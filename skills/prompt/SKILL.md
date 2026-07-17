@@ -158,7 +158,18 @@ already attending. Save the amplitude for text that must survive distance.
 Six devices. Each is stated, given an image, and armed with the temptation it must
 defeat — which is also the schema to give every rule *you* write.
 
-### 1. Redundancy is amplitude
+**Cite the device at the point of use.** When one of these six shapes a sentence you
+write, name it: `[DEVICE:<token>]`. Because the artifact here is usually prose that a
+reader shouldn't wade through tokens for, the citation lives in your reasoning — say
+`[DEVICE:metaphor-as-retrieval-handle]` in chat as you cash a principle out as an
+image — not buried in the document. This is the same instrument `laws:code` uses with
+`[LAW:]`: naming the move at the moment of use re-activates it, and makes the
+engagement greppable so it can be audited rather than assumed. The six tokens are
+fixed: `redundancy-is-amplitude`, `metaphor-as-retrieval-handle`,
+`rehearse-the-temptation`, `disarm-counterarguments`, `negative-examples`,
+`stakes-not-calm`.
+
+### 1. Redundancy is amplitude [DEVICE:redundancy-is-amplitude]
 
 State each core principle many times, in many shapes, distributed across the
 document — as a definition, as an image, as a consequence, as a diagnostic question,
@@ -183,7 +194,7 @@ deduplicate guidance prose on principle.
 Diagnostic: is each restatement a *different shape* of the principle? Different
 shapes are amplitude; identical copy-paste is the only true flab.
 
-### 2. Metaphor is a retrieval handle
+### 2. Metaphor is a retrieval handle [DEVICE:metaphor-as-retrieval-handle]
 
 Cash out every abstract principle as a concrete, preferably sensory image, and reuse
 the image until it becomes the document's vocabulary. Nothing in a rough function
@@ -206,7 +217,7 @@ Diagnostic: does every rule have an image that a novel situation could *resemble
 If you cannot find one, you do not yet understand the rule's felt experience well
 enough to teach it.
 
-### 3. Rehearse the moment of temptation
+### 3. Rehearse the moment of temptation [DEVICE:rehearse-the-temptation]
 
 For each rule, script the exact moment of its violation: name the feeling, quote the
 rationalization the model will hear itself think, then write the refusal and the
@@ -230,7 +241,7 @@ quotes, you have not identified the enemy yet — go find it before you ship.
 Diagnostic: for each rule, can you point at the situation, the quoted
 rationalization, the refusal, and the redirect?
 
-### 4. Disarm the counter-arguments by name
+### 4. Disarm the counter-arguments by name [DEVICE:disarm-counterarguments]
 
 Find the respectable proverbs that will be cited against your guidance — YAGNI,
 "the wrong abstraction is worse than duplication," "premature optimization" — and
@@ -251,7 +262,7 @@ doesn't starve them; it leaves them unanswered on the reader's own schedule.
 Diagnostic: list the proverbs that oppose your guidance. Has each been engaged by
 name, granted its domain, and fenced out of this one?
 
-### 5. Negative examples are enforceable; positive instructions are ignored
+### 5. Negative examples are enforceable; positive instructions are ignored [DEVICE:negative-examples]
 
 Show wrongness concretely: WRONG/RIGHT pairs, BAD/GOOD dialogue, forbidden-pattern
 lists. A positive instruction — "be behavioral," "write clean code" — describes a
@@ -269,7 +280,7 @@ ideally real and quoted. A forbidden-patterns list beats a virtues list every ti
 Diagnostic: for each important behavior, can the reader point at the forbidden
 thing?
 
-### 6. Stakes, not calm
+### 6. Stakes, not calm [DEVICE:stakes-not-calm]
 
 Register is an instruction the model reads even when no instruction is written. A
 calm, taxonomic register says "this is reference material — consult when relevant,"
