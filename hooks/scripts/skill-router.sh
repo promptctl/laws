@@ -16,20 +16,21 @@ COOLDOWN_SECONDS=300  # 5 minutes
 # Without jq the hook would error on every firing; degrade to a silent no-op instead.
 command -v jq >/dev/null 2>&1 || exit 0
 
-read -r -d '' SESSION_TEXT <<'EOT'
-Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: code — source, tests, schemas, configs, scripts, infrastructure — Skill(laws:code); text another LLM will consume — task prompts, subagent instructions, guidance documents, skill bodies, hook text — Skill(laws:prompt); prose for humans — docs, READMEs, reports, messages — Skill(laws:prose). Load one, not two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work. Switch skills only if the medium itself changes.
-
-Then, for the rest of the session, consider the laws and devices of the craft you've loaded and how you will apply them to achieve the highest-quality expression of your work. Express that reasoning directly in the chat, naming the specific law or device at the point of use — engaging with them is a must. Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest-quality expression at every stage. This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.
-EOT
-
-# Pure reinforcement — deepens engagement with whatever is already loaded. It does NOT
-# re-route or second-guess the medium; the point of a recurring ping is to reinforce the
-# current commitment, not to ask "sure you don't want to switch?" every message. This is
-# the closest descendant of the original universal-laws reminder, which was itself pure
-# engagement (the laws were always loaded, so it never needed to route).
+# The engagement text — the one source of truth, injected by both hooks. session-start
+# prepends the routing line; the engage ping (unwired) uses it alone as pure
+# reinforcement. It does NOT re-route or second-guess the medium: the point of a
+# recurring ping is to reinforce the current commitment, not to ask "sure you don't want
+# to switch?" every message. Closest descendant of the original universal-laws reminder,
+# which was itself pure engagement — the laws were always loaded, so it never routed.
 read -r -d '' ENGAGE_TEXT <<'EOT'
 For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.
 EOT
+
+read -r -d '' ROUTE_TEXT <<'EOT'
+Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: code — source, tests, schemas, configs, scripts, infrastructure — Skill(laws:code); text another LLM will consume — task prompts, subagent instructions, guidance documents, skill bodies, hook text — Skill(laws:prompt); prose for humans — docs, READMEs, reports, messages — Skill(laws:prose). Load one, not two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work. Switch skills only if the medium itself changes.
+EOT
+
+SESSION_TEXT="${ROUTE_TEXT}"$'\n\n'"${ENGAGE_TEXT}"
 
 # Time-based throttling for the engage ping
 should_remind() {
