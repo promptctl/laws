@@ -7,14 +7,11 @@
 #                    to a UserPromptSubmit hook to test whether per-prompt re-engagement
 #                    improves behavior enough to justify the injection. See README.
 #
-# Requires: jq
+# No external dependencies — pure bash (3.2+), so it runs anywhere Claude Code does.
 
 HOOK_TYPE="$1"
 STATE_FILE="$HOME/.claude/.last_laws_engage"
 COOLDOWN_SECONDS=300  # 5 minutes
-
-# Without jq the hook would error on every firing; degrade to a silent no-op instead.
-command -v jq >/dev/null 2>&1 || exit 0
 
 # The engagement text — the one source of truth, injected by both hooks. session-start
 # prepends the routing line; the engage ping (unwired) uses it alone as pure
@@ -26,11 +23,13 @@ read -r -d '' ENGAGE_TEXT <<'EOT'
 For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.
 EOT
 
+# Keep this text single-line, straight quotes, no double-quotes or backslashes — then no
+# JSON escaping is needed at all (see emit).
 read -r -d '' ROUTE_TEXT <<'EOT'
-Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: code — source, tests, schemas, configs, scripts, infrastructure — Skill(laws:code); text another LLM will consume — task prompts, subagent instructions, guidance documents, skill bodies, hook text — Skill(laws:prompt); prose for humans — docs, READMEs, reports, messages — Skill(laws:prose). Load one, not two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work. Switch skills only if the medium itself changes.
+Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: code - source, tests, schemas, configs, scripts, infrastructure - Skill(laws:code); text another LLM will consume - task prompts, subagent instructions, guidance documents, skill bodies, hook text - Skill(laws:prompt); prose for humans - docs, READMEs, reports, messages - Skill(laws:prose). Load one, not two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work. Switch skills only if the medium itself changes.
 EOT
 
-SESSION_TEXT="${ROUTE_TEXT}"$'\n\n'"${ENGAGE_TEXT}"
+SESSION_TEXT="${ROUTE_TEXT}  ${ENGAGE_TEXT}"
 
 # Time-based throttling for the engage ping
 should_remind() {
@@ -43,9 +42,14 @@ should_remind() {
   return 1
 }
 
+# Build the hook JSON with printf — no jq. The text above is pre-sanitized, so the only
+# JSON-mandatory escape left is backslash; these two lines defend against a future edit
+# that reintroduces a backslash or newline, so the guarantee never depends on memory.
 emit() {
-  jq -n --arg event "$1" --arg ctx "$2" \
-    '{hookSpecificOutput: {hookEventName: $event, additionalContext: $ctx}}'
+  local ctx=$2
+  ctx=${ctx//\\/\\\\}
+  ctx=${ctx//$'\n'/ }
+  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$1" "$ctx"
 }
 
 case "$HOOK_TYPE" in

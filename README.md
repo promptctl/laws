@@ -31,7 +31,7 @@ Or from a local clone:
 /plugin install laws@promptctl
 ```
 
-The hook requires `jq` on your PATH.
+The hook is pure bash — no external dependencies.
 
 ## Why the laws read the way they do
 
