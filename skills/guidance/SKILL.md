@@ -1,19 +1,21 @@
 ---
 name: guidance
-description: Craft reference for authoring persistent agent guidance — CLAUDE.md files, system prompts, skill bodies, hook-injected text, or any standing instructions meant to steer an LLM across many future sessions. Use BEFORE writing or rewriting any such document. The genre has its own devices (redundancy, imagery, rehearsed temptations) and its own anti-goals (token economy, deduplication); applying ordinary prompt-tightening or code aesthetics to it is a known failure mode.
+description: Craft reference for any text another LLM will consume — task prompts, subagent instructions, prompts written into files or code, and persistent agent guidance (CLAUDE.md files, system prompts, skill bodies, hook text). Use BEFORE writing either kind. The regime determines the craft — task prompts want terse, complete, say-it-once instructions; persistent guidance wants redundancy, imagery, and rehearsed temptations — and applying either regime's style to the other is a known failure mode.
 ---
 
-# Authoring behavioral guidance for LLMs
+# Authoring text for LLMs
 
-Craft reference for writing **persistent agent guidance** — CLAUDE.md files, system
-prompts, skill bodies, hook-injected text, standing instructions of any kind. Read this
-before writing or rewriting any document whose job is to change how a model behaves
-across many future sessions.
+Craft reference for any text another LLM will consume, from a one-off subagent prompt
+to a CLAUDE.md that must steer sessions for months. Those are the two ends of one
+continuum, and they want opposite styles; the regime section below tells you which
+end you are writing, and the proximate end gets its own short section. Most of this
+document is the far end's field manual, because that is where the craft is
+counter-intuitive and failure is silent.
 
-This is a different genre from a task prompt. A task prompt is consumed once, in
+The far end first, since it names the contrast: a task prompt is consumed once, in
 context, with the user watching. Behavioral guidance is ambient: it must win at
 thousands of future decision points where no one is watching, against strong competing
-defaults. The techniques below exist because of that difference.
+defaults. The devices below exist because of that difference.
 
 ---
 
@@ -124,6 +126,36 @@ restated constraints, anchors, recaps — no matter that its author calls it a p
 Before writing, ask the regime question: *how far from the decision, and how alone,
 will this text be when it has to work?* The answer — not the document's label —
 selects the devices.
+
+---
+
+## The proximate end: task prompts
+
+If your text is proximate — a subagent prompt, a one-off instruction, anything
+consumed once, near its decision, with the requester able to see the result — the
+calibration flips. Proximity licenses terseness. Say each thing once, clearly:
+
+- **State the deliverable exactly**: what artifact, what format, where it goes.
+  Vague asks get default behavior.
+- **The reader starts from zero.** A subagent sees only your prompt — no
+  conversation history, no user context, no standing guidance. Every requirement
+  goes in the prompt, in the original requester's words; anything omitted does not
+  exist.
+- **Give one verifiable acceptance criterion** — what correct output looks like,
+  stated so it can be checked.
+- **Show a negative example for anything that matters.** "Do NOT produce output
+  like: [example]" is enforceable; "be thorough" is not. This is the one far-end
+  device that survives at distance zero.
+- **Explain why** when a constraint would otherwise be surprising — motivation
+  generalizes; bare rules get lawyered.
+- **Separate instructions, context, and data** with tags or sections so none is
+  mistaken for another.
+- **On return, read the artifact, not the report.** Validate against the
+  requirements, not the worker's self-assessment.
+
+One anti-rule: do not import the far end's devices. Redundancy, imagery, and stakes
+framing at distance zero read as emphasis and distort weighting — the reader is
+already attending. Save the amplitude for text that must survive distance.
 
 ---
 
