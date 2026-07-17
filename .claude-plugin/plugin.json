@@ -1,7 +1,7 @@
 {
   "name": "laws",
-  "version": "0.14.0",
-  "description": "Universal architectural laws for code work, medium-scoped quality skills (code / prose / prompt), and a skill-router hook that loads the right one for each task.",
+  "version": "0.15.0",
+  "description": "Universal architectural laws for code work, medium-scoped quality skills (code / prose / prompt), and skill-router hooks that route to the right one at session start and re-engage the laws on every message.",
   "author": {
     "name": "Brandon Fryslie"
   },

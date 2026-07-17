@@ -40,7 +40,7 @@ Framings (used in reasoning, not cited in code):
 Laws (cited in code as `[LAW:<token>]`):
 `decomposition` · `types-are-the-program` · `composability` · `carrying-cost` ·
 `no-ambient-temporal-coupling` · `effects-at-boundaries` · `one-source-of-truth` ·
-`single-enforcer` · `comments-carry-intent` · `dataflow-not-control-flow` ·
+`single-enforcer` · `comments-carry-meaning` · `dataflow-not-control-flow` ·
 `one-type-per-behavior` · `no-mode-explosion` · `no-defensive-null-guards` ·
 `locality-or-seam` · `one-way-deps` · `no-shared-mutable-globals` ·
 `verifiable-goals` · `behavior-not-structure` · `no-silent-failure`
@@ -457,43 +457,43 @@ Diagnostic: *where is THE place this invariant is enforced — and is this it?*
 Instance of `one-source-of-truth`, applied to enforcement; the single enforcer is
 where the type-level invariant lives when the type system can't carry it.
 
-## [LAW:comments-carry-intent] — the code is the mechanism; the comment is the meaning
+## [LAW:comments-carry-meaning] — the code is the mechanism; the comment is the meaning
 
-**A comment earns its place only by carrying what the code cannot: the intent behind
-the mechanism, the domain meaning a dense expression serves, a non-obvious
-relationship to code elsewhere, the reason for this way and not another. It must never
-re-encode the mechanism the code already is, and never swell past the code into mood
-or backstory. Whether it reads as "what" or "why" is beside the point; whether it
-duplicates or adds is the whole point.**
+**A comment earns its place by standing at an altitude the code does not: the intent
+behind the mechanism, a relationship to code elsewhere, the reason for this way and
+not another — or the mechanism itself lifted into a simplification that meets a reader
+who cannot yet read the dense original. It may restate what the code does; it must not
+restate it at the code's own altitude, a verbatim echo that adds no height and rots
+the moment the code moves. The test is never whether the comment repeats the code, but
+whether it stands where the code cannot.**
 
-The code is a photograph, re-shot on every read: an exact, self-refreshing image of
-what runs. A comment is the caption. A caption that re-describes what is already in
-the frame — "a loop over the users," a list of every caller, a count the next commit
-falsifies — is worthless to expert and novice alike, and begins to lie the first time
-the photo is retouched and the words are not. A caption that names what the frame
-cannot hold — "the last read before the retry storm," "must run before `release()`
-frees the buffer" — is the entire reason captions exist. The line is never whether the
-code is obvious; obviousness is a fact about the viewer, not the frame. It is whether
-the words are already in the frame: mechanism is, and copying it is the sin; meaning
-is not, and supplying it is the craft.
+The code is a photograph; the comment is the caption. Describing the frame is not
+forbidden — describing the frame is what captions are for. The dead caption reads the
+pixels back at pixel-resolution — `// returns 2+2` over `return 2+2` — serving no one
+who could already see them. The living caption names the scene from a height the
+pixels don't hand over: "a Gaussian blur across nine neighbor samples," "the last read
+before the retry storm," "the accounts legal requires we purge." Whether a viewer
+needs that height is not the frame's business — a reader fluent in the language reads
+the pixels and skips the caption at no cost, while a reader who cannot (a shader in a
+language they don't speak, a codebase annotated for learning) is handed the scene they
+could not have resolved alone. Obviousness is a fact about the viewer, never the frame.
 
-A caption fails two ways. It transliterates — a second copy of the frame that drifts
-at the next edit. Or it floods — the author's state of mind, the ticket's backstory, a
-re-teaching of the domain, everything outside the frame and scoped to the project
-instead of the code. *"A quick line restating this helps the next reader"*: no — one
-edit later the caption contradicts the frame, and the reader believes the caption over
-the code. *"Let me write down everything I understand"*: no — a comment is not a home
-for information that already has one. Sometimes the unreadable mechanism is a name or
-type asking to be fixed, so fix it; but "the code should just be clearer" never
-licenses stripping a comment that carries what the code cannot.
+So a comment dies two deaths. *"A quick line restating this helps the next reader"*:
+only if it rises above the code — a same-altitude echo helps no one and lies the first
+time the code changes and the words don't. *"This just says what the code says, delete
+it"*: check the altitude first — a teaching gloss or a simplification does work you
+cannot see *because* you can already read the code; never strip comprehension on the
+grounds that the mechanism is transparent to you. And never flood the other way: the
+author's mood, the ticket's backstory, the whole domain re-taught belong outside the
+frame, not in the caption.
 
-Diagnostic: *does this comment carry intent, meaning, or a relationship the code
-cannot say about itself — and does it stay scoped to this code?*
+Diagnostic: *does this comment stand at an altitude the code does not — a
+simplification, an intent, a relationship — while staying scoped to this code?*
 
-Instance of `one-source-of-truth`: mechanism's one home is the code, meaning's one
-home is the comment; copying the mechanism makes a divergent second copy, carrying the
-intent makes that intent's only copy. Under `[FRAMING:representation]`, each belongs
-only in its own home.
+Instance of `one-source-of-truth`, but only at the code's own altitude: a same-altitude
+echo is a divergent second copy that will drift, while a comment pitched higher is a
+distinct rendering for a reader the code doesn't reach, not a rival source. Under
+`[FRAMING:representation]`, keep the view the code cannot supply.
 
 ---
 
@@ -895,8 +895,8 @@ misread the binding.
 under dependency, and under sharing.
 
 **Truthfulness** — `types-are-the-program` makes the compiler the mapkeeper;
-`one-source-of-truth`, `single-enforcer`, and `comments-carry-intent` allow each
-fact, each invariant, and each intent exactly one authoritative home.
+`one-source-of-truth`, `single-enforcer`, and `comments-carry-meaning` allow each
+fact, each invariant, and each meaning exactly one authoritative home.
 
 **Contact with the world** — `no-ambient-temporal-coupling` turns time into owned
 state; `effects-at-boundaries` keeps the fire in the hearth.

@@ -1,5 +1,5 @@
 {
-  "description": "Once per session: route to the one medium-matched skill (laws:code / laws:prompt / laws:prose) and command active engagement with it. An optional cooldown-gated 'engage' re-activation ping exists in the script, unwired pending real-world testing.",
+  "description": "Two injection points: SessionStart routes once to the medium-matched skill (laws:code / laws:prompt / laws:prose); UserPromptSubmit re-engages the laws on every user message.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,6 +7,16 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/skill-router.sh\" session-start"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/skill-router.sh\" engage"
           }
         ]
       }
