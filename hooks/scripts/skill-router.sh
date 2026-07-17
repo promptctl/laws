@@ -10,6 +10,9 @@ HOOK_TYPE="$1"
 STATE_FILE="$HOME/.claude/.last_laws_router_reminder"
 COOLDOWN_SECONDS=300  # 5 minutes
 
+# Without jq the hook would error on every prompt; degrade to a silent no-op instead.
+command -v jq >/dev/null 2>&1 || exit 0
+
 read -r -d '' ROUTER_LONG <<'EOT'
 Identify the medium of the deliverable for this request, then load the matching skill BEFORE doing substantive work:
 - Code — source, tests, schemas, configs, scripts, infrastructure, architecture — load Skill(laws:code).
