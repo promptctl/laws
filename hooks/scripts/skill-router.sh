@@ -1,31 +1,32 @@
 #!/bin/bash
-# Skill-router reminder hook — steers each session to load the skill that matches
-# the medium of its deliverable. Quality guidance is scoped per medium; applying
-# one medium's standards to another's artifact is the failure mode this plugin
-# exists to prevent (see the prompt skill).
+# Session hook for the laws plugin.
+#
+#   session-start  — fires once per session (wired in hooks.json): route to the ONE
+#                    medium-matched skill, then engage it actively for the whole session.
+#   engage         — re-activation ping (cooldown-gated). NOT wired by default; add it
+#                    to a UserPromptSubmit hook to test whether per-prompt re-engagement
+#                    improves behavior enough to justify the injection. See README.
 #
 # Requires: jq
 
 HOOK_TYPE="$1"
-STATE_FILE="$HOME/.claude/.last_laws_router_reminder"
+STATE_FILE="$HOME/.claude/.last_laws_engage"
 COOLDOWN_SECONDS=300  # 5 minutes
 
-# Without jq the hook would error on every prompt; degrade to a silent no-op instead.
+# Without jq the hook would error on every firing; degrade to a silent no-op instead.
 command -v jq >/dev/null 2>&1 || exit 0
 
-read -r -d '' ROUTER_LONG <<'EOT'
-Identify the medium of the deliverable for this request, then load the matching skill BEFORE doing substantive work:
-- Code — source, tests, schemas, configs, scripts, infrastructure, architecture — load Skill(laws:code).
-- Text another LLM will consume — task prompts, subagent instructions, agent guidance documents, skill bodies, hook text — load Skill(laws:prompt).
-- Prose for humans — docs, READMEs, reports, summaries, messages — load Skill(laws:prose).
-Load the skill first, then hold its bar for the whole task. If the task spans several media, load each skill at the point you switch. Applying one medium's quality standards to another medium's artifact is a known failure mode: the code laws applied to guidance prose destroy the guidance, and prose instincts applied to code hide bugs. Route by medium first.
+read -r -d '' SESSION_TEXT <<'EOT'
+Before substantive work, identify the medium of the primary deliverable and load the ONE skill that matches: code — source, tests, schemas, configs, scripts, infrastructure — Skill(laws:code); text another LLM will consume — task prompts, subagent instructions, guidance documents, skill bodies, hook text — Skill(laws:prompt); prose for humans — docs, READMEs, reports, messages — Skill(laws:prose). Load one, not two: these skills carry different quality standards, and stacking them in one context is how one medium's standards bleed into another's artifact. If the medium genuinely changes mid-session, switch skills at that point.
+
+Once loaded, engage the guidance actively for every task in this session: consider how the work you produce will achieve its highest-quality expression through it, and express that reasoning directly in the chat as you go — cite its principles at the point of use. It may feel tedious and repetitive to keep deriving the concrete from the abstract; that derivation IS the application, at every stage of the work. This is not a checklist to satisfy. It is a philosophy to inhabit.
 EOT
 
-read -r -d '' ROUTER_SHORT <<'EOT'
-Reminder: your quality bar comes from the medium of the current deliverable — code → Skill(laws:code), LLM-consumed text → Skill(laws:prompt), human prose → Skill(laws:prose). If the matching skill is not loaded yet, load it before continuing.
+read -r -d '' ENGAGE_TEXT <<'EOT'
+Re-engage the loaded guidance for this request: how does this specific piece of work achieve its highest-quality expression through it? Express the derivation in chat — abstract to concrete, again, at the point of use. If no guidance skill is loaded yet, load the one matching the deliverable's medium first. This is a philosophy to inhabit, not a checklist to satisfy.
 EOT
 
-# Time-based throttling: only fire if cooldown has elapsed
+# Time-based throttling for the engage ping
 should_remind() {
   LAST=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
   NOW=$(date +%s)
@@ -36,31 +37,21 @@ should_remind() {
   return 1
 }
 
-# additionalContext JSON is required for the text to reach the model on tool hooks;
-# plain stdout only reaches context on UserPromptSubmit.
 emit() {
   jq -n --arg event "$1" --arg ctx "$2" \
     '{hookSpecificOutput: {hookEventName: $event, additionalContext: $ctx}}'
 }
 
 case "$HOOK_TYPE" in
-  user-prompt)
-    # Full routing instruction at task start; resets the cooldown timer
+  session-start)
     echo "$(date +%s)" > "$STATE_FILE"
-    emit "UserPromptSubmit" "$ROUTER_LONG"
+    emit "SessionStart" "$SESSION_TEXT"
     ;;
 
-  read-post)
-    # Time-throttled: short nudge if 5+ minutes since last reminder
+  engage)
     if should_remind; then
-      emit "PostToolUse" "$ROUTER_SHORT"
+      emit "UserPromptSubmit" "$ENGAGE_TEXT"
     fi
-    ;;
-
-  task-pre)
-    # Full routing instruction before spawning subagents; resets the cooldown timer
-    echo "$(date +%s)" > "$STATE_FILE"
-    emit "PreToolUse" "$ROUTER_LONG"
     ;;
 
   *)
