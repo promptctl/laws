@@ -17,13 +17,18 @@ COOLDOWN_SECONDS=300  # 5 minutes
 command -v jq >/dev/null 2>&1 || exit 0
 
 read -r -d '' SESSION_TEXT <<'EOT'
-Before substantive work, identify the medium of the primary deliverable and load the ONE skill that matches: code — source, tests, schemas, configs, scripts, infrastructure — Skill(laws:code); text another LLM will consume — task prompts, subagent instructions, guidance documents, skill bodies, hook text — Skill(laws:prompt); prose for humans — docs, READMEs, reports, messages — Skill(laws:prose). Load one, not two: these skills carry different quality standards, and stacking them in one context is how one medium's standards bleed into another's artifact. If the medium genuinely changes mid-session, switch skills at that point.
+Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: code — source, tests, schemas, configs, scripts, infrastructure — Skill(laws:code); text another LLM will consume — task prompts, subagent instructions, guidance documents, skill bodies, hook text — Skill(laws:prompt); prose for humans — docs, READMEs, reports, messages — Skill(laws:prose). Load one, not two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work. Switch skills only if the medium itself changes.
 
-Once loaded, engage the guidance actively for every task in this session: consider how the work you produce will achieve its highest-quality expression through it, and express that reasoning directly in the chat as you go — cite its principles at the point of use. It may feel tedious and repetitive to keep deriving the concrete from the abstract; that derivation IS the application, at every stage of the work. This is not a checklist to satisfy. It is a philosophy to inhabit.
+Then, for the rest of the session, consider the craft you've loaded and how any work you create will achieve its highest-quality expression through it. Express that reasoning directly in the chat, citing its principles at the point of use — engaging with it is a must. Although it may seem tedious and repetitive to repeatedly derive the concrete from the abstract, that engagement is critical to applying the craft correctly at every stage of the work. This is not a checklist to satisfy; it is a philosophy to inhabit.
 EOT
 
+# Pure reinforcement — deepens engagement with whatever is already loaded. It does NOT
+# re-route or second-guess the medium; the point of a recurring ping is to reinforce the
+# current commitment, not to ask "sure you don't want to switch?" every message. This is
+# the closest descendant of the original universal-laws reminder, which was itself pure
+# engagement (the laws were always loaded, so it never needed to route).
 read -r -d '' ENGAGE_TEXT <<'EOT'
-Re-engage the loaded guidance for this request: how does this specific piece of work achieve its highest-quality expression through it? Express the derivation in chat — abstract to concrete, again, at the point of use. If no guidance skill is loaded yet, load the one matching the deliverable's medium first. This is a philosophy to inhabit, not a checklist to satisfy.
+For this request, consider the craft you've loaded and how the work you create will achieve its highest-quality expression through it. Express that reasoning directly in the chat, citing its principles at the point of use — engaging with it is a must. It may feel tedious and repetitive to keep deriving the concrete from the abstract, but that derivation IS the application, at every stage. This is not a checklist to satisfy; it is a philosophy to inhabit.
 EOT
 
 # Time-based throttling for the engage ping
