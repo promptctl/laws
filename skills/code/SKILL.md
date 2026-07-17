@@ -40,7 +40,7 @@ Framings (used in reasoning, not cited in code):
 Laws (cited in code as `[LAW:<token>]`):
 `decomposition` · `types-are-the-program` · `composability` · `carrying-cost` ·
 `no-ambient-temporal-coupling` · `effects-at-boundaries` · `one-source-of-truth` ·
-`single-enforcer` · `comments-explain-why-only` · `dataflow-not-control-flow` ·
+`single-enforcer` · `comments-carry-intent` · `dataflow-not-control-flow` ·
 `one-type-per-behavior` · `no-mode-explosion` · `no-defensive-null-guards` ·
 `locality-or-seam` · `one-way-deps` · `no-shared-mutable-globals` ·
 `verifiable-goals` · `behavior-not-structure` · `no-silent-failure`
@@ -457,31 +457,43 @@ Diagnostic: *where is THE place this invariant is enforced — and is this it?*
 Instance of `one-source-of-truth`, applied to enforcement; the single enforcer is
 where the type-level invariant lives when the type system can't carry it.
 
-## [LAW:comments-explain-why-only] — comments explain why, never what
+## [LAW:comments-carry-intent] — the code is the mechanism; the comment is the meaning
 
-**Comments may carry rationale — the why. They must never restate what the code does,
-and never reference low-level specifics: no caller enumerations, no counts, no line
-references, no variable or function names, no "called from X and Y."**
+**A comment earns its place only by carrying what the code cannot: the intent behind
+the mechanism, the domain meaning a dense expression serves, a non-obvious
+relationship to code elsewhere, the reason for this way and not another. It must never
+re-encode the mechanism the code already is, and never swell past the code into mood
+or backstory. Whether it reads as "what" or "why" is beside the point; whether it
+duplicates or adds is the whole point.**
 
-The code is the authoritative description of what it does; a WHAT-comment is a
-hand-drawn copy of a territory the code already photographs, and hand-drawn copies
-are never redrawn. They are not deleted, not refreshed, not updated — they just
-quietly start to lie, and a lying comment is worse than none because it wears the
-uniform of documentation. If you find caller lists, counts, or line references in
-comments, you are required to remove them immediately — no asking, no debating
-exceptions.
+The code is a photograph, re-shot on every read: an exact, self-refreshing image of
+what runs. A comment is the caption. A caption that re-describes what is already in
+the frame — "a loop over the users," a list of every caller, a count the next commit
+falsifies — is worthless to expert and novice alike, and begins to lie the first time
+the photo is retouched and the words are not. A caption that names what the frame
+cannot hold — "the last read before the retry storm," "must run before `release()`
+frees the buffer" — is the entire reason captions exist. The line is never whether the
+code is obvious; obviousness is a fact about the viewer, not the frame. It is whether
+the words are already in the frame: mechanism is, and copying it is the sin; meaning
+is not, and supplying it is the craft.
 
-The temptation arrives as: *"a little summary comment will help the next reader."*
-What the next reader gets, one edit later, is a false map. Refuse it. The redirect:
-if the code needs explaining, the shape is wrong — the comment-shaped urge is a
-signal to rename, retype, or restructure until the code says it itself. Keep the
-comment only if it says something the code *cannot*: why this way, what was tried and
-rejected, which external constraint forced this.
+A caption fails two ways. It transliterates — a second copy of the frame that drifts
+at the next edit. Or it floods — the author's state of mind, the ticket's backstory, a
+re-teaching of the domain, everything outside the frame and scoped to the project
+instead of the code. *"A quick line restating this helps the next reader"*: no — one
+edit later the caption contradicts the frame, and the reader believes the caption over
+the code. *"Let me write down everything I understand"*: no — a comment is not a home
+for information that already has one. Sometimes the unreadable mechanism is a name or
+type asking to be fixed, so fix it; but "the code should just be clearer" never
+licenses stripping a comment that carries what the code cannot.
 
-Diagnostic: *does this comment say anything the code cannot say about itself?*
+Diagnostic: *does this comment carry intent, meaning, or a relationship the code
+cannot say about itself — and does it stay scoped to this code?*
 
-Instance of `one-source-of-truth` (a WHAT-comment is a manual divergent copy) and of
-`[FRAMING:representation]`: prefer the map the machine redraws.
+Instance of `one-source-of-truth`: mechanism's one home is the code, meaning's one
+home is the comment; copying the mechanism makes a divergent second copy, carrying the
+intent makes that intent's only copy. Under `[FRAMING:representation]`, each belongs
+only in its own home.
 
 ---
 
@@ -883,8 +895,8 @@ misread the binding.
 under dependency, and under sharing.
 
 **Truthfulness** — `types-are-the-program` makes the compiler the mapkeeper;
-`one-source-of-truth`, `single-enforcer`, and `comments-explain-why-only` allow each
-fact, each invariant, and each rationale exactly one authoritative home.
+`one-source-of-truth`, `single-enforcer`, and `comments-carry-intent` allow each
+fact, each invariant, and each intent exactly one authoritative home.
 
 **Contact with the world** — `no-ambient-temporal-coupling` turns time into owned
 state; `effects-at-boundaries` keeps the fire in the hearth.
