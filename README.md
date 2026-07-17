@@ -20,7 +20,7 @@ that reminds Claude to load the right one before starting work.
 ## Install
 
 ```
-/plugin marketplace add brandon-fryslie/promptctl_laws
+/plugin marketplace add promptctl/laws
 /plugin install laws@promptctl
 ```
 

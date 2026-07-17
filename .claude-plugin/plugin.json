@@ -5,6 +5,7 @@
   "author": {
     "name": "Brandon Fryslie"
   },
-  "repository": "https://github.com/brandon-fryslie/promptctl_laws",
+  "repository": "https://github.com/promptctl/laws",
+  "license": "MIT",
   "keywords": ["architecture", "code-quality", "guidance", "skills", "prompting"]
 }
