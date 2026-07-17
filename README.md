@@ -15,7 +15,7 @@ that reminds Claude to load the right one before starting work.
 | `laws:code` skill | The universal architectural laws: 19 laws under 2 root framings, each with a statement, a metaphor, the rationalization it must defeat (quoted, with the refusal), a one-line diagnostic, and its place in the derivation tree. Includes worked WRONG/RIGHT examples and domain bindings for UI, APIs, schemas, pipelines, distributed systems, and CLIs. |
 | `laws:prose` skill | Writing guidance for human-audience text: docs, READMEs, reports, messages. |
 | `laws:prompt` skill | The craft of writing text for LLMs, across the whole continuum — terse, complete task prompts at one end; persistent guidance (CLAUDE.md files, system prompts, skill bodies) at the other, with six devices, their mechanisms, explicit anti-goals, and a shipping checklist. Written in the style it teaches. |
-| Session hook | Fires once per session: identify the medium of the primary deliverable, load the ONE matching skill (never stack them — different media carry different standards), then engage it actively — express the derivation from principle to concrete in chat, at every stage. An optional cooldown-gated `engage` re-activation ping ships in the script, unwired; add `skill-router.sh engage` to a UserPromptSubmit hook if testing shows once-per-session isn't enough. |
+| Session hooks | Two injection points. `SessionStart` fires once: identify the medium of the primary deliverable and load the ONE matching skill (never stack them — different media carry different standards). `UserPromptSubmit` fires on every user message: re-engage the laws for that request — express the derivation from principle to concrete in chat, at every stage. |
 
 ## Install
 
@@ -48,5 +48,4 @@ here, and do not "clean them up."
 /plugin uninstall laws@promptctl
 ```
 
-The hook writes one state file (`~/.claude/.last_laws_router_reminder`) for its
-cooldown; remove it if you want no trace left.
+The hooks are stateless — no files written, nothing to clean up.
