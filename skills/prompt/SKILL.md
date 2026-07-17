@@ -1,5 +1,5 @@
 ---
-name: guidance
+name: prompt
 description: Craft reference for any text another LLM will consume — task prompts, subagent instructions, prompts written into files or code, and persistent agent guidance (CLAUDE.md files, system prompts, skill bodies, hook text). Use BEFORE writing either kind. The regime determines the craft — task prompts want terse, complete, say-it-once instructions; persistent guidance wants redundancy, imagery, and rehearsed temptations — and applying either regime's style to the other is a known failure mode.
 ---
 

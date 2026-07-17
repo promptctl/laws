@@ -2,7 +2,7 @@
 # Skill-router reminder hook — steers each session to load the skill that matches
 # the medium of its deliverable. Quality guidance is scoped per medium; applying
 # one medium's standards to another's artifact is the failure mode this plugin
-# exists to prevent (see the guidance skill).
+# exists to prevent (see the prompt skill).
 #
 # Requires: jq
 
@@ -16,13 +16,13 @@ command -v jq >/dev/null 2>&1 || exit 0
 read -r -d '' ROUTER_LONG <<'EOT'
 Identify the medium of the deliverable for this request, then load the matching skill BEFORE doing substantive work:
 - Code — source, tests, schemas, configs, scripts, infrastructure, architecture — load Skill(laws:code).
-- Text another LLM will consume — task prompts, subagent instructions, agent guidance documents, skill bodies, hook text — load Skill(laws:guidance).
+- Text another LLM will consume — task prompts, subagent instructions, agent guidance documents, skill bodies, hook text — load Skill(laws:prompt).
 - Prose for humans — docs, READMEs, reports, summaries, messages — load Skill(laws:prose).
 Load the skill first, then hold its bar for the whole task. If the task spans several media, load each skill at the point you switch. Applying one medium's quality standards to another medium's artifact is a known failure mode: the code laws applied to guidance prose destroy the guidance, and prose instincts applied to code hide bugs. Route by medium first.
 EOT
 
 read -r -d '' ROUTER_SHORT <<'EOT'
-Reminder: your quality bar comes from the medium of the current deliverable — code → Skill(laws:code), LLM-consumed text → Skill(laws:guidance), human prose → Skill(laws:prose). If the matching skill is not loaded yet, load it before continuing.
+Reminder: your quality bar comes from the medium of the current deliverable — code → Skill(laws:code), LLM-consumed text → Skill(laws:prompt), human prose → Skill(laws:prose). If the matching skill is not loaded yet, load it before continuing.
 EOT
 
 # Time-based throttling: only fire if cooldown has elapsed
