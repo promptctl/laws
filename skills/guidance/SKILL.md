@@ -65,10 +65,8 @@ And the error re-enacted itself the same day it was diagnosed: mid-conversation
 designing the replacement guidance under `[LAW:one-source-of-truth]`. Ambient
 pressure beats situational awareness. Write your guidance expecting that.
 
-(The pre-distillation original ships with this skill at
-`references/style-exemplar.md`; the `code` skill in this plugin is the restored,
-effective-style rewrite. Both are specimens of the far-end style — as is the page
-you are reading.)
+(The `code` skill in this plugin is the restored, effective-style rewrite — a
+full-length specimen of the far-end style, as is the page you are reading.)
 
 ---
 
@@ -241,9 +239,9 @@ left standing is a getaway car idling outside every rule: the model doesn't have
 invent a rationalization when it can *cite* one, with the full prior authority of
 training data behind it. A blanket "ignore YAGNI" loses that authority contest;
 granting the maxim its domain and then fencing it out wins without a fight, because
-the model can hold both without contradiction. The exemplar's move is the pattern:
-YAGNI conceded as correct for high-carrying-cost features, then shown incoherent for
-smooth foundational blocks — like telling a neolithic toolmaker he doesn't need
+the model can hold both without contradiction. The laws skill's YAGNI passage is the
+pattern: conceded as correct for high-carrying-cost features, then shown incoherent
+for smooth foundational blocks — like telling a neolithic toolmaker he doesn't need
 metalworking because he can't name a specific tool he's currently failing to make.
 
 The temptation: *"quoting the objections just gives them oxygen."* Refuse it. The
