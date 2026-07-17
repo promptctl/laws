@@ -74,6 +74,59 @@ that.
 
 ---
 
+## Same physics, different regime — why the genre exists at all
+
+An objection will occur to you, and it is correct as far as it goes: everything the
+model reads is one surface. Guidance, task prompts, tool results, file contents — it
+is all just prompt, processed by the same attention over the same context by the same
+next-token machinery. There is no separate parser for guidance. So how can it be a
+different genre?
+
+Because genre lives not in the substrate but in the **operating regime**. Four axes
+separate a task prompt's regime from guidance's, and every device in this document is
+the price of some axis:
+
+- **Distance to the decision.** A task prompt sits next to the decision it governs:
+  recent, on-topic, attended. Guidance is injected at session start and must fire
+  dozens of tool calls and a hundred thousand tokens later — against competing
+  defaults that the local context is *actively feeding* ("just add a guard" is
+  suggested by the very code on screen). Redundancy and imagery are not decoration;
+  they are what retrieval-under-interference costs. Amplitude matters when you are
+  far from the receiver.
+
+- **Known vs. unknown target.** A task prompt addresses one situation its author can
+  see, so it can specify. Guidance addresses a distribution of situations nobody has
+  seen yet, so it must install a *disposition* that generalizes — which is why it
+  leans on transferable handles (the rough stone) instead of enumerated instructions.
+
+- **The adversary.** A task prompt's failure mode is ambiguity: the model didn't
+  understand. Guidance's failure mode is defection: the model understands perfectly,
+  and the local gradient points elsewhere anyway. That is why guidance needs
+  temptation scripts and disarmed proverbs, and a task prompt almost never does. You
+  don't argue with someone standing next to you; you argue in advance with someone
+  who will be alone when it counts.
+
+- **Feedback latency.** A task prompt fails in front of its author and is fixed in
+  the next turn. Guidance fails silently, diffusely, for months, with no one
+  attributing the drift to its source. One is a command; the other is
+  infrastructure, and you engineer it like infrastructure.
+
+These are ends of a continuum, not a binary — and the calibration rule falls out of
+the axes: **terseness is licensed by proximity; distance must be paid for in
+amplitude.** The skill-router hook this plugin ships is short and works, because it
+is injected *at* the decision point — distance zero, nothing to survive. The laws
+skill cannot afford that brevity, because it must still be winning arguments deep in
+someone else's diff, hours later. And the middle of the continuum obeys the same
+rule: a long-horizon agent prompt that will run autonomously for two hundred
+thousand tokens has drifted into guidance's regime and needs guidance's devices —
+restated constraints, anchors, recaps — no matter that its author calls it a prompt.
+
+Before writing, ask the regime question: *how far from the decision, and how alone,
+will this text be when it has to work?* The answer — not the document's label —
+selects the devices.
+
+---
+
 ## The devices
 
 Each device below was observed working in the style exemplar and weakened or absent in
