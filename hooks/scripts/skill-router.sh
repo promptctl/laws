@@ -23,8 +23,8 @@ read -r -d '' ENGAGE_TEXT <<'EOT'
 For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.
 EOT
 
-# Keep this text single-line, straight quotes, no double-quotes or backslashes — then no
-# JSON escaping is needed at all (see emit).
+# Keep this text single-line, with straight quotes and no backslashes, so it needs no
+# JSON escaping when emitted.
 read -r -d '' ROUTE_TEXT <<'EOT'
 Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: code - source, tests, schemas, configs, scripts, infrastructure - Skill(laws:code); text another LLM will consume - task prompts, subagent instructions, guidance documents, skill bodies, hook text - Skill(laws:prompt); prose for humans - docs, READMEs, reports, messages - Skill(laws:prose). Load one, not two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work. Switch skills only if the medium itself changes.
 EOT
@@ -42,9 +42,9 @@ should_remind() {
   return 1
 }
 
-# Build the hook JSON with printf — no jq. The text above is pre-sanitized, so the only
-# JSON-mandatory escape left is backslash; these two lines defend against a future edit
-# that reintroduces a backslash or newline, so the guarantee never depends on memory.
+# The two substitutions are defensive: the text as written needs no escaping, but a later
+# edit could reintroduce a backslash or newline, and either would silently break the
+# emitted JSON. Escaping them here keeps that guarantee off the editor's memory.
 emit() {
   local ctx=$2
   ctx=${ctx//\\/\\\\}
