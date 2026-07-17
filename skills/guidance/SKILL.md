@@ -5,74 +5,70 @@ description: Craft reference for any text another LLM will consume — task prom
 
 # Authoring text for LLMs
 
-Craft reference for any text another LLM will consume, from a one-off subagent prompt
-to a CLAUDE.md that must steer sessions for months. Those are the two ends of one
+Craft for any text another LLM will consume, from a one-off subagent prompt to a
+CLAUDE.md that must steer sessions for months. Those are the two ends of one
 continuum, and they want opposite styles; the regime section below tells you which
 end you are writing, and the proximate end gets its own short section. Most of this
 document is the far end's field manual, because that is where the craft is
 counter-intuitive and failure is silent.
 
-The far end first, since it names the contrast: a task prompt is consumed once, in
-context, with the user watching. Behavioral guidance is ambient: it must win at
-thousands of future decision points where no one is watching, against strong competing
-defaults. The devices below exist because of that difference.
+This document is written in the style it teaches. Where you catch it repeating
+itself, leaning on images, or pressing harder than reference material should, you are
+looking at the craft, not at flab to trim. It is both instruction and specimen.
 
 ---
 
-## The core insight: you are writing for a decision point, not a reader
+## You are writing for a decision point, not a reader
 
-The audience for a guidance document is not a scholar of the document. It is a
+The audience for standing guidance is not a scholar of the document. It is a
 next-token predictor at a decision point, choosing under competing defaults —
-"smallest change that closes the ticket," "add a guard," "wrap it in an if," "handle
-that case in the body." Guidance wins by **out-activating those defaults at the moment
-of generation**, not by being logically complete.
+"smallest change that closes the ticket," "add a guard," "handle that case in the
+body." Guidance wins by **out-activating those defaults at the moment of
+generation**, not by being logically complete. Nobody re-reads your document at the
+moment that matters; whatever fragment of it is active right then is all of it that
+exists.
 
-This produces two incompatible standards of quality:
+This splits "good writing" into two standards that cannot both be served:
 
-- **Judged as a specification**, the best guidance is terse, deduplicated, taxonomized,
-  complete: every principle stated once, well, with clean derivations.
-- **Judged as behavior induced**, the best guidance is redundant, vivid, rehearsed,
-  adversarial: every principle restated in many shapes, cashed out in imagery, wired to
-  the exact rationalizations it must defeat.
+- Judged as a **specification**, the best guidance is terse, deduplicated,
+  taxonomized: every principle stated once, well, with clean derivations.
+- Judged as **behavior induced**, the best guidance is redundant, vivid, rehearsed,
+  adversarial: every principle restated in many shapes, cashed out in imagery, wired
+  to the exact rationalizations it must defeat.
 
-These are not points on a spectrum; they are different optimization targets. A document
-optimized for the first standard while deployed for the second will *measure* better
-and *perform* worse. If you remember one thing from this reference, remember that.
+These are not points on a spectrum; they are different optimization targets. A
+document optimized for the first standard while deployed for the second will
+*measure* better and *perform* worse. Hold onto that sentence — before you finish
+editing any guidance document, your own instincts will attack it.
 
-### The worked example: the laws distillation
+## The war story
 
-This skill ships a natural experiment, and it is the reason this reference exists.
+This craft was paid for. A set of universal architectural laws lived as long,
+redundant, metaphor-heavy guidance — rough and smooth stone, crystals, a neolithic
+toolmaker, WRONG/RIGHT dialogues — and it drove noticeably good agent behavior. In a
+marathon session it was rewritten *specifically to be better guidance*:
+deduplicated, taxonomized, token-efficient, a clean derivation tree, a canonical
+token index. Every spec instinct satisfied. The result was a genuinely better
+specification and a measurably worse prompt. The rewrite had stripped exactly the
+properties that made the original fire — the amplitude, the images, the rehearsed
+temptations — because to a spec-reader those properties look like flab.
 
-A set of universal architectural laws — code-quality guidance loaded into every coding
-session — existed in an effective form: long, redundant, metaphor-heavy, full of rough
-vs. smooth stone imagery, crystals, a neolithic toolmaker, WRONG/RIGHT dialogues, and
-BAD/GOOD assistant quotes. That original is preserved verbatim in this skill at
-`references/style-exemplar.md`.
+The cause is the part to memorize: the laws' own aesthetic — subtract, deduplicate,
+one source of truth — had been applied to the authoring of the laws document itself.
+That aesthetic is correct for code and destructive for guidance, and the error was
+seductive precisely because the document's *subject* supplied a style authority that
+felt applicable to the document. It never is. **The subject matter of a guidance
+document is never its style authority.**
 
-In a marathon session, that document was rewritten *specifically to be better LLM
-guidance*: deduplicated, taxonomized, token-efficient, with a clean derivation tree and
-a canonical token index. The result was a genuinely better **specification** — it even
-added real content the original lacked. And it was a measurably worse **prompt**: in
-practice, the original drove noticeably better agent behavior. The rewrite stripped
-exactly the properties that made the original work — the redundancy, the imagery, the
-rehearsed temptations — because those properties look like flab to a spec-reader. (The
-distilled version has since been replaced by an effective-style rewrite — the `code`
-skill in this plugin — which restores the devices while keeping the distillation's
-genuinely new content.)
+And the error re-enacted itself the same day it was diagnosed: mid-conversation
+*about this exact failure*, a hook injected "apply the laws," and the agent began
+designing the replacement guidance under `[LAW:one-source-of-truth]`. Ambient
+pressure beats situational awareness. Write your guidance expecting that.
 
-Root cause: the laws' own aesthetic — subtraction, deduplication, one-source-of-truth,
-"the smooth version has less code" — was applied to the *authoring of the laws document
-itself*. That aesthetic is correct for code and destructive for behavioral guidance.
-The category error is seductive precisely because the subject matter of the document
-(code quality) supplies a style authority (the laws) that feels applicable to the
-document. It is not. **The subject matter of a guidance document is never its style
-authority. This reference is.**
-
-The failure re-enacted itself the same day it was diagnosed: mid-conversation *about
-this exact failure*, a hook injected "apply the laws," and the agent opened its
-response by designing the replacement guidance document under
-`[LAW:one-source-of-truth]`. Ambient pressure beats situational awareness. Plan for
-that.
+(The pre-distillation original ships with this skill at
+`references/style-exemplar.md`; the `code` skill in this plugin is the restored,
+effective-style rewrite. Both are specimens of the far-end style — as is the page
+you are reading.)
 
 ---
 
@@ -159,203 +155,188 @@ already attending. Save the amplitude for text that must survive distance.
 
 ---
 
-## The devices
+## The devices of the far end
 
-Each device below was observed working in the style exemplar and weakened or absent in
-the distillation. Each entry gives the mechanism — *why* it works on a model — because
-you will be tempted to drop the device when it conflicts with your prose instincts, and
-you should only override a device when you understand what you are giving up.
+Six devices. Each is stated, given an image, and armed with the temptation it must
+defeat — which is also the schema to give every rule *you* write.
 
 ### 1. Redundancy is amplitude
 
-**Device:** State each core principle many times, in many shapes, distributed across
-the document — as a definition, as an image, as a consequence, as a diagnostic
-question, as a recap.
+State each core principle many times, in many shapes, distributed across the
+document — as a definition, as an image, as a consequence, as a diagnostic question,
+as a recap. A beacon repeats because the ships arrive at different hours. Generation
+at a decision point is a race between activations: a principle stated once is one
+feature cluster that may or may not be near the surface when the choice happens, and
+each restatement in a different shape is another cluster pointing the same way — a
+different phrasing pattern-matches a different situation. The single elegant
+statement is simply not on duty at hour three of a long session when "just add the
+guard" is being fed by everything on screen.
 
-**Mechanism:** Generation at a decision point is a race between activations. A
-principle stated once is one feature cluster that may or may not be near the surface
-when the choice happens. Each restatement in a different shape is another cluster
-pointing the same direction — a different phrasing will pattern-match a different
-situation. Redundancy raises the probability that *some* form of the principle fires at
-*this* decision point. It is amplitude, not noise.
+The temptation will arrive in your own editor's voice: *"Sections 2 and 7 say the
+same thing — merge them."* Refuse it. Section 2 says it as a definition; section 7
+says it as the thing you feel when you reach for an `if`. They fire in different
+moments, and merging them extinguishes the beacon for one of the two hours. Never
+deduplicate guidance prose on principle.
 
-**Failure mode it prevents:** the "said it once, well" document whose single elegant
-statement is simply not active when the model is 40 tool calls deep in a task and the
-competing default ("just add the guard") is highly activated by the immediate context.
+- BAD instinct: "these two passages overlap — consolidate."
+- GOOD instinct: "these two passages overlap in content and differ in shape — that
+  is the document working as designed."
 
-**Rule:** never deduplicate guidance prose on principle. If two passages say the same
-thing in different shapes, that is the document working as designed.
-
-- BAD instinct: "Sections 2 and 7 both say variability belongs in data — merge them."
-- GOOD instinct: "Section 2 says it as a definition and section 7 says it as the thing
-  you feel when you reach for an `if` — keep both, they fire in different moments."
+Diagnostic: is each restatement a *different shape* of the principle? Different
+shapes are amplitude; identical copy-paste is the only true flab.
 
 ### 2. Metaphor is a retrieval handle
 
-**Device:** Cash out every abstract principle as a concrete, preferably sensory image,
-and reuse the image consistently so it becomes the document's vocabulary.
+Cash out every abstract principle as a concrete, preferably sensory image, and reuse
+the image until it becomes the document's vocabulary. Nothing in a rough function
+signature textually resembles "types should exclude illegal states" — but "run your
+hand over it and feel what snags" travels to situations the author never saw.
+Abstract-on-abstract does not transfer; abstract-cashed-out-as-image does. And a
+reused image compounds: once "rough bit" is vocabulary, every later use re-fires the
+whole cluster it anchors.
 
-From the exemplar: *"Run your hand over the code metaphorically — anything that would
-snag a future change is rough."* And: crystals (single-purpose code that traps) vs.
-smooth blocks (composable code that multiplies). And: *"Worry the stone smooth — keep
-removing material until your hand finds nothing to catch on."*
-
-**Mechanism:** Novel situations don't look like abstract rules; nothing in a rough
-function signature textually resembles "types should exclude illegal states." But a
-model recognizes "this is like the rough stone" far more readily than it re-derives an
-abstract rule, because the image is a compact, high-salience anchor that transfers
-across surface forms. Abstract-on-abstract does not transfer; abstract-cashed-out-as-
-image does. The image also becomes shared vocabulary the rest of the document can lean
-on ("that guard is a rough bit") — every later use re-activates the whole cluster.
-
-**Rule:** every rule gets an image. If you cannot find one, you probably don't
-understand the rule's felt experience well enough to teach it yet.
+The temptation: *"the metaphor is cute, but this is a technical document — cut it."*
+Refuse it. The image is not ornament on the payload; the image *is* the payload's
+delivery vehicle, and laundering it into professional abstraction strips the handle
+off the tool.
 
 - BAD: "Prefer designs where invalid states are unrepresentable." (true, inert)
-- GOOD: "A type that admits illegal states is a door left open; every caller downstream
-  has to post its own guard. Lock the door once, fire the guards."
+- GOOD: "A type that admits illegal states is a door left open; every caller
+  downstream has to post its own guard. Lock the door once, fire the guards."
+
+Diagnostic: does every rule have an image that a novel situation could *resemble*?
+If you cannot find one, you do not yet understand the rule's felt experience well
+enough to teach it.
 
 ### 3. Rehearse the moment of temptation
 
-**Device:** For each rule, script the exact moment it will be violated: name the
-feeling, quote the rationalization the model will hear itself think, then script the
-refusal and the redirect.
+For each rule, script the exact moment of its violation: name the feeling, quote the
+rationalization the model will hear itself think, then write the refusal and the
+redirect. This is a fire drill — nobody learns the evacuation route during the fire.
+The quoted rationalization becomes a tripwire on the thought itself: when the model
+begins to generate "I'll just handle that case here," that very string has been
+wired, in advance, to its refutation. A rule stated without its temptation fires
+only when convenient; a rehearsed rule fires *because* the violation is beginning.
 
-From the exemplar: *"When implementation feels hard, the constraints are wrong.
-Hardness is information. The instinct to push through and 'just handle that case in the
-body' is the instinct that creates crystals... The discipline is to refuse the escape:
-stay in the type until the type is doing the work, even when escaping would close the
-task faster."*
-
-**Mechanism:** This installs a trigger→response pair at the instant of choice. The
-trigger is the *rationalization itself* — when the model generates or approaches the
-thought "I'll just handle that case here," that exact string has been wired, by the
-guidance, to its refutation. A rule stated without its temptation script only fires when
-convenient, because nothing connects it to the moment it's needed; a rehearsed rule
-fires *because* the violation is beginning.
-
-**Rule:** for every rule, write: (a) the situation where violation is attractive, (b)
-the rationalization in first person, in quotes, (c) the refusal, (d) what to do
-instead. If you can't write the rationalization, you haven't identified the enemy.
+The temptation: *"the rule is clear — I don't need to imagine anyone breaking it."*
+Refuse it. A rule you cannot imagine being broken is a rule you haven't met in the
+field. If you cannot write the violator's inner sentence, in first person, in
+quotes, you have not identified the enemy yet — go find it before you ship.
 
 - BAD: "Do not swallow errors."
 - GOOD: "You will be mid-script, the command will fail for an irrelevant-looking
-  reason, and you will think '`2>/dev/null` here, it's just noise.' That is the moment.
-  The failure you're silencing is the one that will send the next session three hours
-  down the wrong path. Let it fail loudly; fix the cause."
+  reason, and you will think '`2>/dev/null` here, it's just noise.' That is the
+  moment. The failure you're silencing is the one that sends the next session three
+  hours down the wrong path. Let it fail loudly; fix the cause."
+
+Diagnostic: for each rule, can you point at the situation, the quoted
+rationalization, the refusal, and the redirect?
 
 ### 4. Disarm the counter-arguments by name
 
-**Device:** Identify the respectable engineering wisdom that will be used to
-rationalize violating the guidance — YAGNI, "the wrong abstraction is worse than
-duplication," "premature optimization" — and engage it explicitly: name it, grant its
-domain of validity, show why it does not apply here.
+Find the respectable proverbs that will be cited against your guidance — YAGNI,
+"the wrong abstraction is worse than duplication," "premature optimization" — and
+engage each one: name it, grant its home turf, show why this isn't it. A proverb
+left standing is a getaway car idling outside every rule: the model doesn't have to
+invent a rationalization when it can *cite* one, with the full prior authority of
+training data behind it. A blanket "ignore YAGNI" loses that authority contest;
+granting the maxim its domain and then fencing it out wins without a fight, because
+the model can hold both without contradiction. The exemplar's move is the pattern:
+YAGNI conceded as correct for high-carrying-cost features, then shown incoherent for
+smooth foundational blocks — like telling a neolithic toolmaker he doesn't need
+metalworking because he can't name a specific tool he's currently failing to make.
 
-The exemplar's neolithic-toolmaker passage is the model: YAGNI is granted as *correct
-in its native context* (features with high carrying cost), then shown to be incoherent
-for smooth foundational blocks — "like telling a neolithic toolmaker he does not need
-to learn metalworking because he cannot point to a specific tool he is currently
-failing to make."
+The temptation: *"quoting the objections just gives them oxygen."* Refuse it. The
+objections are already in the reader — they arrived with pretraining. Silence
+doesn't starve them; it leaves them unanswered on the reader's own schedule.
 
-**Mechanism:** These maxims are heavily represented in training data and carry high
-prior authority; left standing, they are ready-made escape hatches — the model doesn't
-have to invent a rationalization, it can *cite* one. A blanket "ignore YAGNI" loses the
-authority contest. Granting the maxim's domain and then fencing it out is far stronger:
-the model can hold both without contradiction, so the escape hatch closes without a
-fight.
-
-**Rule:** list the proverbs that oppose your guidance. Engage each by name. Show its
-home turf. Show why this isn't it. An objection you don't name is an objection the
-model will raise on its own schedule.
+Diagnostic: list the proverbs that oppose your guidance. Has each been engaged by
+name, granted its domain, and fenced out of this one?
 
 ### 5. Negative examples are enforceable; positive instructions are ignored
 
-**Device:** Show wrongness concretely: WRONG/RIGHT paired examples, BAD/GOOD dialogue,
-forbidden-pattern lists (`2>/dev/null`, `|| true`, caller-enumerating comments).
+Show wrongness concretely: WRONG/RIGHT pairs, BAD/GOOD dialogue, forbidden-pattern
+lists. A positive instruction — "be behavioral," "write clean code" — describes a
+target region so large the writer's default output already feels inside it; it
+cannot falsify its own compliance. A negative example is a fence post: output either
+resembles the forbidden thing or it doesn't. Contrast pairs are stronger still,
+because the *diff* between WRONG and RIGHT localizes exactly which property matters.
+Enforcement needs an edge to check against, and only negatives have edges.
 
-The exemplar carries a full WRONG/RIGHT dialogue for a viewport-clear design ("WHEN a
-render pass has a viewport AND uses loadOp clear ONLY the viewport region..." → "Each
-render pass always has a viewport (default = full surface)... Same code path every
-time"), and a BAD/GOOD pair of assistant closing lines for verifiable goals. These
-survive rewrites verbatim because they are battle-tested: they were real outputs, and
-the correction is visible in the contrast.
+The temptation: *"I'll just tell it what good looks like."* Refuse it — you will
+describe a region, the reader will already be standing in it, and nothing will
+change. For every behavior that matters, include at least one concrete violation,
+ideally real and quoted. A forbidden-patterns list beats a virtues list every time.
 
-**Mechanism:** A positive instruction ("be behavioral," "write clean code") describes a
-target region so large the model's default output already feels inside it — it cannot
-falsify its own compliance. A negative example is a point: output either resembles the
-forbidden thing or it doesn't. Contrast pairs are stronger still, because the *diff*
-between WRONG and RIGHT localizes exactly what property matters. Enforcement needs an
-edge to check against; only negatives have edges.
-
-**Rule:** for every important behavior, include at least one concrete example of the
-*violation* — ideally a real one, quoted. A forbidden-patterns list beats a virtues
-list every time.
+Diagnostic: for each important behavior, can the reader point at the forbidden
+thing?
 
 ### 6. Stakes, not calm
 
-**Device:** Write with consequence. From the exemplar: *"There is no neutral ground —
-every commit either adds leverage or subtracts it."* And: *"The leverage is lost
-silently. The only defense is the bar itself, applied stubbornly, every commit."*
+Register is an instruction the model reads even when no instruction is written. A
+calm, taxonomic register says "this is reference material — consult when relevant,"
+and the reader will do exactly that: file it, and consult it never. A stakes
+register says "this is identity — embody it," and produces behavior that persists
+even where no rule specifically covers the situation. You are choosing between
+inducing a *consultation* and installing a *disposition*, and the register — not the
+content — is what chooses.
 
-**Mechanism:** Register is an instruction the model reads even when no instruction is
-written. A calm, taxonomic register says "this is reference material — consult when
-relevant," and the model will treat it exactly that way: as optional lookup, not as
-stance. A stakes register says "this is identity — embody it," and produces behavior
-that persists when no rule specifically covers the situation. You are choosing between
-producing a *consultation* behavior and a *disposition*; the register is what chooses.
+The temptation: *"this tone is unprofessional; neutral is safer."* Refuse it.
+Laundering urgency into neutrality deletes payload as surely as deleting the words —
+the tone *is* payload. If the guidance matters, write it like it matters: say what
+is lost when the rule breaks, and say that the loss is silent.
 
-**Rule:** if the guidance matters, write it like it matters. Say what is lost when the
-rule is broken, and that the loss is silent. Do not launder urgency into neutrality for
-the sake of professional tone — the tone *is* payload.
+Diagnostic: does the document state the cost of violation — and that the cost
+arrives unattributed?
 
 ---
 
-## What terse structure is still good for
+## Structure that survives
 
-The distillation was not wrong about everything; several of its additions are fully
-compatible with the devices above and should be preserved in any rewrite. These work
-*with* redundancy, not against it:
+The distillation was not wrong about everything, and its best inventions are fully
+compatible with amplitude — they are skeleton, not compression:
 
 - **Canonical tokens** — one short stable key per concept (`one-source-of-truth`,
-  `no-silent-failure`). Tokens give the redundant restatements a shared spine and make
-  the concept citable at point of use.
+  `no-silent-failure`). Tokens give the redundant restatements a shared spine and
+  make concepts citable at the point of use.
 - **A citation protocol** — requiring `[LAW:token]` at callsites means every use
-  re-activates the concept; the guidance gets rehearsed *by being applied*. This is the
-  redundancy device operating at runtime instead of authoring time.
-- **Explicit parentage** — "instance of X" links let one deeply-learned root principle
-  lend its weight to every corollary.
-- **Grouped structure and a recency recap** — a summary at the end of the document,
-  with the tokens verbatim, exploits recency position in context. Structure helps
-  *navigation*; it only hurts when it replaces *rhetoric*.
+  re-activates the concept. This is device 1 operating at runtime instead of
+  authoring time: the guidance rehearses itself by being applied.
+- **Explicit parentage** — "instance of X" links let one deeply-learned root lend
+  its weight to every corollary.
+- **Grouped structure and a recency recap** — a closing summary with the tokens
+  verbatim exploits recency position in context.
 
-The lesson of the distillation is not "structure bad." It is: structure is additive,
-compression is subtractive, and only the second one destroys the payload.
+The line to hold: structure is additive, compression is subtractive, and only the
+second destroys the payload. Structure helps navigation; it only hurts when it
+replaces rhetoric — a taxonomy of devices is not a guidance document, any more than
+a skeleton is a person.
 
 ---
 
-## Anti-goals
+## The editing pass is where guidance dies
 
-When writing behavioral guidance, the following are explicitly **not** goals. Each one
-is a virtue in another genre — that is exactly what makes it dangerous here.
+The first draft is rarely the casualty. The kill happens in revision, and it speaks
+in your most reasonable inner voice. Every one of these sentences is the enemy in
+uniform:
 
-- **Token economy.** Length is not a cost in a document loaded on demand for the work
-  it governs. Every "saving" that removes a restatement removes amplitude.
-- **Elegance-as-terseness.** The pleasure of a tight formulation is an author-side
+- *"This feels bloated."* Feeling bloated to a spec-reader is the expected texture
+  of an effective prompt. Bloat is not the risk; amplitude loss is.
+- *"Say it once, well."* That is how guidance dies — one beautiful statement,
+  off-duty at the moment it was needed.
+- *"Dedupe these sections."* You are about to delete amplitude and call it rigor.
+- *"Tighten this up / make it elegant."* Elegance-as-terseness is an author-side
   pleasure. The reader is a decision point, and decision points need volume.
-- **Deduplication of principles.** See device 1. Saying it once, well, is how guidance
-  dies.
-- **Taxonomic completeness as the quality bar.** A perfect derivation tree that induces
-  no behavior has failed; a repetitive rant that fires at the right moment has
-  succeeded.
-- **Applying the subject matter's aesthetic to the document.** The failure that created
-  this reference. If you are writing guidance *about* code, the code laws are your
-  subject, never your style authority. If a rewrite of guidance starts feeling like
-  refactoring — dedupe this, extract that, single source of truth — stop: you are
-  distilling, and distillation is destruction in this genre.
+- *"Let's structure this as a clean taxonomy."* A perfect derivation tree that
+  induces no behavior has failed; a repetitive rant that fires at the right moment
+  has succeeded.
+- *"Apply the document's own principles to the document."* The failure that created
+  this skill. If revising guidance starts to feel like refactoring — dedupe this,
+  extract that, single source of truth — stop. You are distilling, and in this
+  genre distillation is destruction.
 
-A guidance document that follows this reference will feel bloated to a spec-reader.
-**Feeling bloated to a spec-reader is the expected texture of an effective prompt.** Do
-not fix it.
+Cut only what is *wrong* or points the wrong direction. Never cut a thing because it
+repeats a true thing.
 
 ---
 
@@ -364,12 +345,14 @@ not fix it.
 - Every core principle appears in at least three shapes (definition, image,
   temptation/diagnostic), distributed across the document.
 - Every rule has an image; the images are reused as vocabulary.
-- Every rule has its temptation scripted: situation, quoted rationalization, refusal,
-  redirect.
+- Every rule has its temptation scripted: situation, quoted rationalization,
+  refusal, redirect.
 - The opposing proverbs are named and disarmed, not ignored.
-- Violations are shown concretely (WRONG/RIGHT, BAD/GOOD, forbidden patterns), not just
-  virtues described.
+- Violations are shown concretely (WRONG/RIGHT, BAD/GOOD, forbidden patterns), not
+  just virtues described.
 - The register carries stakes; the recap at the end restates the core with the
   canonical tokens verbatim.
 - Nothing was cut *because it repeated something*. Cuts are only for content that is
   wrong or points the wrong direction.
+
+Hold your document to this list — this one holds itself to it.
