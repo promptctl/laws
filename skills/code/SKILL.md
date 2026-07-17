@@ -6,7 +6,7 @@ description: Universal architectural laws and domain bindings for all code work.
 
 <!-- The single home of the universal architectural laws, written in the effective
      (rhetorical) style. The style authority for any future edit to THIS file is the
-     guidance skill in this plugin — never the laws themselves. Do not
+     prompt skill in this plugin — never the laws themselves. Do not
      deduplicate, compress, or "clean up" this file: the redundancy is load-bearing,
      and distilling it is the documented failure mode that destroyed a previous
      effective version. -->
