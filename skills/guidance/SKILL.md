@@ -1,5 +1,5 @@
 ---
-name: guidance-authoring
+name: guidance
 description: Craft reference for authoring persistent agent guidance — CLAUDE.md files, system prompts, skill bodies, hook-injected text, or any standing instructions meant to steer an LLM across many future sessions. Use BEFORE writing or rewriting any such document. The genre has its own devices (redundancy, imagery, rehearsed temptations) and its own anti-goals (token economy, deduplication); applying ordinary prompt-tightening or code aesthetics to it is a known failure mode.
 ---
 
