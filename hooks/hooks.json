@@ -1,5 +1,5 @@
 {
-  "description": "Skill-router: reminds the session to load the medium-matched skill (laws:code / laws:guidance-authoring / laws:prose) at prompt submit, before subagent spawns, and throttled after file reads.",
+  "description": "Skill-router: reminds the session to load the medium-matched skill (laws:code / laws:guidance / laws:prose) at prompt submit, before subagent spawns, and throttled after file reads.",
   "hooks": {
     "UserPromptSubmit": [
       {

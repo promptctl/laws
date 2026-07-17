@@ -14,7 +14,7 @@ that reminds Claude to load the right one before starting work.
 |---|---|
 | `laws:code` skill | The universal architectural laws: 19 laws under 2 root framings, each with a statement, a metaphor, the rationalization it must defeat (quoted, with the refusal), a one-line diagnostic, and its place in the derivation tree. Includes worked WRONG/RIGHT examples and domain bindings for UI, APIs, schemas, pipelines, distributed systems, and CLIs. |
 | `laws:prose` skill | Writing guidance for human-audience text: docs, READMEs, reports, messages. |
-| `laws:guidance-authoring` skill | The craft of writing persistent agent guidance (CLAUDE.md files, system prompts, skill bodies): six devices with their mechanisms, explicit anti-goals, and a shipping checklist. Ships the original style exemplar the devices were observed in. |
+| `laws:guidance` skill | The craft of writing persistent agent guidance (CLAUDE.md files, system prompts, skill bodies): six devices with their mechanisms, explicit anti-goals, and a shipping checklist. Ships the original style exemplar the devices were observed in. |
 | Skill-router hook | Injects a short routing instruction at prompt submit, before subagent spawns, and (throttled to every 5 minutes) after file reads: identify the medium, load the matching skill, hold its bar. |
 
 ## Install
@@ -39,7 +39,7 @@ The laws skill is long, repetitive, and vivid on purpose. An earlier version was
 rewritten to be terse and deduplicated — a better specification that turned out to be
 a worse prompt, because the redundancy and imagery were what made the guidance fire at
 the moment of decision. That failure and the craft that replaced it are documented in
-the `laws:guidance-authoring` skill; read it before editing any of the skill bodies
+the `laws:guidance` skill; read it before editing any of the skill bodies
 here, and do not "clean them up."
 
 ## Uninstall
