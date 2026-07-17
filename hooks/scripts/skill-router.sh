@@ -19,7 +19,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 read -r -d '' SESSION_TEXT <<'EOT'
 Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: code — source, tests, schemas, configs, scripts, infrastructure — Skill(laws:code); text another LLM will consume — task prompts, subagent instructions, guidance documents, skill bodies, hook text — Skill(laws:prompt); prose for humans — docs, READMEs, reports, messages — Skill(laws:prose). Load one, not two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work. Switch skills only if the medium itself changes.
 
-Then, for the rest of the session, consider the craft you've loaded and how any work you create will achieve its highest-quality expression through it. Express that reasoning directly in the chat, citing its principles at the point of use — engaging with it is a must. Although it may seem tedious and repetitive to repeatedly derive the concrete from the abstract, that engagement is critical to applying the craft correctly at every stage of the work. This is not a checklist to satisfy; it is a philosophy to inhabit.
+Then, for the rest of the session, consider the laws and devices of the craft you've loaded and how you will apply them to achieve the highest-quality expression of your work. Express that reasoning directly in the chat, naming the specific law or device at the point of use — engaging with them is a must. Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest-quality expression at every stage. This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.
 EOT
 
 # Pure reinforcement — deepens engagement with whatever is already loaded. It does NOT
@@ -28,7 +28,7 @@ EOT
 # the closest descendant of the original universal-laws reminder, which was itself pure
 # engagement (the laws were always loaded, so it never needed to route).
 read -r -d '' ENGAGE_TEXT <<'EOT'
-For this request, consider the craft you've loaded and how the work you create will achieve its highest-quality expression through it. Express that reasoning directly in the chat, citing its principles at the point of use — engaging with it is a must. It may feel tedious and repetitive to keep deriving the concrete from the abstract, but that derivation IS the application, at every stage. This is not a checklist to satisfy; it is a philosophy to inhabit.
+For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.
 EOT
 
 # Time-based throttling for the engage ping
