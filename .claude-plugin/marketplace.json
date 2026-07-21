@@ -8,7 +8,7 @@
     {
       "name": "laws",
       "source": "./",
-      "description": "Universal architectural laws for code work, medium-scoped quality skills (code / prose / prompt), and a skill-router hook that loads the right one for each task."
+      "description": "Universal architectural laws for code work, medium-scoped quality skills (code / prose / prompt / ticket), and a skill-router hook that loads the right one for each task."
     }
   ]
 }
