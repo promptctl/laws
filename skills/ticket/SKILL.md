@@ -34,8 +34,20 @@ who will read it once, act on it while slowly going blind, and never get to ask 
 what you meant. Write every ticket as if you will not be there — because you will
 not.
 
+And hold the fact's other edge, because half the craft hangs from it: **the cold
+start is a cost, and it is billed once per ticket.** A new executor does not begin at
+the work; it begins at orientation — reading the terrain from zero, re-learning code
+the previous agent had warm in its glass minutes ago, re-earning an understanding
+that already existed and was thrown away at the boundary. Cold is why detail must
+live in the ticket; cold is *also* why boundaries are expensive. A backlog is a row
+of toll gates, and every gate charges the same fee whether the stretch of road behind
+it is a mile or a meter.
+
 `[TICKET:cold-executor]` — this is the root. When any rule below feels arbitrary,
-trace it back here and it stops being arbitrary.
+trace it back here and it stops being arbitrary. And notice it cuts both ways: the
+executor's amnesia is the argument for rich tickets *and* the argument for few
+boundaries. A craft that only remembers the first half shreds epics into confetti and
+calls it care.
 
 The failure is silent. A bad ticket does not throw. It produces an agent that
 confidently builds the wrong thing, or builds the right thing badly in its dull final
@@ -46,7 +58,7 @@ the price.
 
 ---
 
-## Epics and issues: cheap, plural, one sharp pass each
+## Epics and issues: split at seams, not into slivers
 
 An **epic** is a whole chunk of work — a feature, a fix, a migration, the entire
 thing a stakeholder would name. An **issue** is one slice of that chunk, sized so a
@@ -54,29 +66,49 @@ single cold executor builds it start-to-done in one sharp pass. The epic is the
 destination; the issues are the steps that walk there, each one leaving the ground
 solid enough to take the next step.
 
-Make as many as the work honestly needs. Epics and issues are cheap — cheaper than a
-session spent thrashing because the work was lumped into three giant tickets nobody
-could finish sharp. The instinct to keep the backlog "clean" with a few big items is
-the enemy: **split until each issue is one sharp pass, then split once more if you
-hesitated.** Ten honest issues that each build something and hand off clean beat three
-heroic ones that each die dull two-thirds through.
+Decomposition has two failure modes, and they do not announce themselves alike. The
+**monolith** — the epic lumped into one giant ticket — fails loudly: the session dies
+dull two-thirds through, and everyone can see the corpse. The **confetti backlog** —
+the epic shredded into a dozen slivers, each a session's overhead wrapped around
+twenty minutes of work — fails silently: every ticket closes green, every criterion
+passes, and the epic still cost triple the work in it, because each sliver billed a
+full toll — a cold boot, a re-read of the same terrain, a verify-and-close ceremony —
+to move a pebble. Nobody attributes the burn to the decomposition, because every
+individual ticket "went fine." Of the two, confetti is the one your planning voice
+will talk you into, because each cut *feels* like diligence.
 
-The temptation, in your own planning voice: *"This is really all one piece of work —
-I'll make it one ticket and let the executor figure out the order."* Refuse it. You
-have the whole epic in your head right now, sharp and cold-free; the executor will
-have one ticket and a clouding glass. The decomposition is the gift you can give it
-that it cannot give itself. Spend your clarity now so it does not have to manufacture
-clarity later, on a worse context than yours.
+So the rule is not "split more" or "split less" — it is **split where the work has a
+seam, and nowhere else.** A seam is a boundary after which the system stands on its
+own and the next slice genuinely starts fresh terrain. Seams are found, not
+manufactured: if the next ticket would begin by re-reading everything this one just
+touched, you did not find a seam — you cut through the middle of one piece of work
+and handed the halves to two strangers, each of whom must now learn the whole.
+
+The temptation runs both directions, so rehearse both. The lumper: *"This is really
+all one piece of work — I'll make it one ticket and let the executor figure out the
+order."* Refuse it — you have the whole epic in your head now, sharp and cold-free;
+the decomposition is the gift only you can give. The shredder: *"Smaller tickets are
+safer — each one is simpler, easier, more likely to land."* Refuse that too. You are
+not making the work smaller; you are making the *overhead* plural. The executor's
+scarce resource is not simplicity — it is warm context, and every boundary you add
+destroys one and bills a stranger to rebuild it.
 
 - BAD: one ticket, "Build user authentication."
-- GOOD: an epic "User authentication," split into ordered issues — schema + migration
-  for credentials; signup endpoint that persists and returns a session; login endpoint
-  that verifies and issues; middleware that gates a protected route — each building
-  something that runs and can be checked, each handing the next a working system.
+- BAD: eight tickets — "create the users table," "add the password-hash helper,"
+  "add the signup route," "add the login route," "return a session token," "add auth
+  middleware," "gate the /account routes," "add logout" — eight cold boots into the
+  same auth code, eight closing ceremonies, wrapped around perhaps one honest day of
+  work.
+- GOOD: an epic "User authentication," split at its real seams — issue one:
+  credential storage and signup/login end-to-end (schema, endpoints, session
+  issuance, proven against a running server); issue two: session enforcement
+  (middleware gating protected routes, expiry, logout). Two substantial issues, each
+  ending on ground solid enough to build on.
 
-Diagnostic: could a cold agent pull the top issue right now and finish it sharp,
-without reading your mind or the four issues below it? If not, you have not
-decomposed — you have relabeled.
+Diagnostic, run at every proposed boundary: does the next issue start on fresh
+terrain, or does it re-open what this one just closed? And could a cold agent pull
+the top issue right now and finish it sharp? The first question kills confetti; the
+second kills monoliths. A decomposition must survive both.
 
 ---
 
@@ -94,23 +126,91 @@ to verify, is the glass still clear enough to see a mistake? If the honest answe
 "it would be running on fumes by then," the ticket is too big — split it, and let two
 agents each finish sharp instead of one finishing blind.
 
-The temptation: *"It's all connected — splitting here just adds overhead, and one
-capable agent can hold the whole thing."* Refuse it. It can hold the whole thing at
-the start. It cannot hold the whole thing at the finish, and the finish is what
-ships. The overhead of one more ticket is a minute of your planning. The overhead of
-a ticket finished dull is a defect discovered three sessions later by someone cold.
+But calibrate the glass against the executor you actually have, not a goldfish. The
+executor is a capable builder with a deep glass: it can carry a whole feature —
+schema, endpoints, wiring, verification — in one pass and still finish sharp. Sizing
+tickets to what a feeble imagined agent could hold is how confetti gets rationalized
+as prudence, and it is the more common sizing error by far. The clouding is real and
+the ceiling exists; it is simply much higher than caution wants to draw it. "Largest
+slice" means *largest* — the ceiling is where you stop growing the ticket, not where
+you start.
 
-- BAD: "Implement the billing system" — one issue, executor is silt by the time it
-  reaches refunds.
-- GOOD: "Add the charge endpoint and prove it against a live test card" — one issue,
-  finished with clarity to spare, and the refund flow is the next ticket, pulled fresh.
+The temptation: *"It's all connected — splitting here just adds overhead, and one
+capable agent can hold the whole thing."* When the whole thing is a feature, that
+voice is *right* — let it be one ticket. Refuse it only at the scale where it stops
+being true: the whole billing system, the whole migration, the epic itself. It can
+hold that at the start. It cannot hold it at the finish, and the finish is what
+ships.
+
+- BAD: "Implement the billing system" — charges, refunds, invoices, webhooks,
+  reconciliation in one issue; the executor is silt by the time it reaches
+  reconciliation.
+- BAD: "Add the charge endpoint" as one issue and "add the refund endpoint" as
+  another — two cold boots into the same payment code for slices one agent finishes
+  sharp before lunch.
+- GOOD: "Charges and refunds work end-to-end, proven against a live test card" — one
+  issue, finished with clarity to spare; invoicing and webhooks are the next seam,
+  pulled fresh.
 
 Diagnostic: picture the executor at the *last* acceptance check of this ticket. Sharp,
-or fumes? If you cannot honestly say sharp, split.
+or fumes? If honestly sharp, the ticket is not too big — and if it would finish sharp
+with hours of clarity to spare, it is too small: grow it to the seam.
 
-(This section sizes the *work* — how big a slice one ticket cuts. How much *detail*
-the ticket's description carries is a second, separate sizing, and it gets its own
-section next.)
+(This section and the next size the *work* — how big a slice one ticket cuts, from
+the ceiling and from the floor. How much *detail* the ticket's description carries is
+a separate sizing, and it gets its own section after.)
+
+---
+
+## The boundary tax: every ticket costs a cold boot [TICKET:boundary-tax]
+
+The sharp finish is the ceiling on a ticket's size. This is the floor, and it is a
+wall of equal rank: **never cut a slice so thin that its boundary costs rival its
+work.**
+
+Every ticket boundary charges a fixed toll, paid in the executor's clearest water. A
+new ticket does not start at the work — it starts at orientation: reading the epic's
+terrain from zero, re-learning code the previous agent had warm minutes ago,
+re-running the setup. And it does not end at the work either — it ends in ceremony:
+verify, review, commit, close. That toll is roughly constant per ticket, which means
+it is *proportionally enormous* on a tiny one. A ticket that moves a boulder
+amortizes its toll; a ticket that moves a pebble *is mostly toll*. A backlog of
+pebbles is a road that is all gates: every session pays full fare, and the epic
+crawls while every individual ticket reports success.
+
+And the floor's failure is the silent one. A ticket too big announces itself — the
+dull finish, the visible corpse. A backlog too fine never does: green tickets, passed
+criteria, and an epic that quietly cost three times the work in it, with no line item
+anywhere saying "spent on re-reading what the last agent already knew." So when you
+hesitate between two honest sizes, take the larger: the mistake you can see beats the
+one you can't, and the capable executor will surprise you upward far more often than
+down.
+
+The temptation will arrive wearing this skill's own coat: *"the executor is cold and
+its glass clouds — smaller tickets keep it safe."* Refuse it, by the root fact
+itself: cold is not a safety you buy with boundaries, cold is the tax each boundary
+*levies*. The glass empties at every ticket boundary — that is the argument for
+**fewer** boundaries, not more. More tickets means more cold, never less.
+
+Disarm the respectable proverb too: *small batches* — thin slices, small PRs,
+INVEST's "S." Granted its home turf: human teams, where a small diff is cheap to
+review, cheap to revert, merges clean — and where the author's memory *survives
+between PRs*, so slicing costs nothing but ceremony. This is not that turf. Here the
+boundary destroys the author's memory, so the resource small batches conserve
+(reviewer attention) is not the binding one, and the resource they spend (warm
+context) is precisely the scarcest thing you have. Slice thin for a human team; slice
+to seams for an amnesiac one.
+
+- BAD: "Add the `created_at` column." / "Backfill `created_at`." / "Sort the
+  activity list by `created_at`." Three tickets, three cold boots into the same three
+  files, a day of toll around an hour of work.
+- GOOD: "The activity list shows newest-first, backed by a real timestamp — column,
+  backfill, ordering, verified against seeded data." One boot, one warm pass, one
+  toll.
+
+Diagnostic: of the session this ticket will cost, estimate honestly how much is
+orientation and ceremony and how much is the work itself. If the toll rivals the
+cargo, the ticket is below the floor — merge it into its neighbor at the seam.
 
 ---
 
@@ -198,6 +298,15 @@ This is not the global "definition of done" — tests green, linter clean, merge
 lives once, for the whole project, and every ticket inherits it silently; do not
 restate it on each ticket. The acceptance criterion is *this ticket's* specific proof,
 the one thing that is true after and was not true before.
+
+And it is a proof, not a test plan. One decisive check that could only pass if the
+work is real beats an enumeration of every sub-behavior — the executor writes the
+tests as part of the work; the criterion just names the observable fact that settles
+"done." A ticket whose acceptance section outweighs its description has its focus
+backwards: it is a QA script with a ticket attached, and the dull agent can hide
+inside a long checklist as easily as inside "works" — ticking boxes is exactly the
+done-doing-things that is not done-right. Match the criterion's weight to the
+ticket's cargo.
 
 The temptation: *"'Login works' is clear enough — the executor will know."* Refuse it.
 "Works" is a region so wide the dull agent is already standing in it and will declare
@@ -385,6 +494,10 @@ and you already hold every tool it needs:
   "pull this next" *today*, not on the day you wrote it. `[TICKET:rank-is-order]`
 - **Re-split** — you learned a ticket is bigger than one sharp pass; cut it now, before
   a cold agent inherits work that finishes dull. `[TICKET:one-sharp-pass]`
+- **Re-merge** — two adjacent slivers with no seam between them: fuse them. The
+  boundary between them was pure toll, and grooming is when you stop charging it.
+  A backlog that only ever splits drifts toward confetti; merging is equal-rank
+  maintenance. `[TICKET:boundary-tax]`
 - **Re-sharpen** — the ticket rising toward the top gets its detail fleshed and its
   pointers made current. That is grooming's detail-move, and it *is*
   `[TICKET:detail-just-in-time]`.
@@ -413,8 +526,8 @@ not the moment the ticket is pulled.
   the tickets point at renamed files and the ranks reflect priorities two pivots stale
   — and every cold agent pulls that rot as gospel.
 - GOOD: keep the top of the backlog honest as the work moves — re-rank to what matters
-  now, prune what died, re-split what grew, sharpen what is about to be pulled — so the
-  next stranger inherits a memory that is still true.
+  now, prune what died, re-split what grew, fuse the slivers, sharpen what is about to
+  be pulled — so the next stranger inherits a memory that is still true.
 
 Diagnostic: if a cold agent pulled the top ticket *right now*, would it inherit the
 current world or a stale one? The gap between the backlog and reality is the grooming
@@ -442,10 +555,16 @@ not belong one application away. Better said twice than missing when it counts.
 
 You are writing for a **cold executor** `[TICKET:cold-executor]`: it arrives with none
 of your memory, works from a glass that clouds as it fills, finishes one ticket, and
-forgets. Every rule is that fact in another coat:
+forgets — and every boundary you cut bills that coldness one more time. Every rule is
+that fact in another coat:
 
-- `[TICKET:one-sharp-pass]` — size an issue to the largest slice one executor finishes
-  *sharp*, with headroom to check its own work. Picture the finish, not the start.
+- `[TICKET:one-sharp-pass]` — size an issue to the *largest* slice one executor
+  finishes sharp, with headroom to check its own work — and calibrate against the
+  capable executor you have, not a goldfish. Picture the finish, not the start.
+- `[TICKET:boundary-tax]` — every ticket boundary bills a cold boot before the work
+  and a ceremony after it; a ticket that moves a pebble is mostly toll. The floor is
+  a wall equal to the ceiling: split at seams, never into slivers, and when you
+  hesitate between two honest sizes, take the larger.
 - `[TICKET:detail-just-in-time]` — split the whole epic up front (structure lasts);
   flesh each ticket's detail only as it nears the pull (prose rots). Depth scales with
   distance.
@@ -453,7 +572,8 @@ forgets. Every rule is that fact in another coat:
   checkable state. Never a document as the deliverable. (The one exception: a ticket
   whose output is more tickets.)
 - `[TICKET:checkable-criterion]` — one machine-checkable proof per issue, that a
-  stranger can verify with no one to ask. Distinct from the global definition of done.
+  stranger can verify with no one to ask. A proof, not a test plan; distinct from the
+  global definition of done.
 - `[TICKET:end-state-and-why]` — write the destination, not the route, plus one line of
   intent so a better-informed builder can serve the goal when your literal words rot.
 - `[TICKET:filename-ceiling]` — never more specific than a filename. A wall, not a
@@ -465,10 +585,13 @@ forgets. Every rule is that fact in another coat:
   reading-pointers under the filename ceiling) or into the code (learned while
   building). Never a standalone document. There is no spike for an amnesiac.
 - `[TICKET:groom-the-backlog]` — the backlog is the only memory that survives the cold
-  executor; keep it true. Re-rank, re-split, re-sharpen, prune, absorb — as the world
-  moves, not once at kickoff. A stale ticket is a lie the next stranger can't catch.
+  executor; keep it true. Re-rank, re-split, re-merge, re-sharpen, prune, absorb — as
+  the world moves, not once at kickoff. A stale ticket is a lie the next stranger
+  can't catch.
 
 Decompose an epic into ordered vertical slices that each build something real, each
-carry a checkable criterion, each sized to one sharp pass, ordered by rank alone.
-Cheap, plural, one at a time. Cite the token when a rule shapes a ticket you write —
-naming the wall at the moment you build to it is how it stays a wall.
+carry a checkable criterion, each sized between the floor and the ceiling —
+substantial enough to be worth a cold boot, small enough to finish sharp — ordered by
+rank alone. Few, substantial, finished sharp. Cite the token when a rule shapes a
+ticket you write — naming the wall at the moment you build to it is how it stays a
+wall.
