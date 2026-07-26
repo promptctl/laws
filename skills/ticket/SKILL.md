@@ -318,10 +318,11 @@ And the bar bends for no ticket type. A build ticket's proof is behavior — an
 endpoint answering, a test passing, an output changed. A spike's proof is the backlog
 delta — the epic split, ranked, the top issue pullable, every one of those a fact a
 stranger can inspect. A refactor's proof is behavior preserved *plus the old shape
-gone* — and on a long migration, a ratchet metric that moved: a legacy-call-site
-count lower than it was, an allowlist shorter than yesterday's. If you cannot name
-the observable delta a ticket leaves behind, the ticket has no reason to exist — "we
-will understand better" is not a delta.
+gone* — and on a long migration, a fact of the repo that moved: a legacy module
+deleted, a call-site count lower than it was. Facts a stranger checks by looking at
+the repo, not apparatus built to measure them. If you cannot name the observable
+delta a ticket leaves behind, the ticket has no reason to exist — "we will understand
+better" is not a delta.
 
 The temptation: *"'Login works' is clear enough — the executor will know."* Refuse it.
 "Works" is a region so wide the dull agent is already standing in it and will declare
