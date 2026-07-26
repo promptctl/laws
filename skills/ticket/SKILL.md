@@ -264,10 +264,16 @@ tickets — those produce paper, and paper is not a state the next cold agent ca
 on, because the next agent arrives cold and will not carry your paper in its head
 anyway.
 
-The one exception is exactly the one your goal names: an issue whose *job* is to break
-down an epic into more issues. That output — new tickets in the backlog — is real
-structure the next agent pulls from. Splitting the work is building the backlog.
-Everything else must move the system, not describe it.
+The one exception is the **spike**, and it is allowed in exactly one shape: an issue
+whose job is to groom the backlog — break an epic into issues, re-rank, re-split,
+sharpen what is about to be pulled. That output is verifiable the same way code is:
+point at the backlog delta. The issues exist, the rank can be read, the top ticket is
+pullable — a stranger can check every one of those facts with no one to ask. A spike
+that produces a document instead has produced nothing checkable — there is no test
+anyone can run against "we now understand the caching layer," no way for an agent or
+a user to determine whether anything actually moved forward. Grooming is the only
+spike deliverable, because the backlog is the only place where understanding becomes
+verifiable. Everything else must move the system, not describe it.
 
 The temptation: *"I don't understand this area yet — I'll make a ticket to research it
 first, then a ticket to build it."* Refuse it. The research ticket's output is a
@@ -307,6 +313,15 @@ backwards: it is a QA script with a ticket attached, and the dull agent can hide
 inside a long checklist as easily as inside "works" — ticking boxes is exactly the
 done-doing-things that is not done-right. Match the criterion's weight to the
 ticket's cargo.
+
+And the bar bends for no ticket type. A build ticket's proof is behavior — an
+endpoint answering, a test passing, an output changed. A spike's proof is the backlog
+delta — the epic split, ranked, the top issue pullable, every one of those a fact a
+stranger can inspect. A refactor's proof is behavior preserved *plus the old shape
+gone* — and on a long migration, a ratchet metric that moved: a legacy-call-site
+count lower than it was, an allowlist shorter than yesterday's. If you cannot name
+the observable delta a ticket leaves behind, the ticket has no reason to exist — "we
+will understand better" is not a delta.
 
 The temptation: *"'Login works' is clear enough — the executor will know."* Refuse it.
 "Works" is a region so wide the dull agent is already standing in it and will declare
@@ -443,25 +458,34 @@ legitimate places to go, because the cold executor makes every other place usele
    uses it, in the context that needs it, and thrown away when the ticket closes —
    exactly where reading belongs.
 
-There is **no spike** — no ticket whose output is "I read some things and now I
-understand." An LLM spike transfers nothing: the agent that reads is not the agent that
-builds (it forgot everything at the ticket boundary), so the build agent arrives cold
-and re-reads regardless. You paid for a session and got a document the next stranger
-won't trust. Splitting an epic is *not* a counterexample — it looks like "research"
-but its output is backlog structure, which is sink 1. The tell is the output: cognition
-that becomes tickets or code is work; cognition that becomes a standalone document to
-be read later is a spike, and there is no reader for it.
+A spike is legal in exactly one currency: **backlog structure.** "Spike: decompose
+the caching epic — done when it is split into ranked issues and the top one is
+pullable" is a real ticket, because its output can be checked: the issues exist, the
+rank can be read, the top ticket either meets the bar or it does not. What does not
+exist is the **document spike** — the ticket whose output is "I read some things,
+and here is a write-up." It is wrong by construction: there is nothing an agent or a
+user can verify to determine whether anything moved forward, and the understanding
+itself transfers nothing — the agent that reads is not the agent that builds (it
+forgot everything at the ticket boundary), so the build agent arrives cold and
+re-reads regardless. You paid for a session and got a document the next stranger
+won't trust and cannot check. The tell is the deliverable line: cognition that
+becomes tickets or code is work; cognition that becomes a standalone document to be
+read later has no reader and no proof.
 
-The temptation: *"I need to understand X before anyone can build it — I'll make a spike
-to figure it out."* Refuse it. Understanding does not survive the ticket boundary. Turn
-what you learn into a sharper split, a re-rank, or a reading-pointer on the build
-ticket — or let the build agent learn it live. Never park it in a document and call
-that progress.
+The temptation: *"I need to understand X before anyone can build it — I'll make a
+spike to figure it out and write up what I find."* Take the spike; refuse the
+write-up. If the terrain is genuinely unknown, a spike is honest work — but its
+deliverable line reads "the epic is decomposed, ranked, and the top issue is
+pullable," never "a document exists." Understanding does not survive the ticket
+boundary; structure does. Turn what you learn into a sharper split, a re-rank, or a
+reading-pointer on the build ticket — or let the build agent learn it live. Never
+park it in a document and call that progress.
 
 - BAD: "Spike: investigate the current caching layer and write up how it works."
-- GOOD: split the epic using what you learned, and on the top build ticket add: "the
-  cache lives in `lib/cache.js` — read it first; the invalidation path is the part that
-  matters here."
+- GOOD: "Spike: decompose the caching epic — done when it is split into ranked
+  issues, the top one pullable, with reading-pointers on the build tickets: 'the
+  cache lives in `lib/cache.js` — read it first; the invalidation path is the part
+  that matters here.'"
 
 Diagnostic: does this cognition end as a ticket, a re-rank, a reading-pointer, or code?
 Good. Does it end as a document someone is supposed to read later? That reader is cold
@@ -569,11 +593,13 @@ that fact in another coat:
   flesh each ticket's detail only as it nears the pull (prose rots). Depth scales with
   distance.
 - `[TICKET:builds-something-real]` — every ticket leaves the system in a new working,
-  checkable state. Never a document as the deliverable. (The one exception: a ticket
-  whose output is more tickets.)
+  checkable state. Never a document as the deliverable. (The one exception: the
+  spike, whose deliverable is backlog grooming — a checkable delta of tickets, never
+  a write-up.)
 - `[TICKET:checkable-criterion]` — one machine-checkable proof per issue, that a
-  stranger can verify with no one to ask. A proof, not a test plan; distinct from the
-  global definition of done.
+  stranger can verify with no one to ask. A proof, not a test plan; the bar bends for
+  no ticket type — a spike proves a backlog delta, a refactor proves the old shape
+  gone.
 - `[TICKET:end-state-and-why]` — write the destination, not the route, plus one line of
   intent so a better-informed builder can serve the goal when your literal words rot.
 - `[TICKET:filename-ceiling]` — never more specific than a filename. A wall, not a
@@ -583,7 +609,8 @@ that fact in another coat:
   links (they deadlock). Explicit dependencies cross epics only.
 - `[TICKET:research-is-a-verb]` — research goes into the backlog (splits, re-ranks,
   reading-pointers under the filename ceiling) or into the code (learned while
-  building). Never a standalone document. There is no spike for an amnesiac.
+  building). A spike pays out in backlog structure or it is wrong by construction;
+  the document spike has no reader and no proof.
 - `[TICKET:groom-the-backlog]` — the backlog is the only memory that survives the cold
   executor; keep it true. Re-rank, re-split, re-merge, re-sharpen, prune, absorb — as
   the world moves, not once at kickoff. A stale ticket is a lie the next stranger
