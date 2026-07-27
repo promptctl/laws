@@ -44,6 +44,14 @@ keep specificity to a filename so it can't rot, let rank carry the order instead
 dependency graph that deadlocks, and groom the backlog — the only memory the executors
 don't have.
 
+**Clean-room application specs** (`laws:application-spec`) — how to specify an
+existing application so an independent team can rebuild it without ever seeing it.
+One test governs every sentence: anything observable at the application's boundary
+— invocation, configuration, startup requirements, shutdown, error behavior,
+traffic to external systems — goes in, exactly; anything visible only from inside
+stays out, keeping the spec legally clean. The same structure covers any target:
+a repo today, a CLI, UI, or SaaS observed directly tomorrow.
+
 **Writing for humans** (`laws:prose`) — a short skill for docs, READMEs, and
 reports. This README was written under it.
 
