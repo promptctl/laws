@@ -1,3 +1,7 @@
+## v0.23.0 — 2026-07-27
+
+- skills: add laws:application-spec — clean-room spec of an existing application — bump 0.23.0
+
 ## v0.22.0 — 2026-07-26
 
 - ci: release workflow — immutable tag, GitHub release, changelog on version bump
