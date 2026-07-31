@@ -41,24 +41,74 @@ document optimized for the first standard while deployed for the second will
 *measure* better and *perform* worse. Hold onto that sentence — before you finish
 editing any guidance document, your own instincts will attack it.
 
+But "behavior induced" does not mean "redundancy maximized." Redundancy is a tuned
+quantity with an optimum, and a range with two walls. Under-amplify — distill the
+live, firing prompt into a terse spec — and the beacons go dark at the hour they were
+needed; that is the wall this document was built to defend, the more common failure
+and the more dangerous one, and most of what follows is that defense. But there is a
+second wall on the far side. Past the optimum, each new restatement stops adding a
+beacon and starts drowning the beacons already lit: the one live sentence lost in ten
+inert paraphrases of it. Amplitude has a ceiling, and shouting past it is not louder —
+it is noise. Which wall a given document is against depends on the document, not on a
+default — a lean-but-live draft and one already stuffed with inert paraphrase need
+opposite moves. What is *not* symmetric is the danger: fall short of the near wall and
+the failure is silent, so that wall is the one this document leans on hardest.
+
+## Emphasis is finite, and allocated by contrast
+
+The two walls above are about one principle's amplitude in isolation. Step back to the
+whole document and a second law governs: emphasis is *relative*. The document is an
+orchestra, and a passage is loud only against quieter passages around it; volume means
+nothing except as a ratio. So the devices below — each one adds emphasis to whatever it
+touches — spend from a fixed budget. Bring every section up to fortissimo and you have
+raised nothing; if the whole orchestra blares at once, the listener has no way to pick
+the melody from the accompaniment, and the emphasis that was supposed to mark
+importance now marks nothing. The score, not any single instrument, is the unit of
+design: each part should play at the volume the piece asks of it relative to the
+others, and the whole should resolve into music, not a pit of instruments each sawing
+as loud as it can to be heard over the rest.
+
+This changes what you do when you find an imbalance — one section over-firing, drowning
+a quieter line that was carrying the melody. The reflex is to arm the quiet line with
+more devices until it can match the loud one. Reach instead for the other direction
+first: the loud section is often simply blaring too high, and the fix is to bring *it*
+down to its rightful level, restoring the contrast that lets the melody be heard
+without touching it. Bringing the over-loud section down is a first-class remedy —
+usually the better one, because it keeps the orchestra's overall volume flat, whereas
+equalizing upward pushes every part toward fortissimo and leaves you, after enough
+edits, with an orchestra where everything blares and no line carries. Ask which part is
+at the wrong volume before you ask which one needs more. Sometimes the answer really is
+that the quiet line was under-built and needs the devices; but that is the second thing
+to check, not the first.
+
+None of this licenses a flat monotone — an orchestra playing everything at one soft
+dynamic is as dead as one blaring at fortissimo throughout. Some guidance earns real
+emphasis, and this document spends heavily on the near-wall failure precisely because
+it is the one that kills silently — that allocation is deliberate, not a violation of
+proportion. The point is that emphasis is a resource with a budget, spent by contrast,
+so it is placed on purpose rather than sprayed to equalize. The devices that follow are
+how you bring a part up when it has earned the volume; read them as the conductor's
+instruments of allocation, under this principle, not as a mandate to turn every dial
+up.
+
 ## The war story
 
 This craft was paid for. A set of universal architectural laws lived as long,
-redundant, metaphor-heavy guidance — rough and smooth stone, crystals, a neolithic
-toolmaker, WRONG/RIGHT dialogues — and it drove noticeably good agent behavior. In a
-marathon session it was rewritten *specifically to be better guidance*:
-deduplicated, taxonomized, token-efficient, a clean derivation tree, a canonical
-token index. Every spec instinct satisfied. The result was a genuinely better
-specification and a measurably worse prompt. The rewrite had stripped exactly the
-properties that made the original fire — the amplitude, the images, the rehearsed
-temptations — because to a spec-reader those properties look like flab.
+redundant, metaphor-heavy guidance — rough and smooth stone, a neolithic toolmaker,
+WRONG/RIGHT dialogues — and it drove noticeably good agent behavior. In a marathon
+session it was rewritten *specifically to be better guidance*: deduplicated,
+taxonomized, token-efficient, a clean derivation tree. Every spec instinct satisfied.
+The result was a genuinely better specification and a measurably worse prompt. The
+rewrite had stripped exactly the properties that made the original fire — the
+amplitude, the images, the rehearsed temptations — because to a spec-reader those
+properties look like flab.
 
 The cause is the part to memorize: the laws' own aesthetic — subtract, deduplicate,
 one source of truth — had been applied to the authoring of the laws document itself.
 That aesthetic is correct for code and destructive for guidance, and the error was
 seductive precisely because the document's *subject* supplied a style authority that
-felt applicable to the document. It never is. **The subject matter of a guidance
-document is never its style authority.**
+felt applicable. It never is. **The subject matter of a guidance document is never its
+style authority.**
 
 And the error re-enacted itself the same day it was diagnosed: mid-conversation
 *about this exact failure*, a hook injected "apply the laws," and the agent began
@@ -73,53 +123,47 @@ full-length specimen of the far-end style, as is the page you are reading.)
 ## Same physics, different regime — why the genre exists at all
 
 An objection will occur to you, and it is correct as far as it goes: everything the
-model reads is one surface. Guidance, task prompts, tool results, file contents — it
-is all just prompt, processed by the same attention over the same context by the same
-next-token machinery. There is no separate parser for guidance. So how can it be a
-different genre?
+model reads is one surface — guidance, task prompts, tool results, file contents, all
+just prompt, one attention over one context. There is no separate parser for guidance.
+So how can it be a different genre?
 
 Because genre lives not in the substrate but in the **operating regime**. Four axes
 separate a task prompt's regime from guidance's, and every device in this document is
 the price of some axis:
 
 - **Distance to the decision.** A task prompt sits next to the decision it governs:
-  recent, on-topic, attended. Guidance is injected at session start and must fire
-  dozens of tool calls and a hundred thousand tokens later — against competing
-  defaults that the local context is *actively feeding* ("just add a guard" is
-  suggested by the very code on screen). Redundancy and imagery are not decoration;
-  they are what retrieval-under-interference costs. Amplitude matters when you are
-  far from the receiver.
+  recent, attended. Guidance is injected at session start and must fire a hundred
+  thousand tokens later, against competing defaults the local context is *actively
+  feeding* ("just add a guard" is suggested by the very code on screen). Redundancy
+  and imagery are what retrieval-under-interference costs; amplitude matters when you
+  are far from the receiver.
 
 - **Known vs. unknown target.** A task prompt addresses one situation its author can
-  see, so it can specify. Guidance addresses a distribution of situations nobody has
-  seen yet, so it must install a *disposition* that generalizes — which is why it
-  leans on transferable handles (the rough stone) instead of enumerated instructions.
+  see, so it can specify. Guidance addresses a distribution nobody has seen yet, so it
+  must install a *disposition* that generalizes — leaning on transferable handles (the
+  rough stone) instead of enumerated instructions.
 
 - **The adversary.** A task prompt's failure mode is ambiguity: the model didn't
-  understand. Guidance's failure mode is defection: the model understands perfectly,
-  and the local gradient points elsewhere anyway. That is why guidance needs
-  temptation scripts and disarmed proverbs, and a task prompt almost never does. You
-  don't argue with someone standing next to you; you argue in advance with someone
-  who will be alone when it counts.
+  understand. Guidance's is defection: the model understands perfectly, and the local
+  gradient points elsewhere anyway. That is why guidance needs temptation scripts and
+  disarmed proverbs and a task prompt almost never does. You don't argue with someone
+  standing next to you; you argue in advance with someone who will be alone when it
+  counts.
 
-- **Feedback latency.** A task prompt fails in front of its author and is fixed in
-  the next turn. Guidance fails silently, diffusely, for months, with no one
-  attributing the drift to its source. One is a command; the other is
-  infrastructure, and you engineer it like infrastructure.
+- **Feedback latency.** A task prompt fails in front of its author and is fixed next
+  turn. Guidance fails silently, diffusely, for months, no one attributing the drift
+  to its source. One is a command; the other is infrastructure, engineered like
+  infrastructure.
 
-These are ends of a continuum, not a binary — and the calibration rule falls out of
-the axes: **terseness is licensed by proximity; distance must be paid for in
-amplitude.** The skill-router hook this plugin ships is short and works, because it
-is injected *at* the decision point — distance zero, nothing to survive. The laws
-skill cannot afford that brevity, because it must still be winning arguments deep in
-someone else's diff, hours later. And the middle of the continuum obeys the same
-rule: a long-horizon agent prompt that will run autonomously for two hundred
-thousand tokens has drifted into guidance's regime and needs guidance's devices —
-restated constraints, anchors, recaps — no matter that its author calls it a prompt.
-
-Before writing, ask the regime question: *how far from the decision, and how alone,
-will this text be when it has to work?* The answer — not the document's label —
-selects the devices.
+The calibration rule falls out of the axes: **terseness is licensed by proximity;
+distance must be paid for in amplitude.** The skill-router hook this plugin ships is
+short and works, injected *at* the decision point — distance zero, nothing to survive.
+The laws skill cannot afford that brevity: it must still be winning arguments deep in
+someone else's diff, hours later. And the middle obeys the same rule — a long-horizon
+agent prompt that runs autonomously for two hundred thousand tokens has drifted into
+guidance's regime and needs guidance's devices, whatever its author calls it. So
+before writing, ask: *how far from the decision, and how alone, will this text be when
+it has to work?* The answer — not the label — selects the devices.
 
 ---
 
@@ -185,14 +229,19 @@ The temptation will arrive in your own editor's voice: *"Sections 2 and 7 say th
 same thing — merge them."* Refuse it. Section 2 says it as a definition; section 7
 says it as the thing you feel when you reach for an `if`. They fire in different
 moments, and merging them extinguishes the beacon for one of the two hours. Never
-deduplicate guidance prose on principle.
+deduplicate guidance prose *on principle* — but "on principle" is the operative
+phrase, because there is a real limit and pretending there isn't is its own failure.
 
-- BAD instinct: "these two passages overlap — consolidate."
-- GOOD instinct: "these two passages overlap in content and differ in shape — that
-  is the document working as designed."
+That limit is the ceiling of this device. A principle needs enough shapes to be lit in
+every moment it must fire; past that count, the next restatement lands in a moment
+already covered, and it is not a new beacon — it is fog over the ones already there.
+The tell is not overlap of *content* (all restatements overlap in content, by design)
+but overlap of *moment*.
 
-Diagnostic: is each restatement a *different shape* of the principle? Different
-shapes are amplitude; identical copy-paste is the only true flab.
+Diagnostic, two-sided: does each restatement fire in a moment the others miss? A
+new-moment restatement is amplitude — keep it. A paraphrase that reaches no new
+situation is flab however fresh its wording, and costs more because it looks like
+work.
 
 ### 2. Metaphor is a retrieval handle [DEVICE:metaphor-as-retrieval-handle]
 
@@ -213,9 +262,8 @@ off the tool.
 - GOOD: "A type that admits illegal states is a door left open; every caller
   downstream has to post its own guard. Lock the door once, fire the guards."
 
-Diagnostic: does every rule have an image that a novel situation could *resemble*?
-If you cannot find one, you do not yet understand the rule's felt experience well
-enough to teach it.
+If you cannot find the image, you do not yet understand the rule's felt experience
+well enough to teach it.
 
 ### 3. Rehearse the moment of temptation [DEVICE:rehearse-the-temptation]
 
@@ -252,15 +300,11 @@ training data behind it. A blanket "ignore YAGNI" loses that authority contest;
 granting the maxim its domain and then fencing it out wins without a fight, because
 the model can hold both without contradiction. The laws skill's YAGNI passage is the
 pattern: conceded as correct for high-carrying-cost features, then shown incoherent
-for smooth foundational blocks — like telling a neolithic toolmaker he doesn't need
-metalworking because he can't name a specific tool he's currently failing to make.
+for smooth foundational blocks.
 
 The temptation: *"quoting the objections just gives them oxygen."* Refuse it. The
 objections are already in the reader — they arrived with pretraining. Silence
 doesn't starve them; it leaves them unanswered on the reader's own schedule.
-
-Diagnostic: list the proverbs that oppose your guidance. Has each been engaged by
-name, granted its domain, and fenced out of this one?
 
 ### 5. Negative examples are enforceable; positive instructions are ignored [DEVICE:negative-examples]
 
@@ -277,9 +321,6 @@ describe a region, the reader will already be standing in it, and nothing will
 change. For every behavior that matters, include at least one concrete violation,
 ideally real and quoted. A forbidden-patterns list beats a virtues list every time.
 
-Diagnostic: for each important behavior, can the reader point at the forbidden
-thing?
-
 ### 6. Stakes, not calm [DEVICE:stakes-not-calm]
 
 Register is an instruction the model reads even when no instruction is written. A
@@ -294,9 +335,6 @@ The temptation: *"this tone is unprofessional; neutral is safer."* Refuse it.
 Laundering urgency into neutrality deletes payload as surely as deleting the words —
 the tone *is* payload. If the guidance matters, write it like it matters: say what
 is lost when the rule breaks, and say that the loss is silent.
-
-Diagnostic: does the document state the cost of violation — and that the cost
-arrives unattributed?
 
 ---
 
@@ -329,39 +367,59 @@ The first draft is rarely the casualty. The kill happens in revision, and it spe
 in your most reasonable inner voice. Every one of these sentences is the enemy in
 uniform:
 
-- *"This feels bloated."* Feeling bloated to a spec-reader is the expected texture
-  of an effective prompt. Bloat is not the risk; amplitude loss is.
-- *"Say it once, well."* That is how guidance dies — one beautiful statement,
-  off-duty at the moment it was needed.
-- *"Dedupe these sections."* You are about to delete amplitude and call it rigor.
-- *"Tighten this up / make it elegant."* Elegance-as-terseness is an author-side
-  pleasure. The reader is a decision point, and decision points need volume.
-- *"Let's structure this as a clean taxonomy."* A perfect derivation tree that
-  induces no behavior has failed; a repetitive rant that fires at the right moment
-  has succeeded.
-- *"Apply the document's own principles to the document."* The failure that created
-  this skill. If revising guidance starts to feel like refactoring — dedupe this,
-  extract that, single source of truth — stop. You are distilling, and in this
-  genre distillation is destruction.
+- *"This feels bloated / say it once / tighten this up."* All one reflex: terseness
+  feels like rigor. Feeling bloated to a spec-reader is the expected texture of an
+  effective prompt — the one beautiful statement is off-duty at the moment it was
+  needed. Bloat is not the risk; amplitude loss is.
+- *"Dedupe these sections / structure this as a clean taxonomy."* You are about to
+  delete amplitude and call it elegance. A perfect derivation tree that induces no
+  behavior has failed where a repetitive rant that fires at the right moment succeeds.
+- *"Apply the document's own principles to the document."* If revising guidance starts
+  to feel like refactoring — dedupe this, extract that, single source of truth — stop.
+  That is the war story happening again; distillation here is destruction.
+- *"This rule is being drowned out — arm it with more devices."* Maybe. But first ask
+  whether the section drowning it is simply blaring too loud, and the remedy is to bring
+  *that* one down. Equalizing upward feels like strengthening the weak rule; what it
+  actually does is push the whole orchestra a notch toward fortissimo, and do it again
+  every time you meet an imbalance, until every part blares and no line carries the
+  melody. Bring the loud section down before you raise the quiet one.
 
-Cut only what is *wrong* or points the wrong direction. Never cut a thing because it
-repeats a true thing.
+Cut only what is *wrong*, points the wrong direction, or is a restatement that fires
+in no moment the document doesn't already cover. Never cut a thing because it repeats
+a true thing — repetition across moments is the mechanism, not the waste.
+
+One honest counter-cue, because a one-directional editor overshoots the other wall.
+The real over-amplified state has its own tell — not "this feels long" (the
+spec-reader's reflex, and it lies) but "I have read this exact move four times and the
+fourth taught me nothing the third didn't." That one you may cut, and cutting it
+sharpens the three that remain. But do not act on the impulse; act on the test. The
+"too long" feeling fires on a bloated document and a lean one alike, so the feeling is
+never the evidence — a named covered moment is. Earn the far-wall cut by pointing at
+the *specific moment* the restatement duplicates, already owned by a passage you can
+name. If you cannot name that moment, you are not at the far wall — you are just
+distilling, the death this whole document exists to prevent.
 
 ---
 
 ## Checklist before shipping a guidance document
 
-- Every core principle appears in at least three shapes (definition, image,
-  temptation/diagnostic), distributed across the document.
-- Every rule has an image; the images are reused as vocabulary.
-- Every rule has its temptation scripted: situation, quoted rationalization,
-  refusal, redirect.
-- The opposing proverbs are named and disarmed, not ignored.
-- Violations are shown concretely (WRONG/RIGHT, BAD/GOOD, forbidden patterns), not
-  just virtues described.
-- The register carries stakes; the recap at the end restates the core with the
-  canonical tokens verbatim.
-- Nothing was cut *because it repeated something*. Cuts are only for content that is
-  wrong or points the wrong direction.
+The six devices, verbatim, at the recency position where they will still be active
+when you make the final pass — each must be present in a firing shape, not merely
+described: `redundancy-is-amplitude` (each principle in enough shapes to be lit in
+every moment it must fire), `metaphor-as-retrieval-handle` (every rule has a reused
+image), `rehearse-the-temptation` (situation, quoted rationalization, refusal,
+redirect), `disarm-counterarguments` (opposing proverbs named and fenced out),
+`negative-examples` (violations shown concretely, not virtues described),
+`stakes-not-calm` (the register states the cost and that it arrives unattributed).
+
+Then the two-walls check: every restatement earns its place by firing in a moment the
+others miss. Nothing was cut merely for repeating; nothing was bolted on past the
+optimum to pad amplitude. Cuts are only for content that is wrong, points the wrong
+way, or reaches no moment the document doesn't already cover.
+
+Then the proportion check: read the document as a score and ask whether the loudest
+sections are the ones that most deserve to be loud. Where two parts fight, you fixed it
+by bringing the over-loud one down at least as readily as by raising the quiet one — the
+orchestra's overall volume held flat across this edit rather than climbing.
 
 Hold your document to this list — this one holds itself to it.
