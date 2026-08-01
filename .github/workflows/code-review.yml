@@ -52,4 +52,13 @@ jobs:
         uses: brandon-fryslie/coding-agent-review@v1
         with:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          # DEPENDENCY_DIFF is on for EVERY repo this installs into — a deliberate
+          # universal default baked into the template, NOT a per-repo divergence that
+          # leaked in. On a PR that bumps a dependency the reviewer fetches the bumped
+          # module's upstream commits and changed files instead of reviewing a bare
+          # version string; that context helps in any repo and costs only a little
+          # review time. Because it lives in the template, this IS the baseline: a
+          # re-run of the installer preserves it. Do not "reconverge to a barer
+          # default" by removing it — there is no barer default, and stripping it
+          # silently degrades every dependency-bump review.
           DEPENDENCY_DIFF: "true"
