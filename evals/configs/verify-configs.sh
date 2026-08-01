@@ -40,8 +40,13 @@ for cfg in "${CONFIGS[@]}"; do
     fail "$name: does not validate — $(head -1 "$WORK/verr")"; continue
   fi
 
-  f="$(cfg_fields "$cfg")"; skill="$(printf '%s' "$f" | sed -n '1p')"; ref="$(printf '%s' "$f" | sed -n '2p')"
-  body="$(cfg_resolve "$cfg" 2>/dev/null)"
+  # Check both exit codes explicitly: an empty result from a FAILED call must not fall through to
+  # the control-arm branch and read as a pass. [LAW:no-silent-failure]
+  f="$(cfg_fields "$cfg")" || { fail "$name: cfg_fields failed after validation"; continue; }
+  skill="$(printf '%s' "$f" | sed -n '1p')"; ref="$(printf '%s' "$f" | sed -n '2p')"
+  if ! body="$(cfg_resolve "$cfg" 2>"$WORK/rerr")"; then
+    fail "$name: resolve aborted — $(head -1 "$WORK/rerr")"; continue
+  fi
   if [ -z "$skill" ]; then
     if [ -z "$body" ]; then pass "$name: control arm resolves to NO body"; else fail "$name: control arm resolved a non-empty body"; fi
   else
