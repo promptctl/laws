@@ -46,27 +46,55 @@ for suitedir in "${SUITES[@]}"; do
   fi
 done
 
-# ── The failure arms (fabricated suites, each must abort nonzero) ───────────────────────
+# ── The failure arms (fabricated suites, each must abort with ITS OWN violation) ────────
+# The arms run against a fabricated tasks root with a hermetic dummy task, never the real task
+# inventory - so removing or renaming a real task cannot silently shift which error path a case
+# exercises. And each case asserts the SPECIFIC violation message, not merely "something
+# aborted": without that, the duplicate case degrading into a missing-member abort would still
+# look green while the duplicate-detection path went untested. [LAW:locality-or-seam]
 printf '\n== failure arms ==\n' >&2
+
+# The dummy task must pass task_validate, whose reachability probe hits TASK_REPO - so back it
+# with a local file:// git repo and the checks stay offline-stable.
+dummy_repo="$WORK/dummy-repo"
+git init --quiet "$dummy_repo" \
+  && git -C "$dummy_repo" -c user.email=v@v -c user.name=v commit --quiet --allow-empty -m init \
+  || suite_die "could not fabricate the dummy git repo"
+FAKE_ROOT="$WORK/fake-tasks"
+mkdir -p "$FAKE_ROOT/dummy-task"
+printf 'TASK_REPO="file://%s"\nTASK_COMMIT="HEAD"\nTASK_SUMMARY="dummy"\n' "$dummy_repo" \
+  > "$FAKE_ROOT/dummy-task/manifest.sh"
+printf 'dummy prompt\n' > "$FAKE_ROOT/dummy-task/prompt.md"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_ROOT/dummy-task/check.sh"
+chmod +x "$FAKE_ROOT/dummy-task/check.sh"
+
 declare -A BAD_MANIFESTS=(
   [missing-member]='SUITE_SUMMARY="bad"
 SUITE_TASKS="no-such-task-anywhere"'
   [empty-tasks]='SUITE_SUMMARY="bad"
 SUITE_TASKS=""'
   [duplicate-member]='SUITE_SUMMARY="bad"
-SUITE_TASKS="laws-scripts-parse laws-scripts-parse"'
+SUITE_TASKS="dummy-task dummy-task"'
   [smuggled-arm]='SUITE_SUMMARY="bad"
-SUITE_TASKS="laws-scripts-parse"
+SUITE_TASKS="dummy-task"
 CONFIG_REF="deadbeef"'
+)
+declare -A EXPECTED_ERROR=(
+  [missing-member]='does not exist under'
+  [empty-tasks]='sets no SUITE_TASKS'
+  [duplicate-member]='duplicate suite member'
+  [smuggled-arm]='configuration/arm field'
 )
 for case in missing-member empty-tasks duplicate-member smuggled-arm; do
   dir="$WORK/$case"
   mkdir -p "$dir"
   printf '%s\n' "${BAD_MANIFESTS[$case]}" > "$dir/manifest.sh"
-  if ( suite_validate "$dir" ) >/dev/null 2>"$WORK/err-$case"; then
+  if ( SUITE_TASKS_ROOT="$FAKE_ROOT" suite_validate "$dir" ) >/dev/null 2>"$WORK/err-$case"; then
     fail "failure arm '$case' was accepted (it must abort)"
+  elif grep -q "${EXPECTED_ERROR[$case]}" "$WORK/err-$case"; then
+    pass "failure arm '$case' aborts with its own violation: $(head -1 "$WORK/err-$case")"
   else
-    pass "failure arm '$case' aborts: $(head -1 "$WORK/err-$case")"
+    fail "failure arm '$case' aborted with the WRONG violation (expected '${EXPECTED_ERROR[$case]}'): $(head -1 "$WORK/err-$case")"
   fi
 done
 
