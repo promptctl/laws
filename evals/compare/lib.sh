@@ -18,6 +18,10 @@ source "$CMP_HERE/../run/lib.sh"
 
 cmp_die() { printf 'ERROR [compare]: %s\n' "$*" >&2; exit 1; }
 
+# The single verdict->rank mapping: pass beats fail beats an aborted run. One owner, so a new
+# verdict is handled in one place. [LAW:single-enforcer]
+cmp_rank() { case "$1" in pass) echo 2 ;; fail) echo 1 ;; *) echo 0 ;; esac; }
+
 # Best-effort skill ref for an arm, for labelling even when its run aborts: the config's git ref,
 # or "none" for control, or "?" if the config itself does not parse.
 cmp_arm_ref() {
@@ -38,6 +42,17 @@ compare_task() {
   task_validate "$task" >/dev/null || exit $?
   [ ! -e "$out" ] || cmp_die "out dir already exists: $out (refusing to overwrite)"
   mkdir -p "$out" || cmp_die "could not create out dir: $out"
+
+  # Arms are keyed by their config basename (the dir under $out and the runlog). Two configs that
+  # share a basename would collide, silently overwriting one arm's outputs - refuse loudly instead.
+  # [LAW:no-silent-failure]
+  local -a seen=()
+  local c bn
+  for c in "$@"; do
+    bn="$(basename "$c")"
+    for s in "${seen[@]}"; do [ "$s" = "$bn" ] && cmp_die "two configurations share the basename '$bn'; give them distinct directory names"; done
+    seen+=("$bn")
+  done
 
   local -a names refs verdicts
   local config name armout ref verdict rc
@@ -72,14 +87,15 @@ cmp_report() {
   local any_failed=0
   for ((i = 0; i < n; i++)); do
     printf '%-22s %-12s %s\n' "${_names[$i]}" "${_refs[$i]}" "${_verdicts[$i]}" >&2
-    case "${_verdicts[$i]}" in pass) rank=2 ;; fail) rank=1 ;; *) rank=0; any_failed=1 ;; esac
+    rank="$(cmp_rank "${_verdicts[$i]}")"
+    [ "$rank" -eq 0 ] && any_failed=1
     [ "$rank" -gt "$best" ] && best="$rank"
   done
 
   # Winners = arms at the best rank.
   local -a winners=()
   for ((i = 0; i < n; i++)); do
-    case "${_verdicts[$i]}" in pass) rank=2 ;; fail) rank=1 ;; *) rank=0 ;; esac
+    rank="$(cmp_rank "${_verdicts[$i]}")"
     [ "$rank" -eq "$best" ] && winners+=("${_names[$i]} (${_refs[$i]})")
   done
 
