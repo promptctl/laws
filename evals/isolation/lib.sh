@@ -122,6 +122,11 @@ iso_is_idle_frame() {
 # [LAW:no-ambient-temporal-coupling] "Idle at a prompt" is a state we poll for, not a hoped-
 # for consequence of a fixed sleep.
 #
+# ISO_EXTRA_SETTINGS (optional): a JSON string appended as `--settings <json>`. --settings is
+# an explicit, additive blob independent of --setting-sources, so it does NOT reintroduce the
+# config dir's settings, plugins, hooks, or CLAUDE.md - the isolation holds. Empty by default,
+# so the launch command is byte-for-byte unchanged when no caller sets it.
+#
 # Usage: iso_launch <session_name> <config_dir> <work_dir>
 iso_launch() {
   local sess="$1" cfg="$2" wd="$3"
@@ -140,10 +145,12 @@ iso_launch() {
   tmux new-session -d -s "$sess" -x "$ISO_PANE_WIDTH" -y "$ISO_PANE_HEIGHT" \
     || iso_die "tmux could not create session: $sess"
 
-  # [LAW:effects-at-boundaries] the launch command is data handed to tmux; %q keeps paths
-  # intact. --setting-sources '' is the explicit second latch (see file header).
+  # [LAW:effects-at-boundaries] the launch command is data handed to tmux; %q keeps paths and
+  # the settings JSON intact. --setting-sources '' is the explicit second latch (see header);
+  # --settings is appended only when a caller provided one.
   local cmd
   printf -v cmd 'cd %q && CLAUDE_CONFIG_DIR=%q claude --model opus --setting-sources '"'"''"'"'' "$wd" "$cfg"
+  [ -n "${ISO_EXTRA_SETTINGS:-}" ] && printf -v cmd '%s --settings %q' "$cmd" "$ISO_EXTRA_SETTINGS"
   tmux send-keys -t "$sess" "$cmd" C-m
 
   # Settle loop: clear Enter-gates, refuse if setup is needed, return on a stable idle frame.
