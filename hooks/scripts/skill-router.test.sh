@@ -49,14 +49,17 @@ assert_deny() { # <label> <output> <must-contain...>
   ok "$label"
 }
 
-# 1. A non-medium skill is irrelevant to the lock and passes straight through.
+# 1. A non-medium skill is irrelevant to the lock and passes straight through - proven
+#    behaviorally: after "next", a real medium is still treated as the first (allowed),
+#    which can only hold if "next" wrote no lock. No knowledge of the lock's layout.
 assert_allow "non-medium skill (next) allowed" "$(run guard "$(skill_payload S1 next)")"
-[ -e "$TMPDIR/laws-medium-lock/S1" ] && bad "non-medium skill must not create a lock" || ok "non-medium skill creates no lock"
+assert_allow "a medium after a non-medium is still the first, allowed" \
+  "$(run guard "$(skill_payload S1 laws:code)")"
 
-# 2. The first medium load is allowed and recorded.
+# 2. The first medium load is allowed. That it was recorded as laws:code is asserted
+#    behaviorally by case 4, whose deny reason names laws:code - so no structural probe
+#    of the lock file is needed (or wanted: it would pin the router's internal layout).
 assert_allow "first medium (laws:code) allowed" "$(run guard "$(skill_payload S2 laws:code)")"
-[ "$(cat "$TMPDIR/laws-medium-lock/S2/main" 2>/dev/null)" = "laws:code" ] \
-  && ok "first medium recorded as laws:code" || bad "first medium not recorded"
 
 # 3. Re-loading the SAME medium is idempotent (e.g. re-routing after a compaction).
 assert_allow "same medium re-load (laws:code) allowed" "$(run guard "$(skill_payload S2 laws:code)")"
