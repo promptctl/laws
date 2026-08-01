@@ -69,6 +69,11 @@ cfg_fields() {
 # Usage: cfg_body_path <laws_root> <ref> <skill>   -> prints the path
 cfg_body_path() {
   local root="$1" ref="$2" skill="$3"
+  # The skill name is interpolated into a path; restrict it to a safe token so it cannot traverse
+  # out of skills/<name>/ (e.g. "../.."). [LAW:no-silent-failure]
+  case "$skill" in
+    ''|*[!A-Za-z0-9_-]*) cfg_die "cfg_body_path: unsafe skill name (allowed: letters, digits, - _): $skill" ;;
+  esac
   local craft="skills/$skill/references/craft.md" main="skills/$skill/SKILL.md"
   if git -C "$root" cat-file -e "$ref:$craft" 2>/dev/null; then printf '%s\n' "$craft"; return 0; fi
   if git -C "$root" cat-file -e "$ref:$main"  2>/dev/null; then printf '%s\n' "$main";  return 0; fi

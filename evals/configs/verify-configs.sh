@@ -18,12 +18,12 @@ fails=0
 pass() { printf '  PASS  %s\n' "$*" >&2; }
 fail() { printf '  FAIL  %s\n' "$*" >&2; fails=$((fails + 1)); }
 
-# Independently derive the expected body the way the done-claim describes - straight from
-# git show <ref>:<path> - and compare the resolver's output to it byte for byte.
+# The expected body is git's content at the derived path. The path comes from cfg_body_path (the
+# single source of the derivation - not re-implemented here); the derivation itself is checked
+# independently below against known-correct literal paths, so this is not circular.
 expected_body() {
   local ref="$1" skill="$2"
-  local craft="skills/$skill/references/craft.md" main="skills/$skill/SKILL.md"
-  if git -C "$ROOT" cat-file -e "$ref:$craft" 2>/dev/null; then git -C "$ROOT" show "$ref:$craft"; else git -C "$ROOT" show "$ref:$main"; fi
+  git -C "$ROOT" show "$ref:$(cfg_body_path "$ROOT" "$ref" "$skill")"
 }
 
 found="$(find "$HERE" -mindepth 2 -maxdepth 2 -name manifest.sh -print)" || cfg_die "config discovery failed"
@@ -77,6 +77,19 @@ CONFIG_REF="8f6d15b"
 CONFIG_SUMMARY="smuggles a task field"
 TASK_REPO="https://example.com/x"')"
 if ( cfg_validate "$taskfield" ) >/dev/null 2>&1; then fail "task field: validate should reject a config that names a task"; else pass "task field: rejected (config stays orthogonal to task)"; fi
+
+# ── Path derivation (independent literal checks of both branches) ───────────────────────
+printf '\n== path derivation ==\n' >&2
+if [ "$(cfg_body_path "$ROOT" HEAD code 2>/dev/null)" = "skills/code/SKILL.md" ]; then
+  pass "derivation: code -> skills/code/SKILL.md (SKILL.md branch)"
+else
+  fail "derivation: code did not resolve to skills/code/SKILL.md"
+fi
+if [ "$(cfg_body_path "$ROOT" HEAD prompt 2>/dev/null)" = "skills/prompt/references/craft.md" ]; then
+  pass "derivation: prompt -> skills/prompt/references/craft.md (craft.md branch)"
+else
+  fail "derivation: prompt did not resolve to skills/prompt/references/craft.md"
+fi
 
 echo "" >&2
 if [ "$fails" -eq 0 ]; then
