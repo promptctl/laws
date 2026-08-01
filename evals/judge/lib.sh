@@ -24,7 +24,8 @@ set -o pipefail
 JUDGE_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JUDGE_AGREEMENT_BAR="${JUDGE_AGREEMENT_BAR:-80}"   # percent agreement with humans required to trust
 
-judge_die() { printf 'ERROR [judge]: %s\n' "$*" >&2; exit 1; }
+# exit 2 = a harness/infra error (never a verdict), distinct from judge_validate's "below bar" (1).
+judge_die() { printf 'ERROR [judge]: %s\n' "$*" >&2; exit 2; }
 judge_log() { printf '[judge] %s\n' "$*" >&2; }
 
 # Score one artifact against the judge's reference. Prints "pass" / "fail"; aborts if the judge
@@ -87,11 +88,18 @@ judge_report() {
 
   local jverdict tag
   jverdict="$(judge_score "$judge" "$artifact")" || exit $?
-  if [ -f "$judge/labels.tsv" ] && judge_validate "$judge" >/dev/null 2>&1; then
-    local pct; pct="$(judge_validate "$judge" 2>&1 >/dev/null | grep -o '= [0-9]*%' | grep -o '[0-9]*%')"
-    tag="validated (agreement ${pct} >= bar ${JUDGE_AGREEMENT_BAR}%) - may contribute to a verdict"
-  elif [ -f "$judge/labels.tsv" ]; then
-    tag="unvalidated (agreement below bar ${JUDGE_AGREEMENT_BAR}%) - does NOT decide the comparison"
+  if [ -f "$judge/labels.tsv" ]; then
+    # ONE calibration call: capture its log and its exit status together (0 = meets bar, 1 = below,
+    # >=2 = could not run), and read the agreement percentage from that same output.
+    local vout vrc pct
+    vout="$(judge_validate "$judge" 2>&1)"; vrc=$?
+    [ "$vrc" -le 1 ] || judge_die "judge_report: judge validation could not run: $vout"
+    pct="$(printf '%s' "$vout" | grep -oE '[0-9]+%' | head -1)"; pct="${pct:-?}"
+    if [ "$vrc" -eq 0 ]; then
+      tag="validated (agreement ${pct} >= bar ${JUDGE_AGREEMENT_BAR}%) - may contribute to a verdict"
+    else
+      tag="unvalidated (agreement ${pct} below bar ${JUDGE_AGREEMENT_BAR}%) - does NOT decide the comparison"
+    fi
   else
     tag="unvalidated (no human-label validation set supplied) - does NOT decide the comparison"
   fi
