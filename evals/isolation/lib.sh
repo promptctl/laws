@@ -102,7 +102,7 @@ iso_screen_needs_setup() {
 }
 
 # A dismissable "press Enter to move on" interstitial (trust dialog, login-success notice,
-# security notice). These are expected and we clear them with Enter.
+# security notice). These default to the SAFE/accept option, so a bare Enter clears them.
 iso_screen_is_enter_gate() {
   case "$1" in
     *"trust this folder"*|*"Press Enter to continue"*|*"Yes, I trust this folder"*) return 0 ;;
@@ -110,16 +110,35 @@ iso_screen_is_enter_gate() {
   return 1
 }
 
-# The idle prompt frame: the shortcuts footer is present and no active-work indicator is.
+# The Bypass-Permissions warning shown when a session launches with --permission-mode
+# bypassPermissions. Unlike the trust dialog, its DEFAULT selection is "No, exit" - a bare Enter
+# would quit - so it needs its own handler that actively selects "Yes, I accept". The acceptance
+# is not persisted in the config dir, so every bypass launch shows it.
+iso_screen_is_bypass_warning() {
+  case "$1" in
+    *"Bypass Permissions mode"*|*"Bypassing Permissions"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Does the screen show an idle prompt's FOOTER? The footer differs by permission mode - normal
+# shows "? for shortcuts", bypass mode replaces it with "bypass permissions on (shift+tab to
+# cycle)" - so both count. This is the single owner of the idle-footer token set; the driver's
+# idle classifier reads it from here rather than repeating the literals. [LAW:one-source-of-truth]
+iso_has_idle_footer() {
+  case "$1" in
+    *"? for shortcuts"*|*"bypass permissions on"*) return 0 ;;
+  esac
+  return 1
+}
+
+# The idle prompt frame: an idle footer is present and no active-work indicator is.
 # [LAW:types-are-the-program] idle-ness is derived from on-screen state, not elapsed time.
 iso_is_idle_frame() {
   case "$1" in
     *"esc to interrupt"*|*"Esc to interrupt"*|*"to interrupt"*) return 1 ;;
   esac
-  case "$1" in
-    *"? for shortcuts"*) return 0 ;;
-  esac
-  return 1
+  iso_has_idle_footer "$1"
 }
 
 # ── Session launch (steady state) ───────────────────────────────────────────────────────
@@ -135,12 +154,26 @@ iso_is_idle_frame() {
 # an explicit, additive blob independent of --setting-sources, so it does NOT reintroduce the
 # config dir's settings, plugins, hooks, or CLAUDE.md - the isolation holds. It is a positional
 # parameter, not an ambient env var, so it cannot leak from one launch into the next.
-# [LAW:no-ambient-temporal-coupling] the extra settings flow in as an argument each call; there
-# is no shell state that a later plain launch could inherit.
+# The 5th argument (optional) is a PATH to a file whose contents load via
+# `--append-system-prompt "$(cat <file>)"` - the mechanism for loading the guidance under test.
+# It is read in the session shell at launch, so a large skill body (tens of KB) never bloats the
+# command line tmux types. It is a launch flag, not a config file, so it keeps the isolation (no
+# CLAUDE.md, no router hooks) while putting the skill body in context from the first turn.
+# [LAW:no-ambient-temporal-coupling] all flow in as arguments each call; no shell state a later
+# plain launch could inherit.
 #
-# Usage: iso_launch <session_name> <config_dir> <work_dir> [extra_settings_json]
+# The 6th argument (optional) is a string of additional claude flags appended VERBATIM (e.g. a
+# permission mode for autonomous runs). Verbatim, not %q-quoted, because it is flags, not a value.
+# Usage: iso_launch <session_name> <config_dir> <work_dir> [extra_settings_json] [sysprompt_file] [extra_flags]
 iso_launch() {
-  local sess="$1" cfg="$2" wd="$3" extra="${4:-}"
+  local sess="$1" cfg="$2" wd="$3" extra="${4:-}" sysprompt_file="${5:-}" extra_flags="${6:-}"
+  if [ -n "$sysprompt_file" ]; then
+    [ -f "$sysprompt_file" ] || iso_die "iso_launch: system-prompt file not found: $sysprompt_file"
+    # Canonicalize to absolute: the `cat` runs in the session shell AFTER `cd "$wd"`, so a relative
+    # path would resolve against the work dir and silently read nothing (`--append-system-prompt ""`
+    # loads no guidance). An absolute path is immune to the cd. [LAW:no-silent-failure]
+    sysprompt_file="$(cd "$(dirname "$sysprompt_file")" && pwd)/$(basename "$sysprompt_file")"
+  fi
   [ -n "$sess" ] && [ -n "$cfg" ] && [ -n "$wd" ] || iso_die "iso_launch: missing session/config/work dir"
   iso_need tmux
   iso_need claude
@@ -166,6 +199,10 @@ iso_launch() {
   local cmd
   printf -v cmd 'cd %q && CLAUDE_CONFIG_DIR=%q claude --model opus --setting-sources '"'"''"'"'' "$wd" "$cfg"
   [ -n "$extra" ] && printf -v cmd '%s --settings %q' "$cmd" "$extra"
+  # The system prompt is read at run time in the session shell - "$(cat <file>)" is left literal in
+  # the command string so a large body never travels through send-keys. %q quotes only the path.
+  [ -n "$sysprompt_file" ] && printf -v cmd '%s --append-system-prompt "$(cat %q)"' "$cmd" "$sysprompt_file"
+  [ -n "$extra_flags" ] && printf -v cmd '%s %s' "$cmd" "$extra_flags"
   tmux send-keys -t "$sess" "$cmd" C-m
 
   # Settle loop: clear Enter-gates, refuse if setup is needed, return on a stable idle frame.
@@ -176,6 +213,18 @@ iso_launch() {
       iso_die "isolated config dir is not logged in / not fully set up: $cfg
   run the one-time setup and log in:  $(dirname "${BASH_SOURCE[0]}")/setup-isolated-session.sh
   (refusing to drive a half-provisioned session)"
+    fi
+    if iso_screen_is_bypass_warning "$screen"; then
+      # Its default is "No, exit", so a bare Enter would quit. Drive it by verified STATE, not a
+      # timing bet: press Enter only once the screen confirms "Yes, I accept" is the selected line
+      # (the ❯ cursor sits on it); otherwise press "2" to move the selection and re-poll.
+      # [LAW:no-ambient-temporal-coupling] the confirm is gated on observed selection, not a sleep.
+      if printf '%s' "$screen" | grep -q '❯.*[Yy]es, I accept'; then
+        tmux send-keys -t "$sess" C-m
+      else
+        tmux send-keys -t "$sess" "2"
+      fi
+      prev=""; sleep "$ISO_POLL_SECS"; waited=$((waited + ISO_POLL_SECS)); continue
     fi
     if iso_screen_is_enter_gate "$screen"; then
       tmux send-keys -t "$sess" C-m
