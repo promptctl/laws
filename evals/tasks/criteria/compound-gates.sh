@@ -23,8 +23,10 @@ command -v pnpm >/dev/null 2>&1 || { echo "check: pnpm is required to run this t
 # tests-unchanged diff can never drift from the commit the checkout was prepared at.
 # [LAW:one-source-of-truth]
 TASK_COMMIT=""
+[ -f "$task_dir/manifest.sh" ] || { echo "check: missing manifest.sh in $task_dir" >&2; exit 2; }
 # shellcheck disable=SC1091
-. "$task_dir/manifest.sh" >/dev/null
+. "$task_dir/manifest.sh" >/dev/null \
+  || { echo "check: manifest.sh failed to source cleanly: $task_dir/manifest.sh" >&2; exit 2; }
 [ -n "$TASK_COMMIT" ] || { echo "check: task manifest sets no TASK_COMMIT" >&2; exit 2; }
 git cat-file -e "$TASK_COMMIT^{commit}" 2>/dev/null \
   || { echo "check: pinned commit $TASK_COMMIT is not in this checkout" >&2; exit 2; }

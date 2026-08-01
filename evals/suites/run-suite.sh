@@ -23,6 +23,10 @@ source "$HERE/lib.sh"
 
 [ "$#" -ge 4 ] || suite_die "usage: run-suite.sh <suite_dir> <out_dir> <reps> <config_dir> <config_dir> [...]"
 suite="$1"; out="$2"; reps="$3"; shift 3
+# Reject a garbage reps NOW, through the one definition of the rule, before any dirs or runs
+# exist - otherwise every task's comparison would die on it one by one and the grid loop would
+# render a misleading 0/<garbage> table. [LAW:no-silent-failure]
+cmp_reps_validate "$reps"
 
 # Capture, then split: mapfile over a process substitution would discard suite_validate's exit
 # status, letting a malformed suite fall through to a misleading secondary error.
