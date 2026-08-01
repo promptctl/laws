@@ -26,6 +26,12 @@ set -o pipefail
 
 # ── Configuration knobs (data, not modes) ──────────────────────────────────────────────
 # [LAW:dataflow-not-control-flow] Timing/geometry vary as values, never as branches.
+# [LAW:one-source-of-truth] The persistent config dir and the clean working dir have ONE set
+# of defaults, here, in the file every isolation and driver script sources. Callers may
+# override via env, but no script redefines the fallback - divergent copies could silently
+# drift and point two scripts at two different dirs.
+: "${ISO_CONFIG_DIR:=$HOME/.claude-laws-eval}"
+: "${ISO_WORK_DIR:=$HOME/.claude-laws-eval-workdir}"
 ISO_PANE_WIDTH="${ISO_PANE_WIDTH:-200}"
 ISO_PANE_HEIGHT="${ISO_PANE_HEIGHT:-50}"
 ISO_LAUNCH_TIMEOUT_SECS="${ISO_LAUNCH_TIMEOUT_SECS:-40}"  # boot + trust dialog to settle
@@ -122,9 +128,16 @@ iso_is_idle_frame() {
 # [LAW:no-ambient-temporal-coupling] "Idle at a prompt" is a state we poll for, not a hoped-
 # for consequence of a fixed sleep.
 #
-# Usage: iso_launch <session_name> <config_dir> <work_dir>
+# The 4th argument (optional) is a JSON string appended as `--settings <json>`. --settings is
+# an explicit, additive blob independent of --setting-sources, so it does NOT reintroduce the
+# config dir's settings, plugins, hooks, or CLAUDE.md - the isolation holds. It is a positional
+# parameter, not an ambient env var, so it cannot leak from one launch into the next.
+# [LAW:no-ambient-temporal-coupling] the extra settings flow in as an argument each call; there
+# is no shell state that a later plain launch could inherit.
+#
+# Usage: iso_launch <session_name> <config_dir> <work_dir> [extra_settings_json]
 iso_launch() {
-  local sess="$1" cfg="$2" wd="$3"
+  local sess="$1" cfg="$2" wd="$3" extra="${4:-}"
   [ -n "$sess" ] && [ -n "$cfg" ] && [ -n "$wd" ] || iso_die "iso_launch: missing session/config/work dir"
   iso_need tmux
   iso_need claude
@@ -140,10 +153,12 @@ iso_launch() {
   tmux new-session -d -s "$sess" -x "$ISO_PANE_WIDTH" -y "$ISO_PANE_HEIGHT" \
     || iso_die "tmux could not create session: $sess"
 
-  # [LAW:effects-at-boundaries] the launch command is data handed to tmux; %q keeps paths
-  # intact. --setting-sources '' is the explicit second latch (see file header).
+  # [LAW:effects-at-boundaries] the launch command is data handed to tmux; %q keeps paths and
+  # the settings JSON intact. --setting-sources '' is the explicit second latch (see header);
+  # --settings is appended only when a caller provided one.
   local cmd
   printf -v cmd 'cd %q && CLAUDE_CONFIG_DIR=%q claude --model opus --setting-sources '"'"''"'"'' "$wd" "$cfg"
+  [ -n "$extra" ] && printf -v cmd '%s --settings %q' "$cmd" "$extra"
   tmux send-keys -t "$sess" "$cmd" C-m
 
   # Settle loop: clear Enter-gates, refuse if setup is needed, return on a stable idle frame.
