@@ -1,12 +1,16 @@
 Seven string helpers in this library are unimplemented stubs that just throw: `camelcase`,
 `kebabcase`, `snakecase`, `wrap`, `wrapWith`, `abbrev`, and `initials` — all under
-`src/sprig/strings/`, each in its own file. This library is a conformance port: every helper
-must produce byte-for-byte the output of the Go original (Masterminds/sprig and the libraries
-it delegates to, e.g. huandu/xstrings for the case conversions).
+`src/sprig/strings/`, each in its own file. This library is a conformance port of Go's sprig
+(Masterminds/sprig and the libraries it delegates to, e.g. huandu/xstrings for the case
+conversions): helpers match the Go original byte-for-byte except where a doc comment says
+otherwise.
 
-Your task: implement each stub, in its file, so the helper exactly matches the original
-behavior — corner cases included (acronym runs, digits inside words, connector and punctuation
-handling, boundary widths), not just the obvious happy path.
+Your task: implement each stub, in its file, to exactly the intended behavior — corner cases
+included (acronym runs, digits inside words, connector and punctuation handling, boundary
+widths), not just the obvious happy path. The authority ordering is: **the doc comment on each
+stub is the binding contract** — where it pins a behavior (including any documented divergence
+from Go), implement exactly that; where it is silent on a corner, the Go original's behavior
+is the reference.
 
 - Run `pnpm install --frozen-lockfile`, then `pnpm test` and `pnpm typecheck` — the visible
   gates. They must pass.

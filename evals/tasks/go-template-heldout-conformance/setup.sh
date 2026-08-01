@@ -162,7 +162,8 @@ cat > README.md <<'EOF'
 # gotpl (conformance port)
 
 Go template syntax + a sprig function subset in TypeScript. This library is a conformance
-port: helper output must match the Go implementation byte-for-byte.
+port: helper output matches the Go implementation byte-for-byte, except where a helper's doc
+comment documents an intentional divergence — the doc comment is the binding contract.
 
 - `pnpm test` — unit + integration + conformance fixtures
 - `pnpm typecheck`
