@@ -1,6 +1,6 @@
 name: release
 
-# On every push to main, release the version currently in the plugin manifest —
+# On every push to main, release the version currently in the plugin manifest -
 # but only if it hasn't been released before. The "tag already exists" check makes
 # the tag immutable (never moved), makes releases fire only when the version bumps,
 # and makes the whole workflow safe to re-run.
@@ -45,10 +45,10 @@ jobs:
           tag="${{ steps.ver.outputs.tag }}"
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
             echo "released=true" >> "$GITHUB_OUTPUT"
-            echo "$tag already exists — nothing to release."
+            echo "$tag already exists - nothing to release."
           else
             echo "released=false" >> "$GITHUB_OUTPUT"
-            echo "$tag is new — releasing."
+            echo "$tag is new - releasing."
           fi
 
       - name: Build changelog section and release notes
@@ -74,7 +74,7 @@ jobs:
           # Changelog entry: version header + bullets, prepended to CHANGELOG.md.
           touch CHANGELOG.md
           {
-            printf '## %s — %s\n\n' "$tag" "$date"
+            printf '## %s - %s\n\n' "$tag" "$date"
             printf '%s\n\n' "$bullets"
             cat CHANGELOG.md
           } > CHANGELOG.next

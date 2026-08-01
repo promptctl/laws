@@ -12,7 +12,7 @@ So there is one rule, and a way to work under it.
 
 ## The rule
 
-The main session — the orchestrator — never reads a skill body. Treat every
+The main session - the orchestrator - never reads a skill body. Treat every
 `SKILL.md` and `craft.md` as opaque.
 
 ## What to read instead
@@ -20,8 +20,8 @@ The main session — the orchestrator — never reads a skill body. Treat every
 The design-goals docs, `design-docs/design-goals-<skill>.md`. They describe a skill's
 intent in plain register; they are prose *about* the skill, not guidance written in
 its medium. Reading `design-goals-code.md` tells you what the code skill is for
-without putting you into code-mode. Most meta-work — indexing the skills, checking
-them for consistency, planning a change — runs off these and never touches a body.
+without putting you into code-mode. Most meta-work - indexing the skills, checking
+them for consistency, planning a change - runs off these and never touches a body.
 
 ## When the goals doc doesn't have the answer
 
@@ -38,13 +38,13 @@ it does no other work, so its contamination dies with its context.
 
 Dispatch a subagent whose whole job is that one skill, and have it read the skill's
 craft as its first step. The medium's standard loads only inside that subagent, never
-in the orchestrator. When the change is done, read the produced file — not the
-subagent's summary — and check it against what you asked for.
+in the orchestrator. When the change is done, read the produced file - not the
+subagent's summary - and check it against what you asked for.
 
 ## The direction the intent flows
 
 The design-goals doc is the source of intent; the skill is written and audited
 against it. Change a skill by editing its goals doc first, then dispatching a writer
 subagent to bring the skill into line. Don't mine a skill body to recover what it was
-trying to do — that is what the goals doc is for. (The current goals docs were
+trying to do - that is what the goals doc is for. (The current goals docs were
 reverse-engineered from the skills as a one-time bootstrap; from here they lead.)
