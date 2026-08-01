@@ -149,12 +149,16 @@ compare_repeated() {
       if ( run_scored "$task" "$config" "$armout" ) >"$out/$name/rep-$(printf '%02d' "$i").runlog" 2>&1 \
            && [ -f "$armout/outcome.json" ]; then
         verdict="$(grep -o '"verdict": *"[^"]*"' "$armout/outcome.json" | sed 's/.*"\([^"]*\)"$/\1/')"
+        [ -n "$verdict" ] || verdict="FAILED"   # a corrupted/empty verdict is not a pass
       else
         verdict="FAILED"
       fi
+      # Total over every verdict: pass counts toward k; fail is a real completed non-pass (in N,
+      # not k, not an abort); anything else - empty or unexpected - is treated as an abort.
       case "$verdict" in
         pass) passed=$((passed + 1)) ;;
-        FAILED) aborted=$((aborted + 1)); any_aborted=1 ;;
+        fail) : ;;
+        *) aborted=$((aborted + 1)); any_aborted=1; verdict="FAILED" ;;
       esac
       printf '  run %02d: %s\n' "$i" "$verdict" >&2
     done
