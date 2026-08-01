@@ -164,8 +164,16 @@ case "$HOOK_TYPE" in
     [ -f "$lock" ] && engaged=$(cat "$lock")
 
     if [ -z "$engaged" ]; then
-      # First medium of the (sub)session: record it and allow. mkdir -p is the only write.
-      mkdir -p "$(dirname "$lock")" && printf '%s' "$skill" > "$lock"
+      # First medium of the (sub)session: record it and allow. The write is the guard's
+      # one external effect, so its failure is checked - a full or unwritable TMPDIR must
+      # not pass as a recorded lock, or the next different medium would find no lock, look
+      # like a first load, and slip through silently. On failure warn and still allow, the
+      # same loud-but-non-blocking tradeoff as the empty-session_id branch: degraded
+      # enforcement beats blocking every skill load.
+      if mkdir -p "$(dirname "$lock")" && printf '%s' "$skill" > "$lock"; then
+        exit 0
+      fi
+      echo "laws skill-router guard: could not write medium lock for $skill; one-craft enforcement degraded this session" >&2
       exit 0
     fi
 

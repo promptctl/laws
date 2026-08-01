@@ -99,5 +99,17 @@ case "$err" in *"empty session_id"*) ok "empty session_id warns on stderr";; *) 
 assert_allow "non-Skill tool ignored" \
   "$(run guard '{"session_id":"S6","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"x"}}')"
 
+# 11. A lock store that cannot be written degrades loudly, not silently: the load is still
+#     allowed (skill loading must never break over a full/unwritable TMPDIR) but the
+#     failure is announced on stderr - otherwise a lost lock would let the next different
+#     medium slip through as a first load. A read-only TMPDIR makes the lock mkdir fail.
+ro=$(mktemp -d); chmod 500 "$ro"
+ro_payload=$(skill_payload S7 laws:code)
+out=$(printf '%s' "$ro_payload" | TMPDIR="$ro" "$ROUTER" guard 2>/dev/null)
+err=$(printf '%s' "$ro_payload" | TMPDIR="$ro" "$ROUTER" guard 2>&1 >/dev/null)
+chmod 700 "$ro"; rm -rf "$ro"
+assert_allow "unwritable lock store still allows the load" "$out"
+case "$err" in *"could not write medium lock"*) ok "unwritable lock store warns on stderr";; *) bad "unwritable lock store did not warn (got: $err)";; esac
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
