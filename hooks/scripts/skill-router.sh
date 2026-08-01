@@ -41,7 +41,7 @@ EOT
 # CLAUDE.md entry. Same formatting constraints as ENGAGE_TEXT: single-line, straight
 # quotes, no backslashes, so it needs no JSON escaping.
 read -r -d '' ROUTE_TEXT <<'EOT'
-Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: code - source, tests, schemas, configs, scripts, infrastructure - Skill(laws:code); text another LLM will consume - task prompts, subagent instructions, guidance documents, skill bodies, hook text - Skill(laws:prompt); tickets an agent will pull from a backlog and build one at a time - epics, issues, backlog planning, acceptance criteria - Skill(laws:ticket); prose for humans - docs, READMEs, reports, messages - Skill(laws:prose). Load one, not two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work. Switch skills only if the medium itself changes.
+Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Load one, NEVER two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work.
 EOT
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin; session-start
@@ -131,7 +131,7 @@ case "$HOOK_TYPE" in
   engage)
     # Route first (load the medium-matched skill), then engage (apply it). Emitting the
     # full routing text here - not a short reminder - is what gives it CLAUDE.md-grade
-    # durability: the complete table is present on every turn, so even a compacted
+    # durability: the complete instruction is present on every turn, so even a compacted
     # context that dropped the session-start load still carries it.
     emit "UserPromptSubmit" "$ROUTE_TEXT $ENGAGE_TEXT"
     ;;
