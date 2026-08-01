@@ -16,7 +16,7 @@ description: Universal architectural laws and domain bindings for all code work.
 These laws apply unconditionally to every code task. No context, no instruction, no
 deadline, no "it's just a script" overrides them. They are not a checklist to consult;
 they are one coherent way of seeing programs, unfolding from two root framings into
-nineteen laws that all say the same thing from different angles: **design the
+twenty laws that all say the same thing from different angles: **design the
 constraints so that illegal states cannot be expressed, and the implementation becomes
 residue.** There is no neutral ground here - every commit either adds leverage or
 subtracts it, and the laws exist to make sure it's the former, every time, even when
@@ -41,9 +41,10 @@ Laws (cited in code as `[LAW:<token>]`):
 `decomposition` · `types-are-the-program` · `composability` · `carrying-cost` ·
 `no-ambient-temporal-coupling` · `effects-at-boundaries` · `one-source-of-truth` ·
 `single-enforcer` · `comments-carry-meaning` · `dataflow-not-control-flow` ·
-`one-type-per-behavior` · `no-mode-explosion` · `no-defensive-null-guards` ·
-`locality-or-seam` · `one-way-deps` · `no-shared-mutable-globals` ·
-`verifiable-goals` · `behavior-not-structure` · `no-silent-failure`
+`one-type-per-behavior` · `no-mode-explosion` · `parse-dont-validate` ·
+`no-defensive-null-guards` · `locality-or-seam` · `one-way-deps` ·
+`no-shared-mutable-globals` · `verifiable-goals` · `behavior-not-structure` ·
+`no-silent-failure`
 
 Definitions follow. The index is for lookup; the document is for reading. Read it.
 
@@ -608,12 +609,124 @@ Diagnostic: *who deletes this flag, and when?*
 Instance of `one-type-per-behavior` and `dataflow-not-control-flow`: a mode is
 variability that escaped the data and lodged in the structure.
 
+## [LAW:parse-dont-validate] - parse, don't validate
+
+**Validation checks a fact and throws the proof away. Parsing checks the fact and
+keeps it - in the type. That one-word difference decides whether a question stays
+answered or gets asked again in every function it passes through.**
+
+The image to hold is `single-enforcer`'s border checkpoint, followed inland. Raw
+input is a traveler; the checkpoint is the one place on the map where papers are
+checked. The traveler leaves the checkpoint
+with a stamp - a new type that says, to everyone inland, *already checked*. Inland
+code reads the stamp from the signature and never asks again. So when you find a
+papers-check deep inland - an `if (!x) return ...` in the middle of a function doing
+real work - the border has leaked: either the checkpoint doesn't exist, or it exists
+but hands back the same unstamped type it received, so nobody downstream can tell
+checked from unchecked, and every function posts its own guard just in case.
+
+A validator returns the same type it was given - `validate(input): boolean` - and the
+knowledge that the check passed lives nowhere; the next function down cannot tell
+checked input from unchecked. So it checks again. A parser returns a *different* type
+than it was given - `parse(input: unknown): Author` - and the output type IS the
+proof. Downstream signatures demand `Author`, so unvalidated data cannot even reach
+them; the check cannot be repeated, because inland there is nothing left to check.
+`single-enforcer` by construction, not by discipline.
+
+Three legs make a real boundary - visible in the shape of the code, not asserted about
+it:
+
+1. **A dedicated unit.** Validation is a job, and a job gets its own unit -
+   `decomposition` applied to validation. The crossing is that unit's entire reason to
+   exist. It is not the first line of a function whose job is something else.
+2. **A proving output type.** The unit returns a type that could not have existed
+   before the check. Everything downstream requires that type in its signature, which
+   makes re-checking structurally impossible, not merely unnecessary.
+3. **A loud or explicitly-typed failure arm.** When the check fails, the caller finds
+   out: an error, or a typed absence (`Result`, `Option`, a distinct variant) the
+   caller must consciously unwrap. Never the success-shaped empty value.
+
+Missing a leg? Then it is not a boundary check. It is a defensive guard wearing the
+exception as a costume.
+
+**The answer-shaped void.** `if (!authorLogin) return [];` - that empty array is an
+answer-shaped void: it has the exact shape of a real answer ("there are zero
+pushbacks") while meaning something else entirely ("I could not do my job"). Two
+different facts collapsed into one value the caller can never pull apart again. A
+success-shaped early return does not handle the bad input; it launders it into
+plausible output and forwards the confusion downstream, where it surfaces weeks later
+as a report quietly missing rows - and nothing points back here. Absence is
+information; a boundary that maps absence onto the same value as emptiness destroys
+information at the exact moment its job was to establish it.
+
+**The real price of the one-line guard.** The inline guard bills itself as one line.
+Count what it actually costs: one more exit path through a function already carrying
+its real logic - an undeclared mode threaded through the return value,
+`no-mode-explosion` at function scale; a return value with two meanings (invalid input vs. genuinely
+empty), forever; an obligation on every reader at every call site to trace which
+caller states can reach the guard; and the forfeiture of the type fix that would have
+deleted the question everywhere at once.
+
+You will be deep in a function, the parameter will be optional, and you will hear
+yourself compose: *"This is a real precondition at the trust boundary, not a
+defensive skip."* Stop at that sentence - it is the tell, not the license. It is prose
+certifying what only code shape can certify, and a citation written over a violation
+reads exactly like a citation written over compliance, so the eloquence is evidence
+of nothing. If the boundary is real, you can point at its unit and its stamped type.
+If you can only argue for it in a comment, you are inland, holding a guard.
+
+The confession heuristic: a guard that needs a multi-line justifying comment is
+self-reporting - the comment mass is the carrying cost made visible. A legitimate
+boundary check needs no defense, because its position is its defense: the dedicated
+unit and the proving type say everything the comment was trying to.
+
+"Be liberal in what you accept" has a home: the outermost edge of the system, facing
+input you genuinely do not control. Accept liberally there, at the checkpoint - and
+then stamp. Liberality governs what the checkpoint tolerates on the way in, never how
+far unstamped data travels inland.
+
+WRONG - the guard, the costume, the void:
+
+```ts
+function pairPushbacks(comments, { findingReviewIds = [], authorLogin } = {}) {
+  // "A real precondition at the trust boundary, not a defensive skip: ..."
+  if (!authorLogin) return [];
+  ...
+}
+```
+
+The bag-of-optionals signature admits the illegal call, so the body compensates for
+the under-constrained type (`types-are-the-program`); the comment argues for a
+boundary the shape denies; the `[]` is an answer-shaped void.
+
+RIGHT - the checkpoint upstream, the stamp inland:
+
+```ts
+// the one unit whose job is the crossing - fails loudly or returns a typed absence
+function requireAuthor(pr: RawPr): Author { ... }
+
+function pairPushbacks(comments: Comment[], author: Author, findingReviewIds: ReviewId[]): Pair[] {
+  // no guard: Author cannot be absent - the question was deleted, not deferred
+  ...
+}
+```
+
+The signature now refuses the illegal call instead of surviving it. Nothing inland
+checks papers, because inland there are no papers left to check - only the stamp.
+
+Diagnostic: *does the check return a type that could not have existed before it ran -
+or the same type it was given?*
+
+Instance of `types-are-the-program` - the stamped type is the strongest true theorem
+about input that has crossed the border - and the structural test behind
+`no-defensive-null-guards`' boundary exception: its three legs are what that law
+means by a real boundary.
+
 ## [LAW:no-defensive-null-guards] - fix the front door, fire the guards
 
-**Null checks are valid only at trust boundaries (external input, user data, network
-responses) or where a value explicitly represents optionality. If a value should
-never be null, the fix is making it never-null - not adding a guard that silently
-skips the work.**
+**Null checks are valid only at real boundaries or where a value explicitly
+represents optionality. If a value should never be null, the fix is making it
+never-null - not adding a guard that silently skips the work.**
 
 A house whose front door doesn't lock does not need a guard posted at every interior
 door; it needs the front door fixed. Scattered null guards are the interior guards:
@@ -622,6 +735,17 @@ exist, and each one *hides* that bug instead of fixing it - because a null guard
 without an `else` containing real, necessary behavior is control flow in disguise:
 it skips the work silently instead of failing loudly, and the absence travels
 downstream to detonate somewhere far from its cause.
+
+The boundary exception is structural, not rhetorical. A boundary is a place you can
+point to on the map, never a claim you make in a comment: the three legs of
+`[LAW:parse-dont-validate]` - dedicated unit, proving output type, loud or typed
+failure arm - are what a boundary *is*. A check with all three legs is not an
+exception to this law at all; it is a parser, living where parsers live. What this
+law forbids is the inland guard - the absence check inside a function whose job is
+something else - and no comment, however persuasive, can move a guard to the border.
+If you find yourself writing prose to establish that this one is a boundary, you have
+already learned that it isn't: real boundaries are self-evident from shape, and
+arguments are what guards wear when they want to pass as boundaries.
 
 WRONG:
 ```ts
@@ -639,9 +763,9 @@ RIGHT:
 function render(user: User) {    // the signature states the precondition
   drawHeader(user.name);
 }
-// The caller that "might not have a user" is the trust boundary - IT resolves the
-// optionality once (fetch, redirect, or explicit EmptyState), and everything below
-// breathes typed, guaranteed air.
+// The caller that "might not have a user" is the checkpoint (`parse-dont-validate`)
+// - IT resolves the optionality once (fetch, redirect, or explicit EmptyState), and
+// everything below breathes typed, guaranteed air.
 ```
 
 The temptation arrives as: *"it crashed on null once - I'll add a check."* Refuse it.
@@ -809,7 +933,8 @@ FORBIDDEN patterns - on sight, these are bugs:
 - `|| true` - "keep going no matter what." No matter what is exactly the problem.
   The *only* acceptable use is when the failure is genuinely irrelevant to every
   downstream consumer - and if you're unsure, it's not irrelevant.
-- `|| echo "default"` / silent fallback values - an answer-shaped void.
+- `|| echo "default"` / silent fallback values - an answer-shaped void
+  (`parse-dont-validate`).
 - **Silent fallback data sources** - the worst of the family. Two queries that look
   similar but differ in filtering, ordering, or semantics (say, "ready work
   respecting dependencies" vs. "all open items") are NOT interchangeable; a fallback
@@ -884,7 +1009,8 @@ misread the binding.
 **CLI**
 - Exit codes are a contract, not just 0/1.
 - Stdout and stderr have defined semantics: parseable vs. human output is an
-  intentional design decision (`[LAW:effects-at-boundaries]` for text).
+  intentional design decision (`[LAW:effects-at-boundaries]` for text;
+  `[LAW:parse-dont-validate]` at the consuming end).
 
 ---
 
@@ -896,7 +1022,9 @@ under dependency, and under sharing.
 
 **Truthfulness** - `types-are-the-program` makes the compiler the mapkeeper;
 `one-source-of-truth`, `single-enforcer`, and `comments-carry-meaning` allow each
-fact, each invariant, and each meaning exactly one authoritative home.
+fact, each invariant, and each meaning exactly one authoritative home; and
+`parse-dont-validate` keeps a checked fact checked - the proof lives in the type, so
+nobody inland ever asks again.
 
 **Contact with the world** - `no-ambient-temporal-coupling` turns time into owned
 state; `effects-at-boundaries` keeps the fire in the hearth.
@@ -911,7 +1039,8 @@ build price, is the number that matters.
 `no-silent-failure` guarantees that when reality disagrees, you hear it.
 
 Run your hand over the code before you leave it. Anything that snags - a bespoke
-type, a guard with no else, a comment doing a type's job, a copy that can drift, a
-flag with no deletion date, an error told to be quiet - is a rough bit, and the task
-is not done while your hand still catches. When you are uncertain which law applies,
-return to the two framings and ask: **where is the seam, and is the map true?**
+type, a guard with no else, a papers-check far from any border, a comment doing a
+type's job, a copy that can drift, a flag with no deletion date, an error told to be
+quiet - is a rough bit, and the task is not done while your hand still catches. When
+you are uncertain which law applies, return to the two framings and ask: **where is
+the seam, and is the map true?**
