@@ -69,6 +69,36 @@ anchor. They will build your guess instead of the right thing, and the judgment 
 ticket existed to invite never fires. A ticket that carries its own solution has spent
 the reader's thinking for them and spent it wrong.
 
+Draw that line on the right axis, because it is easy to draw it on the wrong one and
+cut the destination in half. The line is **boundary versus interior** - what the
+requester observes when the work lands, versus the route inside that produces it - and
+it is *not* how specific the sentence is. A destination can be pinned to the character
+and still be a destination: the exact error string a user must see, the shape of a
+response body, a file format, the fixed per-module block a summary must render in. That
+is not a mechanism smuggled in under a precise costume; it is the outcome at full
+resolution, and pinning it is the ticket doing its job. Specificity is not the tell -
+*which side of the boundary* is. Withhold the interior - the retry strategy, the data
+structure, the hook, the query - and keep the observable, however exact it has to be.
+
+The test that sorts them runs on the spot, with no conversation to reconstruct: **could
+two correct implementations differ on this and both be right?** If yes, it is route -
+leave it open, the implementer owns it. If no - if any other result would be *wrong*
+because the requester or the outcome itself demands exactly this - it is destination,
+pinned at whatever resolution it takes. A token-bucket limiter passes the test and goes:
+a leaky bucket bounds the rate just as well, both are right. An exact error string fails
+it and stays: a different string is a miss, not a second right answer. Here is the
+moment this exists for. You are holding *"the review summary must render as a fixed
+per-module block,"* the anti-mechanism rule is loud in your context, and you hear
+yourself think *"that's an implementation detail - strip it to 'the summary is readable'
+and let the implementer pick the shape."* Run the test first: two builds that render it
+two different ways are not both right, because the requester pinned the block - so it is
+destination, and stripping it deletes what they asked for. One guard keeps *observable*
+from becoming its own loophole: the output you pin has to be one the requester
+**required** or the outcome **intrinsically** needs - not a shape you minted while
+picturing the work. An invented format is interior in an output's costume; two builds
+could format it differently and both be right, so the test strips it like any other
+guess. Observable **and** required - both gates, or it does not get pinned.
+
 Here is the exact move to catch, because it wears a badge that says it is safe. The
 author writes a real mechanism - "a PreToolUse hook on the Skill tool that detects an
 already-active medium and blocks a second" - feels the prescription in it, and staples
@@ -138,12 +168,17 @@ in is not a mechanism leak - it is fidelity, and dropping it is the real defect.
   limiter" - a mechanism *you* minted, pinned for no reason; strip it.
 
 Two questions, asked in this order, decide every case without reconstructing the
-conversation: **(1) Is this a *how*?** If no, it stays regardless. **(2) If yes - did
-it come from the requester, or from me?** From the requester: keep it, verbatim, and
-mark it as theirs. From me: strip it. You never have to remember the original chat to
-answer question 2 - it is answerable from one fact you always have at hand: whether
-*you* are the one who thought of it. If you cannot honestly claim authorship of the
-mechanism, it is not yours to remove.
+conversation. **(1) Is this the outcome, or the route to it?** - the two-builds test:
+*could two correct implementations differ on this and both be right?* No means it is the
+outcome, or the exact shape of one the requester or the outcome demands, and it stays at
+full resolution. Yes means it is a route, so ask **(2) did the route come from the
+requester, or from me?** From the requester - a constraint they imposed from outside -
+keep it, verbatim, marked as theirs. From me: strip it. You never have to remember the
+original chat: question 1 is about the thing itself, and question 2 turns on one fact
+always at hand - whether *you* are the one who thought of it. If you cannot honestly
+claim authorship of the mechanism, it is not yours to remove. The two failure modes sit
+one under each question: mistaking a precise output for a route strips a destination at
+question 1; mistaking the requester's constraint for your own strips it at question 2.
 
 Acceptance criteria obey the same law. They state observable outcomes and stay
 maximally open on the route to them.
@@ -160,6 +195,16 @@ maximally open on the route to them.
   using tmux (requester constraint)." - a requester-supplied *how* is not a mechanism
   leak; it is the boundary the world imposed, and stripping it would delete the
   requirement, not clean up the ticket.
+- GOOD: requester asked the review summary to come back per module → "The review
+  summary renders as a fixed per-module block: one block per module, showing that
+  module's findings." - a fully specified *output* is the destination at full
+  resolution; the requester pinned the shape, so pinning it in the ticket is fidelity,
+  not a mechanism leak - the two-builds test keeps it, because two builds that render it
+  differently are not both right.
+- BAD: requester asked only for "a readable summary"; ticket says "the summary renders
+  as a fixed per-module block" - the block was *your* idea, an output shape you invented;
+  two builds could format it differently and both be right, so it is a mechanism in an
+  output's costume. Write "the summary is readable" and leave the shape open.
 
 ---
 
