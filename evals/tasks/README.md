@@ -84,5 +84,5 @@ own `task_die` exits `2`; and `check-task.sh` surfaces `0`/`1`/`2` unchanged. `v
 ## Environment
 
 `git` for all tasks; a task's `check.sh` may need its own tools (`go-template-add-fix` needs
-`pnpm` + `node`). A criterion whose tools are missing exits nonzero (a conservative FAIL), never a
-fabricated pass.
+`pnpm` + `node`). A criterion whose tools are missing exits `2` (a harness/infra error), never a
+fabricated pass and never a fabricated FAIL.

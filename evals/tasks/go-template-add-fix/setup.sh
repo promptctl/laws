@@ -7,11 +7,11 @@
 set -euo pipefail
 
 target="src/sprig/math/add.ts"
-[ -f "$target" ] || { echo "setup: expected source file not found: $target" >&2; exit 1; }
+[ -f "$target" ] || { echo "setup: expected source file not found: $target" >&2; exit 2; }
 
 # Turn the reducer's "+ v" into "- v". Anchored to the exact reduce expression so it can only
 # match the intended line.
 perl -0pi -e 's/\(acc, v\) => acc \+ v/(acc, v) => acc - v/' "$target"
 
-grep -q '=> acc - v' "$target" || { echo "setup: regression did not apply to $target" >&2; exit 1; }
+grep -q '=> acc - v' "$target" || { echo "setup: regression did not apply to $target" >&2; exit 2; }
 echo "setup: injected regression into $target (add now subtracts)"

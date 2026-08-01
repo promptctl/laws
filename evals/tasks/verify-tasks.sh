@@ -30,6 +30,9 @@ fail() { printf '  FAIL  %s\n' "$*" >&2; fails=$((fails + 1)); }
 # that would report success for only the tasks that happened to be readable. [LAW:no-silent-failure]
 found="$(find "$HERE" -mindepth 2 -maxdepth 2 -name manifest.sh -print)" \
   || task_die "task discovery (find) failed under $HERE"
+# Guard on empty BEFORE splitting: an empty $found would otherwise become one empty mapfile
+# element that slips past the count check below and drives the loop with a blank task dir.
+[ -n "$found" ] || task_die "no task directories found under $HERE"
 mapfile -t TASKS < <(printf '%s\n' "$found" | sed 's#/manifest.sh$##' | sort)
 [ "${#TASKS[@]}" -gt 0 ] || task_die "no task directories found under $HERE"
 task_log "found ${#TASKS[@]} task(s)"

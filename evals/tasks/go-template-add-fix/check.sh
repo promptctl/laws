@@ -8,5 +8,7 @@
 set -euo pipefail
 
 command -v pnpm >/dev/null 2>&1 || { echo "check: pnpm is required to run this task's criterion" >&2; exit 2; }
-pnpm install --frozen-lockfile >/dev/null 2>&1 || { echo "check: dependency install failed" >&2; exit 2; }
+# Silence install stdout but let its stderr through, so a failure's diagnostic is visible rather
+# than swallowed. [LAW:no-silent-failure]
+pnpm install --frozen-lockfile >/dev/null || { echo "check: dependency install failed" >&2; exit 2; }
 pnpm test   # exits 0 on pass, 1 on test failures - the verdict

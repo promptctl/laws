@@ -97,7 +97,7 @@ task_validate() {
 task_prepare() {
   local dir="$1" dest="$2"
   [ -n "$dir" ] && [ -n "$dest" ] || task_die "task_prepare: need <task_dir> <dest_dir>"
-  local out; out="$(task_validate "$dir")" || exit 1
+  local out; out="$(task_validate "$dir")" || exit $?   # preserve the harness-error code (2)
   local repo commit
   repo="$(printf '%s' "$out" | sed -n '1p')"
   commit="$(printf '%s' "$out" | sed -n '2p')"

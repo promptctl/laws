@@ -7,9 +7,9 @@
 set -euo pipefail
 
 target="evals/driver/drive.sh"
-[ -f "$target" ] || { echo "setup: expected script not found: $target" >&2; exit 1; }
+[ -f "$target" ] || { echo "setup: expected script not found: $target" >&2; exit 2; }
 
 printf '\nif then\n' >> "$target"   # a syntactically broken fragment: `if` with no condition
 
-! bash -n "$target" 2>/dev/null || { echo "setup: injected fragment did not break parsing of $target" >&2; exit 1; }
+! bash -n "$target" 2>/dev/null || { echo "setup: injected fragment did not break parsing of $target" >&2; exit 2; }
 echo "setup: injected a syntax error into $target"
