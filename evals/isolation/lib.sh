@@ -167,7 +167,13 @@ iso_is_idle_frame() {
 # Usage: iso_launch <session_name> <config_dir> <work_dir> [extra_settings_json] [sysprompt_file] [extra_flags]
 iso_launch() {
   local sess="$1" cfg="$2" wd="$3" extra="${4:-}" sysprompt_file="${5:-}" extra_flags="${6:-}"
-  [ -z "$sysprompt_file" ] || [ -f "$sysprompt_file" ] || iso_die "iso_launch: system-prompt file not found: $sysprompt_file"
+  if [ -n "$sysprompt_file" ]; then
+    [ -f "$sysprompt_file" ] || iso_die "iso_launch: system-prompt file not found: $sysprompt_file"
+    # Canonicalize to absolute: the `cat` runs in the session shell AFTER `cd "$wd"`, so a relative
+    # path would resolve against the work dir and silently read nothing (`--append-system-prompt ""`
+    # loads no guidance). An absolute path is immune to the cd. [LAW:no-silent-failure]
+    sysprompt_file="$(cd "$(dirname "$sysprompt_file")" && pwd)/$(basename "$sysprompt_file")"
+  fi
   [ -n "$sess" ] && [ -n "$cfg" ] && [ -n "$wd" ] || iso_die "iso_launch: missing session/config/work dir"
   iso_need tmux
   iso_need claude
