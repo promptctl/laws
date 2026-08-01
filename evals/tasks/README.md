@@ -32,15 +32,22 @@ consumes a task ever reads one — the arm is supplied entirely separately (the 
 format). `manifest.sh` setting an arm-shaped variable is rejected by the validator as a smell that
 the two concerns got confused.
 
-## The two tasks here (deliberately different shapes)
+## The tasks here (deliberately different shapes)
 
-| Task | Repo | Criterion type |
-|------|------|----------------|
-| `go-template-add-fix` | `promptctl/go-template-js` | the repo's **test suite** (`pnpm test`) |
-| `laws-scripts-parse`  | `promptctl/laws`          | a **mechanical detector** (`bash -n` every eval script) |
+| Task | Repo | Work shape | Criterion type |
+|------|------|-----------|----------------|
+| `go-template-add-fix` | `promptctl/go-template-js` | fix one regression | the repo's **test suite** (`pnpm test`) |
+| `go-template-multi-regression` | `promptctl/go-template-js` | hunt three scattered regressions | **compound gates** (test + typecheck + lint) + a tests-unchanged **diff detector** |
+| `go-template-stub-reimpl` | `promptctl/go-template-js` | reimplement two gutted helpers | **compound gates** + the tests-unchanged detector |
+| `laws-scripts-parse`  | `promptctl/laws`          | fix a broken script | a **mechanical detector** (`bash -n` every eval script) |
 
-Different repos *and* different criterion types — both validate against the same format with no
-edit to the format, which is the proof that the format is not shaped around one task.
+Different repos, work shapes, *and* criterion types — all validate against the same format with
+no edit to the format, which is the proof that the format is not shaped around one task. The
+tests-unchanged detector (a `git diff --diff-filter=MD` against the pinned commit over test and
+conformance paths) makes gaming the gates a scored FAIL: modifying or deleting an existing test
+is caught mechanically, while adding new tests stays legitimate. Every injected defect was
+verified against the pinned commit to be caught by the repo's own suite — a defect the criterion
+cannot see would silently invalidate its task.
 
 ## Use it
 
