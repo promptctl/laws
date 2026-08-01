@@ -143,7 +143,9 @@ task_check() {
   [ -x "$dir/check.sh" ] || task_die "task_check: no executable check.sh in $dir"
   [ -d "$state" ] || task_die "task_check: state dir does not exist: $state"
   local abs rc; abs="$(cd "$dir" && pwd)"
-  ( cd "$state" && exec "$abs/check.sh" ) >&2
+  # cd failure (the state dir vanished after the check above) exits 2 - a harness error - so it
+  # cannot masquerade as the criterion's FAIL. Only check.sh's own 0/1 becomes a verdict.
+  ( cd "$state" || exit 2; exec "$abs/check.sh" ) >&2
   rc=$?
   case "$rc" in
     0) task_log "criterion PASS for $(basename "$dir") against $state"; return 0 ;;

@@ -13,6 +13,9 @@ set -euo pipefail
 # aborts as a harness error rather than silently yielding a short list. [LAW:no-silent-failure]
 scripts="$(find evals -name '*.sh' -type f | sort)" \
   || { echo "check: could not enumerate scripts under evals/" >&2; exit 2; }
+# Zero scripts is not a vacuous pass - it means the checkout is not what the criterion expects.
+# Treat it as a harness error, never a fabricated PASS. [LAW:no-silent-failure]
+[ -n "$scripts" ] || { echo "check: no shell scripts found under evals/ (unexpected checkout)" >&2; exit 2; }
 
 failed=0
 while IFS= read -r script; do
