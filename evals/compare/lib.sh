@@ -22,6 +22,15 @@ cmp_die() { printf 'ERROR [compare]: %s\n' "$*" >&2; exit 1; }
 # verdict is handled in one place. [LAW:single-enforcer]
 cmp_rank() { case "$1" in pass) echo 2 ;; fail) echo 1 ;; *) echo 0 ;; esac; }
 
+# The ONE definition of a valid repetition count: a base-10 positive integer, rejecting empty,
+# non-digits, and leading zeros ("08" would be misread as invalid octal by bash arithmetic).
+# Both the repeated comparison and the suite runner validate through this, so the rule cannot
+# drift between them - and an outer caller can reject garbage before creating any state.
+# [LAW:single-enforcer]
+cmp_reps_validate() {
+  case "$1" in ''|*[!0-9]*|0*) cmp_die "reps must be a positive integer with no leading zero: $1" ;; esac
+}
+
 # The ONE decoder of an outcome record's verdict field - every consumer (single comparison,
 # repeated comparison, suite summary) reads the record through this, so a change to the record
 # shape is a change in one place. A missing/garbled verdict decodes as FAILED: a corrupted record
@@ -132,9 +141,7 @@ cmp_report() {
 compare_repeated() {
   local task="$1" out="$2" reps="$3"; shift 3
   [ -n "$task" ] && [ -n "$out" ] && [ -n "$reps" ] || cmp_die "usage: compare_repeated <task> <out> <reps> <config...>"
-  # Reject non-digits, empty, and leading zeros ("08" would be misread as invalid octal by bash
-  # arithmetic). This leaves reps a base-10 positive integer.
-  case "$reps" in ''|*[!0-9]*|0*) cmp_die "reps must be a positive integer with no leading zero: $reps" ;; esac
+  cmp_reps_validate "$reps"
   [ "$#" -ge 1 ] || cmp_die "need at least one configuration"
   task_validate "$task" >/dev/null || exit $?
   [ ! -e "$out" ] || cmp_die "out dir already exists: $out (refusing to overwrite)"
