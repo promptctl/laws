@@ -53,28 +53,42 @@ document, not on a default - a lean-but-live draft and one already stuffed with 
 paraphrase need opposite moves. What is *not* symmetric is the danger: fall short of the near wall and
 the failure is silent, so that wall is the one this document leans on hardest.
 
-## Keep it green
+## Emphasis is finite, and allocated by contrast
 
 The two walls above are about one principle's amplitude in isolation. Step back to the
-whole document and one calibration governs it all: keep the writing green. Green is
-spare and still growing - full of potential, ready to bloom. Ripe is a passage sagging
-under its own restatements, every point said one time past enough. If you're green
-you're growing; if you're ripe you're rotten. Be spare, nearly austere - but never cut
-richness that is ready to bloom.
+whole document and a second law governs: emphasis is *relative*. The document is an
+orchestra, and a passage is loud only against quieter passages around it; volume means
+nothing except as a ratio. So the devices below - each one adds emphasis to whatever it
+touches - spend from a fixed budget. Bring every section up to fortissimo and you have
+raised nothing; if the whole orchestra blares at once, the listener has no way to pick
+the melody from the accompaniment, and the emphasis that was supposed to mark
+importance now marks nothing. The score, not any single instrument, is the unit of
+design: each part should play at the volume the piece asks of it relative to the
+others, and the whole should resolve into music, not a pit of instruments each sawing
+as loud as it can to be heard over the rest.
 
-Emphasis is finite, and that is what greenness protects. Emphasis is relative: a
-passage is loud only against quieter passages around it, so bringing every section up
-raises nothing. When two passages fight and one is drowning the other, the reflex is to
-arm the quiet one until it can match the loud one. Reach the other way first - the loud
-one is usually simply overblown, and bringing *it* down restores the contrast without
-raising the overall volume. Ask which passage is at the wrong level before you ask
-which needs more. Sometimes the quiet line really was under-built and needs the
-devices; that is the second thing to check, not the first.
+This changes what you do when you find an imbalance - one section over-firing, drowning
+a quieter line that was carrying the melody. The reflex is to arm the quiet line with
+more devices until it can match the loud one. Reach instead for the other direction
+first: the loud section is often simply blaring too high, and the fix is to bring *it*
+down to its rightful level, restoring the contrast that lets the melody be heard
+without touching it. Bringing the over-loud section down is a first-class remedy -
+usually the better one, because it keeps the orchestra's overall volume flat, whereas
+equalizing upward pushes every part toward fortissimo and leaves you, after enough
+edits, with an orchestra where everything blares and no line carries. Ask which part is
+at the wrong volume before you ask which one needs more. Sometimes the answer really is
+that the quiet line was under-built and needs the devices; but that is the second thing
+to check, not the first.
 
-Green is not a flat monotone. This document spends heavily on the near-wall failure
-because it is the one that kills silently, and that is emphasis placed on purpose, not
-a violation of spareness. The devices that follow are how you bring a part up when it
-has earned the volume - not a mandate to turn every dial up.
+None of this licenses a flat monotone - an orchestra playing everything at one soft
+dynamic is as dead as one blaring at fortissimo throughout. Some guidance earns real
+emphasis, and this document spends heavily on the near-wall failure precisely because
+it is the one that kills silently - that allocation is deliberate, not a violation of
+proportion. The point is that emphasis is a resource with a budget, spent by contrast,
+so it is placed on purpose rather than sprayed to equalize. The devices that follow are
+how you bring a part up when it has earned the volume; read them as the conductor's
+instruments of allocation, under this principle, not as a mandate to turn every dial
+up.
 
 ## The war story
 
@@ -179,6 +193,33 @@ calibration flips. Proximity licenses terseness. Say each thing once, clearly:
 One anti-rule: do not import the far end's devices. Redundancy, imagery, and stakes
 framing at distance zero read as emphasis and distort weighting - the reader is
 already attending. Save the amplitude for text that must survive distance.
+
+---
+
+## Keep the language green
+
+Hold one disposition over every device below: keep the language green. Green is lean and
+agile - still growing, every word pulling its weight. Ripe is a fat, sagging mass,
+language grown past its use and gone soft, and that sag is the fog. The fix is never
+less metaphor - metaphor is the fabric that binds, and it stays. The fix is less slack:
+land the point, land the image, and move on while the writing is still lean. Green,
+you're growing; ripe, you're rotten.
+
+---
+
+## Avoid absolutes; leave room to judge
+
+Absolutes - never, always, every, only, must - read as strength but they are brittle.
+An "always" breaks on the first case the writer never saw, and a reader holding a rule
+with no give has nowhere to put judgment. They also compound: a page of absolutes
+becomes a cage, the rules grating on each other, the edge case with no room to breathe.
+Guidance works in situations nobody has seen yet, so leave the reader room to meet them.
+
+Write the truth's real shape. When it is "usually," write usually; when it is "almost
+never," do not write never. Keep the absolute for the thing that is genuinely one - an
+invariant, a safety line that holds every time - where the missing give is the point,
+not a pose. The tell to catch: reaching for "never" to sound firm when "rarely" is the
+truth.
 
 ---
 
@@ -399,6 +440,17 @@ the *specific moment* the restatement duplicates, already owned by a passage you
 name. If you cannot name that moment, you are not at the far wall - you are just
 distilling, the death this whole document exists to prevent.
 
+Cutting is one revision failure; adding without weaving in is the other. A change is
+made against the whole document, not in a corner of it. Before you add, hold the whole
+and ask what the new passage does against what is already there. If it fires in a moment
+nothing else covers, it belongs - that is amplitude, and it stays. If it only repeats a
+passage already carrying that moment, it is a bolt-on: the existing passage is the home,
+so sharpen that one instead of standing a second beside it. If it contradicts a passage
+already there, one of them is wrong - settle it; don't let both stand and the document
+drift out of true with itself. This is not the refactor the war story forbids - you are
+not deduping live amplitude for elegance - it is keeping the document honest with
+itself. Integrate the change; don't append it.
+
 ---
 
 ## Checklist before shipping a guidance document
@@ -417,10 +469,15 @@ others miss. Nothing was cut merely for repeating; nothing was bolted on past th
 optimum to pad amplitude. Cuts are only for content that is wrong, points the wrong
 way, or reaches no moment the document doesn't already cover.
 
-Then the green check: is every passage still growing, or is one sagging under its own
-restatements? Where two passages fought, you fixed it by bringing the overblown one
-down at least as readily as by raising the quiet one, so the document's overall volume
-held flat rather than climbing. And every image reveals - none dragged past its work,
-none stacked two-deep on one point.
+Then the proportion check: read the document as a score and ask whether the loudest
+sections are the ones that most deserve to be loud. Where two parts fight, you fixed it
+by bringing the over-loud one down at least as readily as by raising the quiet one - the
+orchestra's overall volume held flat across this edit rather than climbing. And every
+image reveals - none dragged past its work, none stacked two-deep on one point.
+
+Then the integration check: each change was woven into the whole, not bolted on -
+nothing you added merely repeats a passage already carrying that moment or contradicts
+one, and where it would have, you sharpened the existing passage instead of standing a
+second beside it.
 
 Hold your document to this list - this one holds itself to it.

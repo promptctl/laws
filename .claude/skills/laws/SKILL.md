@@ -24,14 +24,19 @@ care. Simple is the goal, not a step toward something more impressive.
   when you change a skill.
 - **`SKILL.md`** - how the main session dispatches a writer subagent and checks the
   result. Nearly the same for every medium. It says nothing about how to write well.
-- **`references/craft.md`** - how to write well in this one medium. Only the writer
-  subagent reads it; the main session never opens it.
+- **`references/craft.md`** - how to write well in this one medium. Read by whoever
+  writes the change: a dispatched subagent, or the main session itself when editing this
+  one skill is the whole job. Never loaded next to a second craft.
 
 ## The rules
 
-1. The main session never reads a `craft.md` or any `SKILL.md` body. It works from the
-   goals docs and from one-off subagents. (`design-docs/working-with-skills.md` covers
-   why.)
+1. One craft per session. Each `craft.md` loads a whole medium's standard, and two in
+   one session stack and corrupt each other - that is the failure to prevent. A session
+   doing mixed work stays craft-free and consults a skill through a disposable subagent.
+   A session whose whole job is one skill may load that skill's one craft and edit it
+   directly - and holding the whole craft is how a change integrates instead of bolting
+   on. Never a second craft in the same session; that one you dispatch.
+   (`design-docs/working-with-skills.md` has the details.)
 2. `craft.md` has no dispatch or verify steps. Those are the main session's job, and
    the writer subagent has no one to dispatch.
 3. `SKILL.md` has no writing advice - not how to write, and not the reasons behind how
@@ -51,8 +56,10 @@ care. Simple is the goal, not a step toward something more impressive.
 The full order is in `design-docs/working-with-skills.md`. In short:
 
 1. Edit the goals doc first.
-2. Dispatch a writer subagent; it reads that medium's `craft.md` as its first step. The
-   main session stays clean.
+2. Bring the craft into line. If editing this skill is the session's whole job, load its
+   craft and edit directly, holding the whole so the change integrates. Otherwise
+   dispatch a subagent that loads only that craft. Never load a second craft in the same
+   session.
 3. Read the file it produced - not its summary - and check it against the goals doc.
 
 ## The failure this prevents
