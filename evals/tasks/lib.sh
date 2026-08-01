@@ -53,7 +53,8 @@ task_validate() {
   [ -s "$dir/prompt.md" ] || task_die "task_validate: prompt.md is empty in $dir"
   [ -f "$dir/check.sh" ] || task_die "task_validate: missing check.sh (the criterion) in $dir"
   [ -x "$dir/check.sh" ] || task_die "task_validate: check.sh is not executable in $dir"
-  [ ! -e "$dir/setup.sh" ] || [ -x "$dir/setup.sh" ] || task_die "task_validate: setup.sh present but not executable in $dir"
+  [ ! -e "$dir/setup.sh" ] || { [ -f "$dir/setup.sh" ] && [ -x "$dir/setup.sh" ]; } \
+    || task_die "task_validate: setup.sh present but not an executable regular file in $dir"
 
   # Source the manifest in a subshell so its assignments cannot leak into the caller, and read
   # back only the three fields. A manifest that sets none of them, or adds logic that fails, is
@@ -122,7 +123,7 @@ task_setup() {
   local dir="$1" state="$2"
   [ -n "$dir" ] && [ -n "$state" ] || task_die "task_setup: need <task_dir> <state_dir>"
   [ -d "$state" ] || task_die "task_setup: state dir does not exist: $state"
-  [ -e "$dir/setup.sh" ] || { task_log "no setup.sh for $dir (nothing to establish)"; return 0; }
+  [ -f "$dir/setup.sh" ] || { task_log "no setup.sh for $dir (nothing to establish)"; return 0; }
   local abs; abs="$(cd "$dir" && pwd)"
   ( cd "$state" && exec "$abs/setup.sh" ) 2>&1 | sed 's/^/[setup] /' >&2
   local rc=${PIPESTATUS[0]}
