@@ -16,7 +16,6 @@ Produce the deliverable with a subagent:
    - the complete requirements, in the requester's own words — anything omitted
      does not exist for the subagent
    - the exact output path and format of the artifact
-   - a verifiable acceptance criterion
    - as its first instruction: read `references/craft.md` (give the absolute path,
      resolved from this skill's base directory) before writing anything
 2. When it returns, read the artifact it produced — the file, not its report —
