@@ -123,8 +123,9 @@ cmp_report() {
 compare_repeated() {
   local task="$1" out="$2" reps="$3"; shift 3
   [ -n "$task" ] && [ -n "$out" ] && [ -n "$reps" ] || cmp_die "usage: compare_repeated <task> <out> <reps> <config...>"
-  case "$reps" in ''|*[!0-9]*) cmp_die "reps must be a positive integer: $reps" ;; esac
-  [ "$reps" -ge 1 ] || cmp_die "reps must be >= 1"
+  # Reject non-digits, empty, and leading zeros ("08" would be misread as invalid octal by bash
+  # arithmetic). This leaves reps a base-10 positive integer.
+  case "$reps" in ''|*[!0-9]*|0*) cmp_die "reps must be a positive integer with no leading zero: $reps" ;; esac
   [ "$#" -ge 1 ] || cmp_die "need at least one configuration"
   task_validate "$task" >/dev/null || exit $?
   [ ! -e "$out" ] || cmp_die "out dir already exists: $out (refusing to overwrite)"
