@@ -3,9 +3,13 @@
 # skill under test, the laws, or any skill-derived rubric - so it structurally cannot grade output
 # against the treatment. Judge-pass iff the artifact's output.txt contains each reference line as a
 # SUBSTRING (grep -F, not an exact-line match). Exit 0 = judge-pass, 1 = judge-fail, 2 = could-not-run.
-# This substring looseness (e.g. "UNAPPROVED" would contain "APPROVED") is a real blind spot - and
-# that is the point: this is a deliberately fallible judge (on held case-4 it passes an artifact a
-# human labelled fail), which is exactly the kind of miss the human-agreement bar exists to catch.
+# This judge is deliberately fallible - two INDEPENDENT blind spots illustrate why a judge must be
+# validated against humans before it is trusted:
+#   - substring looseness: "UNAPPROVED" would contain "APPROVED" and wrongly pass (a genuine hole,
+#     not exercised by the held set);
+#   - no semantic judgement: on held case-4 the output IS exactly "APPROVED", so the judge passes it,
+#     yet a human labelled it fail (superficially right, actually bad). That disagreement - which has
+#     nothing to do with substring matching - is what drops agreement to 4/5.
 set -euo pipefail
 artifact="${1:?artifact dir}"; reference="${2:?reference path}"
 

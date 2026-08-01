@@ -21,7 +21,6 @@
 #   has no access to the treatment (the skill), so it cannot grade output against the treatment.
 
 set -o pipefail
-JUDGE_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JUDGE_AGREEMENT_BAR="${JUDGE_AGREEMENT_BAR:-80}"   # percent agreement with humans required to trust
 
 # exit 2 = a harness/infra error (never a verdict), distinct from judge_validate's "below bar" (1).
