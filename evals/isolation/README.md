@@ -37,11 +37,12 @@ Exits `0` only if every check passes:
 | no `CLAUDE.md` in the config dir      | `find` the dir - a dir with no guidance in it cannot serve guidance |
 | loads no plugins/hooks                | read the config dir's `settings.json` - no `enabledPlugins`, no `hooks` (so the laws router can't fire) |
 | (D) no silent fallback                | a nonexistent/unwritable `CLAUDE_CONFIG_DIR` makes the harness exit nonzero, never fall back to the global config |
-| (A) live session is **Opus**          | launch the real session and ask it - model + auth are the one thing only the running session can confirm |
+| (A) live session is **Opus** on the subscription | launch the real session and **read the account banner** it paints (`<model> · Claude Max`) - the model it resolved to and the plan, taken from the left box column so a changelog naming another model can't fool it |
 
-The first four are structural (read the config dir / the exit code). Only (A) is behavioral,
-because whether the live session actually came up as Opus on the subscription is the one
-property you genuinely cannot read off a file.
+The first four are structural (read the config dir / the exit code). (A) launches the real
+session - the model only resolves once it is running - but it is still read from state, not from
+the model: we read the banner the TUI paints, never ask the model to name itself (models
+misreport their identity). The banner also confirms the **Claude Max** subscription plan.
 
 ## Launch a session to poke at yourself
 
@@ -54,9 +55,10 @@ Teardown: `tmux kill-session -t <ISO_SESSION>`. The config dir stays - it holds 
 
 ## Files
 
-- `lib.sh` - isolation primitives: `iso_config_require`, `iso_launch`, `iso_turn`,
-  `iso_wait`/`iso_answer`, `iso_teardown`. Single owner of the tmux session and launch
-  lifecycle. No credential handling - auth comes from the one-time login in the keychain.
+- `lib.sh` - isolation primitives: `iso_config_require`, `iso_launch`, `iso_capture`, the frame
+  classifiers, `iso_teardown`. Single owner of the tmux session and launch lifecycle. No
+  credential handling - auth comes from the one-time login in the keychain. Driving turns lives
+  in `../driver`; isolation quizzes no model.
 - `setup-isolated-session.sh` - one-time interactive login that provisions the config dir.
 - `launch-isolated-session.sh` - steady-state launch (aborts if not set up), leaves it idle.
 - `verify-isolation.sh` - the checks above, exit 0 iff all pass.
@@ -66,4 +68,5 @@ Teardown: `tmux kill-session -t <ISO_SESSION>`. The config dir stays - it holds 
 macOS with `tmux`, `python3`, and a `claude` binary. The persistent config dir
 (`~/.claude-laws-eval`) and working dir (`~/.claude-laws-eval-workdir`) live in `$HOME`, not
 the repo. Knobs `ISO_CONFIG_DIR`, `ISO_WORK_DIR`, `ISO_LAUNCH_TIMEOUT_SECS`,
-`ISO_TURN_TIMEOUT_SECS`, `ISO_POLL_SECS`, and the pane geometry are overridable via env.
+`ISO_POLL_SECS`, `ISO_HISTORY_LIMIT`, `ISO_PLAN_TOKEN` (the account-banner anchor, default
+`Claude Max`), and the pane geometry are overridable via env.

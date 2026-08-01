@@ -39,7 +39,6 @@ ISO_PANE_HEIGHT="${ISO_PANE_HEIGHT:-50}"
 # this many lines. Must exceed the longest single turn's line count, or that head is lost.
 ISO_HISTORY_LIMIT="${ISO_HISTORY_LIMIT:-100000}"
 ISO_LAUNCH_TIMEOUT_SECS="${ISO_LAUNCH_TIMEOUT_SECS:-40}"  # boot + trust dialog to settle
-ISO_TURN_TIMEOUT_SECS="${ISO_TURN_TIMEOUT_SECS:-90}"      # per-turn generation ceiling
 ISO_POLL_SECS="${ISO_POLL_SECS:-2}"                       # idle-poll cadence
 
 # ── Small utilities ─────────────────────────────────────────────────────────────────────
@@ -192,80 +191,11 @@ iso_launch() {
   iso_die "session never reached an idle prompt within ${ISO_LAUNCH_TIMEOUT_SECS}s: $sess"
 }
 
-# ── Drive one turn ──────────────────────────────────────────────────────────────────────
-# Send one prompt, wait for the session to return to idle, and echo the full pane. A one-
-# shot probe turn - the simple question/answer this ticket needs, not the general multi-turn
-# driver (a later ticket).
-#
-# [LAW:no-silent-failure] A turn that never begins, never returns to idle within the timeout,
-# or comes back with an empty/unchanged screen ABORTS nonzero - it never returns a partial
-# capture a caller could mistake for a pass. This is the amplifier guard: one bad turn stops
-# the line rather than emitting a corrupt datapoint.
-#
-# Usage: iso_turn <session> <prompt>   -> prints post-turn pane on stdout
-iso_turn() {
-  local sess="$1" prompt="$2"
-  [ -n "$sess" ] && [ -n "$prompt" ] || iso_die "iso_turn: missing session or prompt"
-
-  local before
-  before="$(iso_capture "$sess")"
-
-  tmux send-keys -t "$sess" -l -- "$prompt" || iso_die "iso_turn: send-keys (prompt) failed on $sess"
-  sleep 1  # let the TUI register the full literal line before submit
-  tmux send-keys -t "$sess" C-m || iso_die "iso_turn: send-keys (submit) failed on $sess"
-
-  # Wait for the turn to actually START (a working indicator appears) before waiting for it
-  # to finish - otherwise the previous turn's idle footer reads as instant completion.
-  # [LAW:no-ambient-temporal-coupling] the started→idle transition is owned state, not luck.
-  local waited=0 cur started=0
-  while [ "$waited" -lt "$ISO_TURN_TIMEOUT_SECS" ]; do
-    cur="$(iso_capture "$sess")"
-    if ! iso_is_idle_frame "$cur"; then started=1; break; fi
-    sleep "$ISO_POLL_SECS"; waited=$((waited + ISO_POLL_SECS))
-  done
-  [ "$started" -eq 1 ] \
-    || iso_die "driven turn never began working within ${ISO_TURN_TIMEOUT_SECS}s (prompt did not take) - aborting"
-
-  # Then wait for it to settle back to a stable idle frame.
-  local prev=""
-  waited=0
-  while [ "$waited" -lt "$ISO_TURN_TIMEOUT_SECS" ]; do
-    cur="$(iso_capture "$sess")"
-    if iso_is_idle_frame "$cur" && [ "$cur" = "$prev" ]; then break; fi
-    prev="$cur"
-    sleep "$ISO_POLL_SECS"; waited=$((waited + ISO_POLL_SECS))
-  done
-  [ "$waited" -lt "$ISO_TURN_TIMEOUT_SECS" ] \
-    || iso_die "driven turn TIMED OUT after ${ISO_TURN_TIMEOUT_SECS}s (never returned to idle) - aborting rather than emitting a partial datapoint"
-
-  local screen
-  screen="$(iso_capture "$sess")"
-  [ -n "$screen" ] || iso_die "driven turn produced an EMPTY capture - aborting"
-  [ "$screen" != "$before" ] || iso_die "driven turn left the screen unchanged - aborting"
-
-  printf '%s\n' "$screen"
-}
-
-# Extract the model's LAST answer from a captured pane. The TUI marks the assistant's reply
-# with a leading "⏺" and the user's prompt with "❯"; grade the reply, not the echoed prompt.
-# [LAW:one-source-of-truth] the answer region is the one place to read the model's reply.
-# Usage: iso_answer "<captured screen>"  -> prints the answer text
-iso_answer() {
-  printf '%s\n' "$1" | awk '
-    { lines[NR] = $0 }
-    /^⏺/ { last = NR }
-    END {
-      if (!last) exit
-      for (i = last; i <= NR; i++) {
-        if (i > last && lines[i] ~ /^[[:space:]]*❯/) break
-        line = lines[i]
-        sub(/^⏺[[:space:]]*/, "", line)
-        sub(/^[[:space:]]+/, "", line)
-        print line
-      }
-    }
-  '
-}
+# Driving turns is the driver layer's job (evals/driver, drive_turn). Isolation deliberately
+# holds no turn-driver of its own: nothing here needs to quiz the model. The one behavioral
+# property - which model the session runs - is read from the account banner the TUI paints
+# (see verify-isolation.sh), because a model's own answer about its identity is exactly the
+# thing it can misstate.
 
 # ── Teardown ────────────────────────────────────────────────────────────────────────────
 # Kill the tmux session. The persistent config dir is deliberately LEFT INTACT - it holds
