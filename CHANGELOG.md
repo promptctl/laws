@@ -1,3 +1,7 @@
+## v0.24.1 - 2026-08-01
+
+- hooks: minimal route text - lean on skill descriptions, drop disabled laws:ticket route (#12)
+
 ## v0.24.0 - 2026-08-01
 
 - hooks: guard one-craft-per-session - refuse a second medium load (promptctl-routing-rat.1) (#11)
