@@ -1,3 +1,30 @@
+## v0.24.0 - 2026-08-01
+
+- hooks: guard one-craft-per-session - refuse a second medium load (promptctl-routing-rat.1) (#11)
+- ticket(craft): draw destination-vs-mechanism on the boundary axis, so a precise output isn't stripped (#10)
+- evals(judge): an optional reference-anchored judge tier, trusted only after human agreement (#9)
+- evals(compare): repeated runs expose the harness's own noise floor (#8)
+- evals(compare): one command that runs a task across arms and reports which did better (#7)
+- evals(run): a single scored run joining one task and one configuration (#6)
+- evals(configs): a configuration format that names a skill body by git ref, or none (#5)
+- evals(tasks): a task-spec format pinning repo, commit, task text, and a machine criterion (#4)
+- evals(isolation): prove Opus by reading the account banner, not by asking the model (#3)
+- evals(driver): complete turns whose replies exceed the visible pane (#2)
+- evals(driver): a tmux turn-driver that refuses to emit a bad turn (#1)
+- chore(ci): install agent code-review action
+- skills(prompt): green language, no reflexive absolutes, integrate-don't-append; one craft per session may be held directly
+- skills(code): restore parse-dont-validate as a first-class law; make the boundary exception structural
+- chore: track lit integration files, ignore local research scratch
+- skills: add project-local laws skill governing laws-skill edits
+- skills(prompt): recast far-end device craft as reveal-don't-fog
+- skills: drop the "verifiable acceptance criterion" bullet from dispatch skills
+- style: normalize em-dashes to hyphens across docs, skills, and scripts
+- skills(ticket): replace frontmatter description with PLACEHOLDER
+- evals(isolation): isolated interactive session that proves Opus + no CLAUDE.md leak
+- skills(ticket): keep subagent-dispatch prompts clean of orchestrator solutioning
+- skills(prompt): add proportion principle carried by the orchestra metaphor
+- skills(ticket): distinguish requester-imposed constraints from agent-invented mechanism
+
 ## v0.23.0 - 2026-07-27
 
 - skills: add laws:application-spec - clean-room spec of an existing application - bump 0.23.0
