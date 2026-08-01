@@ -83,13 +83,11 @@ drv_frame_working() {
   return 1
 }
 
-# IDLE: the shortcuts footer is present and nothing signals active work.
+# IDLE: an idle footer is present and nothing signals active work. The idle-footer token set lives
+# in the isolation layer (iso_has_idle_footer) - the single owner - so the two layers cannot drift.
 drv_frame_idle() {
   drv_frame_working "$1" && return 1
-  case "$1" in
-    *"? for shortcuts"*) return 0 ;;
-  esac
-  return 1
+  iso_has_idle_footer "$1"
 }
 
 # The transcript is everything ABOVE the input box. The input box is a "❯ " line sandwiched
@@ -148,9 +146,12 @@ drv_reply_below_prompt() {
 # [LAW:one-source-of-truth] iso_launch stays the only place that builds the claude command; we
 # hand it the extra setting as its 4th positional argument (no ambient env that could leak into
 # a later launch).
-# Usage: drv_launch <session> <config_dir> <work_dir>
+# The optional 4th argument is a PATH to a file whose contents load via --append-system-prompt -
+# the guidance under test. The optional 5th is extra claude flags appended verbatim (e.g. a
+# permission mode). Both pass straight through to iso_launch.
+# Usage: drv_launch <session> <config_dir> <work_dir> [sysprompt_file] [extra_flags]
 drv_launch() {
-  local sess="$1" cfg="$2" wd="$3"
+  local sess="$1" cfg="$2" wd="$3" sysprompt_file="${4:-}" extra_flags="${5:-}"
   # [LAW:parse-dont-validate] The sentinel is interpolated into a JSON string; a value carrying
   # a quote or backslash would corrupt it and claude would reject --settings, silently leaving
   # the session with no working token. Reject anything but a plain alphanumeric token here, at
@@ -159,7 +160,8 @@ drv_launch() {
     ''|*[!A-Za-z0-9]*) drv_die "DRV_SPINNER_SENTINEL must be a non-empty alphanumeric token: got [$DRV_SPINNER_SENTINEL]" ;;
   esac
   iso_launch "$sess" "$cfg" "$wd" \
-    "{\"spinnerVerbs\":{\"mode\":\"replace\",\"verbs\":[\"${DRV_SPINNER_SENTINEL}\"]}}"
+    "{\"spinnerVerbs\":{\"mode\":\"replace\",\"verbs\":[\"${DRV_SPINNER_SENTINEL}\"]}}" \
+    "$sysprompt_file" "$extra_flags"
 }
 
 # ── Send one prompt (bracketed paste, then explicit submit) ─────────────────────────────
@@ -192,12 +194,14 @@ drv_send() {
   [ "$after" != "$before" ] \
     || drv_die "drv_send: paste did not register on $sess (screen unchanged - send failed)"
   # Stronger confirm when a safe needle exists: the input box actually shows our text, not some
-  # unrelated redraw. Use the first non-blank line's leading run of word/space chars.
+  # unrelated redraw. Use the first non-blank line's leading run of word/space chars. A multi-line
+  # or large paste is COLLAPSED by the TUI into a "[Pasted text #N +M lines]" chip - the content is
+  # there and submits on Enter, but the literal text is hidden - so the chip counts as registered.
   local head
   head="$(printf '%s' "$prompt" | sed -n '1p' | grep -oE '^[[:alnum:] ]+' | head -c 40)"
   if [ -n "$head" ]; then
     case "$after" in
-      *"$head"*) : ;;
+      *"$head"*|*"[Pasted text"*) : ;;
       *) drv_die "drv_send: prompt did not register in the input box on $sess (send failed)" ;;
     esac
   fi
