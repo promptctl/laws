@@ -34,6 +34,10 @@ set -o pipefail
 : "${ISO_WORK_DIR:=$HOME/.claude-laws-eval-workdir}"
 ISO_PANE_WIDTH="${ISO_PANE_WIDTH:-200}"
 ISO_PANE_HEIGHT="${ISO_PANE_HEIGHT:-50}"
+# Scrollback retention. A reply longer than the visible pane scrolls its head - including the
+# prompt line a reader anchors on - out of the visible frame; tmux keeps it in history up to
+# this many lines. Must exceed the longest single turn's line count, or that head is lost.
+ISO_HISTORY_LIMIT="${ISO_HISTORY_LIMIT:-100000}"
 ISO_LAUNCH_TIMEOUT_SECS="${ISO_LAUNCH_TIMEOUT_SECS:-40}"  # boot + trust dialog to settle
 ISO_TURN_TIMEOUT_SECS="${ISO_TURN_TIMEOUT_SECS:-90}"      # per-turn generation ceiling
 ISO_POLL_SECS="${ISO_POLL_SECS:-2}"                       # idle-poll cadence
@@ -152,6 +156,10 @@ iso_launch() {
   tmux kill-session -t "$sess" 2>/dev/null || true
   tmux new-session -d -s "$sess" -x "$ISO_PANE_WIDTH" -y "$ISO_PANE_HEIGHT" \
     || iso_die "tmux could not create session: $sess"
+  # Set scrollback retention before the TUI produces any output, so a long reply's scrolled-off
+  # head stays in history and a full-history capture can recover it. [LAW:no-silent-failure]
+  tmux set-option -t "$sess" history-limit "$ISO_HISTORY_LIMIT" \
+    || iso_die "tmux could not set history-limit on session: $sess"
 
   # [LAW:effects-at-boundaries] the launch command is data handed to tmux; %q keeps paths and
   # the settings JSON intact. --setting-sources '' is the explicit second latch (see header);

@@ -46,6 +46,31 @@ DRV_SPINNER_SENTINEL="${DRV_SPINNER_SENTINEL:-EVALBUSY}"
 drv_die() { printf 'ERROR [driver]: %s\n' "$*" >&2; exit 1; }
 drv_log() { printf '[driver] %s\n' "$*" >&2; }
 
+# ── History-inclusive capture, and the live frame within it ─────────────────────────────
+# iso_capture reads only the visible pane; a reply longer than the pane scrolls its head - the
+# prompt line the reply parser anchors on - out of view, and the parser then finds nothing and
+# the turn times out. drv_capture captures the full retained scrollback (`-S -`), so the whole
+# reply, head included, is present regardless of length. Retention is bounded by the session's
+# history-limit, set generously at launch (ISO_HISTORY_LIMIT).
+# [LAW:effects-at-boundaries] the one place the driver reads the screen for a turn.
+# Usage: drv_capture <session>
+drv_capture() {
+  tmux capture-pane -t "$1" -p -S - 2>/dev/null
+}
+
+# The LIVE FRAME is the last ISO_PANE_HEIGHT lines of a full capture - exactly the visible pane.
+# Idle/working classification must read only this region, never the whole scrollback: the footer
+# tokens ("esc to interrupt", "? for shortcuts") live at the live bottom, and slicing to the
+# live frame means anything sitting in history - a stale "working" footer from a prior turn, say -
+# cannot be seen by the classifier and cannot mislead it. Reply extraction, by contrast, reads
+# the full capture (it needs the scrolled-off head). One capture, sliced two ways.
+# [LAW:no-ambient-temporal-coupling] idle-ness is read from the live frame by construction, not
+# from an assumption about what the TUI does or does not leave in scrollback.
+# Usage: drv_live_frame <full_capture>
+drv_live_frame() {
+  printf '%s\n' "$1" | tail -n "$ISO_PANE_HEIGHT"
+}
+
 # ── Frame classification (pure functions of a captured screen) ──────────────────────────
 # WORKING: the interrupt affordance is on screen, or our spinner sentinel is. The interrupt
 # line is present on every generating frame; the sentinel flickers with tips, so it is an
@@ -202,8 +227,20 @@ drive_turn() {
   while [ "$waited" -lt "$DRV_TURN_TIMEOUT_SECS" ]; do
     tmux has-session -t "$sess" 2>/dev/null \
       || drv_die "drive_turn: session died mid-turn: $sess (no reply emitted)"
-    cur="$(iso_capture "$sess")"
-    if drv_frame_idle "$cur"; then
+    # History-inclusive capture: a reply longer than the visible pane keeps its prompt anchor and
+    # head in scrollback, so the parser can still find and return the whole reply.
+    cur="$(drv_capture "$sess")"
+    # A live session's pane always carries at least the footer, so an empty capture is a real
+    # failure, not a slow turn. Surface it with the precise cause instead of spinning to a
+    # misleading timeout. [LAW:no-silent-failure] (also closes the has-session/capture TOCTOU:
+    # a session that died in between lands here and is reported as a death, not a capture fault.)
+    if [ -z "$cur" ]; then
+      tmux has-session -t "$sess" 2>/dev/null \
+        || drv_die "drive_turn: session died mid-turn: $sess (no reply emitted)"
+      drv_die "drive_turn: screen capture returned empty on a live session: $sess (tmux capture-pane failed) - aborting rather than spinning to a misleading timeout"
+    fi
+    # Idle/working from the live frame (immune to scrollback); reply from the full capture.
+    if drv_frame_idle "$(drv_live_frame "$cur")"; then
       curreply="$(drv_reply_below_prompt "$cur")"
       if [ -n "$curreply" ] && [ "$curreply" = "$prev" ]; then
         stable=$((stable + 1))
