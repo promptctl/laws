@@ -59,10 +59,22 @@ same image dragged past its work, or several images stacked on one point, is fog
 fog obscures more than it reveals. Fog spreads: once a document tolerates it, more
 follows.
 
-The calibration is one test - keep the writing green. Green is spare and still
-growing, full of potential; ripe is a passage sagging under its own restatements. If
-you're green you're growing; if you're ripe you're rotten. Be spare, nearly austere,
-but do not cut richness that is ready to bloom.
+Over all the devices sits one disposition: keep the language green. Green is lean and
+agile, still growing; ripe is a fat, sagging mass of language grown past its use - that
+sag is the fog. If you're green you're growing; if you're ripe you're rotten. The fix
+is never less metaphor, which is the fabric that binds - it is less slack. Be lean, but
+never cut richness that is ready to bloom.
+
+The skill also tells the writer to avoid reflexive absolutes - never, always, every,
+only - and to write language shaped to the truth, because guidance addresses situations
+nobody has seen yet and an absolute leaves the reader no room to judge them. The
+absolute is kept for the genuine invariant, where the missing give is the point.
+
+And it tells the writer that a change is made against the whole document, not in a
+corner: a passage that merely repeats or contradicts one already there is a bolt-on, so
+the writer weaves the change in - sharpening the existing passage, or settling the
+contradiction - rather than appending a second. A coherence check, not the distillation
+the war story forbids.
 
 This does not reverse the anti-distillation stance below. The enemy was never
 repetition of a true thing; it is fog. Cut obscuring language, never a revealing image
