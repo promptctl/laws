@@ -2,7 +2,7 @@
 # Isolation primitives for driving a real, live, interactive Claude Code TUI over tmux.
 #
 # THE MODEL (read this before changing anything):
-# A single PERSISTENT CLAUDE_CONFIG_DIR that the owner logs into ONCE — an ordinary
+# A single PERSISTENT CLAUDE_CONFIG_DIR that the owner logs into ONCE - an ordinary
 # interactive subscription OAuth login. The token then lives in the macOS keychain and is
 # reused for weeks; the config dir keeps the account link and a theme. That is all setup-
 # isolated-session.sh does. Nothing here copies an identity file or exports a keychain
@@ -18,9 +18,9 @@
 # [LAW:no-shared-mutable-globals] The tmux session and working dir are shared mutable state;
 # this file is their single owner with an explicit API. The persistent config dir is owned
 # by the one-time setup, not by any run.
-# [LAW:effects-at-boundaries] Every effect — tmux I/O, file reads, sleeps — is gathered here.
+# [LAW:effects-at-boundaries] Every effect - tmux I/O, file reads, sleeps - is gathered here.
 # [LAW:no-silent-failure] Every external call is validated; a bad config dir, or a session
-# that never reaches an idle prompt, aborts nonzero — it never falls back to ~/.claude.
+# that never reaches an idle prompt, aborts nonzero - it never falls back to ~/.claude.
 
 set -o pipefail
 
@@ -45,7 +45,7 @@ iso_need() {
 # Ensure the persistent CLAUDE_CONFIG_DIR exists and is writable, or abort. There is no
 # credential handling here by design: the dir is provisioned once by setup-isolated-
 # session.sh (the owner logs in), and every run thereafter just uses it.
-# [LAW:no-silent-failure] A missing/unwritable dir aborts — it never silently falls back to
+# [LAW:no-silent-failure] A missing/unwritable dir aborts - it never silently falls back to
 # the owner's global ~/.claude, which would defeat the isolation entirely.
 # Usage: iso_config_require <config_dir>
 iso_config_require() {
@@ -81,7 +81,7 @@ iso_capture() {
   tmux capture-pane -t "$sess" -p 2>/dev/null
 }
 
-# A screen that unambiguously means "this config dir is NOT set up" — first-run onboarding
+# A screen that unambiguously means "this config dir is NOT set up" - first-run onboarding
 # or a login prompt. If we see any of these on a run that expected a ready dir, we abort and
 # tell the owner to run setup, rather than drive a half-provisioned session.
 iso_screen_needs_setup() {
@@ -115,7 +115,7 @@ iso_is_idle_frame() {
 
 # ── Session launch (steady state) ───────────────────────────────────────────────────────
 # Launch the interactive Claude Code TUI on Opus, in a clean working dir, with the already-
-# provisioned isolated config dir, and settle to an idle prompt — clearing the per-directory
+# provisioned isolated config dir, and settle to an idle prompt - clearing the per-directory
 # trust dialog on the way. If the screen shows first-run onboarding or a login prompt, the
 # dir is not set up: abort loudly pointing at setup, never limp forward.
 #
@@ -171,11 +171,11 @@ iso_launch() {
 
 # ── Drive one turn ──────────────────────────────────────────────────────────────────────
 # Send one prompt, wait for the session to return to idle, and echo the full pane. A one-
-# shot probe turn — the simple question/answer this ticket needs, not the general multi-turn
+# shot probe turn - the simple question/answer this ticket needs, not the general multi-turn
 # driver (a later ticket).
 #
 # [LAW:no-silent-failure] A turn that never begins, never returns to idle within the timeout,
-# or comes back with an empty/unchanged screen ABORTS nonzero — it never returns a partial
+# or comes back with an empty/unchanged screen ABORTS nonzero - it never returns a partial
 # capture a caller could mistake for a pass. This is the amplifier guard: one bad turn stops
 # the line rather than emitting a corrupt datapoint.
 #
@@ -192,7 +192,7 @@ iso_turn() {
   tmux send-keys -t "$sess" C-m || iso_die "iso_turn: send-keys (submit) failed on $sess"
 
   # Wait for the turn to actually START (a working indicator appears) before waiting for it
-  # to finish — otherwise the previous turn's idle footer reads as instant completion.
+  # to finish - otherwise the previous turn's idle footer reads as instant completion.
   # [LAW:no-ambient-temporal-coupling] the started→idle transition is owned state, not luck.
   local waited=0 cur started=0
   while [ "$waited" -lt "$ISO_TURN_TIMEOUT_SECS" ]; do
@@ -201,7 +201,7 @@ iso_turn() {
     sleep "$ISO_POLL_SECS"; waited=$((waited + ISO_POLL_SECS))
   done
   [ "$started" -eq 1 ] \
-    || iso_die "driven turn never began working within ${ISO_TURN_TIMEOUT_SECS}s (prompt did not take) — aborting"
+    || iso_die "driven turn never began working within ${ISO_TURN_TIMEOUT_SECS}s (prompt did not take) - aborting"
 
   # Then wait for it to settle back to a stable idle frame.
   local prev=""
@@ -213,12 +213,12 @@ iso_turn() {
     sleep "$ISO_POLL_SECS"; waited=$((waited + ISO_POLL_SECS))
   done
   [ "$waited" -lt "$ISO_TURN_TIMEOUT_SECS" ] \
-    || iso_die "driven turn TIMED OUT after ${ISO_TURN_TIMEOUT_SECS}s (never returned to idle) — aborting rather than emitting a partial datapoint"
+    || iso_die "driven turn TIMED OUT after ${ISO_TURN_TIMEOUT_SECS}s (never returned to idle) - aborting rather than emitting a partial datapoint"
 
   local screen
   screen="$(iso_capture "$sess")"
-  [ -n "$screen" ] || iso_die "driven turn produced an EMPTY capture — aborting"
-  [ "$screen" != "$before" ] || iso_die "driven turn left the screen unchanged — aborting"
+  [ -n "$screen" ] || iso_die "driven turn produced an EMPTY capture - aborting"
+  [ "$screen" != "$before" ] || iso_die "driven turn left the screen unchanged - aborting"
 
   printf '%s\n' "$screen"
 }
@@ -245,7 +245,7 @@ iso_answer() {
 }
 
 # ── Teardown ────────────────────────────────────────────────────────────────────────────
-# Kill the tmux session. The persistent config dir is deliberately LEFT INTACT — it holds
+# Kill the tmux session. The persistent config dir is deliberately LEFT INTACT - it holds
 # the one-time login and is reused by every future run. There is no materialized secret to
 # scrub, because we never create one.
 # Usage: iso_teardown <session>

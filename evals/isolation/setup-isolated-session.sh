@@ -5,7 +5,7 @@
 # pointed at the persistent config dir, then hands off to you: you attach, pick the
 # subscription login, complete the OAuth in your browser, accept the trust dialog, and
 # decline the fullscreen renderer. After that the token lives in your macOS keychain and the
-# config dir keeps the account link — reused for weeks. You only do this again if the login
+# config dir keeps the account link - reused for weeks. You only do this again if the login
 # expires.
 #
 # Nothing is copied or exported. Auth is obtained the real way: you log in.
@@ -24,7 +24,7 @@ ISO_SESSION="${ISO_SESSION:-iso-setup}"
 iso_config_require "$ISO_CONFIG_DIR"
 
 if iso_config_is_setup "$ISO_CONFIG_DIR"; then
-  iso_log "config dir already logged in: $ISO_CONFIG_DIR — nothing to do."
+  iso_log "config dir already logged in: $ISO_CONFIG_DIR - nothing to do."
   iso_log "verify it with: $HERE/verify-isolation.sh"
   exit 0
 fi

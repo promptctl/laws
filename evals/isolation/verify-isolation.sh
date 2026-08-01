@@ -3,19 +3,19 @@
 # global guidance able to load, and no silent fallback to the global config. Exits 0 only if
 # every check passes.
 #
-# How each property is actually checked — and why:
+# How each property is actually checked - and why:
 #   Isolation is STRUCTURAL. The owner's ~/.claude/CLAUDE.md, settings.json, and the laws-
 #   plugin router hooks live under the DEFAULT ~/.claude dir. We point CLAUDE_CONFIG_DIR at a
 #   DIFFERENT dir, so they are not on the search path. We prove that by reading the config
-#   dir — it is not ~/.claude, it holds no CLAUDE.md, and its settings enable no plugins or
+#   dir - it is not ~/.claude, it holds no CLAUDE.md, and its settings enable no plugins or
 #   hooks. We do NOT quiz the model with trick questions to "discover" a leak: a config dir
 #   with no guidance in it cannot serve guidance, and that is a fact about the filesystem,
 #   not about the model's answers.
-#   Model + auth ARE behavioral — whether the live session actually came up as Opus on the
+#   Model + auth ARE behavioral - whether the live session actually came up as Opus on the
 #   subscription can only be seen by launching it and asking. That one check runs live.
 #
 # [LAW:no-silent-failure] A bad config dir aborts nonzero; the live turn aborts nonzero on a
-# timeout/empty turn — no check can be faked into a pass.
+# timeout/empty turn - no check can be faked into a pass.
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,8 +29,8 @@ GLOBAL_CONFIG_DIR="${CLAUDE_CONFIG_DIR_DEFAULT:-$HOME/.claude}"
 
 PASS=0 FAIL=0
 report() {  # report <label> <ok|fail> <detail>
-  if [ "$2" = ok ]; then PASS=$((PASS+1)); printf '  PASS  %s — %s\n' "$1" "$3"
-  else FAIL=$((FAIL+1)); printf '  FAIL  %s — %s\n' "$1" "$3"; fi
+  if [ "$2" = ok ]; then PASS=$((PASS+1)); printf '  PASS  %s - %s\n' "$1" "$3"
+  else FAIL=$((FAIL+1)); printf '  FAIL  %s - %s\n' "$1" "$3"; fi
 }
 cleanup() { iso_teardown "$ISO_SESSION"; }
 trap cleanup EXIT
@@ -38,7 +38,7 @@ trap cleanup EXIT
 # ── (Structural) The config dir is distinct from the global one and carries no guidance ───
 echo "== (isolation) config dir carries none of the global guidance =="
 
-# Distinct from ~/.claude — pointing at the same dir would load everything.
+# Distinct from ~/.claude - pointing at the same dir would load everything.
 if [ "$(cd "$ISO_CONFIG_DIR" 2>/dev/null && pwd -P)" = "$(cd "$GLOBAL_CONFIG_DIR" 2>/dev/null && pwd -P)" ]; then
   report "config dir is not the global one" fail "ISO_CONFIG_DIR resolves to the global $GLOBAL_CONFIG_DIR"
 else
@@ -52,7 +52,7 @@ else
   report "no CLAUDE.md in config dir" ok "none under $ISO_CONFIG_DIR"
 fi
 
-# The config dir's own settings enable no plugins and register no hooks — so the laws-plugin
+# The config dir's own settings enable no plugins and register no hooks - so the laws-plugin
 # router cannot fire. (A missing settings.json is trivially clean.)
 SETTINGS="$ISO_CONFIG_DIR/settings.json"
 if [ ! -f "$SETTINGS" ]; then
@@ -75,7 +75,7 @@ PY
   fi
 fi
 
-# ── (D) A bad CLAUDE_CONFIG_DIR aborts nonzero — never a silent fallback to global ────────
+# ── (D) A bad CLAUDE_CONFIG_DIR aborts nonzero - never a silent fallback to global ────────
 echo "== (D) No silent fallback for a bad CLAUDE_CONFIG_DIR =="
 DTMP="$(mktemp -d)"
 
@@ -94,11 +94,11 @@ else
 fi
 rm -rf "$DTMP"
 
-# ── (A) The live session actually runs on Opus (behavioral — the one thing you must ask) ──
+# ── (A) The live session actually runs on Opus (behavioral - the one thing you must ask) ──
 echo "== (A) launch the real session and confirm it is Opus =="
 iso_config_require "$ISO_CONFIG_DIR"
 iso_config_is_setup "$ISO_CONFIG_DIR" \
-  || iso_die "config dir is not logged in: $ISO_CONFIG_DIR — run $HERE/setup-isolated-session.sh first"
+  || iso_die "config dir is not logged in: $ISO_CONFIG_DIR - run $HERE/setup-isolated-session.sh first"
 iso_launch "$ISO_SESSION" "$ISO_CONFIG_DIR" "$ISO_WORK_DIR"
 
 A_SCREEN="$(iso_turn "$ISO_SESSION" \
@@ -113,7 +113,7 @@ fi
 echo ""
 echo "SUMMARY: $PASS passed, $FAIL failed"
 if [ "$FAIL" -eq 0 ]; then
-  echo "RESULT: PASS — isolated config dir carries no global guidance; bad dir aborts; live session is Opus"
+  echo "RESULT: PASS - isolated config dir carries no global guidance; bad dir aborts; live session is Opus"
   exit 0
 else
   echo "RESULT: FAIL"
