@@ -11,5 +11,7 @@ target="evals/driver/drive.sh"
 
 printf '\nif then\n' >> "$target"   # a syntactically broken fragment: `if` with no condition
 
+# Here the parse error is EXPECTED - it is the proof the break took - so its output is suppressed
+# on purpose; we only care that bash -n now fails.
 ! bash -n "$target" 2>/dev/null || { echo "setup: injected fragment did not break parsing of $target" >&2; exit 2; }
 echo "setup: injected a syntax error into $target"

@@ -9,12 +9,19 @@ set -euo pipefail
 
 [ -d evals ] || { echo "check: no evals/ directory in the checkout" >&2; exit 2; }
 
+# Enumerate first, with pipefail + an explicit check, so a find runtime error (unreadable dir, I/O)
+# aborts as a harness error rather than silently yielding a short list. [LAW:no-silent-failure]
+scripts="$(find evals -name '*.sh' -type f | sort)" \
+  || { echo "check: could not enumerate scripts under evals/" >&2; exit 2; }
+
 failed=0
 while IFS= read -r script; do
-  if ! bash -n "$script" 2>/dev/null; then
+  [ -n "$script" ] || continue
+  # Let bash -n's diagnostic (line, token) through, next to our own line, so a failure is debuggable.
+  if ! bash -n "$script"; then
     echo "check: does not parse: $script" >&2
     failed=1
   fi
-done < <(find evals -name '*.sh' -type f | sort)
+done <<< "$scripts"
 
 exit "$failed"

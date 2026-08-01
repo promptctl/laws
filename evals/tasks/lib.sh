@@ -61,7 +61,9 @@ task_validate() {
   local vars
   vars="$(set -e; TASK_REPO=""; TASK_COMMIT=""; TASK_SUMMARY=""
           # shellcheck disable=SC1090
-          . "$man" >/dev/null 2>&1
+          # Suppress the manifest's stdout, but let its stderr through so a source error is
+          # visible rather than swallowed. [LAW:no-silent-failure]
+          . "$man" >/dev/null
           printf '%s\n%s\n%s\n' "$TASK_REPO" "$TASK_COMMIT" "$TASK_SUMMARY")" \
     || task_die "task_validate: manifest.sh failed to source cleanly: $man"
   local repo commit summary
@@ -82,8 +84,9 @@ task_validate() {
   smuggled="$(grep -nE '^[[:space:]]*(TASK_SKILL|TASK_ARM|TASK_SKILL_REF|TASK_CONFIG|SKILL_REF|ARM)[[:space:]]*=' "$man" | head -1)"
   [ -z "$smuggled" ] || task_die "task_validate: manifest sets a configuration/arm field (a task must be orthogonal to the arm): $smuggled"
 
-  # The repo must be reachable, so a typo'd URL fails now, not deep in a run.
-  git ls-remote "$repo" >/dev/null 2>&1 \
+  # The repo must be reachable, so a typo'd URL fails now, not deep in a run. Suppress ls-remote's
+  # ref list on stdout but let its stderr through, so the reason (auth, DNS, 404) is visible.
+  git ls-remote "$repo" >/dev/null \
     || task_die "task_validate: TASK_REPO is not reachable: $repo"
 
   printf '%s\n%s\n%s\n' "$repo" "$commit" "$summary"
@@ -103,8 +106,10 @@ task_prepare() {
   commit="$(printf '%s' "$out" | sed -n '2p')"
 
   [ ! -e "$dest" ] || task_die "task_prepare: dest already exists: $dest (refusing to overwrite)"
-  git clone --quiet "$repo" "$dest" 2>/dev/null || task_die "task_prepare: git clone failed: $repo"
-  git -C "$dest" checkout --quiet "$commit" 2>/dev/null \
+  # --quiet suppresses progress; git's actual error on failure still reaches stderr (not swallowed)
+  # so the reason is visible before we abort. [LAW:no-silent-failure]
+  git clone --quiet "$repo" "$dest" || task_die "task_prepare: git clone failed: $repo"
+  git -C "$dest" checkout --quiet "$commit" \
     || task_die "task_prepare: TASK_COMMIT does not resolve in $repo: $commit"
   task_log "prepared $repo @ $commit -> $dest"
 }
