@@ -1,6 +1,6 @@
 ---
 name: ticket
-description: Craft reference for breaking work into epics and issues another agent will build — backlog planning, decomposing a feature or fix, writing or splitting tickets, defining acceptance criteria. Use BEFORE you create or groom tickets. A ticket is read later, against a moved codebase, by an agent with none of the planning conversation — the craft covers what a ticket must carry, how work is sized and ordered, and what makes done checkable.
+description: PLACEHOLDER
 ---
 
 # Producing this artifact
