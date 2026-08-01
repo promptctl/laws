@@ -110,3 +110,74 @@ cmp_report() {
 
   [ "$any_failed" -eq 0 ]
 }
+
+# ── Repeated comparison (expose the harness's own noise) ────────────────────────────────
+# Run each task+arm pair N times and report each arm's outcome as a DISTRIBUTION across its
+# repetitions (k of N passed), not a single verdict - because an Opus agent driven through a
+# multi-turn task is stochastic, so a one-shot A-beats-B read is as likely to be noise as signal.
+# A reader compares an arm's within-run spread against the cross-arm difference before trusting it.
+#
+# [LAW:no-silent-failure] an aborted repetition is a FAILED run in the count - it never counts as a
+#   pass or a fabricated score, and any aborted repetition makes the overall exit nonzero.
+# Usage: compare_repeated <task_dir> <out_dir> <reps> <config_dir> [<config_dir> ...]
+compare_repeated() {
+  local task="$1" out="$2" reps="$3"; shift 3
+  [ -n "$task" ] && [ -n "$out" ] && [ -n "$reps" ] || cmp_die "usage: compare_repeated <task> <out> <reps> <config...>"
+  # Reject non-digits, empty, and leading zeros ("08" would be misread as invalid octal by bash
+  # arithmetic). This leaves reps a base-10 positive integer.
+  case "$reps" in ''|*[!0-9]*|0*) cmp_die "reps must be a positive integer with no leading zero: $reps" ;; esac
+  [ "$#" -ge 1 ] || cmp_die "need at least one configuration"
+  task_validate "$task" >/dev/null || exit $?
+  [ ! -e "$out" ] || cmp_die "out dir already exists: $out (refusing to overwrite)"
+  mkdir -p "$out" || cmp_die "could not create out dir: $out"
+
+  # Distinct basenames, as in compare_task - two arms can't share a storage dir.
+  local -a seen=(); local c bn
+  for c in "$@"; do bn="$(basename "$c")"
+    for s in "${seen[@]}"; do [ "$s" = "$bn" ] && cmp_die "two configurations share the basename '$bn'"; done
+    seen+=("$bn"); done
+
+  local any_aborted=0
+  local -a names refs passes aborts
+  local config name ref i armout verdict passed aborted
+  for config in "$@"; do
+    name="$(basename "$config")"; ref="$(cmp_arm_ref "$config")"
+    passed=0; aborted=0
+    printf '\n[compare] arm %s (skill_ref=%s), %d repetition(s):\n' "$name" "$ref" "$reps" >&2
+    for ((i = 1; i <= reps; i++)); do
+      armout="$out/$name/rep-$(printf '%02d' "$i")"
+      mkdir -p "$out/$name"
+      if ( run_scored "$task" "$config" "$armout" ) >"$out/$name/rep-$(printf '%02d' "$i").runlog" 2>&1 \
+           && [ -f "$armout/outcome.json" ]; then
+        verdict="$(grep -o '"verdict": *"[^"]*"' "$armout/outcome.json" | sed 's/.*"\([^"]*\)"$/\1/')"
+        [ -n "$verdict" ] || verdict="FAILED"   # a corrupted/empty verdict is not a pass
+      else
+        verdict="FAILED"
+      fi
+      # Total over every verdict: pass counts toward k; fail is a real completed non-pass (in N,
+      # not k, not an abort); anything else - empty or unexpected - is treated as an abort.
+      case "$verdict" in
+        pass) passed=$((passed + 1)) ;;
+        fail) : ;;
+        *) aborted=$((aborted + 1)); any_aborted=1; verdict="FAILED" ;;
+      esac
+      printf '  run %02d: %s\n' "$i" "$verdict" >&2
+    done
+    printf '  -> %d of %d passed%s\n' "$passed" "$reps" \
+      "$([ "$aborted" -gt 0 ] && printf ' (%d aborted)' "$aborted")" >&2
+    names+=("$name"); refs+=("$ref"); passes+=("$passed"); aborts+=("$aborted")
+  done
+
+  # Summary: each arm's pass rate over N, so a reader can see whether a cross-arm gap exceeds an
+  # arm's own run-to-run spread. With small N this is a floor, not a significance test - stated so.
+  printf '\n%-22s %-12s %s\n' "ARM" "SKILL_REF" "PASS RATE (k/N)" >&2
+  printf '%-22s %-12s %s\n' "----------------------" "------------" "---------------" >&2
+  local n="${#names[@]}"
+  for ((i = 0; i < n; i++)); do
+    printf '%-22s %-12s %d/%d%s\n' "${names[$i]}" "${refs[$i]}" "${passes[$i]}" "$reps" \
+      "$([ "${aborts[$i]}" -gt 0 ] && printf ' (%d aborted)' "${aborts[$i]}")" >&2
+  done
+  printf '\nRead a cross-arm difference as real only if it exceeds an arm'\''s own run-to-run spread over these %d repetitions.\n' "$reps" >&2
+
+  [ "$any_aborted" -eq 0 ]
+}
