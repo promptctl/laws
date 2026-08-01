@@ -11,22 +11,22 @@ failure the skill calls out by name.
 
 The skill's stated frame is that all these texts sit on one continuum with two
 ends, and the ends want opposite styles. A task prompt is read once, right next to
-the decision it governs, by a reader who can see the result — so it should be
+the decision it governs, by a reader who can see the result - so it should be
 terse and say each thing once. Standing guidance is injected at session start and
-has to still fire a hundred thousand tokens later against competing defaults — so
+has to still fire a hundred thousand tokens later against competing defaults - so
 it should be redundant, cash principles out as images, and rehearse the exact
 rationalizations it must beat. The skill states these as different optimization
 targets, not points on a spectrum: text tuned to read well as a specification will
 measure better and perform worse when it is actually deployed as guidance.
 
 The design choice that serves this: before any device, the skill makes you ask one
-question — how far from the decision, and how alone, will this text be when it has
+question - how far from the decision, and how alone, will this text be when it has
 to work? The stated rule is that the answer, not the document's label, selects the
 style. The skill grounds this in four axes it names (distance to the decision;
 known vs. unknown target; whether the failure is the model misunderstanding versus
 the model understanding and defecting anyway; and how fast the failure comes back
 to its author). My reading: those four axes exist so the writer can place a text on
-the continuum by its operating conditions rather than by what it is called — a
+the continuum by its operating conditions rather than by what it is called - a
 long-horizon autonomous agent prompt is named a prompt but has drifted into
 guidance's regime.
 
@@ -36,7 +36,7 @@ For the proximate end (task prompts), the skill's target is a prompt a cold read
 can execute exactly once: the deliverable stated precisely (artifact, format,
 destination), every requirement present because the reader starts from zero, one
 checkable acceptance criterion, instructions and context and data kept separate.
-The one far-end device it keeps here is the negative example — "do NOT produce
+The one far-end device it keeps here is the negative example - "do NOT produce
 output like X" is enforceable in a way "be thorough" is not.
 
 For the far end (standing guidance), the skill's target is behavior induced at a
@@ -49,6 +49,25 @@ stated reasoning for each is retrieval under interference: whatever fragment of 
 document is active at the moment of generation is all of it that exists, so
 amplitude and repetition are how a principle stays on duty deep in a session.
 
+## The discipline on the far-end devices: reveal, don't fog
+
+Metaphor is why the far-end devices work: it is the core mechanism of knowledge
+transfer - a revealing image binds a principle whole and carries it into the later
+moment where it must fire. That power is why it needs governing. The test is reveal
+vs. fog. An image that reveals makes the idea graspable and beats plain language; the
+same image dragged past its work, or several images stacked on one point, is fog, and
+fog obscures more than it reveals. Fog spreads: once a document tolerates it, more
+follows.
+
+The calibration is one test - keep the writing green. Green is spare and still
+growing, full of potential; ripe is a passage sagging under its own restatements. If
+you're green you're growing; if you're ripe you're rotten. Be spare, nearly austere,
+but do not cut richness that is ready to bloom.
+
+This does not reverse the anti-distillation stance below. The enemy was never
+repetition of a true thing; it is fog. Cut obscuring language, never a revealing image
+or a restatement that fires where the others do not.
+
 ## Design choices in the skill itself
 
 Two structural choices, both stated:
@@ -59,10 +78,10 @@ Two structural choices, both stated:
   stacks guidance that session does not need. My reading: this keeps the routing
   layer thin and the heavy material out of contexts that will not write anything.
 
-- `craft.md` is deliberately written in the far-end style it teaches — repetitive,
-  image-heavy, higher-amplitude than reference material normally is. The skill says
-  so outright and calls itself both instruction and specimen, so a reader tempted
-  to trim the repetition sees the craft rather than flab.
+- `craft.md` is written in the far-end style it teaches - image-anchored and
+  repetitive where repetition fires - but spare, not foggy: every image earns its
+  place by revealing, and none is extended past its work. The skill calls itself both
+  instruction and specimen, so it must model reveal-not-fog, not merely assert it.
 
 ## What it deliberately avoids, and why
 
@@ -70,8 +89,8 @@ Two structural choices, both stated:
   rewrite that deduplicated and taxonomized a working guidance document, measured
   better as a spec, and drove worse behavior because it stripped the repetition and
   images that made the original fire. So the skill forbids cutting a passage merely
-  because it repeats a true thing; cuts are only for content that is wrong or points
-  the wrong way.
+  because it repeats a true thing; cuts are for content that is wrong, points the
+  wrong way, or is fog - language that obscures more than it reveals.
 
 - Importing far-end devices into task prompts. Redundancy, imagery, and stakes
   framing at distance zero read as emphasis and distort the weighting for a reader
@@ -80,10 +99,10 @@ Two structural choices, both stated:
 
 - Letting a document's subject supply its style. The stated lesson from the origin
   story is that the subject matter of a guidance document is never its style
-  authority — code's "one source of truth" aesthetic is correct for code and
+  authority - code's "one source of truth" aesthetic is correct for code and
   destructive when applied to the guidance document about code.
 
 - Confusing structure with compression. The skill keeps the distillation's genuine
-  wins — canonical tokens, a citation protocol, explicit parentage, a closing recap
-  — and frames them as skeleton that aids navigation. The line it holds: structure
+  wins - canonical tokens, a citation protocol, explicit parentage, a closing recap
+  - and frames them as skeleton that aids navigation. The line it holds: structure
   is additive and safe, compression is subtractive and destroys the payload.
