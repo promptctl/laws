@@ -32,7 +32,7 @@ was printed; nonzero (with a located message on stderr) the moment a turn cannot
 evals/driver/verify-driver.sh
 ```
 
-Exits `0` iff all five checks pass against a live Opus session:
+Exits `0` iff all six checks pass against a live Opus session:
 
 | Check | What it proves |
 |-------|----------------|
