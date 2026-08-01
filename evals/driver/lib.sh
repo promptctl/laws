@@ -220,6 +220,15 @@ drive_turn() {
     # History-inclusive capture: a reply longer than the visible pane keeps its prompt anchor and
     # head in scrollback, so the parser can still find and return the whole reply.
     cur="$(drv_capture "$sess")"
+    # A live session's pane always carries at least the footer, so an empty capture is a real
+    # failure, not a slow turn. Surface it with the precise cause instead of spinning to a
+    # misleading timeout. [LAW:no-silent-failure] (also closes the has-session/capture TOCTOU:
+    # a session that died in between lands here and is reported as a death, not a capture fault.)
+    if [ -z "$cur" ]; then
+      tmux has-session -t "$sess" 2>/dev/null \
+        || drv_die "drive_turn: session died mid-turn: $sess (no reply emitted)"
+      drv_die "drive_turn: screen capture returned empty on a live session: $sess (tmux capture-pane failed) - aborting rather than spinning to a misleading timeout"
+    fi
     if drv_frame_idle "$cur"; then
       curreply="$(drv_reply_below_prompt "$cur")"
       if [ -n "$curreply" ] && [ "$curreply" = "$prev" ]; then
