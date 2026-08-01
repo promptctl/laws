@@ -39,6 +39,7 @@ Exits `0` iff all five checks pass against a live Opus session:
 | A | a throwaway prompt returns the reply text and exits 0 |
 | B | turns compose: a second turn returns *its* reply, not the first's (no staleness) |
 | C | a slow turn is waited out in full - the reply's final end-token is present, never an early partial |
+| F | a reply several times the pane height completes with its head (scrolled off the pane) and tail both present |
 | D | a turn that never reaches idle within its bound exits nonzero and emits no reply |
 | E | killing the session mid-turn exits nonzero and emits no reply |
 
@@ -54,6 +55,10 @@ submitted* is non-empty **and** unchanged across two polls. Three things fall ou
   "working" indicator, which a fast turn can finish between polls.
 - **The reply is returned parsed and clean** - the trailing completion stamp (`✻ … for Ns`)
   and input-box chrome are trimmed off - so callers downstream never re-parse a raw pane.
+- **A reply longer than the pane still completes.** The driver captures the full retained
+  scrollback (`capture-pane -S -`), not just the visible pane, so a reply that scrolls its head
+  (and the prompt anchor) off-screen is still found whole. Retention is bounded by the session's
+  `history-limit`, set generously at launch; the footer/idle tokens still sit at the live bottom.
 
 The prompt is delivered by **bracketed paste** (`tmux paste-buffer -p`) so multi-line task text
 stays in the input box intact; submission is a single explicit Enter afterward, never a newline

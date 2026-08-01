@@ -8,6 +8,8 @@
 #   B. Turns compose: a second turn on the same session returns THAT turn's reply, not the first.
 #   C. A slow turn is waited out in full - the driver returns the complete reply (its final
 #      end-token is present), never an early partial.
+#   F. A reply several times the pane height completes and returns the WHOLE reply - its head
+#      (which scrolled off the visible pane) and its tail end-token both present.
 #   D. A turn that never reaches idle within its bound exits nonzero and emits NO reply.
 #   E. Killing the session mid-turn exits nonzero and emits NO reply.
 #
@@ -66,6 +68,21 @@ if replyC="$(drive_turn "$S1" "$CPROMPT")"; then
   esac
 else
   fail "C: slow turn did not exit 0"
+fi
+
+# F) a reply several times the pane height completes and returns the WHOLE reply. The pane is
+# ISO_PANE_HEIGHT (~50) lines; a ~150-line reply scrolls its head - including the prompt anchor -
+# off the visible pane. Asserting BOTH the head (row 1) and the tail end-token are present proves
+# the full-history capture recovered the scrolled-off head, not just the visible tail.
+FPROMPT='Output the numbers 1 through 150, each on its own line in the exact form "row N" (row 1, row 2, ... row 150). On the very last line after row 150 write exactly BIGDONE-9Z. Output all lines directly with no commentary.'
+if replyF="$(drive_turn "$S1" "$FPROMPT")"; then
+  case "$replyF" in
+    *"row 1"*BIGDONE-9Z*) pass "F: reply several times the pane height completed with head AND tail present (full-history capture)" ;;
+    *BIGDONE-9Z*) fail "F: end-token present but the reply head (row 1) is missing - only the visible tail was captured: [$(printf '%s' "$replyF" | head -1)]" ;;
+    *) fail "F: long reply did not return the final end-token (returned a partial?)" ;;
+  esac
+else
+  fail "F: long-reply turn did not exit 0"
 fi
 
 # D) a turn that cannot reach idle within its bound -> nonzero, and NOTHING on stdout

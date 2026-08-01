@@ -46,6 +46,21 @@ DRV_SPINNER_SENTINEL="${DRV_SPINNER_SENTINEL:-EVALBUSY}"
 drv_die() { printf 'ERROR [driver]: %s\n' "$*" >&2; exit 1; }
 drv_log() { printf '[driver] %s\n' "$*" >&2; }
 
+# ── History-inclusive capture ───────────────────────────────────────────────────────────
+# iso_capture reads only the visible pane; a reply longer than the pane scrolls its head - the
+# prompt line the reply parser anchors on - out of view, and the parser then finds nothing and
+# the turn times out. This captures the full retained scrollback (`-S -`), so the whole reply,
+# head included, is present regardless of length. Retention is bounded by the session's
+# history-limit, set generously at launch (ISO_HISTORY_LIMIT).
+# The footer/idle-detection tokens still sit at the live bottom of this capture, and the TUI
+# redraws the footer in place rather than scrolling it, so no stale "working" footer accumulates
+# in history - idle/working classification reads the same on a full capture as on a visible one.
+# [LAW:effects-at-boundaries] the one place the driver reads the screen for a turn.
+# Usage: drv_capture <session>
+drv_capture() {
+  tmux capture-pane -t "$1" -p -S - 2>/dev/null
+}
+
 # ── Frame classification (pure functions of a captured screen) ──────────────────────────
 # WORKING: the interrupt affordance is on screen, or our spinner sentinel is. The interrupt
 # line is present on every generating frame; the sentinel flickers with tips, so it is an
@@ -202,7 +217,9 @@ drive_turn() {
   while [ "$waited" -lt "$DRV_TURN_TIMEOUT_SECS" ]; do
     tmux has-session -t "$sess" 2>/dev/null \
       || drv_die "drive_turn: session died mid-turn: $sess (no reply emitted)"
-    cur="$(iso_capture "$sess")"
+    # History-inclusive capture: a reply longer than the visible pane keeps its prompt anchor and
+    # head in scrollback, so the parser can still find and return the whole reply.
+    cur="$(drv_capture "$sess")"
     if drv_frame_idle "$cur"; then
       curreply="$(drv_reply_below_prompt "$cur")"
       if [ -n "$curreply" ] && [ "$curreply" = "$prev" ]; then
