@@ -119,19 +119,28 @@ run_scored() {
   printf '%s\n' "$out/outcome.json"
 }
 
-# Write the outcome record as JSON. Values are shell strings with no embedded quotes/newlines
-# (names, a ref, a verdict, a count, paths), so a small hand-rolled writer is safe and dep-free.
+# Write the outcome record as JSON. A path value (artifact/transcript, derived from the caller's
+# out dir) can legitimately contain a double quote or backslash, so the values are escaped by a
+# real JSON encoder rather than interpolated raw - a malformed record is itself a bad datapoint.
+# [LAW:no-silent-failure]
 run_emit_outcome() {
   local file="$1" task="$2" config="$3" skillref="$4" verdict="$5" turns="$6" artifact="$7" transcript="$8"
-  cat > "$file" <<JSON
-{
-  "task": "$task",
-  "config": "$config",
-  "skill_ref": "$skillref",
-  "verdict": "$verdict",
-  "turns": $turns,
-  "artifact": "$artifact",
-  "transcript": "$transcript"
+  iso_need python3
+  TASK="$task" CONFIG="$config" SKILLREF="$skillref" VERDICT="$verdict" TURNS="$turns" \
+  ARTIFACT="$artifact" TRANSCRIPT="$transcript" python3 - "$file" <<'PY' \
+    || run_die "run_emit_outcome: could not write the outcome record: $file"
+import json, os, sys
+rec = {
+    "task": os.environ["TASK"],
+    "config": os.environ["CONFIG"],
+    "skill_ref": os.environ["SKILLREF"],
+    "verdict": os.environ["VERDICT"],
+    "turns": int(os.environ["TURNS"]),
+    "artifact": os.environ["ARTIFACT"],
+    "transcript": os.environ["TRANSCRIPT"],
 }
-JSON
+with open(sys.argv[1], "w") as f:
+    json.dump(rec, f, indent=2)
+    f.write("\n")
+PY
 }

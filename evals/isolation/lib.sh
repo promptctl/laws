@@ -121,18 +121,24 @@ iso_screen_is_bypass_warning() {
   return 1
 }
 
-# The idle prompt frame: an idle-footer token is present and no active-work indicator is. The
-# footer differs by permission mode - normal shows "? for shortcuts", bypass mode replaces it with
-# "bypass permissions on (shift+tab to cycle)" - so both are recognized.
+# Does the screen show an idle prompt's FOOTER? The footer differs by permission mode - normal
+# shows "? for shortcuts", bypass mode replaces it with "bypass permissions on (shift+tab to
+# cycle)" - so both count. This is the single owner of the idle-footer token set; the driver's
+# idle classifier reads it from here rather than repeating the literals. [LAW:one-source-of-truth]
+iso_has_idle_footer() {
+  case "$1" in
+    *"? for shortcuts"*|*"bypass permissions on"*) return 0 ;;
+  esac
+  return 1
+}
+
+# The idle prompt frame: an idle footer is present and no active-work indicator is.
 # [LAW:types-are-the-program] idle-ness is derived from on-screen state, not elapsed time.
 iso_is_idle_frame() {
   case "$1" in
     *"esc to interrupt"*|*"Esc to interrupt"*|*"to interrupt"*) return 1 ;;
   esac
-  case "$1" in
-    *"? for shortcuts"*|*"bypass permissions on"*) return 0 ;;
-  esac
-  return 1
+  iso_has_idle_footer "$1"
 }
 
 # ── Session launch (steady state) ───────────────────────────────────────────────────────
@@ -203,9 +209,15 @@ iso_launch() {
   (refusing to drive a half-provisioned session)"
     fi
     if iso_screen_is_bypass_warning "$screen"; then
-      # Its default is "No, exit"; select "2. Yes, I accept" then confirm. [LAW:no-silent-failure]
-      # exception: a bare Enter here would quit the session.
-      tmux send-keys -t "$sess" "2"; sleep 1; tmux send-keys -t "$sess" C-m
+      # Its default is "No, exit", so a bare Enter would quit. Drive it by verified STATE, not a
+      # timing bet: press Enter only once the screen confirms "Yes, I accept" is the selected line
+      # (the ❯ cursor sits on it); otherwise press "2" to move the selection and re-poll.
+      # [LAW:no-ambient-temporal-coupling] the confirm is gated on observed selection, not a sleep.
+      if printf '%s' "$screen" | grep -q '❯.*[Yy]es, I accept'; then
+        tmux send-keys -t "$sess" C-m
+      else
+        tmux send-keys -t "$sess" "2"
+      fi
       prev=""; sleep "$ISO_POLL_SECS"; waited=$((waited + ISO_POLL_SECS)); continue
     fi
     if iso_screen_is_enter_gate "$screen"; then

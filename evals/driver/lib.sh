@@ -83,15 +83,11 @@ drv_frame_working() {
   return 1
 }
 
-# IDLE: an idle-footer token is present and nothing signals active work. The footer differs by
-# permission mode - normal shows "? for shortcuts", bypass mode shows "bypass permissions on
-# (shift+tab to cycle)" - so both count.
+# IDLE: an idle footer is present and nothing signals active work. The idle-footer token set lives
+# in the isolation layer (iso_has_idle_footer) - the single owner - so the two layers cannot drift.
 drv_frame_idle() {
   drv_frame_working "$1" && return 1
-  case "$1" in
-    *"? for shortcuts"*|*"bypass permissions on"*) return 0 ;;
-  esac
-  return 1
+  iso_has_idle_footer "$1"
 }
 
 # The transcript is everything ABOVE the input box. The input box is a "❯ " line sandwiched
