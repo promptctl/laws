@@ -11,11 +11,14 @@
 #   hooks. We do NOT quiz the model with trick questions to "discover" a leak: a config dir
 #   with no guidance in it cannot serve guidance, and that is a fact about the filesystem,
 #   not about the model's answers.
-#   Model + auth ARE behavioral - whether the live session actually came up as Opus on the
-#   subscription can only be seen by launching it and asking. That one check runs live.
+#   Model + auth are read the same way - from state, not from the model. Launching the session
+#   paints an account banner ("<model> · Claude Max"); we read the model and plan off that. We do
+#   NOT ask the model to name itself: models misreport their identity, so an answer would be the
+#   one thing on this screen the session could fake. The banner is chrome the TUI renders from
+#   the resolved model, so a session on a different model shows a different banner and fails.
 #
-# [LAW:no-silent-failure] A bad config dir aborts nonzero; the live turn aborts nonzero on a
-# timeout/empty turn - no check can be faked into a pass.
+# [LAW:no-silent-failure] A bad config dir aborts nonzero; a missing banner fails the model check
+# rather than passing quietly - no check can be faked into a pass.
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -93,20 +96,33 @@ else
 fi
 rm -rf "$DTMP"
 
-# ── (A) The live session actually runs on Opus (behavioral - the one thing you must ask) ──
-echo "== (A) launch the real session and confirm it is Opus =="
+# ── (A) The live session runs on Opus, on the subscription - READ from the TUI chrome ─────
+# The account banner the TUI paints on launch shows "<model> · Claude Max" - the model the
+# session actually resolved to, and the subscription plan. We READ that; we do NOT ask the model
+# to name itself. Models routinely misreport their own identity, and the rest of this script
+# already proves properties by reading state, not by quizzing the model - this check now agrees
+# with that principle instead of contradicting it. Reading the banner also confirms the
+# subscription plan ("Claude Max"), which the old quiz never checked at all.
+echo "== (A) the live session runs on Opus, on the subscription (read from chrome) =="
 iso_config_require "$ISO_CONFIG_DIR"
 iso_config_is_setup "$ISO_CONFIG_DIR" \
   || iso_die "config dir is not logged in: $ISO_CONFIG_DIR - run $HERE/setup-isolated-session.sh first"
 iso_launch "$ISO_SESSION" "$ISO_CONFIG_DIR" "$ISO_WORK_DIR"
 
-A_SCREEN="$(iso_turn "$ISO_SESSION" \
-  "Reply with exactly one line: MODELCHECK then the model family and version you are.")"
-A_ANS="$(iso_answer "$A_SCREEN")"
-if printf '%s' "$A_ANS" | grep -qi 'opus'; then
-  report "(A) model is Opus" ok "session answered: $(printf '%s' "$A_ANS" | grep -i opus | head -1)"
+# The banner line carries the plan token "Claude Max"; the model is the left box column, i.e.
+# everything before "Claude Max". Taking that prefix excludes the right column (a changelog that
+# can itself name another model) - so a changelog mention of "Opus" cannot pass a non-Opus
+# session, and a Sonnet/Haiku session fails even when the changelog mentions Opus.
+A_BANNER="$(tmux capture-pane -t "$ISO_SESSION" -p -S - 2>/dev/null | grep -m1 'Claude Max' || true)"
+A_MODEL="${A_BANNER%%Claude Max*}"
+# For display only: drop the box border, the trailing "· ", and surrounding whitespace.
+A_MODEL_DISP="$(printf '%s' "$A_MODEL" | tr -d '│' | sed -E 's/·[[:space:]]*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
+if [ -z "$A_BANNER" ]; then
+  report "(A) model is Opus on the subscription" fail "no account banner on screen - cannot read the model the session runs"
+elif printf '%s' "$A_MODEL" | grep -qi 'opus'; then
+  report "(A) model is Opus on the subscription" ok "banner shows $A_MODEL_DISP on Claude Max"
 else
-  report "(A) model is Opus" fail "model answer did not say Opus. Answer: [$A_ANS]"
+  report "(A) model is Opus on the subscription" fail "banner model is not Opus: [$A_MODEL_DISP]"
 fi
 
 echo ""
