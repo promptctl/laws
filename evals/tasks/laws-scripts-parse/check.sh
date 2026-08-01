@@ -2,10 +2,12 @@
 # THE CRITERION (mechanical-detector shape). Runs with CWD = the repo checkout. Exit 0 = every
 # shell script under evals/ parses; nonzero = at least one does not. Ground truth via `bash -n`,
 # not a judgment of the work against any skill, law, or rubric.
-# [LAW:no-silent-failure] a missing evals/ tree is an infra fault, not a silent pass.
+# Exit codes follow the harness contract: 0 = every script parses, 1 = at least one does not (the
+# verdict), 2 = the criterion could NOT run (no evals/ tree) - a harness error, never a fabricated
+# FAIL. [LAW:no-silent-failure]
 set -euo pipefail
 
-[ -d evals ] || { echo "check: no evals/ directory in the checkout" >&2; exit 1; }
+[ -d evals ] || { echo "check: no evals/ directory in the checkout" >&2; exit 2; }
 
 failed=0
 while IFS= read -r script; do

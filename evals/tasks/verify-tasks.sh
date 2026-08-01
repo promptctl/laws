@@ -11,6 +11,8 @@
 # [LAW:dataflow-not-control-flow] one loop over the discovered task list; no per-task code.
 # [LAW:no-silent-failure] a task that cannot even be prepared aborts loudly; a criterion that
 #   passes where it must fail (or vice-versa) is a hard failure, never glossed.
+# `set -e` is intentionally omitted (as in the sibling verify-driver.sh): a failing check must be
+# recorded and the suite continue, not abort. Discovery is guarded explicitly below instead.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
@@ -23,8 +25,12 @@ fails=0
 pass() { printf '  PASS  %s\n' "$*" >&2; }
 fail() { printf '  FAIL  %s\n' "$*" >&2; fails=$((fails + 1)); }
 
-# Discover tasks: every directory under here that holds a manifest.sh.
-mapfile -t TASKS < <(find "$HERE" -mindepth 2 -maxdepth 2 -name manifest.sh -exec dirname {} \; | sort)
+# Discover tasks: every directory under here that holds a manifest.sh. Capture find's own exit so
+# a discovery error (an unreadable dir) aborts loudly rather than silently yielding a short list
+# that would report success for only the tasks that happened to be readable. [LAW:no-silent-failure]
+found="$(find "$HERE" -mindepth 2 -maxdepth 2 -name manifest.sh -print)" \
+  || task_die "task discovery (find) failed under $HERE"
+mapfile -t TASKS < <(printf '%s\n' "$found" | sed 's#/manifest.sh$##' | sort)
 [ "${#TASKS[@]}" -gt 0 ] || task_die "no task directories found under $HERE"
 task_log "found ${#TASKS[@]} task(s)"
 

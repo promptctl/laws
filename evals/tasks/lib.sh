@@ -31,7 +31,11 @@
 
 set -o pipefail
 
-task_die() { printf 'ERROR [task]: %s\n' "$*" >&2; exit 1; }
+# task_die exits 2, never 1: it is always a harness/infra error (a missing repo, an unresolvable
+# commit, an absent check.sh), which the exit-code contract keeps DISTINCT from a criterion's FAIL
+# verdict (exit 1). Collapsing the two would let "the harness could not run the check" masquerade
+# as "the work failed" - a fabricated verdict, the one thing this harness must never produce.
+task_die() { printf 'ERROR [task]: %s\n' "$*" >&2; exit 2; }
 task_log() { printf '[task] %s\n' "$*" >&2; }
 
 # ── Validate a task against the format (parse, don't validate) ───────────────────────────
@@ -121,21 +125,24 @@ task_setup() {
 }
 
 # ── Run the criterion against a prepared state ──────────────────────────────────────────
-# Run check.sh with CWD = <state_dir> and return its verdict: 0 = pass, nonzero = fail. The
-# machinery aborts (nonzero, via task_die) only on ITS OWN errors - an absent check.sh or a
-# missing state dir - so a genuine FAIL verdict is never confused with a broken harness.
-# Usage: task_check <task_dir> <state_dir>   -> exit 0 (pass) / 1 (fail); prints PASS/FAIL to stderr
+# Run check.sh with CWD = <state_dir> and translate its exit code by the contract:
+#   0    -> criterion PASS (return 0)
+#   1    -> criterion FAIL  (return 1) - a real verdict about the work
+#   >=2  -> the criterion could NOT run (missing tool, absent tree): a harness error, NOT a
+#           verdict, so abort loudly (task_die) rather than report a fabricated FAIL.
+# The machinery also aborts on its OWN errors - an absent check.sh, a missing state dir.
+# Usage: task_check <task_dir> <state_dir>   -> return 0 (pass) / 1 (fail); aborts on harness error
 task_check() {
   local dir="$1" state="$2"
   [ -n "$dir" ] && [ -n "$state" ] || task_die "task_check: need <task_dir> <state_dir>"
   [ -x "$dir/check.sh" ] || task_die "task_check: no executable check.sh in $dir"
   [ -d "$state" ] || task_die "task_check: state dir does not exist: $state"
-  local abs; abs="$(cd "$dir" && pwd)"
-  if ( cd "$state" && exec "$abs/check.sh" ) >&2; then
-    task_log "criterion PASS for $(basename "$dir") against $state"
-    return 0
-  else
-    task_log "criterion FAIL for $(basename "$dir") against $state"
-    return 1
-  fi
+  local abs rc; abs="$(cd "$dir" && pwd)"
+  ( cd "$state" && exec "$abs/check.sh" ) >&2
+  rc=$?
+  case "$rc" in
+    0) task_log "criterion PASS for $(basename "$dir") against $state"; return 0 ;;
+    1) task_log "criterion FAIL for $(basename "$dir") against $state"; return 1 ;;
+    *) task_die "criterion could NOT run for $(basename "$dir") against $state (check.sh exit $rc) - a harness error, not a verdict" ;;
+  esac
 }

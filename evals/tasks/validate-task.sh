@@ -8,7 +8,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
 
 [ "$#" -eq 1 ] || task_die "usage: validate-task.sh <task_dir>"
-out="$(task_validate "$1")"   # aborts nonzero on any violation
+# Explicit failure check: a command-substitution assignment does not reliably trip errexit on
+# every bash, so guard it so a validation failure aborts (preserving task_die's exit 2) instead of
+# falling through to print VALID with empty fields. [LAW:no-silent-failure]
+out="$(task_validate "$1")" || exit $?
 printf 'VALID: %s\n' "$1"
 printf '  repo:    %s\n' "$(printf '%s' "$out" | sed -n '1p')"
 printf '  commit:  %s\n' "$(printf '%s' "$out" | sed -n '2p')"

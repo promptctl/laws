@@ -59,9 +59,18 @@ task is proven by adding its directory — nothing here changes.
 
 ## Exit-code contract
 
-`check.sh` / `check-task.sh`: `0` = criterion passed, `1` = criterion failed, any other nonzero =
-the harness could not run the check (never a fabricated verdict). `validate-task.sh`: `0` = valid,
-nonzero = the first violation, named on stderr.
+Three distinct outcomes, so a consumer can never mistake "the harness could not run" for "the
+work failed" — a fabricated verdict is the one thing this harness must not produce:
+
+- `0` = criterion **passed**.
+- `1` = criterion **failed** — a real verdict about the work.
+- `2` (or any code `> 1`) = the criterion **could not run** (missing tool, absent tree, unresolvable
+  commit) — a harness error, not a verdict.
+
+This holds end to end: each `check.sh` exits `2` from its infra guards and `1` only on a genuine
+failure; `task_check` translates those, aborting on `≥2` rather than reporting a FAIL; the machinery's
+own `task_die` exits `2`; and `check-task.sh` surfaces `0`/`1`/`2` unchanged. `validate-task.sh`:
+`0` = valid, `2` = the first violation, named on stderr.
 
 ## Files
 
