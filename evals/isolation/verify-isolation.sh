@@ -28,6 +28,13 @@ source "$HERE/lib.sh"
 # ISO_CONFIG_DIR / ISO_WORK_DIR default in lib.sh (sourced above), its single owner.
 ISO_SESSION="${ISO_SESSION:-iso-verify-$$}"
 GLOBAL_CONFIG_DIR="${CLAUDE_CONFIG_DIR_DEFAULT:-$HOME/.claude}"
+# The account banner the TUI paints reads "<model> · <plan>". This is the anchor we grep for to
+# find that line and the boundary we split on to isolate the model (the left column). Reading it
+# couples the check to TUI chrome ON PURPOSE - it is the ticket's mandate to read the model the
+# session runs rather than ask the model, and there is no more stable contract to read instead.
+# The coupling's failure mode is safe: a TUI that renames the plan makes this token miss and the
+# check FAIL loudly (never a false pass). Overridable here so that rename is a one-line change.
+ISO_PLAN_TOKEN="${ISO_PLAN_TOKEN:-Claude Max}"
 
 PASS=0 FAIL=0
 report() {  # report <label> <ok|fail> <detail>
@@ -109,18 +116,18 @@ iso_config_is_setup "$ISO_CONFIG_DIR" \
   || iso_die "config dir is not logged in: $ISO_CONFIG_DIR - run $HERE/setup-isolated-session.sh first"
 iso_launch "$ISO_SESSION" "$ISO_CONFIG_DIR" "$ISO_WORK_DIR"
 
-# The banner line carries the plan token "Claude Max"; the model is the left box column, i.e.
-# everything before "Claude Max". Taking that prefix excludes the right column (a changelog that
+# The banner line carries the plan token (ISO_PLAN_TOKEN); the model is the left box column, i.e.
+# everything before that token. Taking that prefix excludes the right column (a changelog that
 # can itself name another model) - so a changelog mention of "Opus" cannot pass a non-Opus
 # session, and a Sonnet/Haiku session fails even when the changelog mentions Opus.
-A_BANNER="$(tmux capture-pane -t "$ISO_SESSION" -p -S - 2>/dev/null | grep -m1 'Claude Max' || true)"
-A_MODEL="${A_BANNER%%Claude Max*}"
+A_BANNER="$(tmux capture-pane -t "$ISO_SESSION" -p -S - 2>/dev/null | grep -m1 "$ISO_PLAN_TOKEN" || true)"
+A_MODEL="${A_BANNER%%${ISO_PLAN_TOKEN}*}"
 # For display only: drop the box border, the trailing "· ", and surrounding whitespace.
 A_MODEL_DISP="$(printf '%s' "$A_MODEL" | tr -d '│' | sed -E 's/·[[:space:]]*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
 if [ -z "$A_BANNER" ]; then
   report "(A) model is Opus on the subscription" fail "no account banner on screen - cannot read the model the session runs"
 elif printf '%s' "$A_MODEL" | grep -qi 'opus'; then
-  report "(A) model is Opus on the subscription" ok "banner shows $A_MODEL_DISP on Claude Max"
+  report "(A) model is Opus on the subscription" ok "banner shows $A_MODEL_DISP on $ISO_PLAN_TOKEN"
 else
   report "(A) model is Opus on the subscription" fail "banner model is not Opus: [$A_MODEL_DISP]"
 fi

@@ -68,4 +68,5 @@ Teardown: `tmux kill-session -t <ISO_SESSION>`. The config dir stays - it holds 
 macOS with `tmux`, `python3`, and a `claude` binary. The persistent config dir
 (`~/.claude-laws-eval`) and working dir (`~/.claude-laws-eval-workdir`) live in `$HOME`, not
 the repo. Knobs `ISO_CONFIG_DIR`, `ISO_WORK_DIR`, `ISO_LAUNCH_TIMEOUT_SECS`,
-`ISO_POLL_SECS`, `ISO_HISTORY_LIMIT`, and the pane geometry are overridable via env.
+`ISO_POLL_SECS`, `ISO_HISTORY_LIMIT`, `ISO_PLAN_TOKEN` (the account-banner anchor, default
+`Claude Max`), and the pane geometry are overridable via env.
