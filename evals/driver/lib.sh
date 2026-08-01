@@ -121,12 +121,20 @@ drv_reply_below_prompt() {
 # config dir's settings, plugins, hooks, or CLAUDE.md - --settings is an explicit, additive
 # JSON blob independent of --setting-sources, so ticket .1's isolation holds.
 # [LAW:one-source-of-truth] iso_launch stays the only place that builds the claude command; we
-# hand it the extra setting through its documented ISO_EXTRA_SETTINGS knob.
+# hand it the extra setting as its 4th positional argument (no ambient env that could leak into
+# a later launch).
 # Usage: drv_launch <session> <config_dir> <work_dir>
 drv_launch() {
   local sess="$1" cfg="$2" wd="$3"
-  ISO_EXTRA_SETTINGS="{\"spinnerVerbs\":{\"mode\":\"replace\",\"verbs\":[\"${DRV_SPINNER_SENTINEL}\"]}}" \
-    iso_launch "$sess" "$cfg" "$wd"
+  # [LAW:parse-dont-validate] The sentinel is interpolated into a JSON string; a value carrying
+  # a quote or backslash would corrupt it and claude would reject --settings, silently leaving
+  # the session with no working token. Reject anything but a plain alphanumeric token here, at
+  # the boundary where the env value enters.
+  case "$DRV_SPINNER_SENTINEL" in
+    ''|*[!A-Za-z0-9]*) drv_die "DRV_SPINNER_SENTINEL must be a non-empty alphanumeric token: got [$DRV_SPINNER_SENTINEL]" ;;
+  esac
+  iso_launch "$sess" "$cfg" "$wd" \
+    "{\"spinnerVerbs\":{\"mode\":\"replace\",\"verbs\":[\"${DRV_SPINNER_SENTINEL}\"]}}"
 }
 
 # ── Send one prompt (bracketed paste, then explicit submit) ─────────────────────────────
@@ -140,20 +148,30 @@ drv_send() {
   local sess="$1" prompt="$2"
   [ -n "$sess" ] && [ -n "$prompt" ] || drv_die "drv_send: missing session or prompt"
 
+  # Capture the screen BEFORE the paste so we can prove the paste landed - a paste that
+  # registered nothing leaves the screen unchanged, and we must not then submit stale/empty
+  # input as if it were the prompt. [LAW:no-silent-failure] the confirm is the whole point.
+  local before
+  before="$(iso_capture "$sess")"
+
   printf '%s' "$prompt" | tmux load-buffer - 2>/dev/null \
     || drv_die "drv_send: could not load prompt into a tmux buffer"
   tmux paste-buffer -t "$sess" -p 2>/dev/null \
     || drv_die "drv_send: paste-buffer failed on $sess (session gone?)"
   sleep "$DRV_SEND_SETTLE_SECS"
 
-  # Confirm the box registered the prompt. Use the first non-blank line's leading run of
-  # word/space chars as a distinctive, wrap-safe needle.
+  local after
+  after="$(iso_capture "$sess")"
+  # Universal confirm: the paste must have changed the screen. Holds for ANY prompt, including
+  # ones that begin with a symbol or emoji (where a leading-alnum needle would be empty).
+  [ "$after" != "$before" ] \
+    || drv_die "drv_send: paste did not register on $sess (screen unchanged - send failed)"
+  # Stronger confirm when a safe needle exists: the input box actually shows our text, not some
+  # unrelated redraw. Use the first non-blank line's leading run of word/space chars.
   local head
   head="$(printf '%s' "$prompt" | sed -n '1p' | grep -oE '^[[:alnum:] ]+' | head -c 40)"
   if [ -n "$head" ]; then
-    local screen
-    screen="$(iso_capture "$sess")"
-    case "$screen" in
+    case "$after" in
       *"$head"*) : ;;
       *) drv_die "drv_send: prompt did not register in the input box on $sess (send failed)" ;;
     esac

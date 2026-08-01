@@ -20,8 +20,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
-ISO_CONFIG_DIR="${ISO_CONFIG_DIR:-$HOME/.claude-laws-eval}"
-ISO_WORK_DIR="${ISO_WORK_DIR:-$HOME/.claude-laws-eval-workdir}"
+# ISO_CONFIG_DIR / ISO_WORK_DIR default in isolation/lib.sh (sourced above) - the single owner
+# of those defaults. [LAW:one-source-of-truth] we do not re-declare them here.
 ISO_SESSION="${ISO_SESSION:-drv-claude-$$}"
 
 # Turns are data: from the argument vector, or one prompt slurped from stdin.
@@ -41,6 +41,10 @@ drv_launch "$ISO_SESSION" "$ISO_CONFIG_DIR" "$ISO_WORK_DIR"
 
 for i in "${!turns[@]}"; do
   drv_log "turn $((i + 1))/${#turns[@]} ->"
-  reply="$(drive_turn "$ISO_SESSION" "${turns[$i]}")"   # aborts nonzero on a bad turn
+  # Explicit failure check: a command-substitution assignment does not reliably trip errexit in
+  # every bash, so a failed drive_turn could otherwise leave reply empty and print a blank line
+  # as if it were the answer. [LAW:no-silent-failure] a bad turn stops the run here.
+  reply="$(drive_turn "$ISO_SESSION" "${turns[$i]}")" \
+    || drv_die "drive.sh: turn $((i + 1)) failed - aborting the run (no reply emitted)"
   printf '%s\n' "$reply"
 done

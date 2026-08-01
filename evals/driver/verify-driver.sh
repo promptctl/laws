@@ -20,8 +20,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
 
-ISO_CONFIG_DIR="${ISO_CONFIG_DIR:-$HOME/.claude-laws-eval}"
-ISO_WORK_DIR="${ISO_WORK_DIR:-$HOME/.claude-laws-eval-workdir}"
+# ISO_CONFIG_DIR / ISO_WORK_DIR default in isolation/lib.sh (sourced above), its single owner.
 
 fails=0
 pass() { printf '  PASS  %s\n' "$*" >&2; }
