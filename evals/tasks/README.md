@@ -86,6 +86,9 @@ own `task_die` exits `2`; and `check-task.sh` surfaces `0`/`1`/`2` unchanged. `v
   `task_check` (run the criterion, return its verdict).
 - `validate-task.sh`, `check-task.sh` — the CLIs.
 - `verify-tasks.sh` — the done-claim proof over every task.
+- `criteria/` — shared criterion implementations (e.g. `compound-gates.sh`); a task whose
+  criterion matches an existing pattern execs it from its `check.sh` rather than copying it,
+  so one criterion has one definition.
 - `<task>/` — one directory per task.
 
 ## Environment
