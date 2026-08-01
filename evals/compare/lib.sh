@@ -22,6 +22,16 @@ cmp_die() { printf 'ERROR [compare]: %s\n' "$*" >&2; exit 1; }
 # verdict is handled in one place. [LAW:single-enforcer]
 cmp_rank() { case "$1" in pass) echo 2 ;; fail) echo 1 ;; *) echo 0 ;; esac; }
 
+# The ONE decoder of an outcome record's verdict field - every consumer (single comparison,
+# repeated comparison, suite summary) reads the record through this, so a change to the record
+# shape is a change in one place. A missing/garbled verdict decodes as FAILED: a corrupted record
+# is never a pass. [LAW:single-enforcer] [LAW:no-silent-failure]
+cmp_verdict_of() {
+  local file="$1" v
+  v="$(grep -o '"verdict": *"[^"]*"' "$file" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/')"
+  [ -n "$v" ] && printf '%s\n' "$v" || printf 'FAILED\n'
+}
+
 # Best-effort skill ref for an arm, for labelling even when its run aborts: the config's git ref,
 # or "none" for control, or "?" if the config itself does not parse.
 cmp_arm_ref() {
@@ -64,8 +74,7 @@ compare_task() {
     # Contain the run in a subshell so an aborting arm (run_die exits) is caught here and reported
     # as FAILED, not propagated to kill the whole comparison. [LAW:no-silent-failure]
     if ( run_scored "$task" "$config" "$armout" ) >"$out/$name.runlog" 2>&1 && [ -f "$armout/outcome.json" ]; then
-      verdict="$(grep -o '"verdict": *"[^"]*"' "$armout/outcome.json" | sed 's/.*"\([^"]*\)"$/\1/')"
-      [ -n "$verdict" ] || verdict="FAILED"
+      verdict="$(cmp_verdict_of "$armout/outcome.json")"
     else
       verdict="FAILED"
     fi
@@ -149,8 +158,7 @@ compare_repeated() {
       mkdir -p "$out/$name"
       if ( run_scored "$task" "$config" "$armout" ) >"$out/$name/rep-$(printf '%02d' "$i").runlog" 2>&1 \
            && [ -f "$armout/outcome.json" ]; then
-        verdict="$(grep -o '"verdict": *"[^"]*"' "$armout/outcome.json" | sed 's/.*"\([^"]*\)"$/\1/')"
-        [ -n "$verdict" ] || verdict="FAILED"   # a corrupted/empty verdict is not a pass
+        verdict="$(cmp_verdict_of "$armout/outcome.json")"   # a corrupted/empty verdict is not a pass
       else
         verdict="FAILED"
       fi
