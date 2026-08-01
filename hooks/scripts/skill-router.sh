@@ -45,8 +45,11 @@ Before substantive work, identify the medium of your primary deliverable and loa
 EOT
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin; session-start
-# and guard read fields out of it, engage ignores it. Harmless where unused.
-INPUT=$(cat)
+# and guard read fields out of it, engage ignores it. Harmless where unused. Newlines are
+# stripped so field extraction is independent of whether Claude Code sends compact or
+# pretty-printed JSON - a string key/value pair is intra-line either way, but collapsing
+# first makes that independence explicit rather than a latent assumption.
+INPUT=$(cat | tr -d '\n')
 
 # --- pure-bash field extraction -------------------------------------------------------
 # Pull the string value of a JSON key. Only used for the constrained tokens named in the
@@ -61,9 +64,10 @@ json_field() {
 }
 
 # Filesystem-safe rendering of an id. UUIDs and hex agent ids pass through unchanged; the
-# tr guards against a malformed id smuggling a slash or dot into the lock path.
+# tr collapses anything else - notably a slash or a dot - so no id can smuggle a path
+# separator or a ".." into the lock path that session-start later feeds to rm -rf.
 sanitize() {
-  printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_-' '_'
 }
 
 # --- the medium lock ------------------------------------------------------------------
@@ -164,17 +168,25 @@ case "$HOOK_TYPE" in
     [ -f "$lock" ] && engaged=$(cat "$lock")
 
     if [ -z "$engaged" ]; then
-      # First medium of the (sub)session: record it and allow. The write is the guard's
-      # one external effect, so its failure is checked - a full or unwritable TMPDIR must
-      # not pass as a recorded lock, or the next different medium would find no lock, look
-      # like a first load, and slip through silently. On failure warn and still allow, the
-      # same loud-but-non-blocking tradeoff as the empty-session_id branch: degraded
-      # enforcement beats blocking every skill load.
-      if mkdir -p "$(dirname "$lock")" && printf '%s' "$skill" > "$lock"; then
+      # First medium of the (sub)session: record it, atomically. The write is the guard's
+      # one external effect and its own concurrency control - noclobber makes the redirect
+      # fail if a parallel guard already created the lock, turning a check-then-write race
+      # into a compare-and-swap. A winner records and allows. A loser re-reads the lock and
+      # falls through to the comparison below, so a racing SECOND medium is still refused,
+      # never slipped through. A genuine write failure (full or unwritable TMPDIR) leaves no
+      # lock: warn and still allow - degraded enforcement beats blocking every skill load,
+      # the same loud-but-non-blocking tradeoff as the empty-session_id branch.
+      mkdir -p "$(dirname "$lock")"
+      if ( set -o noclobber; printf '%s' "$skill" > "$lock" ) 2>/dev/null; then
         exit 0
       fi
-      echo "laws skill-router guard: could not write medium lock for $skill; one-craft enforcement degraded this session" >&2
-      exit 0
+      engaged=""
+      [ -f "$lock" ] && engaged=$(cat "$lock")
+      if [ -z "$engaged" ]; then
+        echo "laws skill-router guard: could not write medium lock for $skill; one-craft enforcement degraded this session" >&2
+        exit 0
+      fi
+      # A concurrent guard won the create; fall through to compare against what it recorded.
     fi
 
     if [ "$engaged" = "$skill" ]; then

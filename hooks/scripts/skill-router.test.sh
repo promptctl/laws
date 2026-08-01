@@ -88,6 +88,12 @@ run session-start "$(start_payload S5 compact)" >/dev/null
 assert_deny "after compaction, switching medium still refused" \
   "$(run guard "$(skill_payload S5 laws:prompt)")" "laws:code" "laws:prompt"
 
+# 8b. resume - the other continuing source - preserves the lock just like compact.
+run guard "$(skill_payload S8 laws:code)" >/dev/null
+run session-start "$(start_payload S8 resume)" >/dev/null
+assert_deny "after resume, switching medium still refused" \
+  "$(run guard "$(skill_payload S8 laws:prompt)")" "laws:code" "laws:prompt"
+
 # 9. A missing session_id cannot key a lock: allow the load but warn on stderr (loud, not silent).
 nosession='{"hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:code"}}'
 out=$(printf '%s' "$nosession" | "$ROUTER" guard 2>/dev/null)
