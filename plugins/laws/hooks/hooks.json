@@ -1,5 +1,5 @@
 {
-  "description": "Three injection points: SessionStart routes once to the medium-matched skill (laws:code / laws:prompt / laws:prose) and resets the medium lock on a fresh session; UserPromptSubmit re-engages the laws on every user message; PreToolUse on Skill guards one-craft-per-session, refusing a second medium load.",
+  "description": "Three injection points: SessionStart routes once to the medium-matched skill (laws:code / laws:prompt / laws:prose) and resets the engaged-craft set on a fresh session; UserPromptSubmit re-engages the laws on every user message; PreToolUse on Skill guards craft compatibility, letting compatible crafts coexist but refusing a craft that is incompatible with one already engaged (today: laws:code with laws:prompt).",
   "hooks": {
     "SessionStart": [
       {
