@@ -44,7 +44,7 @@ OR
 
 Check for open PRs related to your current branch?  If there are, THIS IS YOUR TICKET!  Skip the rest of the skill and proceed to work that ticket.
 
-We'll proceed with pulling from the backlog, but Open PRs are still relevant - you want to ensure you're building on old code or going to have significant merge conflicts.  But check this after you pull a ticket.
+**If there are no open PRs on the current branch:** we'll proceed with pulling from the backlog. Open PRs are still relevant, though — you want to check whether older open PRs overlap with your work, since rebuilding on top of stale code risks significant merge conflicts. But check this after you pull a ticket.
 
 #### lit ready
 
@@ -54,9 +54,11 @@ If there are any orphaned tickets, pull from those first.  Those tickets are aba
 
 If there aren't any other tickets to pick up, take from the top of the ready queue.
 
-3. **Read the ticket fully.** Title, description, acceptance criteria, comments, linked PRs, linked tickets. If the ticket references a spec, doc, or prior PR, read that too. You are about to author code that claims to satisfy this ticket — earn the right to claim it.
+Once you've picked a ticket, work it through these steps:
 
-4. **Surface blockers before starting.**
+1. **Read the ticket fully.** Title, description, acceptance criteria, comments, linked PRs, linked tickets. If the ticket references a spec, doc, or prior PR, read that too. You are about to author code that claims to satisfy this ticket — earn the right to claim it.
+
+2. **Surface blockers before starting.**
    - Acceptance criteria missing or vague? Ask.
    - Depends on another ticket that isn't done? Stop and report.
    - Spec referenced but doesn't exist? Stop and report.
@@ -67,14 +69,11 @@ IN ALL CASES YOU MUST DO AS MUCH OBVIOUS PREPATORY WORK AS YOU CAN BEFORE ASKING
 
 A mature engineer knows when to ask for help, and it isn't at the slightest hint of ambiguity and before they've put in a shred of effort to answer the question themselves.  "What do I do with this uncommited work" is only a good question if it isn't obviously work that Directly corresponds to the ticket matching the branch name.  "Acceptance criteria missing or vague?" It is only a good question if it's not clearly answerable via common sense or existing documentation or some other method. If there's real ambiguity, surface it. If it's just basic information about the repo, see if you can figure it out for yourself. In all cases, the user should be presented with The results of an Extremely quick Investigation rather than "Hey, I don't know what to do. Tell me what to do." 
 
-5. **Set up the workspace.**
+3. **Set up the workspace.**
    - Create or check out The branch matching the ticket ID. eg, `git checkout -b <ticket id>` or  `git checkout -b <ticket id>_slug`
    - Confirm the working tree is clean before starting. If dirty, Figure it the f*ck out. You're a mature, responsible, highly skilled engineer. 
 
-6. **State the plan in one paragraph, then start.** What the ticket asks for, how you'll verify it's done (the machine-verifiable criterion), and the first concrete step. Then begin.
-
-## General rules
-
+4. **State the plan in one paragraph, then start.** What the ticket asks for, how you'll verify it's done (the machine-verifiable criterion), and the first concrete step. Then begin.
 
 ## When to stop and ask
 
