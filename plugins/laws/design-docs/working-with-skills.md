@@ -4,20 +4,25 @@ The skill bodies under `skills/*/SKILL.md` and `skills/*/references/craft.md` ar
 persuasive guidance, each written to the standard of one medium and built to keep
 firing deep in a session against competing defaults. An agent that reads one and then
 does other work carries that standard into the other work: reading one skill puts its
-whole standard on duty and biases what you do next, and reading two stacks standards
-that contradict each other. Stacking is the failure that has already ruined a session
-here.
+whole standard on duty and biases what you do next. Most standards sit together fine -
+code, its ticket, and its docs are complementary work - but some *contradict*, and
+reading two that contradict stacks standards that corrupt each other. That stacking is
+the failure that has already ruined a session here.
 
 So there is one rule, and a way to work under it.
 
 ## The rule
 
-One craft per session. Each `craft.md` loads a whole medium's standard and puts it on
-duty; two at once stack standards that contradict each other, the failure that has
-ruined a session here. So a session doing mixed work stays craft-free - it treats every
-body as opaque and consults a skill through a disposable subagent. The exception is a
-session whose whole job is one skill: it may load that skill's one craft and work in it
-directly. Either way, never a second craft.
+Compatible crafts coexist; incompatible ones do not. Most media are complementary, so a
+session that produces code and its ticket and its docs may hold those crafts together -
+their standards do not fight, and the guard lets them share a session. What must never
+stack is an *incompatible* pair: two standards that contradict each other, the failure
+that has ruined a session here. The known incompatible pair is laws:code and laws:prompt
+- code is nothing like prompt-for-an-LLM, so each craft's rules are actively wrong for
+the other's work, and the guard refuses the second of that pair. When you need a craft
+that conflicts with one already engaged, you don't load it here: consult it through a
+disposable subagent, or - if the session's whole job has become that craft - /clear and
+load it clean.
 
 ## What to read instead
 
@@ -45,8 +50,8 @@ is the session's whole job, load its craft and edit directly - holding the whole
 a change integrates instead of bolting on. If you're mid other work and don't want that
 standard on you, dispatch a subagent whose only job is this skill. Either way, edit the
 goals doc first, and when the change is done read the produced file - not a summary -
-against the goals doc. Never load a second skill's craft in the same session; that one
-you dispatch.
+against the goals doc. Never load a craft that conflicts with this one in the same
+session; that one you dispatch.
 
 ## The direction the intent flows
 
