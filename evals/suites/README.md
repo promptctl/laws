@@ -36,16 +36,19 @@ Runs every task in the suite through the repeated comparison (`compare-repeated`
 given arms, printing each task's per-arm distribution as it goes, then the suite grid:
 
 ```
-TASK                         code-ref-a         control
----------------------------- ------------------ ------------------
-go-template-add-fix          2/2                2/2
-go-template-multi-regression 2/2                2/2
-go-template-stub-reimpl      2/2                2/2
-laws-scripts-parse           2/2                2/2
+TASK                            code-ref-a         control
+------------------------------- ------------------ ------------------
+go-template-add-fix             2/2                2/2
+go-template-heldout-conformance 1/4                2/4
+go-template-multi-regression    2/2                2/2
+go-template-stub-reimpl         2/2                2/2
+laws-scripts-parse              2/2                2/2
 ```
 
-(This is the real grid from the 2026-08-01 campaign — see `code/SENSITIVITY.md` for the
-reading; an aborted cell would additionally carry a `(n!)` marker.)
+(These are the real cells from the 2026-08-01 campaigns — the four saturated tasks at N=2, the
+held-out task at N=4 from its own follow-up campaign; see `code/SENSITIVITY.md` for the reading,
+including why movement on the held-out task's cells must be read with care. An aborted cell
+would additionally carry a `(n!)` marker.)
 
 Every repetition holds all the harness constraints (subscription Opus, interactive tmux-driven
 session, real multi-turn work, isolation, ground-truth scoring). The grid is **derived from the
