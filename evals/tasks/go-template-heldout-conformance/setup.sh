@@ -131,7 +131,11 @@ for d in sprig-kebabcase-basic sprig-snakecase-http-server sprig-snakecase-pasca
   rm -rf "conformance/fixtures/$d"
 done
 
-leftover="$(grep -rlE 'camelcase|snakecase|kebabcase|wrapWith|abbrev' conformance/fixtures 2>/dev/null || true)"
+# All seven gutted helpers, word-bounded so standalone `wrap` is caught without double-counting
+# `wrapWith`. This is the drift guard for future TASK_COMMIT bumps: a fixture exercising any
+# gutted helper that survives the deletions above must abort the setup, not leak into the
+# agent's visible coverage.
+leftover="$(grep -rlE 'camelcase|snakecase|kebabcase|\bwrap\b|wrapWith|abbrev|initials' conformance/fixtures 2>/dev/null || true)"
 [ -z "$leftover" ] || { echo "setup: visible fixtures still exercise gutted helpers: $leftover" >&2; exit 2; }
 for f in src/sprig/strings/caseUtils.ts src/sprig/strings/camelcase.test.ts \
          conformance/fixtures/sprig-kebabcase-basic; do
