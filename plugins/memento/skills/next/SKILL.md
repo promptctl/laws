@@ -65,7 +65,7 @@ Once you've picked a ticket, work it through these steps:
    - The ticket conflicts with current branch state or uncommitted work? Stop and report.
    - Don't paper over ambiguity with assumptions — confirm scope first.
 
-IN ALL CASES YOU MUST DO AS MUCH OBVIOUS PREPATORY WORK AS YOU CAN BEFORE ASKING THE USER.
+IN ALL CASES YOU MUST DO AS MUCH OBVIOUS PREPARATORY WORK AS YOU CAN BEFORE ASKING THE USER.
 
 A mature engineer knows when to ask for help, and it isn't at the slightest hint of ambiguity and before they've put in a shred of effort to answer the question themselves.  "What do I do with this uncommited work" is only a good question if it isn't obviously work that Directly corresponds to the ticket matching the branch name.  "Acceptance criteria missing or vague?" It is only a good question if it's not clearly answerable via common sense or existing documentation or some other method. If there's real ambiguity, surface it. If it's just basic information about the repo, see if you can figure it out for yourself. In all cases, the user should be presented with The results of an Extremely quick Investigation rather than "Hey, I don't know what to do. Tell me what to do." 
 
@@ -79,7 +79,4 @@ A mature engineer knows when to ask for help, and it isn't at the slightest hint
 
 To be honest, rarely. You should be capable of figuring this stuff out. 
 
-If you think that there's a chance that this could have negative impacts on other work, you can ask a quick question, but like I said, You need to make an attempt to answer the question yourself. 
-
-That being said, here's one scenario which you can ask about: 
-- The current branch already has uncommitted work that doesn't belong to a current ticket.
+If you think that there's a chance that this could have negative impacts on other work, you can ask a quick question, but like I said, You need to make an attempt to answer the question yourself.  (The one recurring case — a branch carrying uncommitted work that belongs to no current ticket — is already handled in "Uncommitted changes" above.)
