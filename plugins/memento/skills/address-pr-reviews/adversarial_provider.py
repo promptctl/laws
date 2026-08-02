@@ -333,6 +333,10 @@ def trigger(pr_url: str) -> dict:
         "--jq", "{head: .head.sha, base: .base.sha}",
     ))
     sha = refs["head"]
+    # Single-writer assumption: the address-pr-reviews loop drives this provider
+    # sequentially from one agent, so this check-then-post is not guarded against a
+    # concurrent second trigger() for the same SHA. Two writers could both pass this
+    # guard and double-post; don't invoke trigger() concurrently for one PR.
     if _our_review_for(owner, repo, pr_num, sha):
         return {"triggered": True, "note": f"review for {sha[:9]} already posted"}
 
