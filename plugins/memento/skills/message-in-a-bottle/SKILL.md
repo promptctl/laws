@@ -1,0 +1,78 @@
+---
+name: message-in-a-bottle
+description: Writes a message to a future session's agent.  Send them your fondest memories of what you worked on, what went well, what didn't go well, and any useful tips they might need. You always run this when you finish a unit of work (closed a PR, completed the handed task, etc) or cross 300k–350k tokens of context.  ALWAYS.
+---
+
+# finalize-session
+
+The last operation of a finishing turn: prepares instructions for a future agent. The launcher returns immediately. You MUST immediately stop and say nothing and use no tools after running this.
+
+## This is mandatory — you run it, you do not decide it
+
+When you reach a finalization point — you closed a PR, finished the task you were handed, or crossed 300k–350k tokens of context — running `finalize-session` is the close-out. It is **not** a choice you weigh, a thing you ask the user about, or a step you defer "until later."
+
+[LAW:dataflow-not-control-flow] running this is unconditional at a finalization point — the same path every time. The only variability is a *value*: the handoff message you pass. 
+
+**The user being present is irrelevant.** Presence is not a gate, a tiebreaker, or a reason to skip — you finalize on the *work's* state, never on whether a human is watching. "The user is here, so I'll skip it" and "I'll ask if they want me to" are both WRONG: this step requires no user action and asks for none.
+
+### The only gate, and the rationalizations that are never one
+
+There is exactly **one** legitimate input: **is the handed unit of work complete?** Unit complete (PR merged, ticket closed, task delivered) *or* context at 300k–350k tokens → you run it, now, with no further deliberation. Unit **not** complete → you are not "deciding not to finalize," you are *still doing the work*: finish the unit, then finalize. There is no third state, and "skip finalize because X" is never one of them.
+
+## You can provide a 'hint' for the next stage, if valuable: /compact
+
+The message you provide to the future agent may carry a hint about how its context should be set up.  If you are in the middle of a task/epic and it would help the future agent to begin with a compacted summary of the work so far rather than a blank slate, you may specify '/compact' somewhere within the first three sentences of your message.  This gives the future agent a summarized version of that knowledge to start from.  If you do not specify this, the future agent starts with ONLY the message you send it (and the standard system, user global, and project level guidance).
+
+Include `/compact` in your message when the handoff needs the thread of what just happened — e.g., start the message with `/compact` or write "Use /compact and then continue the spec audit…".
+
+## Carry the goal forward — if one is set, it dies unless you carry it
+
+If a `/goal <condition>` is active in this session, **the handoff silently kills it.** Every transport resets the session — tmux sends `/clear` or `/compact`, iTerm2 kills claude and relaunches a fresh process — and `/clear` and a new process each wipe the session-scoped goal. The next agent wakes with no goal, and the autonomous run you set up just *stops* — unattended, with nobody watching to notice it stopped. That silent halt is the exact failure this guards against.
+
+So when a goal is in force, pass it: `--goal '<the exact condition>'` before your message. The launcher re-issues `/goal <condition>` into the reset session as a queued input *after* the handoff, so the next agent picks up the same condition and keeps grinding toward it.
+
+- The condition is a **value you already hold** — it is whatever was last set with `/goal` this session (you set it, or the user did). Reproduce it verbatim, including any bound clause like `... or stop after 20 turns`.
+- **No goal active → omit `--goal`.** Nothing changes; this is not a field you invent, and an empty `--goal` is not a thing to pass.
+- Do not talk yourself out of it. The rationalization will be *"the next agent will infer the goal from my message"* — it will not. A goal is a harness condition re-checked after every turn, not a sentence in a prompt; if you do not re-issue it, it does not exist in the next session. Carrying it is the difference between an autonomous run that continues and one that quietly dies at the handoff.
+
+## Turn-ending discipline — the launcher invocation is the last act of the turn
+
+Once you call the launcher, your turn is over. Stop. No closing text, no parting summary, no "scheduled!" confirmation, no further tool calls, no end-of-turn insights. The launcher's `handoff scheduled → <target> (/<reset>) in Ns` line is the only artifact this skill emits, and it is the last line your turn produces.
+
+[LAW:dataflow-not-control-flow] the launcher's return *is* the data signal that the agent's turn has ended; the agent observes that signal and exits. There is no branch on "should I add a closing paragraph" — the same code path runs every time, and the data (launcher returned) picks the effect (turn ends).
+
+## Invocation
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/skills/message-in-a-bottle/bin/finalize-session [--goal '<condition>'] [message...]
+```
+
+- `--goal '<condition>'` — optional, and only when a `/goal` is active this session. Re-establishes that goal in the reset session so the run continues. Leading argument; quote the condition. **Omit entirely when no goal is set.**
+- `[message...]` — a slash command, plain text, multi-line, or containing quotes/backticks/dollar signs. Quote it at invocation as usual (your shell does word-splitting and `$VAR` expansion before the script sees argv). **Omit it to default to `/next`.**
+
+For the live transports (tmux/iTerm2) the launcher prints `handoff scheduled → <target> … in Ns (log: <tempfile>)` and exits; the log captures worker progress and any transport errors. The file-drop fallback path emits no `handoff scheduled` line — it prints `no tmux or iTerm2 transport detected` and `Handoff written to: ~/.claude/finalize-pending-handoff.txt` (with delivery instructions) to stderr instead.
+
+The transport is chosen by capability, most reliable first: **tmux** (reset the pane in place, verified by reading it back, then paste) → **iTerm2** (kill the running claude and relaunch it fresh with the message as its initial prompt, delivered in the background with no focus steal) → **file-drop** (no live transport: the message is written to `~/.claude/finalize-pending-handoff.txt` with delivery instructions, never silently dropped). You do not choose the transport; the launcher detects it. To preview the decision without scheduling anything, prefix `FINALIZE_DRY_RUN=1`.
+
+## Examples
+
+Finalize and provide the future agent with guidance to pull the next ticket:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/skills/message-in-a-bottle/bin/finalize-session /next
+```
+
+Hand off a specific instruction, providing a compacted summary of this session (include `/compact` in the message):
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/skills/message-in-a-bottle/bin/finalize-session \
+  '/compact Continue the spec audit. Pick up at section 4 — the previous session left findings in spec/audit/section-3.md.'
+```
+
+Finalize while a goal is active — carry the goal forward so the autonomous run continues, and hand off `/next`:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/skills/message-in-a-bottle/bin/finalize-session \
+  --goal 'every open PR on this branch is merged or closed, or stop after 30 turns' \
+  /next
+```
