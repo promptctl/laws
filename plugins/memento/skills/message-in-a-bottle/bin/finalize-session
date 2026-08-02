@@ -144,7 +144,7 @@ case "$MODE" in
 
     # [LAW:dataflow-not-control-flow] reset mode derived from the message (tmux).
     PROBE=$(_first_three_sentences "$AGENT_MESSAGE")
-    if [[ "$PROBE" =~ (^|[[:space:]])/compact([[:space:]]|$) ]]; then
+    if [[ "$PROBE" =~ (^|[[:space:]])/compact([[:space:]]|[.!?]|$) ]]; then
       RESET=compact
     else
       RESET=clear
