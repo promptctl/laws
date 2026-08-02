@@ -68,8 +68,10 @@ CONFIG_REF="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 CONFIG_SUMMARY="bad ref"')"
 if ( cfg_resolve "$badref" ) >/dev/null 2>&1; then fail "bad ref: resolve should abort but succeeded"; else pass "bad ref: resolve aborts nonzero (no empty/stale body)"; fi
 
+# HEAD always resolves, so the abort is guaranteed to come from cfg_body_path (no
+# body for nosuchskill), not from ref validation — the arm this test means to exercise.
 badskill="$(mk badskill 'CONFIG_SKILL="nosuchskill"
-CONFIG_REF="8f6d15b"
+CONFIG_REF="HEAD"
 CONFIG_SUMMARY="bad skill/path"')"
 if ( cfg_resolve "$badskill" ) >/dev/null 2>&1; then fail "bad skill: resolve should abort but succeeded"; else pass "bad skill/path: resolve aborts nonzero"; fi
 
@@ -90,6 +92,18 @@ if [ "$(cfg_body_path "$ROOT" HEAD prompt)" = "plugins/laws/skills/prompt/refere
   pass "derivation: prompt -> plugins/laws/skills/prompt/references/craft.md (craft.md branch)"
 else
   fail "derivation: prompt did not resolve to plugins/laws/skills/prompt/references/craft.md"
+fi
+# Pre-move refs: bodies exist only at the historic skills/ location, so derivation must
+# fall through to the old candidates (skills/…/SKILL.md and skills/…/references/craft.md).
+if [ "$(cfg_body_path "$ROOT" 8f6d15b code)" = "skills/code/SKILL.md" ]; then
+  pass "derivation: code @pre-move -> skills/code/SKILL.md (old-location fallback)"
+else
+  fail "derivation: code @pre-move did not fall through to skills/code/SKILL.md"
+fi
+if [ "$(cfg_body_path "$ROOT" 8f6d15b prompt)" = "skills/prompt/references/craft.md" ]; then
+  pass "derivation: prompt @pre-move -> skills/prompt/references/craft.md (old-location craft.md fallback)"
+else
+  fail "derivation: prompt @pre-move did not fall through to skills/prompt/references/craft.md"
 fi
 
 echo "" >&2
