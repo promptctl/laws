@@ -31,9 +31,9 @@ Examples:
 - Minor update to the readme to include some more instructions: commit it and proceed
 - Major update to the readme that is related to the work on the current branch: commit it and proceed
 - Major update to work that is clearly NOT on this branch: stash it and proceed
-- A half finished feature: find the ticket it's related to.  THIS TICKET IS YOUR ASSIGNED WORK. SKIP THE REST OF THE SKILL. If it's not related to a ticket you see, do a quick code review.  does the code look experimental and temporary or high quality?  Does it look complete or barely started?  Then briefly explain the state of the code, what it does, and any other info you have (no ticket, etc).  Ask if they want you to create a ticket and continue the work, if they want it to committed to work as part of a different ticket, or whether they want you to stash or discard it.  Follow that instruction.
+- A half finished feature: find the ticket it's related to.  THIS TICKET IS YOUR ASSIGNED WORK. Skip the backlog scan and go straight to "Working the ticket". If it's not related to a ticket you see, do a quick code review.  does the code look experimental and temporary or high quality?  Does it look complete or barely started?  Then briefly explain the state of the code, what it does, and any other info you have (no ticket, etc).  Ask if they want you to create a ticket and continue the work, if they want it to committed to work as part of a different ticket, or whether they want you to stash or discard it.  Follow that instruction.
 
-Before proceeding, confirm the uncommitted changes are now resolved (committed, stashed, or discarded per the above).  If anything you did previously resulted in a reference to a specific ticket, THAT IS YOUR TICKET ID and you should skip the rest of this skill.
+Before proceeding, confirm the uncommitted changes are now resolved (committed, stashed, or discarded per the above).  If anything you did previously resulted in a reference to a specific ticket, THAT IS YOUR TICKET ID and you should skip the backlog scan and go straight to "Working the ticket".
 
 Do NOT proceed without either:
 - no uncommitted changes
@@ -42,7 +42,7 @@ OR
 
 #### Open PRs
 
-Check for open PRs related to your current branch?  If there are, THIS IS YOUR TICKET!  Skip the rest of the skill and work that PR through the `address-pr-reviews` skill (that's the memento skill for taking a PR's review feedback to a clean, merged close-out).
+Check for open PRs related to your current branch — `gh pr list --head "$(git branch --show-current)" --state open` (`lit ready` lists tickets, not GitHub PRs, so it won't surface one).  If there are, THIS IS YOUR TICKET!  Skip the backlog scan below and work that PR through the `address-pr-reviews` skill (that's the memento skill for taking a PR's review feedback to a clean, merged close-out), then pick up the working steps under "Working the ticket".
 
 **If there are no open PRs on the current branch:** we'll proceed with pulling from the backlog. Open PRs are still relevant, though — you want to check whether older open PRs overlap with your work, since rebuilding on top of stale code risks significant merge conflicts. Check this after you pull a ticket; if an older PR touches the same files, surface it to the user with both the ticket and PR references before starting, rather than silently building over it.
 
@@ -50,11 +50,13 @@ Check for open PRs related to your current branch?  If there are, THIS IS YOUR T
 
 Lit ready shows an overview of the epics and the top ticket in each epic, as well as any in-progress or orphaned tickets.
 
-If there are any orphaned tickets, pull from those first — those tickets are abandoned and need someone to finish them. An orphan is your ticket; skip ahead to the steps below.
+If there are any orphaned tickets, pull from those first — those tickets are abandoned and need someone to finish them. An orphan is your ticket; skip ahead to "Working the ticket".
 
 Otherwise, take from the top of the ready queue.
 
-Once you've picked a ticket, work it through these steps:
+## Working the ticket
+
+However you arrived at a ticket — uncommitted work, an open PR, an orphan, or the ready queue — work it through these steps:
 
 1. **Read the ticket fully.** Title, description, acceptance criteria, comments, linked PRs, linked tickets. If the ticket references a spec, doc, or prior PR, read that too. You are about to author code that claims to satisfy this ticket — earn the right to claim it.
 
