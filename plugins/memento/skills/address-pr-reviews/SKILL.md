@@ -41,7 +41,7 @@ if not check["installed"]:
 
 [LAW:no-silent-failure] a missing reviewer is the one failure that would otherwise look like "clean review, zero findings." Surface it as a hard stop, never an empty pass. Installed → proceed to the loop.
 
-When `setup_check` capability is `False` (a non-workflow provider — `local`, `adversarial`), the whole section is skipped: there is no installed workflow to check.
+When a provider declares `setup_check: False`, the whole section is skipped: there is no installed workflow to check. (Every current provider — `action`, `local`, `adversarial` — declares it `True`, so read `CAPABILITIES` rather than assuming from the provider name.)
 
 ## The loop
 
@@ -267,6 +267,8 @@ do not implement until the user approves direction.">
 EOF
 )"
 ```
+
+[LAW:single-enforcer] if a `/goal` is active in this session, carry it: pass `--goal '<the exact condition>'` as the leading argument, exactly as message-in-a-bottle's contract requires. Every transport resets the session, so an un-carried goal silently dies at the handoff — a multi-PR goal (e.g. "every open PR on this branch is merged") would stop at this first close-out. Omit `--goal` entirely when no goal is set.
 
 [LAW:dataflow-not-control-flow] the variability lives in the candidates' classified state, not in whether the agent decided to look or run. Handoff content (direct vs define-task) and the halt-vs-run decision are both mechanical consequences of classification — the data picks the variant. Well-definedness in particular is a content discriminator, not a run/skip gate.
 
