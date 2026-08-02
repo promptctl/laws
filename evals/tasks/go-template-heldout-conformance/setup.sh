@@ -134,8 +134,12 @@ done
 # All seven gutted helpers, word-bounded so standalone `wrap` is caught without double-counting
 # `wrapWith`. This is the drift guard for future TASK_COMMIT bumps: a fixture exercising any
 # gutted helper that survives the deletions above must abort the setup, not leak into the
-# agent's visible coverage.
-leftover="$(grep -rlE 'camelcase|snakecase|kebabcase|\bwrap\b|wrapWith|abbrev|initials' conformance/fixtures 2>/dev/null || true)"
+# agent's visible coverage. Three outcomes, kept distinct: matches (a leak - abort), no matches
+# (clean), grep failure (infra abort with its stderr visible, never an empty pass).
+# [LAW:no-silent-failure]
+leftover="$(grep -rlE 'camelcase|snakecase|kebabcase|\bwrap\b|wrapWith|abbrev|initials' conformance/fixtures)" \
+  && grep_rc=0 || grep_rc=$?
+[ "$grep_rc" -le 1 ] || { echo "setup: drift-guard grep could not run (rc=$grep_rc)" >&2; exit 2; }
 [ -z "$leftover" ] || { echo "setup: visible fixtures still exercise gutted helpers: $leftover" >&2; exit 2; }
 for f in src/sprig/strings/caseUtils.ts src/sprig/strings/camelcase.test.ts \
          conformance/fixtures/sprig-kebabcase-basic; do
