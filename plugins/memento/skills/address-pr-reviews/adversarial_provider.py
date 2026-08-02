@@ -162,11 +162,21 @@ def _parse_result(text: str) -> dict:
 
 
 def _claude_once(prompt: str, model: str) -> str:
-    proc = subprocess.run(
-        ["claude", "-p", "--model", model, "--output-format", "json",
-         "--allowedTools", "Read,Grep,Glob"],
-        input=prompt, capture_output=True, text=True, timeout=REVIEW_TIMEOUT_S,
-    )
+    # [LAW:single-enforcer] the contract (PROVIDER_CONTRACT.md) surfaces only
+    # RuntimeError / CalledProcessError. subprocess.run(timeout=...) raises
+    # TimeoutExpired, a SubprocessError sibling of CalledProcessError — not a
+    # subclass — so callers catching the contract surface would miss it. Wrap it
+    # here, the one chokepoint, alongside the non-zero-exit and error-envelope wraps.
+    try:
+        proc = subprocess.run(
+            ["claude", "-p", "--model", model, "--output-format", "json",
+             "--allowedTools", "Read,Grep,Glob"],
+            input=prompt, capture_output=True, text=True, timeout=REVIEW_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"Reviewer agent timed out after {REVIEW_TIMEOUT_S}s and was killed."
+        ) from e
     if proc.returncode != 0:
         raise RuntimeError(
             f"Reviewer agent exited {proc.returncode}: {proc.stderr.strip()[:2000]}"
