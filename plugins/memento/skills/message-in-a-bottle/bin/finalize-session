@@ -129,7 +129,11 @@ _claude_flags() {
 # only be the fresh relaunch, not a stale one lingering in scrollback.
 _iterm_session_contents() {
   local uuid="$1"
-  osascript <<OSA 2>/dev/null
+  # [LAW:no-silent-failure] surface osascript errors into the worker log rather
+  # than swallowing them — the healthy read writes nothing to stderr (found →
+  # returns text; UUID absent → empty, exit 0), so this only speaks up on a real
+  # AppleScript/iTerm2 fault, which is exactly the clue a silent 30s timeout lacks.
+  osascript <<OSA 2>>/dev/stderr
 tell application "iTerm2"
   repeat with w in windows
     repeat with t in tabs of w
