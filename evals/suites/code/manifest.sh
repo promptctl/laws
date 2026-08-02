@@ -5,6 +5,7 @@
 SUITE_SUMMARY="Coding tasks scored by real repos' own tests and mechanical defect detectors"
 SUITE_TASKS="
 go-template-add-fix
+go-template-heldout-conformance
 go-template-multi-regression
 go-template-stub-reimpl
 laws-scripts-parse
