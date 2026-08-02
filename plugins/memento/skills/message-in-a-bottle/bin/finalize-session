@@ -24,9 +24,14 @@ set -euo pipefail
 # before reading the pane back to verify it ran (tmux).
 HANDOFF_DELAY_SECONDS=10
 SETTLE_SECONDS=5
-# How long to let a freshly relaunched claude boot and draw its input box before
-# queueing a carried /goal into it (iTerm2 transport only).
-CLAUDE_BOOT_SECONDS=6
+# Upper bound on how long to wait for a freshly relaunched claude to become ready
+# — its banner drawn, input box up — before queueing a carried /goal into it
+# (iTerm2 transport only). We POLL the session contents and proceed the instant it
+# is ready; on timeout we surface a failure rather than blind-writing into a
+# not-yet-ready input box. This mirrors the tmux worker's pane read-back, and
+# [LAW:no-silent-failure] closes the race a fixed boot sleep could only narrow.
+CLAUDE_READY_TIMEOUT_SECONDS=30
+CLAUDE_READY_POLL_SECONDS=0.5
 
 # [LAW:one-source-of-truth] the static framing wrapped around the agent's message
 # lives here once. The launcher composes PREFIX + agent message + SUFFIX into the
@@ -113,6 +118,30 @@ _claude_flags() {
     esac
   done
   printf '%s' "$out"
+}
+
+# Read the currently-visible contents of the iTerm2 session with the given UUID.
+# This is the iTerm2 analog of tmux's `capture-pane -p`: the readiness probe polls
+# it for the relaunched claude's banner before queueing a carried /goal, so the
+# goal is never written into a not-yet-ready input box. In the direct-iTerm2 path
+# (the only one that reaches this — the launcher prefers tmux when both exist) the
+# killed claude's alternate screen is torn down on exit, so a banner match here can
+# only be the fresh relaunch, not a stale one lingering in scrollback.
+_iterm_session_contents() {
+  local uuid="$1"
+  osascript <<OSA 2>/dev/null
+tell application "iTerm2"
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        if (unique id of s) is "${uuid}" then
+          return contents of s
+        end if
+      end repeat
+    end repeat
+  end repeat
+end tell
+OSA
 }
 
 # [LAW:types-are-the-program] one discriminator at the entry; everything
@@ -354,12 +383,40 @@ OSA
       # input into the freshly relaunched claude — same value-decides-effect shape
       # as tmux. The relaunch started a new process, so the /goal was wiped.
       if [[ -s "$GOALFILE" ]]; then
-        log "re-establishing carried goal"
-        sleep "$CLAUDE_BOOT_SECONDS"
-        GOALCMD="/goal $(cat "$GOALFILE")"
-        GAS=${GOALCMD//\\/\\\\}
-        GAS=${GAS//\"/\\\"}
-        if osascript <<OSA2 2>>/dev/stderr
+        # [LAW:no-silent-failure] mirror the tmux worker's read-back: poll the
+        # session until the relaunched claude has drawn its banner (input box up,
+        # ready for type-ahead) rather than blind-sleeping a fixed boot delay that
+        # a slow boot would outrun. Proceed the instant it is ready; if it never
+        # becomes ready within the bound, surface the failure below — the carried
+        # goal is NEVER logged as re-established when it was not delivered.
+        # 'Claude Code v[0-9]' is the fresh-boot banner the tmux worker keys on too.
+        log "waiting for relaunched claude to become ready (up to ${CLAUDE_READY_TIMEOUT_SECONDS}s)"
+        READY=""
+        DEADLINE=$(( $(date +%s) + CLAUDE_READY_TIMEOUT_SECONDS ))
+        while [[ $(date +%s) -le $DEADLINE ]]; do
+          # Capture then grep a herestring — never `osascript | grep`: with
+          # pipefail, grep -q closing the pipe early SIGPIPEs osascript (its output
+          # exceeds the pipe buffer), and pipefail would then report a MATCH as a
+          # failure, spuriously declaring the session not-ready.
+          SNAP=$(_iterm_session_contents "$UUID")
+          if grep -qE 'Claude Code v[0-9]' <<<"$SNAP"; then
+            READY=1
+            break
+          fi
+          sleep "$CLAUDE_READY_POLL_SECONDS"
+        done
+
+        if [[ -z "$READY" ]]; then
+          log "ERROR: relaunched claude in session $UUID did not become ready within ${CLAUDE_READY_TIMEOUT_SECONDS}s; carried goal NOT delivered. Deliver it manually once the session is up: /goal $(cat "$GOALFILE")"
+        else
+          # Ready: let the input box settle a beat, then queue the goal (mirrors
+          # the tmux worker's sleep-1 before its goal paste).
+          sleep 1
+          log "claude ready; re-establishing carried goal"
+          GOALCMD="/goal $(cat "$GOALFILE")"
+          GAS=${GOALCMD//\\/\\\\}
+          GAS=${GAS//\"/\\\"}
+          if osascript <<OSA2 2>>/dev/stderr
 tell application "iTerm2"
   repeat with w in windows
     repeat with t in tabs of w
@@ -373,10 +430,11 @@ tell application "iTerm2"
   end repeat
 end tell
 OSA2
-        then
-          log "carried goal re-established in iTerm2 session $UUID"
-        else
-          log "ERROR: could not re-establish carried goal in session $UUID"
+          then
+            log "carried goal re-established in iTerm2 session $UUID"
+          else
+            log "ERROR: could not re-establish carried goal in session $UUID"
+          fi
         fi
       fi
     else
