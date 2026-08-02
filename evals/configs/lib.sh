@@ -17,10 +17,12 @@
 # there is no second representation of a skill body that could drift from the one in git.
 #
 # The body path follows the repo convention - but is DERIVED from git rather than hard-coded, so
-# it stays correct as the repo changes: the body is `skills/<name>/references/craft.md` when that
-# exists at the ref (laws:prompt, laws:prose, laws:ticket), otherwise `skills/<name>/SKILL.md`
-# (laws:code, laws:chat, laws:application-spec). Deriving reproduces the documented convention
-# without duplicating the repo's structure in a list here. [LAW:one-source-of-truth]
+# it stays correct as the repo changes: under a location root, the body is `references/craft.md`
+# when that exists at the ref (laws:prompt, laws:prose, laws:ticket), otherwise `SKILL.md`
+# (laws:code, laws:chat, laws:application-spec). Two location roots are searched, NEW first: the
+# current `plugins/laws/skills/<name>/` and the historic `skills/<name>/` that pinned pre-move
+# refs still carry. Deriving reproduces the documented convention across both eras without
+# duplicating the repo's structure in a list here. [LAW:one-source-of-truth]
 #
 # [LAW:no-silent-failure] A ref or a body path that does not exist in git aborts nonzero - it
 #   never loads an empty or stale body, and never lets the control arm's "no body" hide a lookup
@@ -65,19 +67,34 @@ cfg_fields() {
   printf '%s\n' "$out"
 }
 
-# Derive the body path for a skill at a ref: craft.md if it exists there, else SKILL.md, else fail.
+# Derive the body path for a skill at a ref. The bodies live under one of two location roots -
+# `plugins/laws/skills/<name>/` since the plugin was moved into a subdirectory, and the historic
+# `skills/<name>/` that pinned pre-move refs still carry - so the lookup tries both, NEW location
+# first (where the body lives now), OLD as fallback. Within each location the precedence is fixed:
+# references/craft.md (laws:prompt, laws:prose, laws:ticket), else SKILL.md (laws:code, laws:chat,
+# laws:application-spec). The candidate list makes both orderings explicit; the first that exists
+# at the ref wins. Deriving from git rather than hard-coding one path keeps this correct across
+# both eras without a second representation of the repo layout. [LAW:one-source-of-truth]
 # Usage: cfg_body_path <laws_root> <ref> <skill>   -> prints the path
 cfg_body_path() {
   local root="$1" ref="$2" skill="$3"
   # The skill name is interpolated into a path; restrict it to a safe token so it cannot traverse
-  # out of skills/<name>/ (e.g. "../.."). [LAW:no-silent-failure]
+  # out of the skills directory (e.g. "../.."). [LAW:no-silent-failure]
   case "$skill" in
     ''|*[!A-Za-z0-9_-]*) cfg_die "cfg_body_path: unsafe skill name (allowed: letters, digits, - _): $skill" ;;
   esac
-  local craft="skills/$skill/references/craft.md" main="skills/$skill/SKILL.md"
-  if git -C "$root" cat-file -e "$ref:$craft" 2>/dev/null; then printf '%s\n' "$craft"; return 0; fi
-  if git -C "$root" cat-file -e "$ref:$main"  2>/dev/null; then printf '%s\n' "$main";  return 0; fi
-  cfg_die "no skill body for '$skill' at ref '$ref' (looked for $craft and $main)"
+  # Location order: NEW before OLD. Precedence within a location: craft.md before SKILL.md.
+  local candidates=(
+    "plugins/laws/skills/$skill/references/craft.md"
+    "plugins/laws/skills/$skill/SKILL.md"
+    "skills/$skill/references/craft.md"
+    "skills/$skill/SKILL.md"
+  )
+  local path
+  for path in "${candidates[@]}"; do
+    if git -C "$root" cat-file -e "$ref:$path" 2>/dev/null; then printf '%s\n' "$path"; return 0; fi
+  done
+  cfg_die "no skill body for '$skill' at ref '$ref' (looked for: ${candidates[*]})"
 }
 
 # ── Validate a configuration against the format ─────────────────────────────────────────
