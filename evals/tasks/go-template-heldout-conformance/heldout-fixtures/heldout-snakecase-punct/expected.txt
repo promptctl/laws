@@ -1,0 +1,1 @@
+foo.bar,baz|a.b|semver.compare2_way
