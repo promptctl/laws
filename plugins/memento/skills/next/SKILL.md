@@ -33,7 +33,7 @@ Examples:
 - Major update to work that is clearly NOT on this branch: stash it and proceed
 - A half finished feature: find the ticket it's related to.  THIS TICKET IS YOUR ASSIGNED WORK. SKIP THE REST OF THE SKILL. If it's not related to a ticket you see, do a quick code review.  does the code look experimental and temporary or high quality?  Does it look complete or barely started?  Then briefly explain the state of the code, what it does, and any other info you have (no ticket, etc).  Ask if they want you to create a ticket and continue the work, if they want it to committed to work as part of a different ticket, or whether they want you to stash or discard it.  Follow that instruction.
 
-Now there are no uncommitted changes.  If anything you did previously resulted in a reference to a specific ticket, THAT IS YOUR TICKET ID and you should skip the rest of this skill.
+Before proceeding, confirm the uncommitted changes are now resolved (committed, stashed, or discarded per the above).  If anything you did previously resulted in a reference to a specific ticket, THAT IS YOUR TICKET ID and you should skip the rest of this skill.
 
 Do NOT proceed without either:
 - no uncommitted changes
@@ -59,7 +59,7 @@ Once you've picked a ticket, work it through these steps:
 1. **Read the ticket fully.** Title, description, acceptance criteria, comments, linked PRs, linked tickets. If the ticket references a spec, doc, or prior PR, read that too. You are about to author code that claims to satisfy this ticket — earn the right to claim it.
 
 2. **Surface blockers before starting.**
-   - Acceptance criteria missing or vague? Ask.
+   - Acceptance criteria missing or vague? Investigate first (see below); ask only if it stays genuinely unresolvable.
    - Depends on another ticket that isn't done? Stop and report.
    - Spec referenced but doesn't exist? Stop and report.
    - The ticket conflicts with current branch state or uncommitted work? Stop and report.
@@ -81,5 +81,5 @@ To be honest, rarely. You should be capable of figuring this stuff out.
 
 If you think that there's a chance that this could have negative impacts on other work, you can ask a quick question, but like I said, You need to make an attempt to answer the question yourself. 
 
-That being said, here's a couple of scenarios which you can ask about: 
+That being said, here's one scenario which you can ask about: 
 - The current branch already has uncommitted work that doesn't belong to a current ticket.
