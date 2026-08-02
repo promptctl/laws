@@ -42,17 +42,17 @@ OR
 
 #### Open PRs
 
-Check for open PRs related to your current branch?  If there are, THIS IS YOUR TICKET!  Skip the rest of the skill and proceed to work that ticket.
+Check for open PRs related to your current branch?  If there are, THIS IS YOUR TICKET!  Skip the rest of the skill and work that PR through the `address-pr-reviews` skill (that's the memento skill for taking a PR's review feedback to a clean, merged close-out).
 
-**If there are no open PRs on the current branch:** we'll proceed with pulling from the backlog. Open PRs are still relevant, though — you want to check whether older open PRs overlap with your work, since rebuilding on top of stale code risks significant merge conflicts. But check this after you pull a ticket.
+**If there are no open PRs on the current branch:** we'll proceed with pulling from the backlog. Open PRs are still relevant, though — you want to check whether older open PRs overlap with your work, since rebuilding on top of stale code risks significant merge conflicts. Check this after you pull a ticket; if an older PR touches the same files, surface it to the user with both the ticket and PR references before starting, rather than silently building over it.
 
 #### lit ready
 
 Lit ready shows an overview of the epics and the top ticket in each epic, as well as any in-progress or orphaned tickets.
 
-If there are any orphaned tickets, pull from those first.  Those tickets are abandoned and need someone to finish them.  
+If there are any orphaned tickets, pull from those first — those tickets are abandoned and need someone to finish them. An orphan is your ticket; skip ahead to the steps below.
 
-If there aren't any other tickets to pick up, take from the top of the ready queue.
+Otherwise, take from the top of the ready queue.
 
 Once you've picked a ticket, work it through these steps:
 
@@ -70,7 +70,7 @@ IN ALL CASES YOU MUST DO AS MUCH OBVIOUS PREPARATORY WORK AS YOU CAN BEFORE ASKI
 A mature engineer knows when to ask for help, and it isn't at the slightest hint of ambiguity and before they've put in a shred of effort to answer the question themselves.  "What do I do with this uncommited work" is only a good question if it isn't obviously work that Directly corresponds to the ticket matching the branch name.  "Acceptance criteria missing or vague?" It is only a good question if it's not clearly answerable via common sense or existing documentation or some other method. If there's real ambiguity, surface it. If it's just basic information about the repo, see if you can figure it out for yourself. In all cases, the user should be presented with The results of an Extremely quick Investigation rather than "Hey, I don't know what to do. Tell me what to do." 
 
 3. **Set up the workspace.**
-   - Create or check out The branch matching the ticket ID. eg, `git checkout -b <ticket id>` or  `git checkout -b <ticket id>_slug`
+   - Create or check out The branch matching the ticket ID. eg, `git checkout -b <ticket id>` or  `git checkout -b <ticket id>_slug` — if that branch already exists (a previously-started ticket), check it out instead with `git checkout <ticket id>`.
    - Confirm the working tree is clean before starting. If dirty, Figure it the f*ck out. You're a mature, responsible, highly skilled engineer. 
 
 4. **State the plan in one paragraph, then start.** What the ticket asks for, how you'll verify it's done (the machine-verifiable criterion), and the first concrete step. Then begin.
