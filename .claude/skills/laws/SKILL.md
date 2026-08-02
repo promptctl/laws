@@ -26,16 +26,18 @@ care. Simple is the goal, not a step toward something more impressive.
   result. Nearly the same for every medium. It says nothing about how to write well.
 - **`references/craft.md`** - how to write well in this one medium. Read by whoever
   writes the change: a dispatched subagent, or the main session itself when editing this
-  one skill is the whole job. Never loaded next to a second craft.
+  one skill is the whole job. Never loaded next to a conflicting craft.
 
 ## The rules
 
-1. One craft per session. Each `craft.md` loads a whole medium's standard, and two in
-   one session stack and corrupt each other - that is the failure to prevent. A session
-   doing mixed work stays craft-free and consults a skill through a disposable subagent.
-   A session whose whole job is one skill may load that skill's one craft and edit it
-   directly - and holding the whole craft is how a change integrates instead of bolting
-   on. Never a second craft in the same session; that one you dispatch.
+1. Compatible crafts coexist; incompatible ones do not. Each `craft.md` loads a whole
+   medium's standard; most standards are complementary (code, its ticket, its docs), but
+   an *incompatible* pair stacks and corrupts each other - laws:code with laws:prompt is
+   the known one, and the guard refuses the second of that pair. A session may hold
+   several compatible crafts, and a session whose whole job is one skill may load that
+   skill's craft and edit it directly - holding the whole craft is how a change integrates
+   instead of bolting on. When you need a craft that conflicts with one already engaged,
+   you don't load it here; that one you dispatch to a disposable subagent.
    (`design-docs/working-with-skills.md` has the details.)
 2. `craft.md` has no dispatch or verify steps. Those are the main session's job, and
    the writer subagent has no one to dispatch.

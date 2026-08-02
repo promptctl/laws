@@ -3,14 +3,18 @@
 #
 #   session-start  - fires at session start, including after /compact (SessionStart):
 #                    the initial routing load before the first message. Also resets the
-#                    medium lock when the session is genuinely fresh (see guard, below).
+#                    engaged-craft set when the session is genuinely fresh (see guard, below).
 #   engage         - fires on every user message (UserPromptSubmit): re-assert routing
 #                    AND re-activate the laws for that specific request.
 #   guard          - fires before every Skill load (PreToolUse, matcher Skill): the one
-#                    checkpoint that enforces one-craft-per-session. Routing only ASKS
-#                    the agent to load a single medium; nothing before this observed the
-#                    actual load, so a second medium loaded silently. This turns "which
-#                    medium loaded first" from luck into owned state and refuses a second.
+#                    checkpoint that enforces craft compatibility. Routing only ASKS the
+#                    agent which craft to load; nothing before this observed the actual
+#                    load. Compatible crafts may coexist in one session - code plus its
+#                    ticket plus its docs is normal, complementary work - so what this
+#                    refuses is not a second craft but an INCOMPATIBLE one: two standards
+#                    that corrupt each other stacked. The one such pair today is laws:code
+#                    with laws:prompt. This turns "what is loaded" from luck into owned
+#                    state and refuses a conflicting addition, naming the craft it clashes.
 #
 # Routing is re-injected on EVERY message, not only at session start, so it carries the
 # same durability as a line in a system prompt: a long or compacted session can bury a
@@ -41,7 +45,20 @@ EOT
 # CLAUDE.md entry. Same formatting constraints as ENGAGE_TEXT: single-line, straight
 # quotes, no backslashes, so it needs no JSON escaping.
 read -r -d '' ROUTE_TEXT <<'EOT'
-Before substantive work, identify the medium of your primary deliverable and load the ONE skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Load one, NEVER two: each carries a different standard, and stacking them lets one medium's rules corrupt another's work.
+Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Compatible crafts may share a session, but laws:code and laws:prompt corrupt each other's work when stacked and cannot both be loaded - the guard refuses the conflicting second.
+EOT
+
+# The incompatibility policy - DATA, one symmetric pair per line (bare craft names, no
+# "laws:" prefix). Two crafts named on one line corrupt each other's standard when both
+# are loaded, so the guard refuses the second; EVERY pairing absent from this list may
+# coexist. This is deliberately a SHORT list, not a full NxN matrix and not an "exclusive"
+# craft: it names only the pairing shown to break real work - laws:code with laws:prompt,
+# because code is nothing like prompt-for-an-LLM, so each craft's rules are actively wrong
+# for the other's medium. Add an edge only with the same kind of evidence; an absent edge
+# means "these two coexist," which is the default for everything else (chat, prose, ticket,
+# application-spec all mix freely with each other and with code).
+read -r -d '' INCOMPATIBLE <<'EOT'
+code prompt
 EOT
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin; session-start
@@ -70,23 +87,41 @@ sanitize() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9_-' '_'
 }
 
-# --- the medium lock ------------------------------------------------------------------
-# One clock for "which medium is engaged": a file whose presence means locked and whose
-# contents name the medium. Keyed by session_id AND agent_id, because a dispatched
-# subagent shares the parent's session_id (verified) and is distinguished only by its
-# agent_id - so keying on session_id alone would make the subagent inherit the parent's
-# lock and break the sanctioned escape hatch (do a second medium's work in a subagent).
-# The main session has no agent_id, so it lands in the "main" slot.
-LOCK_ROOT="${TMPDIR:-/tmp}/laws-medium-lock"
+# --- the craft lock (the engaged set) -------------------------------------------------
+# The record of "which crafts are engaged" is a DIRECTORY per (sub)session holding one
+# empty marker file per engaged craft - a set, not a single value, because compatible
+# crafts coexist. Keyed by session_id AND agent_id, because a dispatched subagent shares
+# the parent's session_id (verified) and is distinguished only by its agent_id - so keying
+# on session_id alone would make the subagent inherit the parent's set and break the
+# sanctioned escape hatch (do an incompatible craft's work in a subagent). The main session
+# has no agent_id, so it lands in the "main" slot.
+LOCK_ROOT="${TMPDIR:-/tmp}/laws-craft-lock"
 
 lock_dir_for() {
   printf '%s/%s' "$LOCK_ROOT" "$(sanitize "$1")"
 }
 
-lock_file_for() {
+# The slot directory for one (sub)session: its engaged-craft markers live inside it.
+slot_dir_for() {
   local sid=$1 aid=$2 slot=main
   [ -n "$aid" ] && slot=$(sanitize "$aid")
   printf '%s/%s' "$(lock_dir_for "$sid")" "$slot"
+}
+
+# True (exit 0) iff crafts $1 and $2 are an incompatible pair per the INCOMPATIBLE policy.
+# Symmetric: it matches a line in either order. It reads the policy data and hard-codes no
+# craft name, so changing the rule is editing INCOMPATIBLE, never this function.
+crafts_incompatible() {
+  local a=$1 b=$2 x y
+  while read -r x y; do
+    [ -n "$x" ] || continue
+    if { [ "$x" = "$a" ] && [ "$y" = "$b" ]; } || { [ "$x" = "$b" ] && [ "$y" = "$a" ]; }; then
+      return 0
+    fi
+  done <<EOF
+$INCOMPATIBLE
+EOF
+  return 1
 }
 
 # --- emitters -------------------------------------------------------------------------
@@ -113,11 +148,11 @@ deny() {
 
 case "$HOOK_TYPE" in
   session-start)
-    # A fresh session starts with no medium engaged. startup/clear/fork are the sources
+    # A fresh session starts with no craft engaged. startup/clear/fork are the sources
     # that begin a new logical context (startup and fork also carry a new session_id, so
     # the removal is a no-op there; clear can reuse the id, which is the case that needs
-    # it). resume and compact continue the same session, so the lock must survive them -
-    # exactly as the routing text itself is built to survive compaction.
+    # it). resume and compact continue the same session, so the engaged set must survive
+    # them - exactly as the routing text itself is built to survive compaction.
     sid=$(json_field session_id)
     source=$(json_field source)
     case "$source" in
@@ -137,11 +172,11 @@ case "$HOOK_TYPE" in
     ;;
 
   guard)
-    # The one checkpoint for one-craft-per-session. A medium is any laws:<x> craft skill;
-    # the colon is the whole discriminator, so the set of media is derived from the
-    # namespace rather than enumerated here - a new medium is covered the day it is added,
-    # and the meta-skill "laws" (no colon) is excluded for free. Everything that is not a
-    # laws: craft - "next", "address-pr-reviews", plain "laws" - flows straight through.
+    # The one checkpoint for craft compatibility. A craft is any laws:<x> skill; the colon
+    # is the whole discriminator, so the craft set is derived from the namespace rather than
+    # enumerated here - a new craft is covered the day it is added, and the meta-skill "laws"
+    # (no colon) is excluded for free. Everything that is not a laws: craft - "next",
+    # "address-pr-reviews", plain "laws" - flows straight through.
     tool=$(json_field tool_name)
     skill=$(json_field skill)
     case "$tool" in
@@ -152,49 +187,55 @@ case "$HOOK_TYPE" in
       laws:?*) ;;
       *) exit 0 ;;
     esac
+    craft=${skill#laws:}
 
     sid=$(json_field session_id)
     aid=$(json_field agent_id)
     if [ -z "$sid" ]; then
-      # No session id means no way to key the lock. Let the load through so skill loading
-      # never breaks, but say so loudly (PreToolUse stderr surfaces in hook debug) rather
-      # than pretend the guard ran - a silent pass here would be the original hole back.
-      echo "laws skill-router guard: empty session_id, medium lock skipped for $skill" >&2
+      # No session id means no way to key the engaged set. Let the load through so skill
+      # loading never breaks, but say so loudly (PreToolUse stderr surfaces in hook debug)
+      # rather than pretend the guard ran - a silent pass here would be the original hole back.
+      echo "laws skill-router guard: empty session_id, craft lock skipped for $skill" >&2
       exit 0
     fi
 
-    lock=$(lock_file_for "$sid" "$aid")
-    engaged=""
-    [ -f "$lock" ] && engaged=$(cat "$lock")
+    slot=$(slot_dir_for "$sid" "$aid")
+    marker="$slot/$(sanitize "$craft")"
 
-    if [ -z "$engaged" ]; then
-      # First medium of the (sub)session: record it, atomically. The write is the guard's
-      # one external effect and its own concurrency control - noclobber makes the redirect
-      # fail if a parallel guard already created the lock, turning a check-then-write race
-      # into a compare-and-swap. A winner records and allows. A loser re-reads the lock and
-      # falls through to the comparison below, so a racing SECOND medium is still refused,
-      # never slipped through. A genuine write failure (full or unwritable TMPDIR) leaves no
-      # lock: warn and still allow - degraded enforcement beats blocking every skill load,
-      # the same loud-but-non-blocking tradeoff as the empty-session_id branch.
-      mkdir -p "$(dirname "$lock")"
-      if ( set -o noclobber; printf '%s' "$skill" > "$lock" ) 2>/dev/null; then
-        exit 0
-      fi
-      engaged=""
-      [ -f "$lock" ] && engaged=$(cat "$lock")
-      if [ -z "$engaged" ]; then
-        echo "laws skill-router guard: could not write medium lock for $skill; one-craft enforcement degraded this session" >&2
-        exit 0
-      fi
-      # A concurrent guard won the create; fall through to compare against what it recorded.
-    fi
+    # Re-loading a craft already engaged is idempotent (e.g. re-routing to it after a
+    # compaction): its marker is already present, nothing to add or refuse.
+    [ -f "$marker" ] && exit 0
 
-    if [ "$engaged" = "$skill" ]; then
-      # Re-loading the same medium (e.g. re-routing to it after a compaction) is idempotent.
+    # Claim this craft's marker FIRST, then check compatibility - the same compare-and-swap
+    # discipline the single-lock guard used, generalized to a set. noclobber makes the create
+    # atomic: the winner proceeds to the check; a loser either finds the marker already there
+    # (a parallel duplicate of the same craft - allow) or hit an unwritable store (degrade to
+    # a loud allow, the same non-blocking tradeoff as the empty-session_id branch - broken
+    # enforcement must never break skill loading).
+    mkdir -p "$slot" 2>/dev/null
+    if ! ( set -o noclobber; : > "$marker" ) 2>/dev/null; then
+      [ -f "$marker" ] && exit 0
+      echo "laws skill-router guard: could not write craft lock for $skill; compatibility enforcement degraded this session" >&2
       exit 0
     fi
 
-    deny "Medium already engaged this session: $engaged. Loading $skill would put a second craft standard on duty, and two standards stacked corrupt each other's work - the one-craft-per-session rule this plugin enforces (design-docs/working-with-skills.md). To do $skill work, dispatch a fresh subagent seeded with only that skill and keep just its answer; do not load a second craft here. If this whole session's job has genuinely become $skill, run /clear first, then load it clean."
+    # Marker claimed. Refuse only if it is incompatible with a craft ALREADY engaged; scan the
+    # set, skipping our own just-written marker. On a conflict, release our claim (so a denied
+    # load leaves no phantom engagement) and deny, naming the craft it clashes with. Two racing
+    # incompatible loads each claim, each see the other, and each release+deny - neither ends up
+    # engaged, an over-refusal the agent recovers from by retrying one. That is the safe
+    # direction: never silently co-engage an incompatible pair.
+    for other in "$slot"/*; do
+      [ -e "$other" ] || continue
+      other=${other##*/}
+      [ "$other" = "$(sanitize "$craft")" ] && continue
+      if crafts_incompatible "$craft" "$other"; then
+        rm -f "$marker"
+        deny "Craft already engaged this session: laws:$other. It and laws:$craft corrupt each other's work when stacked, so they cannot both be loaded in one session - the compatibility rule this plugin enforces (design-docs/working-with-skills.md). Compatible crafts may coexist, but this pair may not. To do laws:$craft work, dispatch a fresh subagent seeded with only that skill and keep just its answer; do not load it here. If this whole session's job has genuinely become laws:$craft, run /clear first, then load it clean."
+        exit 0
+      fi
+    done
+    exit 0
     ;;
 
   *)
