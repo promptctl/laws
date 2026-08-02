@@ -31,9 +31,9 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
-          version="$(jq -r '.version' .claude-plugin/plugin.json)"
+          version="$(jq -r '.version' plugins/laws/.claude-plugin/plugin.json)"
           if [ -z "$version" ] || [ "$version" = "null" ]; then
-            echo "::error::.claude-plugin/plugin.json has no .version"; exit 1
+            echo "::error::plugins/laws/.claude-plugin/plugin.json has no .version"; exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"

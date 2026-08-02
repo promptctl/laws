@@ -1,0 +1,11 @@
+{
+  "name": "memento",
+  "version": "0.1.0",
+  "description": "Agent-native workflow tooling: pull the next lit ticket (next), the mandatory session close-out and cross-session handoff that carries a goal across a reset (message-in-a-bottle), and the address-PR-review loop (address-pr-reviews).",
+  "author": {
+    "name": "Brandon Fryslie"
+  },
+  "repository": "https://github.com/promptctl/laws",
+  "license": "MIT",
+  "keywords": ["workflow", "lit", "handoff", "pr-review", "agent-native"]
+}

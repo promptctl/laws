@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""review — CLI entrypoint over the address-pr-reviews provider library.
+
+One command per operation the SKILL.md loop needs, so agents never hand-write
+`python3 -c` glue or raw graphql. Stdout is always the operation's JSON;
+errors are human-readable on stderr with a nonzero exit.
+
+    review caps
+    review setup-check [OWNER REPO]
+    review wait <pr>
+    review fetch <pr>
+    review change-requests <pr>
+    review resolve <thread-id>
+    review reply <thread-id> --body <text>
+    review dismiss <pr> <review-id> --message <text>
+    review trigger <pr>
+
+<pr> is a full PR URL or a bare number (resolved against the cwd's repo).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+# [LAW:one-source-of-truth] the skill directory is derived from this file's
+# REAL location — resolve() walks through the ~/.claude/skills symlink — so
+# sibling modules import identically from either invocation path.
+SKILL_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SKILL_DIR))
+
+import github_threads  # noqa: E402
+import provider_loader  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Input parsing — checkpoints that hand back stamped values
+# ---------------------------------------------------------------------------
+
+def pr_url(ref: str) -> str:
+    """Parse a PR reference (full URL or bare number) into a canonical PR URL.
+
+    [LAW:parse-dont-validate] this is the one checkpoint for PR references;
+    every handler downstream receives a URL already known to be well-formed.
+    """
+    if ref.isdigit():
+        url = github_threads.gh("pr", "view", ref, "--json", "url", "--jq", ".url")
+        if not url:
+            raise RuntimeError(
+                f"gh pr view {ref} returned no URL — does PR #{ref} exist in "
+                "the current directory's repo?"
+            )
+        return url
+    github_threads.parse_pr(ref)  # raises ValueError on a malformed URL
+    return ref
+
+
+def repo_slug(owner: str | None, repo: str | None) -> tuple[str, str]:
+    """Return (owner, repo) — the explicit pair, or inferred from the cwd's
+    GitHub remote. Argparse guarantees the pair arrives whole or not at all."""
+    if owner is not None and repo is not None:
+        return owner, repo
+    data = json.loads(github_threads.gh("repo", "view", "--json", "owner,name"))
+    return data["owner"]["login"], data["name"]
+
+
+# ---------------------------------------------------------------------------
+# Handlers — each returns (payload, failure_message | None).
+# [LAW:dataflow-not-control-flow] every handler prints its payload and exits
+# by the same path; success-vs-failure is a value the handler returns, not a
+# side branch in main.
+# ---------------------------------------------------------------------------
+
+def cmd_caps(provider, args) -> tuple[dict, str | None]:
+    return provider.CAPABILITIES, None
+
+
+def cmd_setup_check(provider, args) -> tuple[dict, str | None]:
+    owner, repo = repo_slug(args.owner, args.repo)
+    check = provider.setup_check(owner, repo)
+    failure = None if check["installed"] else f"Reviewer not installed: {check['message']}"
+    return check, failure
+
+
+def cmd_wait(provider, args) -> tuple[dict, str | None]:
+    result = provider.wait(pr_url(args.pr))
+    # [LAW:no-silent-failure] a non-success conclusion means the reviewer
+    # errored — its findings are absent, not empty. Surface the run URL.
+    failure = None if result["conclusion"] == "success" else (
+        f"review run concluded {result['conclusion']!r}, not success — "
+        f"findings are absent, not empty. Run: {result.get('url')}"
+    )
+    return result, failure
+
+
+def cmd_fetch(provider, args) -> tuple[dict, str | None]:
+    return provider.fetch(pr_url(args.pr)), None
+
+
+def cmd_change_requests(provider, args) -> tuple[dict, str | None]:
+    return provider.change_requests(pr_url(args.pr)), None
+
+
+def cmd_resolve(provider, args) -> tuple[dict, str | None]:
+    return provider.resolve(args.thread_id), None
+
+
+def cmd_reply(provider, args) -> tuple[dict, str | None]:
+    # The thread-reply mutation formerly inlined in SKILL.md's plan/confirm
+    # phases; confirmation of the created comment id is the success signal.
+    comment_id = github_threads.gh(
+        "api", "graphql",
+        "-f", "query=mutation($id:ID!,$body:String!){"
+              "addPullRequestReviewThreadReply("
+              "input:{pullRequestReviewThreadId:$id,body:$body})"
+              "{comment{id}}}",
+        "-F", f"id={args.thread_id}",
+        "-F", f"body={args.body}",
+        "--jq", ".data.addPullRequestReviewThreadReply.comment.id",
+    )
+    if not comment_id or comment_id == "null":
+        # [LAW:no-silent-failure] no confirmed comment id means no reply.
+        raise RuntimeError(
+            f"addPullRequestReviewThreadReply returned no comment id for "
+            f"{args.thread_id} — the reply was NOT posted."
+        )
+    return {"thread_id": args.thread_id, "comment_id": comment_id}, None
+
+
+def cmd_dismiss(provider, args) -> tuple[dict, str | None]:
+    return provider.dismiss_review(pr_url(args.pr), args.review_id, args.message), None
+
+
+def cmd_trigger(provider, args) -> tuple[dict, str | None]:
+    return provider.trigger(pr_url(args.pr)), None
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="review",
+        description="CLI over the address-pr-reviews provider library.",
+    )
+    parser.add_argument(
+        "--provider",
+        help="pin a provider for this invocation (default: provider.json / "
+             "PR_REVIEW_PROVIDER)",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    # [LAW:types-are-the-program] each subcommand declares the capability flag
+    # it needs; the single gate in main() reads it. Ungated commands carry None.
+    def add(name, func, capability=None, help=None):
+        p = sub.add_parser(name, help=help)
+        p.set_defaults(func=func, capability=capability)
+        return p
+
+    add("caps", cmd_caps, help="print the active provider's CAPABILITIES")
+
+    p = add("setup-check", cmd_setup_check, capability="setup_check",
+            help="verify the reviewer is installed; nonzero exit when not")
+    p.add_argument("owner", nargs="?", default=None)
+    p.add_argument("repo", nargs="?", default=None)
+
+    p = add("wait", cmd_wait,
+            help="block until the head SHA's review completes; nonzero exit "
+                 "unless conclusion is success")
+    p.add_argument("pr", help="PR URL or number")
+
+    p = add("fetch", cmd_fetch, help="canonical findings JSON")
+    p.add_argument("pr", help="PR URL or number")
+
+    p = add("change-requests", cmd_change_requests, capability="dismiss_review",
+            help="the automated reviewer's blocking CHANGES_REQUESTED reviews")
+    p.add_argument("pr", help="PR URL or number")
+
+    p = add("resolve", cmd_resolve, capability="resolve",
+            help="resolve one review thread (verified)")
+    p.add_argument("thread_id")
+
+    p = add("reply", cmd_reply, capability="resolve",
+            help="post a reply comment on a review thread")
+    p.add_argument("thread_id")
+    p.add_argument("--body", required=True)
+
+    p = add("dismiss", cmd_dismiss, capability="dismiss_review",
+            help="dismiss one stale CHANGES_REQUESTED review (verified)")
+    p.add_argument("pr", help="PR URL or number")
+    p.add_argument("review_id", type=int)
+    p.add_argument("--message", required=True)
+
+    p = add("trigger", cmd_trigger, capability="trigger",
+            help="explicitly request a review")
+    p.add_argument("pr", help="PR URL or number")
+
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+
+    # setup-check's owner/repo pair arrives whole or not at all.
+    if args.command == "setup-check" and (args.owner is None) != (args.repo is None):
+        print("ERROR (setup-check): give both OWNER and REPO, or neither "
+              "(inferred from the cwd's GitHub remote).", file=sys.stderr)
+        return 2
+
+    try:
+        provider = provider_loader.get(args.provider)
+        # [LAW:single-enforcer] the one capability gate for every subcommand.
+        if args.capability and not provider.CAPABILITIES.get(args.capability):
+            raise RuntimeError(
+                f"provider '{provider.__name__}' does not support "
+                f"'{args.command}': CAPABILITIES[{args.capability!r}] is False."
+            )
+        payload, failure = args.func(provider, args)
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or "").strip() or str(e)
+        print(f"ERROR ({args.command}): {detail}", file=sys.stderr)
+        return 1
+    except (RuntimeError, ValueError, NotImplementedError, KeyError) as e:
+        print(f"ERROR ({args.command}): {e}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(payload, indent=2))
+    if failure:
+        print(f"ERROR ({args.command}): {failure}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
