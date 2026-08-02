@@ -50,10 +50,11 @@ for cfg in "${CONFIGS[@]}"; do
   if [ -z "$skill" ]; then
     if [ -z "$body" ]; then pass "$name: control arm resolves to NO body"; else fail "$name: control arm resolved a non-empty body"; fi
   else
+    bodypath="$(cfg_body_path "$ROOT" "$ref" "$skill" 2>/dev/null)"
     if [ "$body" = "$(expected_body "$ref" "$skill")" ] && [ -n "$body" ]; then
-      pass "$name: resolves to EXACTLY git's body at $ref:skills/$skill (bytes: ${#body})"
+      pass "$name: resolves to EXACTLY git's body at $ref:$bodypath (bytes: ${#body})"
     else
-      fail "$name: resolved body does not match git show $ref:skills/$skill/…"
+      fail "$name: resolved body does not match git show $ref:$bodypath"
     fi
   fi
 done
@@ -80,15 +81,15 @@ if ( cfg_validate "$taskfield" ) >/dev/null 2>&1; then fail "task field: validat
 
 # ── Path derivation (independent literal checks of both branches) ───────────────────────
 printf '\n== path derivation ==\n' >&2
-if [ "$(cfg_body_path "$ROOT" HEAD code 2>/dev/null)" = "skills/code/SKILL.md" ]; then
-  pass "derivation: code -> skills/code/SKILL.md (SKILL.md branch)"
+if [ "$(cfg_body_path "$ROOT" HEAD code 2>/dev/null)" = "plugins/laws/skills/code/SKILL.md" ]; then
+  pass "derivation: code -> plugins/laws/skills/code/SKILL.md (SKILL.md branch)"
 else
-  fail "derivation: code did not resolve to skills/code/SKILL.md"
+  fail "derivation: code did not resolve to plugins/laws/skills/code/SKILL.md"
 fi
-if [ "$(cfg_body_path "$ROOT" HEAD prompt 2>/dev/null)" = "skills/prompt/references/craft.md" ]; then
-  pass "derivation: prompt -> skills/prompt/references/craft.md (craft.md branch)"
+if [ "$(cfg_body_path "$ROOT" HEAD prompt 2>/dev/null)" = "plugins/laws/skills/prompt/references/craft.md" ]; then
+  pass "derivation: prompt -> plugins/laws/skills/prompt/references/craft.md (craft.md branch)"
 else
-  fail "derivation: prompt did not resolve to skills/prompt/references/craft.md"
+  fail "derivation: prompt did not resolve to plugins/laws/skills/prompt/references/craft.md"
 fi
 
 echo "" >&2
