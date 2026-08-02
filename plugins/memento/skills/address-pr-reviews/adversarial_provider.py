@@ -181,7 +181,14 @@ def _claude_once(prompt: str, model: str) -> str:
         raise RuntimeError(
             f"Reviewer agent exited {proc.returncode}: {proc.stderr.strip()[:2000]}"
         )
-    envelope = json.loads(proc.stdout)
+    try:
+        envelope = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        # A 0-exit with unparseable stdout (e.g. truncated by a kill that beat the
+        # exit code) would otherwise leak a ValueError past the contract surface.
+        raise RuntimeError(
+            f"Reviewer agent returned unparseable JSON: {proc.stdout.strip()[:2000]}"
+        ) from e
     if envelope.get("is_error") or envelope.get("subtype") != "success":
         raise RuntimeError(f"Reviewer agent failed: {json.dumps(envelope)[:2000]}")
     return envelope["result"].strip()
