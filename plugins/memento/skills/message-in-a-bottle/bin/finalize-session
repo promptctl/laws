@@ -216,6 +216,10 @@ case "$MODE" in
       # Persist to a stable, well-known path and tell the operator exactly how
       # to deliver it. Synchronous; no worker.
       DROP="$HOME/.claude/finalize-pending-handoff.txt"
+      # [LAW:no-silent-failure] this path's whole promise is "never drop the
+      # handoff", so guarantee the destination dir exists before the cp — a
+      # missing ~/.claude/ (first-run, unusual setup) must not lose the message.
+      mkdir -p "$(dirname "$DROP")"
       cp -- "$MSGFILE" "$DROP"
       echo "finalize-session: no tmux or iTerm2 transport detected." >&2
       echo "Handoff written to: $DROP" >&2
