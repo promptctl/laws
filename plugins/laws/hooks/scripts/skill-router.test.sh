@@ -145,5 +145,20 @@ chmod 700 "$ro"; rm -rf "$ro"
 assert_allow "unwritable lock store still allows the load" "$out"
 case "$err" in *"could not write craft lock"*) ok "unwritable lock store warns on stderr";; *) bad "unwritable lock store did not warn (got: $err)";; esac
 
+# 12. A missing policy file degrades loudly, not silently: the incompatible load is ALLOWED
+#     (a lost policy must never block skill loading) but a warning is emitted - otherwise an
+#     absent policy would silently read as "everything coexists" and the guard would go dark.
+#     Run a copy of the router in a dir WITHOUT the policy file so the read fails.
+nopolicy=$(mktemp -d)
+cp "$ROUTER" "$nopolicy/skill-router.sh"
+np_code=$(skill_payload S13 laws:code)
+np_prompt=$(skill_payload S13 laws:prompt)
+printf '%s' "$np_code" | "$nopolicy/skill-router.sh" guard >/dev/null 2>&1
+out=$(printf '%s' "$np_prompt" | "$nopolicy/skill-router.sh" guard 2>/dev/null)
+err=$(printf '%s' "$np_prompt" | "$nopolicy/skill-router.sh" guard 2>&1 >/dev/null)
+rm -rf "$nopolicy"
+assert_allow "missing policy file still allows the load (degraded)" "$out"
+case "$err" in *"policy file not readable"*) ok "missing policy file warns on stderr";; *) bad "missing policy file did not warn (got: $err)";; esac
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
