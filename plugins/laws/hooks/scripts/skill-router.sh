@@ -48,18 +48,25 @@ read -r -d '' ROUTE_TEXT <<'EOT'
 Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Compatible crafts may share a session, but laws:code and laws:prompt corrupt each other's work when stacked and cannot both be loaded - the guard refuses the conflicting second.
 EOT
 
-# The incompatibility policy - DATA, one symmetric pair per line (bare craft names, no
-# "laws:" prefix). Two crafts named on one line corrupt each other's standard when both
-# are loaded, so the guard refuses the second; EVERY pairing absent from this list may
-# coexist. This is deliberately a SHORT list, not a full NxN matrix and not an "exclusive"
-# craft: it names only the pairing shown to break real work - laws:code with laws:prompt,
-# because code is nothing like prompt-for-an-LLM, so each craft's rules are actively wrong
-# for the other's medium. Add an edge only with the same kind of evidence; an absent edge
-# means "these two coexist," which is the default for everything else (chat, prose, ticket,
-# application-spec all mix freely with each other and with code).
-read -r -d '' INCOMPATIBLE <<'EOT'
-code prompt
-EOT
+# The incompatibility policy is DATA, and it lives in one file read by BOTH enforcers -
+# this guard AND the runtime gate (laws-excise.js) - so the rule has a single home
+# ([LAW:one-source-of-truth], the divergence the two used to risk). This script hard-codes
+# no craft name; changing the policy is editing incompatible-crafts.txt. Comments (#) and
+# blank lines are stripped HERE, so crafts_incompatible below sees only "a b" pair lines,
+# exactly the shape the former inline heredoc handed it - the read is re-derived every
+# process launch, so the file is the source and this variable is just its cache, never a
+# second copy that can drift.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+POLICY_FILE="$SCRIPT_DIR/incompatible-crafts.txt"
+if [ -r "$POLICY_FILE" ]; then
+  INCOMPATIBLE="$(sed -E 's/#.*$//' "$POLICY_FILE" | grep -E '[^[:space:]]')"
+else
+  # Loud degrade, matching this script's ethos elsewhere (empty session_id, unwritable
+  # store): a missing policy must never BLOCK skill loading, but it must not silently pass
+  # as "everything coexists" either - announce it. [LAW:no-silent-failure]
+  echo "laws skill-router guard: policy file not readable ($POLICY_FILE); craft compatibility enforcement disabled this session" >&2
+  INCOMPATIBLE=""
+fi
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin; session-start
 # and guard read fields out of it, engage ignores it. Harmless where unused. Newlines are
