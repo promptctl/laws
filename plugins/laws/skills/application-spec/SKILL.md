@@ -6,28 +6,20 @@ description: Produce a thorough, functional, clean-room specification of an exis
 # Producing this artifact
 
 The craft for this medium lives in `references/craft.md`, relative to this skill's
-base directory. Do not read it in this conversation - it is the writing agent's
-material, and loading it here stacks guidance this session does not need.
+base directory.
 
-Produce the deliverable with a subagent:
-
-1. Dispatch a fresh subagent (one that inherits no conversation context). Its
-   prompt must contain:
-   - the complete requirements, in the requester's own words - anything omitted
-     does not exist for the subagent
+1. Read `references/craft.md` before touching the target.
+2. Fix these before you write:
+   - the complete requirements, in the requester's own words
    - the target: the repo path, or how to reach the application (command, URL,
-     credentials) - every evidence channel the subagent may use
+     credentials) - every evidence channel available to you
    - the exact output path for the spec (default: an `appspec/` directory at the
      target root)
    - the acceptance criterion: an independent team holding only the spec could
      rebuild the application, and no sentence in the spec states a fact an
      outside observer of the running application could not confirm
-   - as its first instruction: read `references/craft.md` (give the absolute path,
-     resolved from this skill's base directory) before touching the target
-2. When it returns, read the artifact it produced - the spec files, not its
-   report - and spot-check both directions: sample surfaces for completeness,
-   sample sentences for leaked internals. If it misses, re-dispatch with the
-   corrections stated explicitly.
-
-If this harness cannot dispatch subagents, read `references/craft.md` now and
-apply it directly yourself.
+3. Write the spec against the craft.
+4. Read back the spec files you produced - the files themselves, not your memory
+   of writing them - and spot-check both directions: sample surfaces for
+   completeness, sample sentences for leaked internals. If it misses, revise until
+   it holds.
