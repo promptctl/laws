@@ -220,6 +220,52 @@ function exciseAt(rawLines, indices, activeMedium) {
   return { lines: out, changed: stubbed.length > 0, stubbed };
 }
 
+// --- rewind (options 3 & 4) ------------------------------------------------------------------
+// Rewind the conversation to `anchorUuid`: after this, a resumed session sees the transcript as
+// ending at the anchor, and everything recorded after it is inert.
+//
+// MEASURED on 2.1.226 (disposable 3-fact session, `-p --resume`, one fact per turn). The resume
+// picks its leaf from the trailing `{"type":"last-prompt","leafUuid":…}` record, but it will not
+// stop at a node that still has reachable descendants — it follows the branch down to the tip. So
+// the two halves below are each necessary and only jointly sufficient, and all four combinations
+// were run:
+//   - repoint last-prompt alone      → NO rewind (the old tail is still reachable below the anchor)
+//   - sever the anchor's children alone → NO rewind (nothing moved the leaf back)
+//   - graft a new record onto the anchor → NO rewind (a shallow branch never displaces the tail,
+//                                          so no purely ADDITIVE surgery can ever rewind)
+//   - sever + repoint                → REWIND, verified live
+// Shipping the sever on its own would be a unit that looks like it works and silently doesn't —
+// so the rewind is ONE operation. [LAW:composability] one complete job, no setup ritual.
+//
+// This needs no bundle internals — no rewindAnchorUuid seam, no minified anchor — which is what
+// lets the gate survive weekly releases untouched.
+//
+// Non-destructive by construction: every record stays in the file, byte-for-byte except the one
+// link field per severed branch. The discarded conversation remains on disk as an orphan branch,
+// and on-disk file deliverables are untouched by every option, `discard` included.
+// `severUuid` is supplied by the caller because randomness is an effect; `sessionId` is read off
+// the anchor record rather than passed in, so it cannot disagree with the transcript it labels.
+// [LAW:effects-at-boundaries] [LAW:one-source-of-truth]
+function rewindTo(rawLines, anchorUuid, severUuid) {
+  const out = rawLines.slice();
+  let severed = 0;
+  let anchor = null;
+  for (let i = 0; i < rawLines.length; i++) {
+    let o;
+    try { o = JSON.parse(rawLines[i]); } catch (_e) { continue; }   // non-JSON → leave untouched
+    if (o.uuid === anchorUuid) anchor = o;
+    if (o.parentUuid !== anchorUuid) continue;
+    o.parentUuid = severUuid;                                        // a uuid rooted nowhere
+    out[i] = JSON.stringify(o);
+    severed++;
+  }
+  // An anchor that is not in the transcript is a caller bug, not a rewind to nothing: refuse it
+  // loudly rather than writing a leaf pointer at a uuid no resume can resolve. [LAW:no-silent-failure]
+  if (!anchor) throw new Error('rewindTo: anchor uuid not present in transcript: ' + anchorUuid);
+  out.push(JSON.stringify({ type: 'last-prompt', leafUuid: anchorUuid, sessionId: anchor.sessionId }));
+  return { lines: out, changed: true, severed };
+}
+
 // --- the CLI / repair path (a boundary) ------------------------------------------------------
 // Atomic write: temp in same dir + rename, so a reader never sees a half-written transcript.
 function writeAtomic(file, contents) {
@@ -254,7 +300,7 @@ function run(file, opts = {}) {
 
 module.exports = {
   parsePolicy, loadPolicy, craftsIncompatible,
-  craftMediumOf, findHits, decide, exciseAt, run,
+  craftMediumOf, findHits, decide, exciseAt, rewindTo, run,
 };
 
 if (require.main === module) {
