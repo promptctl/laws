@@ -181,5 +181,100 @@ t('run repairs an incompatible stack in place; leaves a compatible stack alone',
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// ---- severAt(): the rewind primitive for options 3 & 4 -------------------------------------
+// The contract is REACHABILITY, measured on 2.1.226: a resume rebuilds the deepest chain rooted
+// at the transcript root, so unrooting the anchor's children is what rewinds it. These assert that
+// contract — which records stay reachable from the root — never how the repointing is spelled.
+function chainLine(uuid, parentUuid, text) {
+  return JSON.stringify({ type: 'user', uuid, parentUuid, message: { role: 'user', content: text } });
+}
+// root -> A -> B -> C, and the anchor is A: severing A's children must strand B and C.
+const CHAIN = [
+  chainLine('root', null, 'root turn'),
+  chainLine('A', 'root', 'anchor turn'),
+  chainLine('B', 'A', 'after the anchor'),
+  chainLine('C', 'B', 'later still'),
+];
+// Depth of the deepest record still reachable from the root — the thing a resume actually reads.
+function deepestRooted(lines) {
+  const objs = lines.map((l) => JSON.parse(l));
+  const byUuid = new Map(objs.map((o) => [o.uuid, o]));
+  const depth = (o, seen = new Set()) => {
+    if (!o || o.parentUuid === null) return o ? 1 : 0;
+    if (seen.has(o.uuid)) return 0;
+    seen.add(o.uuid);
+    const p = byUuid.get(o.parentUuid);
+    return p ? depth(p, seen) + 1 : 0;                        // unrooted branch contributes nothing
+  };
+  return objs.reduce((max, o) => Math.max(max, depth(o)), 0);
+}
+
+// The trailing leaf pointer a resume reads, or null if the surgery never wrote one.
+function trailingLeaf(lines) {
+  const lp = lines.map((l) => { try { return JSON.parse(l); } catch (_e) { return null; } })
+    .filter((o) => o && o.type === 'last-prompt');
+  return lp.length ? lp[lp.length - 1].leafUuid : null;
+}
+
+t('rewindTo does BOTH halves: strands the tail and moves the leaf pointer to the anchor', () => {
+  // Either half alone was measured to rewind nothing, so both are part of the contract.
+  assert.strictEqual(deepestRooted(CHAIN), 4);                // root,A,B,C before
+  const r = M.rewindTo(CHAIN, 'A', 'nowhere-uuid');
+  assert.strictEqual(r.changed, true);
+  assert.strictEqual(r.severed, 1);                           // only B was a child of A
+  assert.strictEqual(deepestRooted(r.lines), 2);              // root,A — B and C are stranded
+  assert.strictEqual(trailingLeaf(r.lines), 'A');             // and the leaf points at the anchor
+});
+t('rewindTo keeps every record and edits only the link of each severed branch', () => {
+  const r = M.rewindTo(CHAIN, 'A', 'nowhere-uuid');
+  assert.strictEqual(r.lines.length, CHAIN.length + 1);       // nothing dropped; one pointer added
+  const b = JSON.parse(r.lines[2]);
+  assert.strictEqual(b.uuid, 'B');                            // identity intact
+  assert.strictEqual(b.message.content, 'after the anchor');  // content intact — history survives
+  assert.strictEqual(b.parentUuid, 'nowhere-uuid');           // only the link changed
+  assert.strictEqual(r.lines[3], CHAIN[3]);                   // C untouched: only direct children move
+});
+t('rewindTo severs ALL children of the anchor, not just the first', () => {
+  const forked = CHAIN.concat([chainLine('D', 'A', 'a sibling branch off the anchor')]);
+  const r = M.rewindTo(forked, 'A', 'nowhere-uuid');
+  assert.strictEqual(r.severed, 2);                           // B and D
+  assert.strictEqual(deepestRooted(r.lines), 2);              // no branch outlives the anchor
+});
+t('rewindTo to the current tip still writes the leaf pointer (no children to sever)', () => {
+  const r = M.rewindTo(CHAIN, 'C', 'nowhere-uuid');
+  assert.strictEqual(r.severed, 0);
+  assert.strictEqual(trailingLeaf(r.lines), 'C');
+});
+t('rewindTo throws on an anchor absent from the transcript', () => {
+  // Writing a leaf pointer at an unresolvable uuid would be a rewind that silently does nothing.
+  assert.throws(() => M.rewindTo(CHAIN, 'no-such-uuid', 'nowhere-uuid'), /anchor uuid not present/);
+});
+t('rewindTo passes non-JSON lines through untouched', () => {
+  const withJunk = ['', 'not json at all'].concat(CHAIN);
+  const r = M.rewindTo(withJunk, 'A', 'nowhere-uuid');
+  assert.strictEqual(r.lines[0], '');
+  assert.strictEqual(r.lines[1], 'not json at all');
+  assert.strictEqual(r.severed, 1);
+});
+t('rewindTo carries the sessionId off the anchor record, not from the caller', () => {
+  const lines = [JSON.stringify({ type: 'user', uuid: 'A', parentUuid: null, sessionId: 'sid-42' })];
+  const r = M.rewindTo(lines, 'A', 'nowhere-uuid');
+  assert.strictEqual(JSON.parse(r.lines[r.lines.length - 1]).sessionId, 'sid-42');
+});
+t('rewindTo composes with exciseAt: rewind_summarize keeps the tombstoned craft line as the leaf', () => {
+  // Option 3 anchors ON the craft-load line: it is tombstoned, stays rooted, and everything the
+  // session did after it is stranded — the ordering contract decide() carries as summaryExcludesCraft.
+  const lines = [
+    chainLine('root', null, 'earlier work'),
+    loadLine({ medium: 'code', uuid: 'K', parentUuid: 'root' }),
+    chainLine('L', 'K', 'work done under laws:code'),
+  ];
+  const excised = M.exciseAt(lines, [1], 'prompt');
+  const r = M.rewindTo(excised.lines, 'K', 'nowhere-uuid');
+  assert.strictEqual(deepestRooted(r.lines), 2);              // root -> tombstoned craft line
+  assert.strictEqual(trailingLeaf(r.lines), 'K');
+  assert.strictEqual(M.craftMediumOf(JSON.parse(r.lines[1])), null); // craft body gone before summary
+});
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail === 0 ? 0 : 1);
