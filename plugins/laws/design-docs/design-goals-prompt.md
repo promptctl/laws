@@ -84,11 +84,12 @@ or a restatement that fires where the others do not.
 
 Two structural choices, both stated:
 
-- The skill body (SKILL.md) does not contain the craft. It routes: dispatch a
-  fresh subagent, hand it the full requirements, and tell it to read `craft.md`
-  first. The stated reason is that loading the craft into the routing conversation
-  stacks guidance that session does not need. My reading: this keeps the routing
-  layer thin and the heavy material out of contexts that will not write anything.
+- The skill body (SKILL.md) does not contain the craft; it points at
+  `references/craft.md` and says to read it before writing. The body stays short
+  because it is what the router injects, and the craft is long far-end material
+  that only the session actually writing in this medium needs. The session that
+  writes reads it directly; what keeps an incompatible standard from stacking on
+  top of it is the runtime gate, not a hand-off.
 
 - `craft.md` is written in the far-end style it teaches - image-anchored and
   repetitive where repetition fires - but spare, not foggy: every image earns its
