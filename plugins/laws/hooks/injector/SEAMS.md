@@ -68,38 +68,41 @@ Two ways across, an open owner decision (see "Decision pending"):
   resume flag after Part A edits the transcript. Robust (public CLI, no minified anchors) and
   lightweight, but it is the "external relaunch" the owner deprioritized in `promptctl-routing-rat.2`.
 
-### MEASURED 2026-08-16 on 2.1.226: disk-only rewind does NOT survive `--resume`
+### RESOLVED 2026-08-16 on 2.1.226: the rewind is disk surgery — `rewindTo()` in `../scripts/laws-excise.js`
 
-Path B's appeal was that it might carry the REWIND options too, making SEAM 2a unnecessary — if a
-resumed session reconstructs context by walking a leaf pointer to the root, then moving that pointer
-on disk is a rewind, with no minified anchor anywhere. **Both additive forms of that were tried on a
-disposable 3-fact session and both failed** (`-p --resume`, facts ALPHA/BETA/GAMMA, project memory
-deleted first so the conversation was the only source):
+**The frontier above is closed for options 3 and 4.** They need no in-closure frame, no
+`rewindAnchorUuid`, and no bundle anchor: a rewind is two edits to the on-disk transcript, and a
+plain `claude --resume` then comes up rewound. Measured on a disposable 3-fact session (one fact per
+turn, `-p --resume`, project memory deleted first so the conversation was the only source of the
+facts). All four combinations were run, and the result is a conjunction:
 
-1. **Append a `{"type":"last-prompt","leafUuid":<anchor>,"sessionId":…}` record.** These records are
-   real and appended throughout a session's life (64 of them in a long transcript), and the trailing
-   one does track the live leaf. Repointed it at the end of turn 1 → resume still listed all three
-   facts. The record is a breadcrumb, not the resume input.
-2. **Append a message record whose `parentUuid` is the anchor**, so the post-anchor range falls off
-   the leaf→root path (the reparent trick recorded on `.2`). Resume still listed all three facts.
+| surgery | rewound? |
+|---|---|
+| repoint the trailing `last-prompt` record at the anchor | **no** |
+| sever the anchor's children (unroot the tail), pointer untouched | **no** |
+| graft a new record onto the anchor | **no** |
+| **sever the anchor's children AND repoint `last-prompt`** | **yes** |
 
-So on 2.1.226 the resume path does not honour either pointer — it is not reconstructing from the
-tree the way `.2`'s note (recorded against 2.1.197) describes. Whether that is a behaviour change,
-a malformed synthetic record being skipped, or a flat file-order replay is **undiagnosed**: the
-follow-up transcript reads were refused by the permission classifier before the mechanism could be
-pinned. Treat `.2`'s "excision = reparent, VERIFIED" as UNRELIABLE on the current binary until
-re-measured.
+The model that fits: the resume takes its leaf from the trailing `last-prompt` record but will not
+stop at a node that still has reachable descendants — it follows the branch down to the tip. So the
+pointer alone is overridden by the surviving tail, and severing alone leaves the leaf where it was.
+Both halves, or nothing. That is also why **no purely additive surgery can ever rewind** — a graft
+onto an early anchor is a shallow branch that never displaces the real tail.
 
-Consequences for the design, and they are the useful part:
-- **Tombstone (option 2) is unaffected** — it is in-place CONTENT replacement, not a tree edit, and
-  it was verified separately. It still needs a reload to take effect live.
-- **Rewind (options 3/4) has no disk-only implementation.** Use the NATIVE `/rewind`, driven through
-  the verified stdin-injection channel (primitive 4) — which is what `.2` settled on anyway
-  ("options 3 & 4 DO use the NATIVE rewind mechanism... the injected tool only AUTO-TARGETS the
-  checkpoint"). Native `/rewind` is MODAL, so driving it means injecting arrow keys + Enter, not a
-  one-shot string.
-- **Do not build a leaf-pointer rewind.** It reads as obviously correct from the file format and it
-  does not work; this note exists so the next session does not spend the same hours rediscovering it.
+`rewindTo(rawLines, anchorUuid, severUuid)` is the one operation, deliberately not shipped as a
+separate `sever` step: a half-primitive here is a unit that looks like it works and silently does
+not. It is non-destructive — every record stays in the file, only the link of each severed branch
+changes, and the discarded conversation remains on disk as an orphan branch. **Verified live**: the
+shipped function applied to a real 82-record transcript, then `--resume`, and the session reported
+only the pre-anchor fact.
+
+Corrects `promptctl-routing-rat.2`'s "excision = reparent, VERIFIED" (recorded against 2.1.197):
+reparenting the FIRST POST-RANGE record is the additive form, and it does not rewind on 2.1.226.
+The tombstone half of `.2` is unaffected — that is in-place content replacement, not a tree edit.
+
+Still open for option 2 (tombstone in place, full conversation kept): it edits an early message
+without moving the leaf, so a resumed session picks it up, but making the ALREADY-RUNNING session
+re-read the file is the reload question below.
 
 ## Seam anchors carried forward (re-derive against the 2.1.226 bundle before use)
 
@@ -111,10 +114,11 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
   `function \w+\(\w+,\w+\)\{if\(!\w+\)return \w+;return \w+\.map\(…sourceToolUseID:\w+\}`. Wrapping
   it lets `craftMediumOf` (from laws-excise.js) read the incoming craft in-process — the detection
   reuses Part A verbatim, one source of truth across the boundary.
-- **SEAM 2a — resume-time trim `deserializeMessagesWithInterruptDetection(…, rewindAnchorUuid)`.**
-  The rewind driver for options 3/4. Set `rewindAnchorUuid` to `decide().rewind.summarizeTo` (#3)
-  or `.discardTo` (#4). Anchors: the export-map literal `deserializeMessagesWithInterruptDetection`
-  and the `rewindAnchorUuid` property name.
+- **SEAM 2a — SUPERSEDED 2026-08-16, do not build against it.** Was the intended rewind driver for
+  options 3/4 (`deserializeMessagesWithInterruptDetection(…, rewindAnchorUuid)`, set from
+  `decide().rewind.summarizeTo`/`.discardTo`). `rewindTo()` achieves the same effect through the
+  transcript alone, so this minified anchor buys nothing and costs a re-derivation every release.
+  Kept only as a record of what was mapped.
 - **DO NOT TOUCH — `fileHistoryRewind`.** That reverts FILE edits. The gate is conversation-only;
   on-disk deliverables must survive every option, including discard. Anchor: `Rewinding to snapshot for `.
 
@@ -123,12 +127,16 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
 - DONE: compatibility policy has one home; `decide()`/`exciseAt()` fire only on an incompatible
   pair and tombstone only the conflicting craft (`../scripts/laws-excise.js` + tests).
 - DONE: injection channel re-verified on 2.1.226; `inspect-eval.js` packages the primitives.
-- DONE (negative result, 2026-08-16): disk-only rewind via `last-prompt` leaf repoint or via a
-  reparented tail record does NOT survive `--resume` on 2.1.226. Rewind must ride native `/rewind`;
-  SEAM 2a is not replaceable by transcript surgery. See the measured section above.
-- OPEN: pick Path A or B for the tombstone reload; wire detection→gate→reload; live-verify the four
-  effects with the on-disk-files-survive invariant. Distribution of the launcher is sibling
-  `promptctl-routing-rat.7`.
-- BLOCKED: further work needs read/write access to session transcripts under `~/.claude/projects/`.
-  The permission classifier refused those reads mid-session, so the mechanism behind the negative
-  result above could not be pinned. This access is a precondition for the rest of Part B.
+- DONE (2026-08-16): the rewind for options 3/4 is disk surgery — `rewindTo()`, sever + repoint,
+  verified live against a real transcript. **SEAM 2a is not needed**, and neither is native
+  `/rewind` with its modal arrow-key driving. See the resolved section above.
+- OPEN: the reload. All four options edit the transcript, and a RESUMED session reads it; the
+  already-running one does not. Options 3/4 move the leaf, so restart-in-place (Path B) fits them
+  exactly; option 2 needs the same reload. Pick Path A or B, wire detection→gate→reload, then
+  live-verify the four effects with the on-disk-files-survive invariant — which holds by
+  construction today (`rewindTo`/`exciseAt` write nothing but the transcript) but has not been
+  exercised end-to-end. Distribution of the launcher is sibling `promptctl-routing-rat.7`.
+- LIKELY UNNEEDED: SEAM 1 (wrap `efl` for detection). The shipped PreToolUse guard already detects
+  the incompatible load and knows the incoming craft. Detection via the hook + enactment via these
+  two pure functions + reload via the launcher leaves the design with **no minified anchor at all**.
+  Confirm this before anyone spends days re-deriving the bundle.
