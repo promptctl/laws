@@ -108,12 +108,15 @@ re-read the file is the reload question below.
 
 From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, anchors are not):
 
-- **SEAM 1 — skill-load funnel `efl(messages, toolUseId)`.** The single point every Skill-tool load
-  passes through; stamps `sourceToolUseID` onto each user message. Anchors: strings
-  `tengu_skill_tool_invocation`, `SkillTool returning `, and the body fingerprint
-  `function \w+\(\w+,\w+\)\{if\(!\w+\)return \w+;return \w+\.map\(…sourceToolUseID:\w+\}`. Wrapping
-  it lets `craftMediumOf` (from laws-excise.js) read the incoming craft in-process — the detection
-  reuses Part A verbatim, one source of truth across the boundary.
+- **SEAM 1 — NOT NEEDED, confirmed 2026-08-16. Do not wrap `efl`.** It was to be the in-process
+  detection point for a 2nd craft load. The shipped PreToolUse guard already has strictly more than
+  it would give: the hook payload carries `tool_input.skill` (the INCOMING craft), `session_id`, and
+  — measured with a probe hook on 2.1.226 — **`transcript_path`, the absolute path of the live
+  transcript**. So `decide(readFileSync(transcript_path), {incomingMedium})` runs entirely in the
+  hook, off public surfaces, before the load is allowed. Full payload keys observed: `session_id`,
+  `transcript_path`, `cwd`, `prompt_id`, `permission_mode`, `hook_event_name`, `tool_name`,
+  `tool_input`, `tool_use_id`. (Was: funnel `efl(messages, toolUseId)`, anchored by the strings
+  `tengu_skill_tool_invocation` / `SkillTool returning ` and a `sourceToolUseID` body fingerprint.)
 - **SEAM 2a — SUPERSEDED 2026-08-16, do not build against it.** Was the intended rewind driver for
   options 3/4 (`deserializeMessagesWithInterruptDetection(…, rewindAnchorUuid)`, set from
   `decide().rewind.summarizeTo`/`.discardTo`). `rewindTo()` achieves the same effect through the
@@ -136,7 +139,8 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
   live-verify the four effects with the on-disk-files-survive invariant — which holds by
   construction today (`rewindTo`/`exciseAt` write nothing but the transcript) but has not been
   exercised end-to-end. Distribution of the launcher is sibling `promptctl-routing-rat.7`.
-- LIKELY UNNEEDED: SEAM 1 (wrap `efl` for detection). The shipped PreToolUse guard already detects
-  the incompatible load and knows the incoming craft. Detection via the hook + enactment via these
-  two pure functions + reload via the launcher leaves the design with **no minified anchor at all**.
-  Confirm this before anyone spends days re-deriving the bundle.
+- DONE (2026-08-16): SEAM 1 is unnecessary, confirmed by probe — the PreToolUse payload carries
+  `transcript_path` alongside `tool_input.skill`, so detection + `decide()` run in the hook off
+  public surfaces. **With SEAM 1 and SEAM 2a both retired, the gate carries NO minified anchor at
+  all**: detection is a hook, enactment is two pure functions over the transcript, and the only
+  remaining question is the reload. Nothing here needs re-deriving when Claude Code updates.
