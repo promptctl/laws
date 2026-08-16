@@ -6,21 +6,12 @@ description: Writing guidance for human-audience text - documentation, READMEs, 
 # Producing this artifact
 
 The craft for this medium lives in `references/craft.md`, relative to this skill's
-base directory. Do not read it in this conversation - it is the writing agent's
-material, and loading it here stacks guidance this session does not need.
+base directory.
 
-Produce the deliverable with a subagent:
-
-1. Dispatch a fresh subagent (one that inherits no conversation context). Its
-   prompt must contain:
-   - the complete requirements, in the requester's own words - anything omitted
-     does not exist for the subagent
-   - the exact output path and format of the artifact
-   - as its first instruction: read `references/craft.md` (give the absolute path,
-     resolved from this skill's base directory) before writing anything
-2. When it returns, read the artifact it produced - the file, not its report -
-   and check it against the requirements. If it misses, re-dispatch with the
-   corrections stated explicitly.
-
-If this harness cannot dispatch subagents, read `references/craft.md` now and
-apply it directly yourself.
+1. Read `references/craft.md` before writing anything.
+2. Fix the deliverable before you write it: the exact output path and format, and
+   the complete requirements in the requester's own words.
+3. Write it against the craft.
+4. Read back the file you produced - the file itself, not your memory of writing
+   it - and check it against the requirements and the craft. If it misses, revise
+   until it holds.
