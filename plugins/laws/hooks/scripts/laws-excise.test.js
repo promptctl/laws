@@ -204,7 +204,9 @@ function deepestRooted(lines) {
     if (seen.has(o.uuid)) return 0;
     seen.add(o.uuid);
     const p = byUuid.get(o.parentUuid);
-    return p ? depth(p, seen) + 1 : 0;                        // unrooted branch contributes nothing
+    if (!p) return 0;                                         // parent missing -> branch is unrooted
+    const d = depth(p, seen);
+    return d === 0 ? 0 : d + 1;                               // unrootedness propagates to descendants
   };
   return objs.reduce((max, o) => Math.max(max, depth(o)), 0);
 }
@@ -274,6 +276,93 @@ t('rewindTo composes with exciseAt: rewind_summarize keeps the tombstoned craft 
   assert.strictEqual(deepestRooted(r.lines), 2);              // root -> tombstoned craft line
   assert.strictEqual(trailingLeaf(r.lines), 'K');
   assert.strictEqual(M.craftMediumOf(JSON.parse(r.lines[1])), null); // craft body gone before summary
+});
+
+// ---- applySwitch(): the four options as one dispatch ---------------------------------------
+// A transcript where laws:code loaded mid-conversation and work happened after it — the exact
+// shape every option operates on.
+function switchFixture() {
+  return [
+    chainLine('r1', null, 'work before any craft'),
+    loadLine({ medium: 'code', uuid: 'CRAFT', parentUuid: 'r1' }),
+    chainLine('w1', 'CRAFT', 'work done under laws:code'),
+    chainLine('w2', 'w1', 'more work under laws:code'),
+  ];
+}
+const ENV = { severUuid: 'nowhere-uuid', summaryUuid: 'sum-1', now: '2026-08-20T00:00:00.000Z' };
+function decisionFor(lines) {
+  return M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
+}
+
+t('applySwitch reject: transcript untouched and nothing to resume into', () => {
+  const lines = switchFixture();
+  const r = M.applySwitch(lines, decisionFor(lines), 'reject', ENV);
+  assert.deepStrictEqual(r.lines, lines);
+  assert.strictEqual(r.resume, false);
+});
+t('applySwitch tombstone: craft body emptied, every other line byte-identical, work still reachable', () => {
+  const lines = switchFixture();
+  const r = M.applySwitch(lines, decisionFor(lines), 'tombstone', ENV);
+  assert.strictEqual(r.resume, true);
+  assert.strictEqual(M.craftMediumOf(JSON.parse(r.lines[1])), null);   // craft excised
+  assert.strictEqual(r.lines[2], lines[2]);                            // post-craft work untouched
+  assert.strictEqual(r.lines[3], lines[3]);
+  assert.strictEqual(deepestRooted(r.lines), 4);                       // full conversation kept
+});
+t('applySwitch rewind_discard: lands before the craft, so the craft never loaded', () => {
+  const lines = switchFixture();
+  const r = M.applySwitch(lines, decisionFor(lines), 'rewind_discard', ENV);
+  assert.strictEqual(r.resume, true);
+  assert.strictEqual(trailingLeaf(r.lines), 'r1');                     // the message before the craft
+  assert.strictEqual(deepestRooted(r.lines), 1);                       // craft + all work stranded
+  assert.strictEqual(r.lines.length, lines.length + 1);                // nothing deleted from the file
+});
+t('applySwitch rewind_summarize: excises first, then rewinds, then lands on the summary', () => {
+  const lines = switchFixture();
+  const r = M.applySwitch(lines, decisionFor(lines), 'rewind_summarize',
+    { ...ENV, summary: 'Did X and Y under the previous craft.' });
+  assert.strictEqual(r.resume, true);
+  // the craft body is gone BEFORE the summary is attached — the ordering contract
+  assert.strictEqual(M.craftMediumOf(JSON.parse(r.lines[1])), null);
+  const last = JSON.parse(r.lines[r.lines.length - 1]);
+  assert.strictEqual(last.parentUuid, 'CRAFT');                        // summary hangs off the anchor
+  assert.strictEqual(last.message.content, 'Did X and Y under the previous craft.');
+  assert.strictEqual(deepestRooted(r.lines), 3);                       // r1 -> tombstoned craft -> summary
+});
+t('applySwitch rewind_summarize refuses to invent an empty summary', () => {
+  const lines = switchFixture();
+  assert.throws(() => M.applySwitch(lines, decisionFor(lines), 'rewind_summarize', ENV), /summary is required/);
+});
+t('applySwitch rewind_discard refuses when the craft is the first message', () => {
+  const lines = [loadLine({ medium: 'code', uuid: 'CRAFT', parentUuid: null })];
+  assert.throws(() => M.applySwitch(lines, decisionFor(lines), 'rewind_discard', ENV), /nothing precedes it/);
+});
+t('applySwitch rejects an unknown choice instead of doing nothing', () => {
+  const lines = switchFixture();
+  assert.throws(() => M.applySwitch(lines, decisionFor(lines), 'defer', ENV), /unknown choice/);
+});
+t('applySwitch refuses a decision that never triggered', () => {
+  const lines = [loadLine({ medium: 'code', uuid: 'A' })];
+  const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prose' }); // compatible
+  assert.strictEqual(d.trigger, false);
+  assert.throws(() => M.applySwitch(lines, d, 'tombstone', ENV), /did not trigger/);
+});
+t('every option decide() advertises has an action, and vice versa', () => {
+  // The menu the user is shown and the actions that can be enacted are the same set, by test.
+  const lines = switchFixture();
+  const advertised = decisionFor(lines).options.map((o) => o.id).sort();
+  assert.deepStrictEqual(advertised, Object.keys(M.SWITCH_ACTIONS).sort());
+});
+t('no option ever removes a record from the transcript', () => {
+  // The files-survive invariant's transcript half: history is stranded, never deleted.
+  const lines = switchFixture();
+  for (const choice of ['reject', 'tombstone', 'rewind_discard']) {
+    const r = M.applySwitch(lines, decisionFor(lines), choice, ENV);
+    assert.ok(r.lines.length >= lines.length, choice + ' dropped records');
+    for (let i = 0; i < lines.length; i++) {
+      assert.ok(r.lines[i] !== undefined, choice + ' lost record ' + i);
+    }
+  }
 });
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
