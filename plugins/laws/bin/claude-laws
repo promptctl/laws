@@ -54,6 +54,9 @@ trap 'rm -rf "$LAWS_SWITCH_DIR"' EXIT
 
 export LAWS_SWITCH_DIR
 export BUN_INSPECT="ws://127.0.0.1:$PORT/dbg"
+# The deny message tells the agent to run `laws-switch`, so it has to BE runnable. Putting
+# this bin dir on PATH is what makes that instruction true rather than aspirational.
+export PATH="$PLUGIN_DIR/bin:$PATH"
 
 REQUEST="$LAWS_SWITCH_DIR/request.json"
 
