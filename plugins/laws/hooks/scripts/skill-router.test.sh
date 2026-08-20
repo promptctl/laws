@@ -160,5 +160,48 @@ rm -rf "$nopolicy"
 assert_allow "missing policy file still allows the load (degraded)" "$out"
 case "$err" in *"policy file not readable"*) ok "missing policy file warns on stderr";; *) bad "missing policy file did not warn (got: $err)";; esac
 
+# 9. The switch offer. It is an EXTRA route out of the deny, available only when the session was
+#    launched by claude-laws (only the launcher can relaunch and enact a choice). The deny itself
+#    must be identical either way - the switch never weakens the refusal.
+switch_payload() { # <session_id> <skill> <transcript_path>
+  printf '{"session_id":"%s","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$1" "$3" "$2"
+}
+
+swdir=$(mktemp -d)
+run guard "$(skill_payload SW1 laws:code)" >/dev/null            # engage code
+out=$(LAWS_SWITCH_DIR="$swdir" printf '%s' "$(switch_payload SW1 laws:prompt /tmp/sw1.jsonl)" | LAWS_SWITCH_DIR="$swdir" "$ROUTER" guard 2>/dev/null)
+assert_deny "under claude-laws, the deny still refuses and also offers the switch" \
+  "$out" "laws:code" "laws:prompt" "laws-switch" "rewind_summarize"
+case "$out" in
+  *"dispatch a fresh subagent"*) ok "  ... and keeps the subagent escape hatch";;
+  *) bad "  ... lost the subagent escape hatch (got: $out)";;
+esac
+if [ -f "$swdir/pending.json" ]; then
+  ok "  ... and records the pending decision for the launcher"
+  pend=$(cat "$swdir/pending.json")
+  case "$pend" in
+    *'"current":"code"'*'"incomingMedium":"prompt"'*) ok "  ... naming the engaged craft and the incoming one";;
+    *) bad "  ... pending.json has the wrong shape (got: $pend)";;
+  esac
+  case "$pend" in
+    *'/tmp/sw1.jsonl'*) ok "  ... and the transcript the launcher must operate on";;
+    *) bad "  ... pending.json is missing the transcript path (got: $pend)";;
+  esac
+else
+  bad "  ... but wrote no pending.json"
+  bad "  ... (shape check skipped)"
+  bad "  ... (transcript check skipped)"
+fi
+rm -rf "$swdir"
+
+# 9b. Without the launcher there is nothing that could enact a switch, so it must not be advertised.
+run guard "$(skill_payload SW2 laws:code)" >/dev/null
+out=$(run guard "$(switch_payload SW2 laws:prompt /tmp/sw2.jsonl)")
+assert_deny "without claude-laws, the deny is unchanged" "$out" "laws:code" "laws:prompt"
+case "$out" in
+  *"laws-switch"*) bad "  ... but offered a switch that cannot be enacted";;
+  *) ok "  ... and offers no switch it cannot enact";;
+esac
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

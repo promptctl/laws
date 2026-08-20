@@ -32,6 +32,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const MEDIA = ['code', 'prose', 'prompt', 'application-spec', 'chat'];
 // base dir ".../skills/<medium>" (tolerates the plugin-cache path and the repo path alike)
@@ -266,6 +267,83 @@ function rewindTo(rawLines, anchorUuid, severUuid) {
   return { lines: out, changed: true, severed };
 }
 
+// --- enacting a chosen switch ----------------------------------------------------------------
+// The four options are DATA, not four code paths: one table keyed by option id, each entry a pure
+// (lines, decision, env) -> lines. Adding a fifth option is a table entry, never a new branch in
+// the caller. [LAW:dataflow-not-control-flow] [LAW:one-type-per-behavior]
+//
+// TIMING, and it is load-bearing: every action here edits the transcript of a session that must
+// ALREADY HAVE EXITED. A running Claude Code appends records as it works, so surgery against a live
+// file races the writer and can be overwritten wholesale. The in-session command records the INTENT
+// and triggers the exit; the launcher runs these actions afterwards, when nobody holds the file.
+// [LAW:no-ambient-temporal-coupling] the ordering is owned by the launcher, not left to luck.
+//
+// A summary record is appended as a CHILD of the rewind anchor rather than replacing it, which
+// works precisely because a resume follows a branch down to its tip: the anchor keeps the leaf
+// pointer, the summary hangs below it, and the resumed session lands on the summary.
+function summaryRecord(anchorRecord, anchorUuid, env, text) {
+  return JSON.stringify({
+    type: 'user', uuid: env.summaryUuid, parentUuid: anchorUuid, timestamp: env.now,
+    sessionId: anchorRecord.sessionId, isSidechain: false, userType: 'external',
+    message: { role: 'user', content: text },
+  });
+}
+
+// Find a record by uuid in raw lines — the one place that resolution happens. [LAW:one-source-of-truth]
+function recordByUuid(rawLines, uuid) {
+  for (const line of rawLines) {
+    let o;
+    try { o = JSON.parse(line); } catch (_e) { continue; }
+    if (o.uuid === uuid) return o;
+  }
+  return null;
+}
+
+const SWITCH_ACTIONS = {
+  // Stay in the current craft. The incoming load was already denied, so the transcript is correct
+  // as it stands and there is nothing to resume into.
+  reject: (lines) => ({ lines, resume: false }),
+
+  // Keep the whole conversation; empty only the superseded craft's guidance.
+  tombstone: (lines, d) => ({ lines: exciseAt(lines, [d.conflictIndex], d.incoming).lines, resume: true }),
+
+  // Excise FIRST, then rewind, then attach the summary. The order is the contract decide() carries
+  // as rewind.summaryExcludesCraft: the agent writes the summary from its own live context, so the
+  // craft body must already be a tombstone by the time this text is composed — which is why the
+  // summary arrives as an argument rather than being generated here.
+  rewind_summarize: (lines, d, env) => {
+    if (!env.summary) throw new Error('rewind_summarize: a summary is required (the live agent writes it)');
+    const excised = exciseAt(lines, [d.conflictIndex], d.incoming).lines;
+    const anchorUuid = d.rewind.summarizeTo;
+    const rewound = rewindTo(excised, anchorUuid, env.severUuid).lines;
+    const anchorRec = recordByUuid(rewound, anchorUuid);
+    rewound.push(summaryRecord(anchorRec, anchorUuid, env, env.summary));
+    return { lines: rewound, resume: true };
+  },
+
+  // Drop the conversation from just before the craft loaded. Files on disk are untouched — nothing
+  // in this module writes anything but the transcript.
+  rewind_discard: (lines, d, env) => {
+    const anchorUuid = d.rewind.discardTo;
+    // A craft loaded as the very first message has no predecessor to land on. Refuse rather than
+    // silently rewinding somewhere else. [LAW:no-silent-failure]
+    if (!anchorUuid) throw new Error('rewind_discard: the craft load is the first message; nothing precedes it to rewind to');
+    return { lines: rewindTo(lines, anchorUuid, env.severUuid).lines, resume: true };
+  },
+};
+
+// applySwitch(rawLines, decision, choice, env) -> { lines, resume }
+// `env` carries the values that would otherwise be effects (uuids, clock, the agent's summary), so
+// this stays pure and testable. [LAW:effects-at-boundaries]
+function applySwitch(rawLines, decision, choice, env = {}) {
+  const action = SWITCH_ACTIONS[choice];
+  // An unknown choice must never degrade into "do nothing and carry on" — that would leave two
+  // incompatible crafts engaged while reporting success. [LAW:no-silent-failure]
+  if (!action) throw new Error('applySwitch: unknown choice ' + JSON.stringify(choice) + '; expected one of ' + Object.keys(SWITCH_ACTIONS).join(', '));
+  if (!decision || !decision.trigger) throw new Error('applySwitch: decision did not trigger a switch');
+  return action(rawLines, decision, env);
+}
+
 // --- the CLI / repair path (a boundary) ------------------------------------------------------
 // Atomic write: temp in same dir + rename, so a reader never sees a half-written transcript.
 function writeAtomic(file, contents) {
@@ -298,16 +376,61 @@ function run(file, opts = {}) {
   return { file, changed, stubbed: stubbedAll };
 }
 
+// Enact a switch request against the transcript it names. Runs from the LAUNCHER, after the
+// session has exited — see the timing note on SWITCH_ACTIONS.
+//
+// The request carries the CHOICE and the incoming craft, never the resolved line indices: the
+// decision is recomputed here against the transcript as it finally landed, because the session
+// kept appending records between the hook's deny and its exit. Carrying stale indices across that
+// gap is how you tombstone the wrong line. [LAW:one-source-of-truth]
+function applyRequest(requestPath, opts = {}) {
+  const req = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
+  for (const field of ['transcript', 'choice', 'incomingMedium']) {
+    if (!req[field]) throw new Error('switch request is missing ' + field + ': ' + requestPath);
+  }
+  const pairs = opts.incompatiblePairs || loadPolicy(opts.policyPath);
+  const text = fs.readFileSync(req.transcript, 'utf8');
+  const eol = text.endsWith('\n');
+  const rawLines = text.split('\n');
+  if (eol) rawLines.pop();
+
+  const decision = decide(rawLines, { incompatiblePairs: pairs, incomingMedium: req.incomingMedium });
+  // The conflict must still be there. If it is not, the session changed under us — say so instead
+  // of writing a "successful" no-op the user will read as a completed switch. [LAW:no-silent-failure]
+  if (!decision.trigger) {
+    throw new Error('switch request no longer applies (' + decision.reason + '): nothing was changed');
+  }
+  const env = {
+    severUuid: crypto.randomUUID(),
+    summaryUuid: crypto.randomUUID(),
+    now: new Date().toISOString(),
+    summary: req.summary,
+  };
+  const r = applySwitch(rawLines, decision, req.choice, env);
+  const changed = r.lines !== rawLines;
+  if (changed && !opts.dryRun) writeAtomic(req.transcript, r.lines.join('\n') + (eol ? '\n' : ''));
+  return { transcript: req.transcript, choice: req.choice, resume: r.resume, changed,
+    sessionId: req.sessionId, switchedFrom: decision.current, switchedTo: decision.incoming };
+}
+
 module.exports = {
   parsePolicy, loadPolicy, craftsIncompatible,
-  craftMediumOf, findHits, decide, exciseAt, rewindTo, run,
+  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS,
+  applyRequest, run,
 };
 
-if (require.main === module) {
+if (require.main === module) (function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
+  const applyAt = args.indexOf('--apply');
+  if (applyAt >= 0) {
+    const reqPath = args[applyAt + 1];
+    if (!reqPath) { process.stderr.write('usage: laws-excise.js --apply <request.json> [--dry-run]\n'); process.exit(2); }
+    process.stdout.write(JSON.stringify(applyRequest(reqPath, { dryRun })) + '\n');
+    return;
+  }
   const file = args.find((a) => !a.startsWith('--'));
   if (!file) { process.stderr.write('usage: laws-excise.js <transcript.jsonl> [--dry-run]\n'); process.exit(2); }
   const res = run(file, { dryRun });
   process.stdout.write(JSON.stringify(res) + '\n');
-}
+})();
