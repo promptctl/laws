@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# claude-laws — an opt-in launcher that makes the craft-compatibility switch enactable.
+#
+# Stock `claude` is untouched; you opt in by running this instead. It adds exactly two things:
+#
+#   1. BUN_INSPECT on an ephemeral loopback port, so the in-session `laws-switch` command can end
+#      the session through Claude's own /exit. An agent cannot type a slash command into its own
+#      session, so that exit has to arrive from outside its tool loop.
+#   2. A relaunch loop. When a switch is chosen, the transcript surgery runs HERE — after Claude
+#      has exited and nobody is appending to the file any more — and the session comes back with
+#      `--resume`, reading the corrected transcript.
+#
+# Nothing here reads or patches Claude's bundle: no extraction, no minified anchors, no per-version
+# cache. Both of the seams that would have required it were retired (see hooks/injector/SEAMS.md),
+# so this launcher is version-robust by construction rather than by anchor-resolution machinery.
+#
+# [LAW:no-silent-failure] every setup step that can fail is checked, and a failure degrades to a
+#   plain, working `claude` with a reason on stderr — never to a broken session and never silently.
+# [LAW:dataflow-not-control-flow] the loop body is the same every pass; whether another pass
+#   happens is a value (the request file) rather than a special case.
+
+set -uo pipefail
+
+log() { printf 'claude-laws: %s\n' "$1" >&2; }
+
+PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EXCISE="$PLUGIN_DIR/hooks/scripts/laws-excise.js"
+
+CLAUDE_BIN="${LAWS_CLAUDE_BIN:-$(command -v claude || true)}"
+[ -n "$CLAUDE_BIN" ] || { log "no 'claude' on PATH; nothing to launch"; exit 127; }
+
+# Any missing prerequisite means the switch cannot work — but the user asked for a Claude session,
+# so give them a working one rather than an error. Degrade loudly, never silently.
+if ! command -v node >/dev/null 2>&1; then
+  log "node not found; launching plain claude (craft switching disabled)"
+  exec "$CLAUDE_BIN" "$@"
+fi
+if [ ! -f "$EXCISE" ]; then
+  log "gate not found at $EXCISE; launching plain claude (craft switching disabled)"
+  exec "$CLAUDE_BIN" "$@"
+fi
+
+PORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{const p=s.address().port;s.close(()=>console.log(p))})' 2>/dev/null)"
+if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+  log "could not reserve an inspector port; launching plain claude (craft switching disabled)"
+  exec "$CLAUDE_BIN" "$@"
+fi
+
+LAWS_SWITCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/laws-switch.XXXXXX")" || {
+  log "could not create the switch directory; launching plain claude (craft switching disabled)"
+  exec "$CLAUDE_BIN" "$@"
+}
+trap 'rm -rf "$LAWS_SWITCH_DIR"' EXIT
+
+export LAWS_SWITCH_DIR
+export BUN_INSPECT="ws://127.0.0.1:$PORT/dbg"
+
+REQUEST="$LAWS_SWITCH_DIR/request.json"
+
+# Relaunch keeps the original flags and appends --resume. A positional prompt would be re-sent on
+# relaunch; that only arises in one-shot usage, where a mid-session craft switch cannot happen.
+while :; do
+  "$CLAUDE_BIN" "$@"
+  status=$?
+
+  [ -f "$REQUEST" ] || exit "$status"
+
+  applied="$(node "$EXCISE" --apply "$REQUEST" 2>&1)"
+  if [ $? -ne 0 ]; then
+    log "the craft switch could not be applied, so the transcript is unchanged:"
+    log "$applied"
+    exit 1
+  fi
+  rm -f "$REQUEST"
+
+  sid="$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).sessionId||"")}catch(e){}})')"
+  if [ -z "$sid" ]; then
+    log "the switch was applied but the session id is missing, so the session cannot be resumed"
+    exit 1
+  fi
+
+  log "$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d);console.log("switched from laws:"+r.switchedFrom+" to laws:"+r.switchedTo+" via "+r.choice+"; resuming")})')"
+  set -- "$@" --resume "$sid"
+done
