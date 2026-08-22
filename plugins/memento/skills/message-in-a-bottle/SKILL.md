@@ -50,9 +50,11 @@ ${CLAUDE_PLUGIN_ROOT}/skills/message-in-a-bottle/bin/finalize-session [--goal '<
 - `--goal '<condition>'` — optional, and only when a `/goal` is active this session. Re-establishes that goal in the reset session so the run continues. Leading argument; quote the condition. **Omit entirely when no goal is set.**
 - `[message...]` — a slash command, plain text, multi-line, or containing quotes/backticks/dollar signs. Quote it at invocation as usual (your shell does word-splitting and `$VAR` expansion before the script sees argv). **Omit it to default to `/next`.**
 
-For the live transports (tmux/iTerm2) the launcher prints `handoff scheduled → <target> … in Ns (log: <tempfile>)` and exits; the log captures worker progress and any transport errors. The file-drop fallback path emits no `handoff scheduled` line — it prints `no tmux or iTerm2 transport detected` and `Handoff written to: ~/.claude/finalize-pending-handoff.txt` (with delivery instructions) to stderr instead.
+On success the launcher prints `handoff scheduled → <target> … in Ns (log: <tempfile>)` and exits 0; the log captures worker progress and any transport errors.
 
-The transport is chosen by capability, most reliable first: **tmux** (reset the pane in place, verified by reading it back, then paste) → **iTerm2** (kill the running claude and relaunch it fresh with the message as its initial prompt, delivered in the background with no focus steal) → **file-drop** (no live transport: the message is written to `~/.claude/finalize-pending-handoff.txt` with delivery instructions, never silently dropped). You do not choose the transport; the launcher detects it. To preview the decision without scheduling anything, prefix `FINALIZE_DRY_RUN=1`.
+The transport is chosen by capability, most reliable first: **tmux** (reset the pane in place, verified by reading it back, then paste) → **iTerm2** (kill the running claude and relaunch it fresh with the message as its initial prompt, delivered in the background with no focus steal). You do not choose the transport; the launcher detects it. To preview the decision without scheduling anything, prefix `FINALIZE_DRY_RUN=1`.
+
+Neither transport available is a hard failure: the launcher prints why to stderr and exits 2, having delivered nothing. Read the exit code, not the prose — a nonzero exit means the close-out did not happen, so say so plainly rather than reporting the session finalized. The common cause is a Claude Code background session (`claude --bg-pty-host`), which owns no tmux pane and no iTerm2 session; those sessions cannot close themselves out.
 
 ## Examples
 

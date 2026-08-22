@@ -3,14 +3,15 @@
 # self-handoff into the current session. The launcher returns immediately; a
 # detached worker delivers the handoff after a fixed delay.
 #
-# Layered by capability, most reliable first:
+# Two transports, most reliable first:
 #   tmux    — in-place reset (/clear or /compact) verified by reading the pane
 #             back, then paste the message. Deterministic; no focus concerns.
 #   iTerm2  — kill the running claude and relaunch it fresh with the message as
 #             its initial prompt, via `write text` to the exact session (no focus
 #             steal, no readback needed — a new process is guaranteed fresh).
-#   none    — no transport: drop the message to a known file and print how to
-#             deliver it. Never silent.
+# Neither available is a hard failure. There is no third arm: delivery into a live
+# session is what this script does, and a session it cannot reach is one it cannot
+# close out.
 #
 # Modes:
 #   launcher:       finalize-session [message...]
@@ -208,10 +209,11 @@ case "$MODE" in
     fi
     SELF="$(cd "$(dirname "$SELF_RAW")" && pwd)/$(basename "$SELF_RAW")"
 
-    # [LAW:dataflow-not-control-flow] transport is a value chosen by capability,
-    # most reliable first. Each branch spawns the matching detached worker (or,
-    # for the no-transport fallback, delivers synchronously). Detection lives
-    # here once [LAW:single-enforcer]; workers never re-detect.
+    # [LAW:parse-dont-validate] this is the parse of the environment into a
+    # transport: it yields a value that could not exist beforehand (a tmux target,
+    # or an iTerm2 session uuid plus the claude pid to relaunch), and every worker
+    # below is typed on that value. Detection lives here once
+    # [LAW:single-enforcer]; workers never re-detect.
     if [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]]; then
       TARGET=$(tmux display-message -p -t "$TMUX_PANE" \
         '#{session_name}:#{window_index}.#{pane_index}')
@@ -245,26 +247,18 @@ case "$MODE" in
       echo "handoff scheduled → iTerm2 (kill+relaunch, fresh) in ${HANDOFF_DELAY_SECONDS}s (log: $LOGFILE)"
 
     else
-      # [LAW:no-silent-failure] no live transport — never drop the handoff.
-      # Persist to a stable, well-known path and tell the operator exactly how
-      # to deliver it. Synchronous; no worker.
-      DROP="$HOME/.claude/finalize-pending-handoff.txt"
-      # [LAW:no-silent-failure] this path's whole promise is "never drop the
-      # handoff", so guarantee the destination dir exists before the cp — a
-      # missing ~/.claude/ (first-run, unusual setup) must not lose the message.
-      mkdir -p "$(dirname "$DROP")"
-      cp -- "$MSGFILE" "$DROP"
-      echo "finalize-session: no tmux or iTerm2 transport detected." >&2
-      echo "Handoff written to: $DROP" >&2
-      echo "Deliver it by resetting your session and pasting that file, or run:" >&2
-      echo "    claude \"\$(cat '$DROP')\"" >&2
-      # [LAW:no-silent-failure] a carried goal must not vanish with the transport
-      # either — tell the operator exactly how to re-establish it after delivery.
-      if [[ -n "$GOAL" ]]; then
-        echo "A goal was carried; after delivering the handoff, re-establish it with:" >&2
-        echo "    /goal $GOAL" >&2
-      fi
-      # MSGFILE cleaned by the EXIT trap (LOGFILE stayed empty).
+      # [LAW:parse-dont-validate] the failure arm of the parse above. Exiting
+      # nonzero is the whole of it: the close-out did not happen, and the caller
+      # learns that from the exit code rather than from prose it may not read.
+      # [LAW:no-silent-failure] writing the message to a file here would be an
+      # answer-shaped void — exit 0 with the shape of delivery and none of the
+      # substance, since nothing reads that file. A message parked on disk is a
+      # message lost, and lost loudly beats lost while claiming success.
+      echo "finalize-session: no tmux or iTerm2 transport; nothing to deliver into." >&2
+      echo "Claude must be running in a tmux pane or an iTerm2 session to close out." >&2
+      echo "Background sessions (claude --bg-pty-host) have neither by construction." >&2
+      exit 2
+      # MSGFILE and GOALFILE cleaned by the EXIT trap.
     fi
     ;;
 
