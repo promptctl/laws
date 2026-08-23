@@ -178,5 +178,30 @@ case "$out" in
   *) bad "  ... and said nothing about it (stderr: $out)";;
 esac
 
+# A user-supplied session selector is not a degraded switch, it is a BROKEN LAUNCH: real claude
+# exits with "--session-id can only be used with --continue or --resume if --fork-session is also
+# specified". The stub cannot reproduce that refusal, so the assertion is on the argv the launcher
+# builds - the pin must never reach claude alongside the user's own selector. Every spelling is
+# covered because the scan matches exact tokens and a missed spelling fails the same way.
+for sel in -c --continue -r --resume; do
+  rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+  out=$("$LAUNCHER" "$sel" 2>&1 >/dev/null)
+  case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
+    *"--session-id "*) bad "$sel still pinned a session, so claude would refuse to launch at all";;
+    *) ok "$sel pins no session, so the launch is not broken by a conflicting pin";;
+  esac
+  case "$out" in
+    *"session selector"*) ok "  ... and says why on stderr";;
+    *) bad "  ... and said nothing about it (stderr: $out)";;
+  esac
+done
+
+# The user's own selector must still REACH claude untouched - withholding the pin is the whole
+# change, and dropping the flag the user typed would be a different bug wearing the same fix.
+case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
+  *"--resume"*) ok "the user's own session selector is passed through untouched";;
+  *) bad "the launcher swallowed the user's selector (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
+esac
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

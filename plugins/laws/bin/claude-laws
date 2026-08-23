@@ -61,20 +61,40 @@ export BUN_INSPECT="ws://127.0.0.1:$PORT/dbg"
 # like the session that started it. Pinning the session id up front turns "is this my session"
 # into an equality test the guard can run, instead of something it has to infer.
 #
-# One-shot mode gets no switch at all. A relaunch re-sends the positional prompt, which would
-# re-execute the user's whole request; rather than parse claude's flags to strip it - where a
-# flag that takes a value is indistinguishable from a positional, and a wrong guess silently
-# drops or duplicates the prompt - the feature is simply unavailable there. The guard offers
-# nothing without LAWS_SWITCH_SESSION, so this is enforced by absence, not by a warning nobody
-# reads. [LAW:no-silent-failure] it still says so.
-one_shot=""
+# WHY THE SWITCH MAY BE UNAVAILABLE, carried as a value rather than a branch: one scan over the
+# user's argv yields the reason it cannot be offered, or empty when it can. The guard offers
+# nothing without LAWS_SWITCH_SESSION, so each case is enforced by ABSENCE of the pin, not by a
+# warning nobody reads. [LAW:dataflow-not-control-flow] [LAW:no-silent-failure] it still says so.
+#
+#   -p/--print   a relaunch re-sends the positional prompt, which would re-execute the user's
+#                whole request. Rather than parse claude's flags to strip it - where a flag that
+#                takes a value is indistinguishable from a positional, and a wrong guess silently
+#                drops or duplicates the prompt - the feature is simply unavailable there. The
+#                same hazard for an INTERACTIVE positional prompt is promptctl-routing-szb and is
+#                NOT covered here; this case catches only the one-shot form.
+#
+#   -c/--continue/-r/--resume
+#                the user has already chosen which conversation to open, and claude REFUSES the
+#                pin alongside that choice - "--session-id can only be used with --continue or
+#                --resume if --fork-session is also specified" (measured). So pinning anyway does
+#                not degrade the switch, it breaks the launch outright, which is why this is a
+#                scan for the selector rather than something the relaunch loop can paper over.
+#                Adding --fork-session would make the pair legal and is deliberately not done: it
+#                would silently turn the user's "continue" into a fork of their conversation,
+#                redefining the flag they handed us. Withhold the switch instead.
+no_switch=""
 for arg in "$@"; do
-  case "$arg" in -p|--print) one_shot=1; break;; esac
+  case "$arg" in
+    -p|--print)
+      no_switch="one-shot session (-p): a relaunch would re-send the prompt"; break;;
+    -c|--continue|-r|--resume)
+      no_switch="session selector ($arg): claude refuses --session-id alongside it, and the switch needs a pinned id"; break;;
+  esac
 done
 
 FIRST_ARGS=()
-if [ -n "$one_shot" ]; then
-  log "one-shot session (-p): craft switching disabled, since a relaunch would re-send the prompt"
+if [ -n "$no_switch" ]; then
+  log "craft switching disabled - $no_switch"
 elif ! LAWS_SWITCH_SESSION="$(node -e 'console.log(require("crypto").randomUUID())' 2>/dev/null)" \
      || [ -z "$LAWS_SWITCH_SESSION" ]; then
   log "could not mint a session id; launching without craft switching"
