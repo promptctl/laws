@@ -158,7 +158,7 @@ out=$(printf '%s' "$np_prompt" | "$nopolicy/skill-router.sh" guard 2>/dev/null)
 err=$(printf '%s' "$np_prompt" | "$nopolicy/skill-router.sh" guard 2>&1 >/dev/null)
 rm -rf "$nopolicy"
 assert_allow "missing policy file still allows the load (degraded)" "$out"
-case "$err" in *"policy file not readable"*) ok "missing policy file warns on stderr";; *) bad "missing policy file did not warn (got: $err)";; esac
+case "$err" in *"no craft pairs readable"*) ok "missing policy file warns on stderr";; *) bad "missing policy file did not warn (got: $err)";; esac
 
 # 9. The switch offer. It is an EXTRA route out of the deny, available only when the session was
 #    launched by claude-laws (only the launcher can relaunch and enact a choice). The deny itself
@@ -173,7 +173,7 @@ swdir=$(mktemp -d)
 # rather than the offer.
 sw1=$(mktemp "$TMPDIR/sw1.XXXXXX.jsonl")
 run guard "$(skill_payload SW1 laws:code)" >/dev/null            # engage code
-out=$(LAWS_SWITCH_DIR="$swdir" printf '%s' "$(switch_payload SW1 laws:prompt "$sw1")" | LAWS_SWITCH_DIR="$swdir" "$ROUTER" guard 2>/dev/null)
+out=$(printf '%s' "$(switch_payload SW1 laws:prompt "$sw1")" | LAWS_SWITCH_DIR="$swdir" LAWS_SWITCH_SESSION=SW1 "$ROUTER" guard 2>/dev/null)
 assert_deny "under claude-laws, the deny still refuses and also offers the switch" \
   "$out" "laws:code" "laws:prompt" "laws-switch" "rewind_summarize"
 case "$out" in
@@ -286,8 +286,8 @@ sub_payload() { # <session_id> <agent_id> <skill> <transcript_path>
 #      launcher's inspector - killing the PARENT - and operate on the parent's transcript.
 #      The subagent escape hatch the deny recommends would destroy its own caller.
 swdir2=$(mktemp -d); sw2=$(mktemp "$TMPDIR/sw2.XXXXXX.jsonl")
-printf '%s' "$(sub_payload SUB1 AGENT7 laws:code "$sw2")"   | LAWS_SWITCH_DIR="$swdir2" "$ROUTER" guard >/dev/null 2>&1
-out=$(printf '%s' "$(sub_payload SUB1 AGENT7 laws:prompt "$sw2")" | LAWS_SWITCH_DIR="$swdir2" "$ROUTER" guard 2>/dev/null)
+printf '%s' "$(sub_payload SUB1 AGENT7 laws:code "$sw2")"   | LAWS_SWITCH_DIR="$swdir2" LAWS_SWITCH_SESSION=SUB1 "$ROUTER" guard >/dev/null 2>&1
+out=$(printf '%s' "$(sub_payload SUB1 AGENT7 laws:prompt "$sw2")" | LAWS_SWITCH_DIR="$swdir2" LAWS_SWITCH_SESSION=SUB1 "$ROUTER" guard 2>/dev/null)
 assert_deny "a subagent is still refused the incompatible craft" "$out" "laws:code" "laws:prompt"
 case "$out" in
   *"laws-switch"*) bad "  ... but was offered a switch that would kill its parent session";;
@@ -302,7 +302,7 @@ rm -rf "$swdir2"
 #      pending.json naming a transcript the launcher cannot operate on.
 swdir3=$(mktemp -d)
 run guard "$(skill_payload SW3 laws:code)" >/dev/null
-out=$(printf '%s' "$(switch_payload SW3 laws:prompt "$TMPDIR/does-not-exist.jsonl")" | LAWS_SWITCH_DIR="$swdir3" "$ROUTER" guard 2>/dev/null)
+out=$(printf '%s' "$(switch_payload SW3 laws:prompt "$TMPDIR/does-not-exist.jsonl")" | LAWS_SWITCH_DIR="$swdir3" LAWS_SWITCH_SESSION=SW3 "$ROUTER" guard 2>/dev/null)
 assert_deny "an unresolvable transcript path still refuses the load" "$out" "laws:code"
 case "$out" in
   *"laws-switch"*) bad "  ... but offered a switch backed by a transcript that does not exist";;
@@ -316,7 +316,7 @@ swdir4=$(mktemp -d); qdir=$(mktemp -d)
 qpath="$qdir/say\"hi\".jsonl"; : > "$qpath"
 run guard "$(skill_payload SW4 laws:code)" >/dev/null
 printf '{"session_id":"SW4","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}' \
-  "$(printf '%s' "$qpath" | sed 's/"/\\"/g')" | LAWS_SWITCH_DIR="$swdir4" "$ROUTER" guard >/dev/null 2>&1
+  "$(printf '%s' "$qpath" | sed 's/"/\\"/g')" | LAWS_SWITCH_DIR="$swdir4" LAWS_SWITCH_SESSION=SW4 "$ROUTER" guard >/dev/null 2>&1
 if [ -f "$swdir4/pending.json" ]; then
   if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$swdir4/pending.json" 2>/dev/null; then
     ok "pending.json stays valid JSON when the transcript path contains a quote"
@@ -333,8 +333,8 @@ rm -rf "$swdir4" "$qdir"
 #      offer whose decision never landed sends the agent to "no pending craft switch".
 swdir5=$(mktemp -d); sw5=$(mktemp "$TMPDIR/sw5.XXXXXX.jsonl"); chmod 500 "$swdir5"
 run guard "$(skill_payload SW5 laws:code)" >/dev/null
-out=$(printf '%s' "$(switch_payload SW5 laws:prompt "$sw5")" | LAWS_SWITCH_DIR="$swdir5" "$ROUTER" guard 2>/dev/null)
-err=$(printf '%s' "$(switch_payload SW5 laws:prompt "$sw5")" | LAWS_SWITCH_DIR="$swdir5" "$ROUTER" guard 2>&1 >/dev/null)
+out=$(printf '%s' "$(switch_payload SW5 laws:prompt "$sw5")" | LAWS_SWITCH_DIR="$swdir5" LAWS_SWITCH_SESSION=SW5 "$ROUTER" guard 2>/dev/null)
+err=$(printf '%s' "$(switch_payload SW5 laws:prompt "$sw5")" | LAWS_SWITCH_DIR="$swdir5" LAWS_SWITCH_SESSION=SW5 "$ROUTER" guard 2>&1 >/dev/null)
 case "$out" in
   *"laws-switch"*) bad "an unwritable switch dir still advertised the switch";;
   *) ok "an unwritable switch dir offers no switch";;
@@ -344,6 +344,52 @@ case "$err" in
   *) bad "  ... and warned nothing (got: $err)";;
 esac
 chmod 700 "$swdir5"; rm -rf "$swdir5"
+
+# 12. A NESTED claude is the case an "am I a subagent" test cannot see: its own session_id, no
+#     agent_id, and it inherits LAWS_SWITCH_DIR and BUN_INSPECT from the launcher's environment.
+#     Were it offered the switch it would overwrite the owning session's pending decision and
+#     drive /exit down the launcher's inspector, killing the session that started it.
+swdir6=$(mktemp -d); sw6=$(mktemp "$TMPDIR/sw6.XXXXXX.jsonl")
+printf '%s' "$(switch_payload NESTED laws:code "$sw6")"   | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=OWNER "$ROUTER" guard >/dev/null 2>&1
+out=$(printf '%s' "$(switch_payload NESTED laws:prompt "$sw6")" | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=OWNER "$ROUTER" guard 2>/dev/null)
+assert_deny "a nested claude session is still refused the incompatible craft" "$out" "laws:code"
+case "$out" in
+  *"laws-switch"*) bad "  ... but was offered the owning session's switch";;
+  *) ok "  ... and is offered no switch belonging to the session that launched it";;
+esac
+[ -f "$swdir6/pending.json" ] && bad "  ... and overwrote the owning session's pending decision" \
+                              || ok "  ... and left the owning session's pending decision alone"
+rm -rf "$swdir6"
+
+# 12b. With no pinned session at all (the launcher disables the switch in one-shot mode, and any
+#      plain `claude` has never had one), the offer must not appear even though the inherited
+#      switch dir exists.
+swdir7=$(mktemp -d); sw7=$(mktemp "$TMPDIR/sw7.XXXXXX.jsonl")
+run guard "$(skill_payload SW7 laws:code)" >/dev/null
+out=$(printf '%s' "$(switch_payload SW7 laws:prompt "$sw7")" | LAWS_SWITCH_DIR="$swdir7" "$ROUTER" guard 2>/dev/null)
+case "$out" in
+  *"laws-switch"*) bad "an unpinned session was offered the switch";;
+  *) ok "an unpinned session is offered no switch";;
+esac
+rm -rf "$swdir7"
+
+# 13. A policy file that is READABLE but names no pairs disables enforcement exactly as an
+#     unreadable one does, so it must warn exactly as loudly. An unchecked grep exit status
+#     used to let a comment-only file pass silently as "everything coexists".
+emptypol=$(mktemp -d)
+cp "$ROUTER" "$emptypol/skill-router.sh"
+printf '# only comments here\n\n' > "$emptypol/incompatible-crafts.txt"
+ep_code='{"session_id":"EP1","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:code"}}'
+ep_prompt='{"session_id":"EP1","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}'
+printf '%s' "$ep_code" | "$emptypol/skill-router.sh" guard >/dev/null 2>&1
+out=$(printf '%s' "$ep_prompt" | "$emptypol/skill-router.sh" guard 2>/dev/null)
+err=$(printf '%s' "$ep_prompt" | "$emptypol/skill-router.sh" guard 2>&1 >/dev/null)
+assert_allow "a pairless policy file still allows the load (degraded)" "$out"
+case "$err" in
+  *"no craft pairs readable"*) ok "a pairless policy file warns on stderr rather than passing as 'everything coexists'";;
+  *) bad "a pairless policy file disabled enforcement silently (stderr: $err)";;
+esac
+rm -rf "$emptypol"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

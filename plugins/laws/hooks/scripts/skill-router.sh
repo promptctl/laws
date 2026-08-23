@@ -64,14 +64,17 @@ EOT
 # second copy that can drift.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POLICY_FILE="$SCRIPT_DIR/incompatible-crafts.txt"
-if [ -r "$POLICY_FILE" ]; then
-  INCOMPATIBLE="$(sed -E 's/#.*$//' "$POLICY_FILE" | grep -E '[^[:space:]]')"
-else
-  # Loud degrade, matching this script's ethos elsewhere (empty session_id, unwritable
-  # store): a missing policy must never BLOCK skill loading, but it must not silently pass
-  # as "everything coexists" either - announce it. [LAW:no-silent-failure]
-  echo "laws skill-router guard: policy file not readable ($POLICY_FILE); craft compatibility enforcement disabled this session" >&2
-  INCOMPATIBLE=""
+INCOMPATIBLE=""
+[ -r "$POLICY_FILE" ] && INCOMPATIBLE="$(sed -E 's/#.*$//' "$POLICY_FILE" | grep -E '[^[:space:]]')"
+# One condition for both ways the policy can fail to arrive, because they have identical
+# consequences: no pairs means crafts_incompatible answers false for everything and the guard
+# is off. Unreadable and readable-but-pairless are the same degraded state, so they get the
+# same warning rather than one being announced and the other passing as "everything coexists"
+# - which is what an unchecked `grep` exit status used to do to a comment-only policy file.
+# A lost policy must never BLOCK skill loading, but it must never be silent either.
+# [LAW:no-silent-failure] [LAW:dataflow-not-control-flow] the degrade is one path, not two.
+if [ -z "$INCOMPATIBLE" ]; then
+  echo "laws skill-router guard: no craft pairs readable from $POLICY_FILE; craft compatibility enforcement disabled this session" >&2
 fi
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin; session-start
@@ -251,15 +254,25 @@ case "$HOOK_TYPE" in
         # VALUE - empty when unavailable - and always appended, so the deny path itself is the
         # same code every time. [LAW:dataflow-not-control-flow]
         switch_offer=""
-        # A SUBAGENT IS NEVER OFFERED THE SWITCH, and this is the load-bearing condition.
-        # A subagent shares the parent's session_id and is told apart only by agent_id, but
-        # laws-switch carries neither: it writes one unscoped pending.json and ends the session
-        # through the launcher's inspector - which terminates the PARENT, and runs the surgery
-        # against the parent's conversation. The subagent escape hatch this very deny recommends
-        # would kill its caller. Only the launcher-owned main session has a relaunch to hand a
-        # decision to, so anywhere else the switch is a route that does not exist.
-        # [LAW:composability] no hidden dependence on being the top-level session - it is checked.
-        if [ -z "$aid" ] && [ -n "${LAWS_SWITCH_DIR:-}" ] && [ -d "${LAWS_SWITCH_DIR:-}" ]; then
+        # ONLY THE SESSION THE LAUNCHER STARTED MAY BE OFFERED THE SWITCH, and the test is
+        # identity, not inference. The launcher pins its session id up front (claude --session-id)
+        # and exports it, so this compares ids rather than guessing from context.
+        #
+        # Everything else that reaches this code inherits LAWS_SWITCH_DIR and BUN_INSPECT from the
+        # launcher's environment and would otherwise look eligible:
+        #   - a dispatched SUBAGENT shares the owning session_id and is told apart only by
+        #     agent_id, which is why the id check alone is not enough;
+        #   - a NESTED `claude` started from a Bash call is its own top-level session - own
+        #     session_id, no agent_id at all - so an "am I not a subagent" test lets it straight
+        #     through.
+        # Either one writing pending.json would hand the launcher a decision naming a conversation
+        # it does not own, and either one running laws-switch would drive /exit down the launcher's
+        # inspector and kill the session that started it. The subagent escape hatch this very deny
+        # recommends would destroy its own caller.
+        # [LAW:composability] the dependence on being the launcher's own session is checked, never
+        # assumed from the ambient environment.
+        if [ -n "${LAWS_SWITCH_SESSION:-}" ] && [ "$sid" = "${LAWS_SWITCH_SESSION:-}" ] \
+           && [ -z "$aid" ] && [ -n "${LAWS_SWITCH_DIR:-}" ] && [ -d "${LAWS_SWITCH_DIR:-}" ]; then
           transcript=$(json_field transcript_path)
           # A transcript path is not a constrained token (see the header), so the extraction is
           # not assumed exact - it has to name a file that is really there. A path truncated at
