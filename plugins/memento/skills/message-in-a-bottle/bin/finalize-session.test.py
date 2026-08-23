@@ -382,8 +382,13 @@ check("the same forged pid resolves when the age is older instead of younger",
       "without this the forging fixture, not the age check, could be doing the work")
 
 # --- precedence -----------------------------------------------------------
+# Both candidates must be resolvable, or the case cannot see which one won. An
+# earlier version handed discovery the unresolvable `%5 1 0` set, so $TMUX_PANE
+# was the only answer available and %42 came back under either ordering - a check
+# that read as pinning precedence while pinning nothing. Here discovery can reach
+# %99 and the environment names %42, so the two genuinely compete.
 
-done = run(depth=2, panes="%5 1 0", tmux_pane="%42")
+done = run(depth=2, tmux_pane="%42")
 check("an inherited $TMUX_PANE wins outright and discovery never runs",
       picked(done) == "%42", f"rc={done.returncode} out={done.stdout!r}")
 
