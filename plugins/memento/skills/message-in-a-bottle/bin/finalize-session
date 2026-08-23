@@ -158,11 +158,20 @@ _find_claude_pid() {
 #   A pid reissued after its holder died is younger than the descendant that
 #   claimed it, and the walk stops rather than wandering into a stranger's tree.
 #
-# Together they are a proof, not a narrowing. Non-decreasing age from hop zero
-# means every matched ancestor is at least as old as this process, so it has held
-# its pid continuously since before this process existed — which is before the
-# pane list was read. Two processes cannot hold one pid at one instant, so the
-# live pane recorded at that pid is that ancestor.
+# Together they are a proof to the resolution of the clock. Non-decreasing age
+# from hop zero means every matched ancestor is at least as old as this process,
+# so it has held its pid continuously since before this process existed — which
+# is before the pane list was read. Two processes cannot hold one pid at one
+# instant, so the live pane recorded at that pid is that ancestor.
+#
+# That clock ticks once a second, and no portable shell carries a faster one:
+# etime is [[dd-]hh:]mm:ss, `ps -o lstart=` is whole seconds as well, and the one
+# genuinely finer source — /proc/<pid>/stat's start time — does not exist on
+# macOS, where this transport mostly runs. Both were measured before being ruled
+# out. So one case stays open: a pid reissued within the same second this process
+# started reads as the same age and passes. Reaching it also needs `ps -e` to
+# read the ppid row and the row for the pid it names on opposite sides of that
+# reuse. A second later, the age check refuses it.
 #
 # [LAW:effects-at-boundaries] both snapshots are taken here, at the edge, and the
 # resolution below is arithmetic over those two values. One whole-table ps rather
