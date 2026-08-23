@@ -118,6 +118,43 @@ _find_claude_pid() {
   return 1
 }
 
+# The tmux pane this process is running inside, discovered from process ancestry
+# instead of from $TMUX_PANE.
+#
+# A session hosted by `claude daemon run` — which is every session when
+# remoteControlAtStartup is on — is spawned by the daemon, not by the pane's
+# shell, so it inherits none of tmux's environment. $TMUX and $TMUX_PANE are
+# simply absent even though a pane four levels up is displaying that session and
+# taking its keystrokes. Reading the environment alone therefore reports "no
+# transport" for a session that plainly has one, and the close-out silently stops
+# happening for precisely the longest-running sessions — the ones with the most
+# worth handing off.
+#
+# [FRAMING:representation] $TMUX_PANE is a copy of a fact, propagated by
+# inheritance and lost the moment something breaks the chain. The fact itself is
+# "an ancestor of mine is some pane's process." Ask the territory, not the map
+# that went missing.
+#
+# [LAW:no-silent-failure] the match is pid identity and nothing else — never the
+# working directory, never "the only pane that looks plausible." A process with
+# no pane ancestor gets no pane: this returns 1 and the caller falls through to
+# the next transport, rather than pasting a handoff into an unrelated window.
+_discover_tmux_pane() {
+  local panes pid i pane_id pane_pid
+  command -v tmux >/dev/null 2>&1 || return 1
+  panes=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null) || return 1
+  [ -n "$panes" ] || return 1
+  pid=$$
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+    [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
+    while read -r pane_id pane_pid; do
+      if [ "$pane_pid" = "$pid" ]; then printf '%s' "$pane_id"; return 0; fi
+    done <<< "$panes"
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+  done
+  return 1
+}
+
 # The flags claude was launched with, reduced to a safe whitelist: permission
 # mode, model, and the skip-permissions toggles — the ones that make the fresh
 # session match the user's setup. Everything else is dropped, and scanning STOPS
@@ -268,9 +305,17 @@ case "$MODE" in
     # or an iTerm2 session uuid plus the claude pid to relaunch), and every worker
     # below is typed on that value. Detection lives here once
     # [LAW:single-enforcer]; workers never re-detect.
-    if [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]]; then
-      TARGET=$(tmux display-message -p -t "$TMUX_PANE" \
-        '#{session_name}:#{window_index}.#{pane_index}')
+    #
+    # The pane resolves from two spellings of one question — inherited when this
+    # process is a child of the pane's shell, discovered from ancestry when a
+    # daemon broke that chain — and they collapse to a single value here so no
+    # code below has to know which spelling answered. [LAW:one-source-of-truth]
+    PANE="${TMUX_PANE:-}"
+    [[ -n "$PANE" ]] || PANE=$(_discover_tmux_pane) || PANE=""
+    if [[ -n "$PANE" ]] \
+       && TARGET=$(tmux display-message -p -t "$PANE" \
+            '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) \
+       && [[ -n "$TARGET" ]]; then
       if [[ -n "${FINALIZE_DRY_RUN:-}" ]]; then
         echo "[dry-run] transport=tmux target=$TARGET reset=/$RESET msgfile=$MSGFILE"
         echo "[dry-run] carried goal: ${GOAL:-(none)}"
@@ -310,7 +355,9 @@ case "$MODE" in
       # message lost, and lost loudly beats lost while claiming success.
       echo "finalize-session: no tmux or iTerm2 transport; nothing to deliver into." >&2
       echo "Claude must be running in a tmux pane or an iTerm2 session to close out." >&2
-      echo "Background sessions (claude --bg-pty-host) have neither by construction." >&2
+      echo "No pane owns this process: neither \$TMUX_PANE nor any ancestor pid" >&2
+      echo "matches a live tmux pane, so there is no window that is showing this" >&2
+      echo "session to hand off into." >&2
       exit 2
       # MSGFILE and GOALFILE cleaned by the EXIT trap.
     fi
