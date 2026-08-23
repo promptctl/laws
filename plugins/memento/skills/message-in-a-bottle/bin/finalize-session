@@ -135,24 +135,139 @@ _find_claude_pid() {
 # "an ancestor of mine is some pane's process." Ask the territory, not the map
 # that went missing.
 #
-# [LAW:no-silent-failure] the match is pid identity and nothing else — never the
+# [LAW:no-silent-failure] the match is descent and nothing else — never the
 # working directory, never "the only pane that looks plausible." A process with
 # no pane ancestor gets no pane: this returns 1 and the caller falls through to
 # the next transport, rather than pasting a handoff into an unrelated window.
+#
+# WHY DESCENT NEEDS MORE THAN A PID. Pids are recycled, so "an ancestor's pid
+# equals a pane's pid" is not by itself proof that the pane's process is that
+# ancestor. Two forgeries are available to a recycled pid, and each is closed by
+# making the snapshot carry a fact the recycled pid cannot supply:
+#
+#   A pane outliving its process. With remain-on-exit set, a pane whose process
+#   has exited stays listed and keeps advertising that dead pid (observed: kill a
+#   pane's process and list-panes still reports its pid, with pane_dead=1). Once
+#   that pid is reissued to something in this chain, the pid match is a
+#   coincidence and the handoff lands in a window showing a corpse. #{pane_dead}
+#   is what tells them apart, so it rides along in the snapshot and dead rows
+#   never enter the match set.
+#
+#   An ancestor exiting mid-walk. Age tells this one apart: a parent is never
+#   younger than its child, so elapsed time must not decrease as the walk climbs.
+#   A pid reissued after its holder died is younger than the descendant that
+#   claimed it, and the walk stops rather than wandering into a stranger's tree.
+#
+# Together they are a proof to the resolution of the clock. Non-decreasing age
+# from hop zero means every matched ancestor is at least as old as this process,
+# so it has held its pid continuously since before this process existed — which
+# is before the pane list was read. Two processes cannot hold one pid at one
+# instant, so the live pane recorded at that pid is that ancestor.
+#
+# That clock ticks once a second, and no portable shell carries a faster one:
+# etime is [[dd-]hh:]mm:ss, `ps -o lstart=` is whole seconds as well, and the one
+# genuinely finer source — /proc/<pid>/stat's start time — does not exist on
+# macOS, where this transport mostly runs. Both were measured before being ruled
+# out. So one case stays open: a pid reissued within the same second this process
+# started reads as the same age and passes. Reaching it also needs `ps -e` to
+# read the ppid row and the row for the pid it names on opposite sides of that
+# reuse. A second later, the age check refuses it.
+#
+# [LAW:effects-at-boundaries] both snapshots are taken here, at the edge, and the
+# resolution below is arithmetic over those two values. One whole-table ps rather
+# than a query per hop is what makes that true: pid and age are read at a single
+# instant, so nothing shifts underneath the walk.
 _discover_tmux_pane() {
-  local panes pid i pane_id pane_pid
+  local panes proctable
   command -v tmux >/dev/null 2>&1 || return 1
-  panes=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null) || return 1
+  panes=$(tmux list-panes -a -F 'pane #{pane_id} #{pane_pid} #{pane_dead}' 2>/dev/null) || return 1
   [ -n "$panes" ] || return 1
-  pid=$$
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
-    [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
-    while read -r pane_id pane_pid; do
-      if [ "$pane_pid" = "$pid" ]; then printf '%s' "$pane_id"; return 0; fi
-    done <<< "$panes"
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
-  done
-  return 1
+  proctable=$(ps -eo pid=,ppid=,etime=) || return 1
+  # The literal 'pane' lead-in is tmux labelling its own rows, so one pass can
+  # tell the two snapshots apart without a separator line to get out of step.
+  printf '%s\n%s\n' "$panes" "$proctable" | awk -v self=$$ -v maxhops=16 '
+    # ps renders elapsed time as [[dd-]hh:]mm:ss; fold it left into seconds so
+    # any of the three widths compares against any other.
+    function ageof(raw,   days, parts, fields, i, seconds) {
+      days = 0
+      if (raw ~ /-/) {
+        days = substr(raw, 1, index(raw, "-") - 1) + 0
+        raw = substr(raw, index(raw, "-") + 1)
+      }
+      fields = split(raw, parts, ":")
+      seconds = 0
+      for (i = 1; i <= fields; i++) seconds = seconds * 60 + parts[i] + 0
+      return days * 86400 + seconds
+    }
+    # [LAW:parse-dont-validate] a whitelist, not a blacklist of the dead value:
+    # only a row that positively asserts liveness joins the match set. tmux
+    # expands a format field it does not know to the empty string (verified on
+    # 3.6a: `#{no_such_field}` renders as nothing, it does not survive as a
+    # literal), so on a tmux predating #{pane_dead} the row arrives with three
+    # fields and an uninitialised $4 — and `$4 != 1` would read that as alive,
+    # silently reverting discovery to the bare pid match this guard exists to
+    # close. The price of strictness is that such a tmux matches no pane at all
+    # and the caller declines; that is the safe direction, and the one the
+    # elapsed-time check below already takes for the same reason.
+    $1 == "pane" { if (NF == 4 && $4 == "0") pane[$3] = $2; next }
+    NF == 3      { parent[$1] = $2; elapsed[$1] = $3 }
+    END {
+      pid = self
+      descendant_age = -1
+      for (hop = 0; hop < maxhops; hop++) {
+        if (!(pid in parent)) exit 1
+        # [LAW:parse-dont-validate] an elapsed time this cannot read is not an
+        # age of zero, which would quietly reduce the walk to bare pid matching.
+        # It is a failure to establish descent, and it refuses the pane.
+        if (elapsed[pid] !~ /^([0-9]+-)?([0-9]+:)?[0-9]+:[0-9][0-9]$/) exit 1
+        age = ageof(elapsed[pid])
+        if (age < descendant_age) exit 1
+        if (pid in pane) { print pane[pid]; exit 0 }
+        descendant_age = age
+        pid = parent[pid]
+        if (pid + 0 <= 1) exit 1
+      }
+      exit 1
+    }'
+}
+
+# A pane id resolved to the tmux target that addresses it, or 1 if tmux does not
+# own that pane.
+#
+# [LAW:parse-dont-validate] display-message cannot be asked this question
+# directly, because it answers the same way whether or not the pane exists: given
+# a pane id no server owns it exits 0 with every field empty, so the target format
+# renders as the literal ":." — an answer-shaped void, non-empty and therefore
+# indistinguishable from a real target to any caller that only checks emptiness.
+# Worse, tmux then reads ":." as a live address meaning current-session:current-
+# window.current-pane, so a stale pane id does not fail loudly; it silently
+# retargets the handoff at whatever the user happens to be looking at when the
+# worker fires. (Verified on tmux 3.6a: `display-message -t %4242` exits 0 and
+# renders ":.", while `list-panes -t %4242` exits 1.)
+#
+# Asking for #{pane_id} alongside the target makes the reply carry its own proof:
+# a target is this pane's target only if the id tmux echoes back is the id we
+# asked about. That refuses the stale id and the degenerate ":." alike.
+#
+# The id alone is not enough, for the same reason the walk above carries
+# #{pane_dead}: owning a pane and displaying a live process are different facts,
+# and remain-on-exit separates them. A dead pane answers exactly like a live one
+# — verified on 3.6a by killing a pane's process on a scratch server, after which
+# `display-message` still exits 0 and still echoes `%0 1 t:1.1`. Admitted on the
+# id alone it would satisfy this, short-circuit the discovery that would have
+# refused it, and leave the worker sending keys into a corpse. So liveness is
+# demanded here in the same words the walk demands it: a positive "0", never the
+# absence of a "1". A tmux too old to know #{pane_dead} renders it empty and is
+# refused by both, which is the point of saying it the same way twice.
+_pane_target() {
+  local pane="${1:-}" reply rest
+  [ -n "$pane" ] || return 1
+  reply=$(tmux display-message -p -t "$pane" \
+            '#{pane_id} #{pane_dead} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) || return 1
+  [ "${reply%% *}" = "$pane" ] || return 1
+  rest="${reply#* }"
+  [ "${rest%% *}" = "0" ] || return 1
+  printf '%s' "${rest#* }"
 }
 
 # The flags claude was launched with, reduced to a safe whitelist: permission
@@ -310,12 +425,15 @@ case "$MODE" in
     # process is a child of the pane's shell, discovered from ancestry when a
     # daemon broke that chain — and they collapse to a single value here so no
     # code below has to know which spelling answered. [LAW:one-source-of-truth]
-    PANE="${TMUX_PANE:-}"
-    [[ -n "$PANE" ]] || PANE=$(_discover_tmux_pane) || PANE=""
-    if [[ -n "$PANE" ]] \
-       && TARGET=$(tmux display-message -p -t "$PANE" \
-            '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) \
-       && [[ -n "$TARGET" ]]; then
+    # Each spelling is accepted only once tmux confirms it still names that pane,
+    # and a spelling that fails to resolve hands the question on rather than
+    # consuming the attempt. The inherited copy going stale is the same "the map
+    # went missing" failure discovery exists for, so it must not be able to lose
+    # the handoff on discovery's behalf. [FRAMING:representation]
+    TARGET=$(_pane_target "${TMUX_PANE:-}") \
+      || TARGET=$(_pane_target "$(_discover_tmux_pane || true)") \
+      || TARGET=""
+    if [[ -n "$TARGET" ]]; then
       if [[ -n "${FINALIZE_DRY_RUN:-}" ]]; then
         echo "[dry-run] transport=tmux target=$TARGET reset=/$RESET msgfile=$MSGFILE"
         echo "[dry-run] carried goal: ${GOAL:-(none)}"
