@@ -46,20 +46,60 @@ HANDOFF_SUFFIX=$(cat <<'SUFFIX'
 SUFFIX
 )
 
-# [LAW:dataflow-not-control-flow] reset mode is a value inferred from the
-# message, not a separate argument. Scan the first 3 sentences for /compact;
-# stop early so long messages don't slow the common case. (tmux only.)
+# The message's first 3 sentences, one per line. Stops early so a long message
+# doesn't slow the common case. (tmux only.)
 _first_three_sentences() {
   local text="$1" result="" count=0 i char
   for ((i=0; i<${#text}; i++)); do
     char="${text:$i:1}"
     result+="$char"
     if [[ "$char" == "." || "$char" == "!" || "$char" == "?" ]]; then
+      printf '%s\n' "$result"
+      result=""
       ((count++)) || true
-      [[ $count -ge 3 ]] && break
+      [[ $count -ge 3 ]] && return 0
     fi
   done
-  printf '%s' "$result"
+  printf '%s\n' "$result"
+}
+
+# Whether the message asks for a compacted handoff — true only on an AFFIRMATIVE
+# mention of /compact in the first 3 sentences.
+#
+# [LAW:parse-dont-validate] The reset mode is a binary the author chose, but prose
+# cannot carry a binary faithfully: to a matcher, a mention and an invocation look
+# identical. `--reset` is the parsed form and wins outright; this inference serves
+# messages that pass no flag, and it is deliberately biased toward `clear`.
+#
+# The bias is not caution for its own sake — the two errors cost wildly different
+# amounts. A wrong `clear` costs the next agent one summary it has to rebuild. A
+# wrong `compact` carries the previous session's context across a boundary that may
+# exist precisely to stop it. On 2026-08-16 a handoff reading "Do NOT use /compact
+# ... a blank slate is required" compacted, because a word-boundary match cannot
+# see a negation — so the more emphatically an author forbade compaction, the
+# surer it was to happen, and the misfire announced itself only in a line the
+# skill's own turn-ending rule forbids the author to stay and read. Under
+# ambiguity, take the harmless error.
+_wants_compact() {
+  local sentence
+  while IFS= read -r sentence; do
+    # Sentences arrive with their terminator attached, so the trailing class must
+    # admit punctuation as well as whitespace and end-of-line.
+    [[ "$sentence" =~ (^|[[:space:]])/compact([[:space:]]|[.,:;!?]|$) ]] || continue
+    # A negated mention is ambiguous, not a request: skip this sentence and let a
+    # later affirmative one — or the `clear` default — decide. Character classes
+    # rather than ${var,,} keep this working on bash 3.2, which is what
+    # /usr/bin/bash still is on macOS.
+    [[ "$sentence" =~ (^|[^A-Za-z])([Nn][Oo][Tt]|[Nn][Ee][Vv][Ee][Rr]|[Aa][Vv][Oo][Ii][Dd]|[Ww][Ii][Tt][Hh][Oo][Uu][Tt]|[Ss][Kk][Ii][Pp])([^A-Za-z]|$) ]] && continue
+    [[ "$sentence" == *"n't"* || "$sentence" == *"N'T"* ]] && continue
+    return 0
+  done < <(_first_three_sentences "$1")
+  return 1
+}
+
+# The inferred reset mode as a word, so the caller can treat it as a plain default.
+_infer_reset() {
+  if _wants_compact "$1"; then printf 'compact'; else printf 'clear'; fi
 }
 
 # Walk the process ancestry from the launcher's parent up to the interactive
@@ -166,9 +206,25 @@ case "$MODE" in
     # without this the next agent wakes with no goal and the autonomous run stops.
     # Absent → empty string; the same code path runs, the value decides the effect.
     GOAL=""
-    while [[ "${1:-}" == --goal ]]; do
-      GOAL="${2:-}"
-      shift 2 || { echo "--goal requires a condition argument" >&2; exit 2; }
+    RESET_ARG=""
+    while :; do
+      case "${1:-}" in
+        --goal)
+          GOAL="${2:-}"
+          shift 2 || { echo "--goal requires a condition argument" >&2; exit 2; }
+          ;;
+        # [LAW:parse-dont-validate] the checkpoint for reset mode: an unrecognised
+        # value is refused here, so everything downstream holds one of two words.
+        --reset)
+          RESET_ARG="${2:-}"
+          case "$RESET_ARG" in
+            clear|compact) ;;
+            *) echo "--reset takes 'clear' or 'compact', got '${RESET_ARG}'" >&2; exit 2 ;;
+          esac
+          shift 2 || { echo "--reset requires a mode argument" >&2; exit 2; }
+          ;;
+        *) break ;;
+      esac
     done
 
     # [LAW:dataflow-not-control-flow] the message is a value carrying a canonical
@@ -176,13 +232,11 @@ case "$MODE" in
     # selects that default; it never yields an empty handoff, so no guard follows.
     AGENT_MESSAGE="${*:-/next}"
 
-    # [LAW:dataflow-not-control-flow] reset mode derived from the message (tmux).
-    PROBE=$(_first_three_sentences "$AGENT_MESSAGE")
-    if [[ "$PROBE" =~ (^|[[:space:]])/compact([[:space:]]|[.,:;!?]|$) ]]; then
-      RESET=compact
-    else
-      RESET=clear
-    fi
+    # [LAW:dataflow-not-control-flow] reset mode is one value with two sources —
+    # the explicit flag when the author passed one, the message's own text
+    # otherwise — resolved by a default, not by a branch in the control flow.
+    # [LAW:one-source-of-truth] the only place RESET is assigned. (tmux only.)
+    RESET="${RESET_ARG:-$(_infer_reset "$AGENT_MESSAGE")}"
 
     # [LAW:one-source-of-truth] the wrapped value is assembled once, here.
     MESSAGE=$(printf '%s\n%s\n%s' "$HANDOFF_PREFIX" "$AGENT_MESSAGE" "$HANDOFF_SUFFIX")

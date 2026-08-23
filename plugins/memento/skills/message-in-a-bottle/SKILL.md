@@ -25,6 +25,10 @@ The message you provide to the future agent may carry a hint about how its conte
 
 Include `/compact` in your message when the handoff needs the thread of what just happened — e.g., start the message with `/compact` or write "Use /compact and then continue the spec audit…".
 
+**Say it with `--reset` when it matters.** Inferring the mode from prose is convenient, not reliable: a matcher cannot tell a mention from an invocation. `--reset compact` and `--reset clear` are the unambiguous forms and they override the message text entirely — pass one whenever a blank slate is a *requirement* rather than a preference (a clean-room stage, a fresh-context protocol, anything where inheriting the last session's context is the failure).
+
+The inference is deliberately biased toward `clear` to keep the harmless error the likely one: a sentence that mentions `/compact` alongside a negation ("do NOT use /compact", "never /compact this one") reads as ambiguous and yields `clear`, while a later affirmative sentence still wins. Before this bias existed, "Do NOT use /compact — a blank slate is required" *compacted*, because a word-boundary match cannot see a negation — so the more emphatically you forbade it, the surer it was to happen. Do not rely on prose to forbid something; pass `--reset clear`.
+
 ## Carry the goal forward — if one is set, it dies unless you carry it
 
 If a `/goal <condition>` is active in this session, **the handoff silently kills it.** Every transport resets the session — tmux sends `/clear` or `/compact`, iTerm2 kills claude and relaunches a fresh process — and `/clear` and a new process each wipe the session-scoped goal. The next agent wakes with no goal, and the autonomous run you set up just *stops* — unattended, with nobody watching to notice it stopped. That silent halt is the exact failure this guards against.
@@ -44,10 +48,11 @@ Once you call the launcher, your turn is over. Stop. No closing text, no parting
 ## Invocation
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/skills/message-in-a-bottle/bin/finalize-session [--goal '<condition>'] [message...]
+${CLAUDE_PLUGIN_ROOT}/skills/message-in-a-bottle/bin/finalize-session [--goal '<condition>'] [--reset clear|compact] [message...]
 ```
 
 - `--goal '<condition>'` — optional, and only when a `/goal` is active this session. Re-establishes that goal in the reset session so the run continues. Leading argument; quote the condition. **Omit entirely when no goal is set.**
+- `--reset clear|compact` — optional; states the next session's starting context outright instead of leaving it to be inferred from the message. Leading argument, in any order with `--goal`. `clear` = blank slate, `compact` = carry a summary forward. **Pass it whenever the choice is load-bearing** rather than a preference; omit it to let the message text decide (see above). An unrecognised value is refused with exit 2.
 - `[message...]` — a slash command, plain text, multi-line, or containing quotes/backticks/dollar signs. Quote it at invocation as usual (your shell does word-splitting and `$VAR` expansion before the script sees argv). **Omit it to default to `/next`.**
 
 On success the launcher prints `handoff scheduled → <target> … in Ns (log: <tempfile>)` and exits 0; the log captures worker progress and any transport errors.
