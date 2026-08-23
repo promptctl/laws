@@ -133,7 +133,12 @@ while :; do
 
   # One read of the result, tab-separated. A malformed result throws out of node rather than being
   # caught and returned as an empty string that later reads as "no session to resume".
-  if ! parsed="$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d);process.stdout.write([r.sessionId||"",r.switchedFrom||"",r.switchedTo||"",r.choice||""].join("\t"))})')"; then
+  #
+  # switchedFrom is a SET - a switch can retire more than one engaged craft - and is joined on ','
+  # explicitly rather than left to Array.prototype.toString, so the wire format is chosen here
+  # instead of inherited from a coercion a future refactor could change without noticing. Craft
+  # names are media slugs, so ',' cannot occur inside one and the split below is unambiguous.
+  if ! parsed="$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d);const from=Array.isArray(r.switchedFrom)?r.switchedFrom.join(","):(r.switchedFrom||"");process.stdout.write([r.sessionId||"",from,r.switchedTo||"",r.choice||""].join("\t"))})')"; then
     log "the switch was applied but its result could not be read: $applied"
     exit 1
   fi
@@ -144,18 +149,26 @@ while :; do
     exit 1
   fi
 
-  # The second half of retiring the craft. Without it the resumed session still holds the engaged
-  # marker and the guard refuses the craft this switch was performed to reach. The lock lives behind
+  # The second half of retiring the crafts. Without it the resumed session still holds the engaged
+  # markers and the guard refuses the craft this switch was performed to reach. The lock lives behind
   # the router, which owns its layout. [LAW:one-source-of-truth]
+  #
+  # EVERY retired craft is released, not just one: the transcript surgery already removed all of
+  # them, and leaving a single marker behind is enough for the guard to refuse the incoming craft
+  # again - a switch that reports success and changes nothing observable. [LAW:composability]
   #
   # A failure here is loud but not fatal: the transcript surgery already happened, so refusing to
   # relaunch would strand the user's session entirely, which is strictly worse than a session that
   # comes back and still refuses one skill. Tell them exactly what will happen instead.
-  if ! printf '{"session_id":"%s","craft":"%s"}' "$sid" "$switched_from" | "$ROUTER" retire-craft; then
-    log "could not release laws:$switched_from from the engaged set; resuming anyway, but laws:$switched_to will still be refused this session"
-  fi
+  IFS=',' read -r -a retired <<< "$switched_from"
+  for craft in "${retired[@]}"; do
+    [ -n "$craft" ] || continue
+    if ! printf '{"session_id":"%s","craft":"%s"}' "$sid" "$craft" | "$ROUTER" retire-craft; then
+      log "could not release laws:$craft from the engaged set; resuming anyway, but laws:$switched_to will still be refused this session"
+    fi
+  done
 
-  log "switched from laws:$switched_from to laws:$switched_to via $choice; resuming"
+  log "switched from laws:${switched_from//,/, laws:} to laws:$switched_to via $choice; resuming"
   # Replaces the initial --session-id, and replaces itself on every switch after the first.
   SESSION_ARGS=(--resume "$sid")
 done

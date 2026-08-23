@@ -239,15 +239,28 @@ case "$HOOK_TYPE" in
 
     # Marker claimed. Refuse only if it is incompatible with a craft ALREADY engaged; scan the
     # set, skipping our own just-written marker. On a conflict, release our claim (so a denied
-    # load leaves no phantom engagement) and deny, naming the craft it clashes with. Two racing
+    # load leaves no phantom engagement) and deny, naming the crafts it clashes with. Two racing
     # incompatible loads each claim, each see the other, and each release+deny - neither ends up
     # engaged, an over-refusal the agent recovers from by retrying one. That is the safe
     # direction: never silently co-engage an incompatible pair.
+    #
+    # THE WHOLE SET IS COLLECTED BEFORE DENYING, rather than denying on the first marker the glob
+    # returns. The gate retires EVERY conflicting craft (laws-excise decide()), so naming only the
+    # first - whichever the filesystem happened to order first - would promise the user a different
+    # outcome than the switch delivers. One decision, one rule, both enforcers.
+    # [LAW:one-source-of-truth] [LAW:single-enforcer]
+    conflicts=""
     for other in "$slot"/*; do
       [ -e "$other" ] || continue
       other=${other##*/}
       [ "$other" = "$(sanitize "$craft")" ] && continue
       if crafts_incompatible "$craft" "$other"; then
+        conflicts="${conflicts:+$conflicts,}$other"
+      fi
+    done
+    if [ -n "$conflicts" ]; then
+        # Rendered once, for every message below: "laws:code" or "laws:code, laws:prose".
+        conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
         # The switch is an extra ROUTE OUT of the deny, offered only when the session was started
         # by claude-laws (it is the launcher that can relaunch and enact the choice). Built as a
@@ -280,11 +293,14 @@ case "$HOOK_TYPE" in
           # advertising one backed by a corrupt pending.json. [LAW:parse-dont-validate] the check
           # yields a path known to resolve, not a promise that it does.
           if [ -f "$transcript" ]; then
+            # `current` carries the whole conflicting set, comma-joined - the same wire format the
+            # launcher reads back from the gate. Craft names are media slugs, so ',' cannot occur
+            # inside one.
             if printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
                  "$(json_escape "$sid")" "$(json_escape "$transcript")" \
-                 "$(json_escape "$other")" "$(json_escape "$craft")" \
+                 "$(json_escape "$conflicts")" "$(json_escape "$craft")" \
                  > "$LAWS_SWITCH_DIR/pending.json"; then
-              switch_offer=" OR SWITCH: this session can move to laws:$craft by retiring laws:$other, keeping your work on disk either way. Run 'laws-switch <option>': reject (stay in laws:$other, change nothing); tombstone (keep the whole conversation, retire the laws:$other guidance in place - cheapest to reason about, most expensive when the session is deep); rewind_summarize --summary '<what you did since laws:$other loaded>' (rewind to that point and carry your work forward as a summary you write now, because after the rewind only you know it - summarize YOUR WORK ONLY and carry none of laws:$other's guidance into it, or you re-inject the guidance this switch exists to retire); rewind_discard (rewind to just before laws:$other loaded and drop the conversation since). Files you have written are never reverted by any option. Ask the user which they want unless they have already said."
+              switch_offer=" OR SWITCH: this session can move to laws:$craft by retiring $conflicts_pretty, keeping your work on disk either way. Run 'laws-switch <option>': reject (stay in $conflicts_pretty, change nothing); tombstone (keep the whole conversation, retire the $conflicts_pretty guidance in place - cheapest to reason about, most expensive when the session is deep); rewind_summarize --summary '<what you did since $conflicts_pretty loaded>' (rewind to that point and carry your work forward as a summary you write now, because after the rewind only you know it - summarize YOUR WORK ONLY and carry none of $conflicts_pretty's guidance into it, or you re-inject the guidance this switch exists to retire); rewind_discard (rewind to just before $conflicts_pretty loaded and drop the conversation since). Files you have written are never reverted by any option. Ask the user which they want unless they have already said."
             else
               # The offer is only made when the decision it depends on was actually recorded.
               # Advertising it after a failed write would send the agent to laws-switch to be told
@@ -295,10 +311,9 @@ case "$HOOK_TYPE" in
             fi
           fi
         fi
-        deny "Craft already engaged this session: laws:$other. It and laws:$craft corrupt each other's work when stacked, so they cannot both be loaded in one session - the compatibility rule this plugin enforces (design-docs/working-with-skills.md). Compatible crafts may coexist, but this pair may not. To do laws:$craft work, dispatch a fresh subagent seeded with only that skill and keep just its answer; do not load it here. If this whole session's job has genuinely become laws:$craft, run /clear first, then load it clean.$switch_offer"
+        deny "Craft already engaged this session: $conflicts_pretty. It and laws:$craft corrupt each other's work when stacked, so they cannot both be loaded in one session - the compatibility rule this plugin enforces (design-docs/working-with-skills.md). Compatible crafts may coexist, but this pair may not. To do laws:$craft work, dispatch a fresh subagent seeded with only that skill and keep just its answer; do not load it here. If this whole session's job has genuinely become laws:$craft, run /clear first, then load it clean.$switch_offer"
         exit 0
-      fi
-    done
+    fi
     exit 0
     ;;
 

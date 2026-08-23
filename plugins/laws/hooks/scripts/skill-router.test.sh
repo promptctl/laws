@@ -247,6 +247,20 @@ case "$out" in
   *"laws:code"*) bad "  ... but the retired craft is still engaged too";;
   *) ok "  ... while the named craft is released";;
 esac
+
+# 10b-ii. When MORE THAN ONE engaged craft conflicts, the deny names them ALL. The gate retires the
+#         whole conflicting set, so a deny naming only the first marker the glob returned would
+#         promise the user a different outcome than the switch delivers - and which one it named
+#         would depend on filesystem ordering. Same session, nothing retired: both are still
+#         engaged. [LAW:one-source-of-truth]
+tp guard "$(skill_payload R2b laws:code)" >/dev/null
+tp guard "$(skill_payload R2b laws:prose)" >/dev/null
+out=$(tp guard "$(skill_payload R2b laws:prompt)")
+assert_deny "a deny names every conflicting craft, not just the first" "$out" "laws:code"
+case "$out" in
+  *"laws:prose"*) ok "  ... including the one the glob did not reach first";;
+  *) bad "  ... but laws:prose is missing from the deny (got: $out)";;
+esac
 rm -rf "$twopair"
 
 # 10c. Releasing what was never engaged is the postcondition already holding, not a failure -

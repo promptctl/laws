@@ -187,20 +187,32 @@ function decide(rawLines, opts = {}) {
     const reason = engagedHits.some((h) => h.medium === incoming) ? 'same-medium' : 'compatible';
     return { trigger: false, reason };
   }
-  const target = newest(conflicts);                        // the craft we switch away from
-  const cur = parsed[target.i];                            // its load line — the rewind anchor
-  const current = target.medium;
+  // THE WHOLE CONFLICTING SET IS THE UNIT, never a pick from it. Retiring one member of a set of
+  // two reports success and leaves the session unable to load the craft it just switched to —
+  // the exact defect this gate exists to fix, one level up. There is deliberately no "which one"
+  // step here: with no selection rule, this enforcer and the router's cannot disagree about the
+  // answer. [LAW:composability] one complete job [LAW:single-enforcer]
+  //
+  // Ordered oldest→newest, and `oldest` is what the rewind anchors hang off: rewinding to the
+  // NEWEST conflict would land above an older conflicting load that is still engaged, so no
+  // choice of a single member is correct — only the earliest point at which none of them are
+  // loaded is. Unreachable under the single shipped pair; the policy file is data designed to be
+  // extended, so this is scheduled rather than hypothetical.
+  const ordered = conflicts.slice().sort((a, b) => a.i - b.i);
+  const oldest = ordered[0];
+  const cur = parsed[oldest.i];                            // its load line — the rewind anchor
+  const current = ordered.map((h) => h.medium);
 
-  const tombstoneTokens = estimateTokens(rawLines.slice(target.i).reduce((n, l) => n + l.length, 0));
+  const tombstoneTokens = estimateTokens(rawLines.slice(oldest.i).reduce((n, l) => n + l.length, 0));
   const deep = tombstoneTokens >= largeAt;
   return {
     trigger: true,
     current, incoming, deep,
     tombstoneTokens,                                       // the cost that varies with depth (option 'tombstone')
-    conflictIndex: target.i,                               // the line the injector tombstones (option 'tombstone')
+    conflictIndices: ordered.map((h) => h.i),              // every line the injector tombstones (option 'tombstone')
     // Auto-targets for the rewind options, so the user never hunts for the craft message:
-    //   summarizeTo = the switched-away craft's load line  (#3: rewind-to-craft, then tombstone + summarize)
-    //   discardTo   = the message before it                (#4: rewind-to-pre-craft, then discard)
+    //   summarizeTo = the OLDEST conflicting load line  (#3: rewind-to-craft, then tombstone + summarize)
+    //   discardTo   = the message before it             (#4: rewind-to-pre-craft, then discard)
     // A summaryExcludesCraft flag used to ride along here asserting that the craft could never leak
     // into the summary. Nothing consumed it and the flow does not deliver it, so it is gone rather
     // than left as a constant that reads like a guarantee. [LAW:types-are-the-program]
@@ -313,8 +325,8 @@ const SWITCH_ACTIONS = {
   // as it stands and there is nothing to resume into.
   reject: (lines) => ({ lines, resume: false }),
 
-  // Keep the whole conversation; empty only the superseded craft's guidance.
-  tombstone: (lines, d) => ({ lines: exciseAt(lines, [d.conflictIndex], d.incoming).lines, resume: true }),
+  // Keep the whole conversation; empty the guidance of every superseded craft.
+  tombstone: (lines, d) => ({ lines: exciseAt(lines, d.conflictIndices, d.incoming).lines, resume: true }),
 
   // Excise, then rewind, then attach the summary. Excising first keeps the tombstone on the leaf
   // that the rewind then lands on; it is NOT a guard against the craft leaking into the summary,
@@ -323,7 +335,7 @@ const SWITCH_ACTIONS = {
   // the context it describes no longer exists.
   rewind_summarize: (lines, d, env) => {
     if (!env.summary) throw new Error('rewind_summarize: a summary is required (the live agent writes it)');
-    const excised = exciseAt(lines, [d.conflictIndex], d.incoming).lines;
+    const excised = exciseAt(lines, d.conflictIndices, d.incoming).lines;
     const anchorUuid = d.rewind.summarizeTo;
     const rewound = rewindTo(excised, anchorUuid, env.severUuid).lines;
     const anchorRec = recordByUuid(rewound, anchorUuid);
@@ -376,7 +388,7 @@ function run(file, opts = {}) {
   for (;;) {
     const d = decide(rawLines, { incompatiblePairs: pairs });
     if (!d.trigger) break;
-    const r = exciseAt(rawLines, [d.conflictIndex], d.incoming);
+    const r = exciseAt(rawLines, d.conflictIndices, d.incoming);
     if (!r.changed) break;                                 // guard against a non-advancing loop
     rawLines = r.lines;
     stubbedAll.push(...r.stubbed);

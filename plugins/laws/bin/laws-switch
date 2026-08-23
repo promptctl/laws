@@ -40,11 +40,15 @@ const pendingPath = path.join(dir, 'pending.json');
 if (!fs.existsSync(pendingPath)) die('no pending craft switch — the guard has not denied an incompatible load in this session.');
 const pending = JSON.parse(fs.readFileSync(pendingPath, 'utf8'));
 
+// `current` is the whole conflicting SET, comma-joined by the guard - a switch can retire more
+// than one engaged craft, so this renders a list rather than assuming a single name.
+const currentPretty = String(pending.current || '').split(',').filter(Boolean).map((c) => 'laws:' + c).join(', ');
+
 // Reject changes nothing and needs no relaunch: the load was already denied, so the session is
 // already in the state this option describes.
 if (choice === 'reject') {
   fs.unlinkSync(pendingPath);
-  process.stdout.write('Staying in laws:' + pending.current + '. The laws:' + pending.incomingMedium + ' load was dropped; nothing else changed.\n');
+  process.stdout.write('Staying in ' + currentPretty + '. The laws:' + pending.incomingMedium + ' load was dropped; nothing else changed.\n');
   process.exit(0);
 }
 

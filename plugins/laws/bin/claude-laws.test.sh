@@ -203,5 +203,59 @@ case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
   *) bad "the launcher swallowed the user's selector (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
 esac
 
+# ---- 4. a switch that retires MORE THAN ONE craft releases every one of them -----------------
+# The shipped policy has a single pair, so two conflicting crafts can never both be engaged under
+# it and this path would be untestable in place. So the whole launcher is run from a temp plugin
+# root whose policy ALSO makes prose incompatible with prompt — the same trick skill-router.test.sh
+# uses. Both halves are real: the real excise computes the set, the real router holds the locks.
+#
+# Releasing only one is the defect under test, and it is INVISIBLE unless the survivor has a
+# consequence: the assertion is therefore that laws:prompt is allowed afterwards, which can only
+# be true if every conflicting marker is gone.
+tp="$TMPDIR/plugin"
+mkdir -p "$tp/bin" "$tp/hooks/scripts"
+cp "$LAUNCHER" "$tp/bin/claude-laws"
+cp "$HERE/../hooks/scripts/laws-excise.js" "$HERE/../hooks/scripts/skill-router.sh" "$tp/hooks/scripts/"
+printf 'code prompt\nprose prompt\n' > "$tp/hooks/scripts/incompatible-crafts.txt"
+
+export STUB_SID="LAUNCH4"
+export STUB_TRANSCRIPT="$TMPDIR/launch4.jsonl"
+export STUB_SWITCH_ON="1"
+node -e '
+  const [file, sid] = process.argv.slice(1);
+  const craft = (uuid, parent, medium, ts) => JSON.stringify({ type: "user", isMeta: true, uuid,
+    parentUuid: parent, sessionId: sid, timestamp: ts, sourceToolUseID: "toolu_" + uuid,
+    message: { role: "user", content: [{ type: "text",
+      text: "Base directory for this skill: /plugins/laws/skills/" + medium + "\n\n<BODY>" }] } });
+  const said = (uuid, parent, text) => JSON.stringify({ type: "user", uuid, parentUuid: parent,
+    sessionId: sid, message: { role: "user", content: text } });
+  require("fs").writeFileSync(file, [
+    said("u1", null, "start"),
+    craft("u2", "u1", "code",  "2026-08-23T00:01:00.000Z"),
+    said("u3", "u2", "work under code"),
+    craft("u4", "u3", "prose", "2026-08-23T00:02:00.000Z"),
+    said("u5", "u4", "work under prose"),
+  ].join("\n") + "\n");
+' "$STUB_TRANSCRIPT" "$STUB_SID"
+rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+
+# Engage both through the temp router, so both locks are real.
+tpr() { printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' \
+          "$STUB_SID" "$1" | "$tp/hooks/scripts/skill-router.sh" guard 2>/dev/null; }
+tpr laws:code >/dev/null
+tpr laws:prose >/dev/null
+
+"$tp/bin/claude-laws" >/dev/null 2>&1
+
+tomb=$(grep -c '\[TOMBSTONE\]' "$STUB_TRANSCRIPT")
+[ "$tomb" = 2 ] && ok "both conflicting crafts are tombstoned in the transcript" \
+                || bad "expected 2 tombstones, got $tomb"
+
+out=$(tpr laws:prompt)
+case "$out" in
+  *'"deny"'*) bad "a craft survived the switch, so laws:prompt is still refused ($out)";;
+  *) ok "every retired craft is released, so the switched-to craft can finally load";;
+esac
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
