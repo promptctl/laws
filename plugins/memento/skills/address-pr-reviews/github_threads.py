@@ -136,27 +136,25 @@ def change_requests(pr_url: str) -> dict:
     Read at fetch-time and dismissed by id at round end. [LAW:one-source-of-truth]
     the dismiss set is what was read and addressed, never re-derived after a push
     — the push's fresh re-review carries a new id this read never saw.
+
+    `--paginate` walks every page of the reviews endpoint. A PR that survives
+    several review rounds accumulates a review per round per re-run and crosses
+    100 easily; a single-page read would silently omit the blocking review and
+    leave the merge stuck with nothing to point at. Completeness is structural
+    here rather than a count this function has to check afterwards.
+
+    With `--jq`, gh applies the filter per page and concatenates the results, so
+    a filter emitting one object per line yields JSONL across the whole set —
+    the one shape that survives page boundaries. (A filter wrapping each page in
+    `[...]` would emit one array *per page* and not parse as a single document.)
     """
     owner, repo, pr_num = parse_pr(pr_url)
     out = gh(
-        "api", f"repos/{owner}/{repo}/pulls/{pr_num}/reviews?per_page=100",
-        "--jq", "[.[] | {review_id: .id, state, type: .user.type, "
-                "author: .user.login, commit_id}]",
+        "api", "--paginate", f"repos/{owner}/{repo}/pulls/{pr_num}/reviews",
+        "--jq", '.[] | select(.state=="CHANGES_REQUESTED" and .user.type=="Bot")'
+                ' | {review_id: .id, author: .user.login, commit_id}',
     )
-    reviews = json.loads(out) if out else []
-    # [LAW:no-silent-failure] past the page cap a blocking review may exist
-    # unseen — that would leave it undismissed and silently block the merge.
-    if len(reviews) >= 100:
-        raise RuntimeError(
-            "PR has 100+ posted reviews — pagination is not implemented and the "
-            "change-request set is incomplete. Do not treat it as the full set."
-        )
-    blocking = [
-        {"review_id": r["review_id"], "author": r["author"],
-         "commit_id": r["commit_id"]}
-        for r in reviews
-        if r["state"] == "CHANGES_REQUESTED" and r["type"] == "Bot"
-    ]
+    blocking = [json.loads(line) for line in out.splitlines() if line.strip()]
     return {"reviews": blocking}
 
 
