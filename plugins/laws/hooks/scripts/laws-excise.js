@@ -111,18 +111,55 @@ function stubText(medium, activeMedium) {
     'This medium is no longer active: do not act on it.';
 }
 
+// Is this record part of the LIVE conversation, or debris the session will never see again?
+//
+// Two ways a craft-load record can be on disk without being engaged, and both produced real
+// bugs. A REWIND severs a branch by repointing it at a uuid rooted nowhere (rewindTo, below)
+// and deliberately does not delete it — so after one rewind the retired craft is still a
+// perfectly well-formed craft-load line sitting on an orphan branch. A SIDECHAIN record is a
+// dispatched subagent's conversation sharing this file; the router isolates subagents by
+// keying craft locks on agent_id, and the gate ignoring the flag is that same isolation
+// broken on the other side.
+//
+// Counting either as engaged is not merely untidy: the rewind anchor is the OLDEST conflict,
+// so stale debris — being oldest — WINS, and a second switch anchors inside a discarded
+// branch. Measured consequence before this filter existed: switch two reported
+// current ['code','code'], grafted the summary onto a severed orphan whose own parent no
+// longer exists, and threw outright on rewind_discard.
+//
+// Rootedness is the test, stated positively: walk parentUuid up and ask whether the chain
+// ends at a root or dies on a uuid that exists nowhere. That reads the severance exactly as
+// rewindTo writes it, and needs no last-prompt record to be present or well-formed.
+function isLive(o, byUuid) {
+  if (!o || o.isSidechain) return false;
+  const seen = new Set();
+  for (let cur = o; cur; cur = byUuid.get(cur.parentUuid)) {
+    if (cur.parentUuid === null || cur.parentUuid === undefined) return true;  // reached a root
+    if (seen.has(cur.uuid)) return false;                                      // cycle → not rooted
+    seen.add(cur.uuid);
+  }
+  return false;                                                                // dangling parent → severed
+}
+
 // One place that parses the raw lines and finds every craft-load line (the survivor picks are
 // made by the caller, per the compatibility policy). Shared by decide (read-only) and run
 // (mutation) so the two can never disagree about what "loaded" means. [LAW:one-source-of-truth]
+//
+// Every hit is reported, each tagged `live`. The two consumers genuinely want different sets:
+// the ENGAGED set (decide's conflicts and anchors) must be live-only, while TOMBSTONING stays
+// file-wide by design. Returning one list with the discriminator on it keeps that a value the
+// caller reads rather than two scans that can drift. [LAW:dataflow-not-control-flow]
 function findHits(rawLines) {
-  const hits = [];
-  const parsed = rawLines.map((line, i) => {
+  const parsed = rawLines.map((line) => {
     if (!line) return null;
-    let o;
-    try { o = JSON.parse(line); } catch (_e) { return null; } // non-JSON (blank/partial) → passthrough
-    const medium = craftMediumOf(o);
-    if (medium) hits.push({ i, medium, ts: Date.parse(o.timestamp) || 0 }); // ts picks newest on a conflict
-    return o;
+    try { return JSON.parse(line); } catch (_e) { return null; }  // non-JSON (blank/partial) → passthrough
+  });
+  const byUuid = new Map();
+  for (const o of parsed) if (o && o.uuid) byUuid.set(o.uuid, o);
+  const hits = [];
+  parsed.forEach((o, i) => {
+    const medium = o && craftMediumOf(o);
+    if (medium) hits.push({ i, medium, ts: Date.parse(o.timestamp) || 0, live: isLive(o, byUuid) });
   });
   return { parsed, hits };
 }
@@ -182,7 +219,10 @@ function decide(rawLines, opts = {}) {
   const edges = opts.conflictEdges;
   if (!Array.isArray(edges)) throw new Error("decide: conflictEdges is required (call loadPolicy first)");
   const largeAt = opts.largeTokens ?? LARGE_TOKENS;
-  const { parsed, hits } = findHits(rawLines);
+  const { parsed, hits: allHits } = findHits(rawLines);
+  // Only the live conversation can hold an ENGAGED craft. Debris on a severed branch, and a
+  // subagent's sidechain, are on disk but were never part of what this session is carrying.
+  const hits = allHits.filter((h) => h.live);
 
   // Resolve the incoming craft and the engaged set to test it against.
   let incoming, engagedHits;
