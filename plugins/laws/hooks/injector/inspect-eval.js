@@ -42,9 +42,24 @@ function connect(wsurl, { timeoutMs = 15000 } = {}) {
     pending.set(i, { resolve, reject });
     ws.send(J({ id: i, method, params }));
   });
+  // A CDP reply carries EITHER `result` OR `error` — they are the two arms of one response, so
+  // the arm is what decides resolve vs reject. Resolving both alike would hand `evaluate` an
+  // object with no `result`, which it cannot tell from a call that legitimately returned
+  // undefined: a refusal by the inspector would read as a successful evaluation returning
+  // nothing. [LAW:no-silent-failure] [LAW:parse-dont-validate] the caller receives a value only
+  // on the arm that actually carries one.
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id).resolve(m); pending.delete(m.id); }
+    if (!m.id || !pending.has(m.id)) return;
+    const { resolve, reject } = pending.get(m.id);
+    pending.delete(m.id);
+    if (m.error) {
+      const err = m.error;
+      reject(new Error('inspector error ' + (err.code !== undefined ? err.code + ': ' : '') +
+                       (err.message || J(err))));
+      return;
+    }
+    resolve(m);
   };
   const ready = new Promise((resolve, reject) => {
     ws.onopen = async () => { try { await send('Runtime.enable'); resolve(); } catch (err) { reject(err); } };
@@ -52,8 +67,12 @@ function connect(wsurl, { timeoutMs = 15000 } = {}) {
     setTimeout(() => reject(new Error('inspector connect timeout after ' + timeoutMs + 'ms')), timeoutMs);
   });
 
-  // Evaluate an expression in the process's global context. Rejects (never silently) if the
-  // process reports an uncaught exception. [LAW:no-silent-failure]
+  // Evaluate an expression in the process's global context. Rejects (never silently) on either
+  // way this can fail: an uncaught exception INSIDE the process (exceptionDetails, handled here)
+  // and a refusal BY the inspector (a CDP error reply, handled in onmessage above). Both arms
+  // matter — only the first was covered once, and a refused evaluate then returned undefined,
+  // indistinguishable from an expression that legitimately evaluated to nothing.
+  // [LAW:no-silent-failure]
   async function evaluate(expression, { awaitPromise = true, returnByValue = true } = {}) {
     const r = await send('Runtime.evaluate', { expression, awaitPromise, returnByValue });
     const res = r.result || {};
@@ -68,10 +87,22 @@ function connect(wsurl, { timeoutMs = 15000 } = {}) {
   // (paused ReadStream, a 'readable' listener, no 'data' listener), so the correct primitive is
   // process.stdin.push(Buffer) — it fills the read queue and fires 'readable'. A trailing '\r'
   // submits. This runs built-in commands through the real dispatch path, single source of truth.
-  function injectStdin(text) {
+  // The injected expression catches its own throw and hands back "ERR:<message>" — a value that
+  // crosses the socket as an ordinary successful result. Returning that to the caller would be an
+  // answer-shaped void: it has the shape of a real return while meaning "I could not do my job",
+  // and the one caller that matters (laws-switch, driving /exit to complete a craft switch) does
+  // not inspect the return value, so the push failing and the push succeeding look identical.
+  // "pushed" is the ONLY value that means the bytes landed; everything else is a failure and is
+  // raised as one, which routes it into laws-switch's existing catch — the recovery path that
+  // tells the user to exit manually already exists, nothing was reaching it.
+  // [LAW:no-silent-failure] [LAW:parse-dont-validate] the check yields "the bytes landed", not a
+  // string the caller must re-interpret.
+  async function injectStdin(text) {
     const expr = '(function(){try{process.stdin.push(Buffer.from(' + J(text) + '));return "pushed"}'
       + 'catch(e){return "ERR:"+(e&&e.message||String(e))}})()';
-    return evaluate(expr, { returnByValue: true });
+    const r = await evaluate(expr, { returnByValue: true });
+    if (r !== 'pushed') throw new Error('stdin injection failed: ' + (r === undefined ? 'no value returned' : String(r)));
+    return r;
   }
 
   function close() { try { ws.close(); } catch (_e) {} }
