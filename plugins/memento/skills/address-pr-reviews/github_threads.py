@@ -33,44 +33,98 @@ def head_sha(owner: str, repo: str, pr_num: int) -> str:
     return gh("api", f"repos/{owner}/{repo}/pulls/{pr_num}", "--jq", ".head.sha")
 
 
-def _fetch_threads(owner: str, repo: str, pr_num: int) -> list[dict]:
-    query = (
-        "query($owner:String!,$repo:String!,$num:Int!){"
-        "  repository(owner:$owner,name:$repo){"
-        "    pullRequest(number:$num){"
-        "      reviewThreads(first:100){"
-        "        nodes{ id isResolved path line"
-        "          comments(first:20){ nodes{ author{login} body } } } } } } }"
-    )
-    out = gh(
-        "api", "graphql",
-        "-f", f"query={query}",
-        "-F", f"owner={owner}", "-F", f"repo={repo}", "-F", f"num={pr_num}",
-        "--jq", ".data.repository.pullRequest.reviewThreads.nodes",
-    )
-    threads = json.loads(out) if out else []
-    # jq renders a null pullRequest as the string "null" with HTTP 200; that
-    # means the PR is missing or inaccessible — an error, never an empty
-    # finding set. [LAW:no-silent-failure]
-    if not isinstance(threads, list):
+_THREADS_QUERY = (
+    "query($owner:String!,$repo:String!,$num:Int!,$cursor:String){"
+    "  repository(owner:$owner,name:$repo){"
+    "    pullRequest(number:$num){"
+    "      reviewThreads(first:100,after:$cursor){"
+    "        pageInfo{ hasNextPage endCursor }"
+    "        nodes{ id isResolved path line"
+    "          comments(first:100){"
+    "            pageInfo{ hasNextPage endCursor }"
+    "            nodes{ author{login} body } } } } } } }"
+)
+
+_COMMENTS_QUERY = (
+    "query($id:ID!,$cursor:String){"
+    "  node(id:$id){ ... on PullRequestReviewThread {"
+    "    comments(first:100,after:$cursor){"
+    "      pageInfo{ hasNextPage endCursor }"
+    "      nodes{ author{login} body } } } } }"
+)
+
+
+def _graphql(query: str, **variables) -> dict:
+    """One GraphQL shell-out. [LAW:single-enforcer]
+
+    [LAW:dataflow-not-control-flow] the variable's Python type picks the flag:
+    `gh -F` type-infers its value, which would coerce an all-digit cursor or node
+    id into a number and break the query, so strings go through `-f` (always raw)
+    and ints through `-F`. A `None` cursor is *omitted* rather than sent empty —
+    an undeclared nullable variable is null to GraphQL, whereas `-f cursor=` is
+    the empty string, which is not a valid cursor.
+    """
+    args = ["api", "graphql", "-f", f"query={query}"]
+    for key, value in variables.items():
+        if value is None:
+            continue
+        args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
+    return json.loads(gh(*args))
+
+
+def _page_of_threads(owner: str, repo: str, pr_num: int, cursor: str | None) -> dict:
+    data = _graphql(_THREADS_QUERY, owner=owner, repo=repo, num=pr_num, cursor=cursor)
+    repository = (data.get("data") or {}).get("repository")
+    pull_request = repository.get("pullRequest") if repository else None
+    # A null repository/pullRequest comes back with HTTP 200; that means the PR is
+    # missing or inaccessible — an error, never an empty finding set.
+    # [LAW:no-silent-failure]
+    if pull_request is None:
         raise RuntimeError(
-            f"reviewThreads query returned {threads!r} for {owner}/{repo}#{pr_num} "
+            f"reviewThreads query returned no pullRequest for {owner}/{repo}#{pr_num} "
             "— the PR is missing or inaccessible, not thread-free."
         )
-    # [LAW:no-silent-failure] the page caps are explicit; hitting one means
-    # findings exist that this fetch did not return — that must halt, not
-    # quietly read as the full set.
-    if len(threads) >= 100:
-        raise RuntimeError(
-            "PR has 100+ review threads — pagination is not implemented and "
-            "this fetch is incomplete. Do not treat it as the full finding set."
-        )
-    for t in threads:
-        if len(t.get("comments", {}).get("nodes") or []) >= 20:
-            raise RuntimeError(
-                f"Thread {t['id']} has 20+ comments — pagination is not "
-                "implemented and the thread chain is incomplete."
-            )
+    return pull_request["reviewThreads"]
+
+
+def _complete_comments(thread: dict) -> None:
+    """Walk a single thread's remaining comment pages onto its first page.
+
+    Nested connections are why this loop is hand-written rather than delegated to
+    `gh --paginate`: that flag walks one top-level connection, and the comment
+    pages hang off each thread node. A truncated chain is not cosmetic — the loop
+    reads `thread_comments` to see its own prior plan and the reviewer's replies,
+    so dropping the tail would re-plan a finding that was already answered.
+    """
+    block = thread["comments"]
+    while block["pageInfo"]["hasNextPage"]:
+        data = _graphql(_COMMENTS_QUERY, id=thread["id"], cursor=block["pageInfo"]["endCursor"])
+        block = data["data"]["node"]["comments"]
+        thread["comments"]["nodes"].extend(block["nodes"])
+
+
+def _fetch_threads(owner: str, repo: str, pr_num: int) -> list[dict]:
+    """Every review thread on the PR, with every comment on each.
+
+    Completeness is structural: both loops run until GitHub reports `hasNextPage`
+    false, so there is no post-hoc count to compare against a page cap. The
+    previous version read one page and raised when it filled, which was the right
+    refusal — a partial set read as complete would report a PR clean while
+    findings sat unread — but a PR that survives several review rounds crosses 100
+    threads as a matter of course, and at that point the loop cannot run at all.
+    [LAW:no-silent-failure] is satisfied by returning the whole set, not by
+    detecting that we failed to.
+    """
+    threads: list[dict] = []
+    cursor: str | None = None
+    while True:
+        block = _page_of_threads(owner, repo, pr_num, cursor)
+        threads.extend(block["nodes"])
+        if not block["pageInfo"]["hasNextPage"]:
+            break
+        cursor = block["pageInfo"]["endCursor"]
+    for thread in threads:
+        _complete_comments(thread)
     return threads
 
 
