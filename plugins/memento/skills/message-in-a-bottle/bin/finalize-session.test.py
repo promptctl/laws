@@ -195,12 +195,27 @@ def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge=False,
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+DECLINED = "declined"
+NO_TRANSPORT_RC = 2  # the launcher's own code for "no transport to deliver into"
+
+
 def picked(done):
-    """The pane id the launcher resolved to, or None if it selected no transport."""
+    """The pane id the launcher resolved to, or DECLINED when it found no
+    transport and said so with the no-transport exit code.
+
+    [LAW:parse-dont-validate] returning a bare None for the second case would be
+    an answer-shaped void: a launcher that deliberately declined and one that
+    crashed on its way to an answer would read identically, and every negative
+    case below would pass on either. So the exit code is read here, once, and a
+    run that is neither a pane nor a clean decline comes back as its own report -
+    a value no assertion matches, carrying the evidence into the failure message.
+    """
     for line in done.stdout.splitlines():
         if line.startswith("[dry-run] transport=tmux target=target-for-"):
             return line.split("target-for-", 1)[1].split(" ", 1)[0]
-    return None
+    if done.returncode == NO_TRANSPORT_RC:
+        return DECLINED
+    return f"<no decision: rc={done.returncode} out={done.stdout!r} err={done.stderr!r}>"
 
 
 # --- preconditions --------------------------------------------------------
@@ -226,8 +241,7 @@ check("resolves a pane at the last hop inside the 16-hop bound",
       picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
 
 done = run(depth=15)
-check("refuses a pane one hop beyond the 16-hop bound", picked(done) is None, done.stdout)
-check("and reports no transport when it refuses", done.returncode == 2, f"rc={done.returncode}")
+check("refuses a pane one hop beyond the 16-hop bound", picked(done) == DECLINED, picked(done))
 
 done = run(depth=3, panes="%1 4 0\n%99 ROOTPID 0\n%7 5 0")
 check("picks the pane that owns it, not the first pane listed",
@@ -242,24 +256,29 @@ check("resolves through a `claude daemon run --bg-pty-host` re-hosting hop",
 # --- no pane to be had ----------------------------------------------------
 
 done = run(panes=None)
-check("no tmux server: selects no transport", picked(done) is None, done.stdout)
-check("no tmux server: exits 2", done.returncode == 2, f"rc={done.returncode}")
+check("no tmux server: selects no transport", picked(done) == DECLINED, picked(done))
+# [LAW:single-enforcer] the exit code is the whole of the no-transport report, so
+# it is pinned once, here, as its own contract. Every other decline below asserts
+# DECLINED, which already carries it - re-asserting the code beside each one
+# would be the same invariant enforced in six places, drifting apart on the day
+# the code changes.
+check("declining is reported by exit code, not by prose alone",
+      done.returncode == NO_TRANSPORT_RC, f"rc={done.returncode}")
 
 done = run(panes="")
-check("a server with no panes selects no transport", picked(done) is None, done.stdout)
+check("a server with no panes selects no transport", picked(done) == DECLINED, picked(done))
 
 done = run(tmux_on_path=False)
-check("tmux absent from PATH: selects no transport", picked(done) is None, done.stdout)
-check("tmux absent from PATH: exits 2", done.returncode == 2, f"rc={done.returncode}")
+check("tmux absent from PATH: selects no transport", picked(done) == DECLINED, picked(done))
 
 done = run(depth=2, panes="%5 1 0")
-check("a pane owned by someone else is not claimed", picked(done) is None, done.stdout)
+check("a pane owned by someone else is not claimed", picked(done) == DECLINED, picked(done))
 
 # --- the two forgeries a bare pid match cannot see -------------------------
 
 done = run(depth=2, panes="%99 ROOTPID 1")
 check("a dead pane still advertising an ancestor's pid is refused",
-      picked(done) is None, done.stdout)
+      picked(done) == DECLINED, picked(done))
 
 done = run(depth=2, panes="%99 ROOTPID 1\n%98 ROOTPID 0")
 check("a live pane is still found past a dead one holding the same pid",
@@ -267,7 +286,7 @@ check("a live pane is still found past a dead one holding the same pid",
 
 done = run(depth=2, sleep=2, forge=True)
 check("an ancestor younger than its own descendant is refused as a recycled pid",
-      picked(done) is None, done.stdout)
+      picked(done) == DECLINED, picked(done))
 check("the same aged chain resolves once the elapsed time is not forged",
       picked(run(depth=2, sleep=2)) == "%99",
       "without this the forging fixture, not the age check, could be doing the work")
