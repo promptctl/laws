@@ -258,6 +258,47 @@ case "$HOOK_TYPE" in
     exit 0
     ;;
 
+  retire-craft)
+    # The launcher's half of retiring a craft, and the reason a switch takes effect at all.
+    #
+    # Retiring a craft is ONE job with two halves: the transcript surgery removes the craft's
+    # guidance, and this releases the engagement marker. Ship only the first and the resumed
+    # session refuses the very load the switch existed to permit - the transcript says the craft
+    # is gone while the lock still says it is engaged. A --resume keeps the same session_id
+    # (measured, 2.1.226), so the lock is the SAME slot the guard already refused from, and
+    # session-start deliberately preserves the set across resume. Both halves or neither.
+    # [LAW:composability] one complete job, no hidden strings - the same lesson rewindTo records.
+    #
+    # The lock layout (LOCK_ROOT, sanitize, slot_dir_for) lives in this file and only here, so
+    # the launcher asks for the release instead of rebuilding the path and drifting from it.
+    # [LAW:one-source-of-truth]
+    #
+    # It releases only; it never pre-claims the incoming craft. A marker means "this craft
+    # actually loaded", and the guard writes it when the load really happens - pre-claiming
+    # would make the marker mean something weaker and lie whenever the load never came.
+    sid=$(json_field session_id)
+    aid=$(json_field agent_id)
+    craft=$(json_field craft)
+    if [ -z "$sid" ] || [ -z "$craft" ]; then
+      echo "laws skill-router retire-craft: need both session_id and craft" >&2
+      exit 2
+    fi
+    marker="$(slot_dir_for "$sid" "$aid")/$(sanitize "$craft")"
+    # Two different facts, kept apart rather than collapsed into one exit code. An absent marker
+    # means the postcondition already holds (the store was cleared, or the guard degraded and
+    # never wrote one) - note it and succeed. A marker that will not delete means the guard will
+    # still refuse the incoming craft, so the switch silently did nothing: that is a failure and
+    # it exits loudly. [LAW:no-silent-failure]
+    if [ ! -e "$marker" ]; then
+      echo "laws skill-router retire-craft: laws:$craft was not engaged; nothing to release" >&2
+      exit 0
+    fi
+    if ! rm -f "$marker"; then
+      echo "laws skill-router retire-craft: could not release laws:$craft ($marker)" >&2
+      exit 1
+    fi
+    ;;
+
   *)
     # Unknown hook type, do nothing
     ;;

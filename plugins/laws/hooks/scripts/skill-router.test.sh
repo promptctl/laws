@@ -203,5 +203,73 @@ case "$out" in
   *) ok "  ... and offers no switch it cannot enact";;
 esac
 
+# 10. retire-craft: the launcher's half of the switch. These assert the ARC a real switch travels
+#     - deny, retire, resume, load - because that arc is where the two halves meet and where each
+#     half's own suite stops looking. A --resume keeps the same session_id (measured on 2.1.226),
+#     so the resumed session lands in the SAME lock slot the guard just refused from.
+retire_payload() { # <session_id> <craft>
+  printf '{"session_id":"%s","craft":"%s"}' "$1" "$2"
+}
+
+# 10a. The whole point: after a switch, the craft that was refused must actually load.
+run guard "$(skill_payload R1 laws:code)" >/dev/null
+out=$(run guard "$(skill_payload R1 laws:prompt)")
+assert_deny "arc: the incompatible load is refused first" "$out" "laws:code"
+printf '%s' "$(retire_payload R1 code)" | "$ROUTER" retire-craft 2>/dev/null
+ok_retire=$?
+[ "$ok_retire" -eq 0 ] && ok "arc: retire-craft releases the engaged craft" \
+  || bad "arc: retire-craft failed (exit $ok_retire)"
+run session-start "$(start_payload R1 resume)" >/dev/null
+assert_allow "arc: after the switch the incoming craft loads" \
+  "$(run guard "$(skill_payload R1 laws:prompt)")"
+
+# 10b. It retires ONE craft, not the whole set. Under the shipped policy a surviving laws:prose
+#      is INVISIBLE - nothing is incompatible with prose, so no guard decision can reveal whether
+#      it is still engaged, and an assertion built on the shipped policy would pass just as
+#      happily against a retire-craft that cleared the entire slot. So this runs a router copy
+#      whose policy ALSO makes prose incompatible with prompt: now prose's survival has an
+#      observable consequence, and clearing the set would show up as prompt being allowed.
+twopair=$(mktemp -d)
+cp "$ROUTER" "$twopair/skill-router.sh"
+printf 'code prompt\nprose prompt\n' > "$twopair/incompatible-crafts.txt"
+tp() { printf '%s' "$2" | "$twopair/skill-router.sh" "$1" 2>/dev/null; }
+tp guard "$(skill_payload R2 laws:code)" >/dev/null
+tp guard "$(skill_payload R2 laws:prose)" >/dev/null
+printf '%s' "$(retire_payload R2 code)" | "$twopair/skill-router.sh" retire-craft 2>/dev/null
+out=$(tp guard "$(skill_payload R2 laws:prompt)")
+assert_deny "retire-craft leaves the crafts it was not asked to retire engaged" "$out" "laws:prose"
+# ... and the one it WAS asked to retire is gone: nothing in that deny names laws:code.
+case "$out" in
+  *"laws:code"*) bad "  ... but the retired craft is still engaged too";;
+  *) ok "  ... while the named craft is released";;
+esac
+rm -rf "$twopair"
+
+# 10c. Releasing what was never engaged is the postcondition already holding, not a failure -
+#      the store may have been cleared, or the guard may have degraded and written no marker.
+printf '%s' "$(retire_payload R3 code)" | "$ROUTER" retire-craft 2>/dev/null
+[ $? -eq 0 ] && ok "retire-craft succeeds when the craft was never engaged" \
+  || bad "retire-craft failed on an unengaged craft"
+
+# 10d. Incomplete instructions are refused rather than silently retiring nothing.
+printf '{"session_id":"R4"}' | "$ROUTER" retire-craft >/dev/null 2>&1
+[ $? -eq 2 ] && ok "retire-craft refuses a request with no craft" \
+  || bad "retire-craft accepted a request with no craft"
+printf '{"craft":"code"}' | "$ROUTER" retire-craft >/dev/null 2>&1
+[ $? -eq 2 ] && ok "retire-craft refuses a request with no session_id" \
+  || bad "retire-craft accepted a request with no session_id"
+
+# 10e. A craft name is interpolated into a path, so it must not be able to reach outside its own
+#      slot. The traversal is aimed from a DIFFERENT session at R5's marker - "../../R5/main/code"
+#      resolves to exactly the path R5's own marker occupies - because a traversal that lands
+#      somewhere harmless would pass whether or not the name is sanitized.
+run guard "$(skill_payload R5 laws:code)" >/dev/null
+# R5x must be a real session with a real slot, or the ".." never resolves and the traversal fails
+# for a reason that has nothing to do with sanitizing.
+run guard "$(skill_payload R5x laws:prose)" >/dev/null
+printf '%s' "$(retire_payload R5x ../../R5/main/code)" | "$ROUTER" retire-craft >/dev/null 2>&1
+assert_deny "a traversal craft name cannot release another session's marker" \
+  "$(run guard "$(skill_payload R5 laws:prompt)")" "laws:code"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
