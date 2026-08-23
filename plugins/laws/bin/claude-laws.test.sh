@@ -58,18 +58,19 @@ printf '%s' "$n" > "$STUB_STATE/count"
 printf '%s\n' "$*" > "$STUB_STATE/argv.$n"
 case " $STUB_SWITCH_ON " in
   *" $n "*)
-    # The transcript starts with laws:code engaged, so the first switch moves to prompt. A later
-    # switch has to move back to code — and first has to put the laws:prompt load in the
-    # transcript, or there is no conflict left for the launcher to act on.
+    # The transcript starts with laws:code engaged, so the first switch moves to prompt. Every
+    # switch here is code→prompt, because the conflict edge runs ONE WAY: prompt-then-code is
+    # ordinary allowed work and would not trigger anything. So a SECOND switch has to re-engage
+    # code first — legitimate once the earlier code load is tombstoned — and then conflict on the
+    # next incoming laws:prompt, exactly as a real session would.
     incoming=prompt
     if [ "$n" != 1 ]; then
-      incoming=code
       node -e '
         const fs = require("fs"), [file, sid] = process.argv.slice(1);
         fs.appendFileSync(file, JSON.stringify({ type: "user", isMeta: true, uuid: "p" + Date.now(),
           parentUuid: "u3", sessionId: sid, timestamp: new Date().toISOString(), sourceToolUseID: "toolu_p",
           message: { role: "user", content: [{ type: "text",
-            text: "Base directory for this skill: /plugins/laws/skills/prompt\n\n<PROMPT BODY>" }] } }) + "\n");
+            text: "Base directory for this skill: /plugins/laws/skills/code\n\n<CODE BODY>" }] } }) + "\n");
       ' "$STUB_TRANSCRIPT" "$STUB_SID"
     fi
     printf '{"sessionId":"%s","transcript":"%s","incomingMedium":"%s","choice":"tombstone"}\n' \

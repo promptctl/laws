@@ -17,8 +17,8 @@ function t(name, fn) {
   catch (e) { fail++; console.log('FAIL - ' + name + '\n       ' + (e && e.message)); }
 }
 
-// The single incompatible pair, passed explicitly so tests never depend on the file on disk.
-const PAIRS = [['code', 'prompt']];
+// The single directed conflict edge, passed explicitly so tests never depend on the file on disk.
+const EDGES = [["code", "prompt"]];   // directed: code engaged ⇒ refuse incoming prompt
 
 // Build one craft-load transcript line, exactly the shape craftMediumOf detects.
 let uidSeq = 0;
@@ -40,17 +40,18 @@ t('parsePolicy strips comments and blanks, keeps pairs', () => {
   const pairs = M.parsePolicy('# header\n\ncode prompt  # inline\n\n');
   assert.deepStrictEqual(pairs, [['code', 'prompt']]);
 });
-t('craftsIncompatible is symmetric and pair-scoped', () => {
-  assert.strictEqual(M.craftsIncompatible('code', 'prompt', PAIRS), true);
-  assert.strictEqual(M.craftsIncompatible('prompt', 'code', PAIRS), true);   // symmetric
-  assert.strictEqual(M.craftsIncompatible('code', 'prose', PAIRS), false);   // compatible
-  assert.strictEqual(M.craftsIncompatible('code', 'code', PAIRS), false);    // not self-incompatible
+t('conflictsWith is DIRECTED: the reverse ordering is a different question', () => {
+  // (engaged, incoming). code degrades prompts; prompt does not degrade code.
+  assert.strictEqual(M.conflictsWith('code', 'prompt', EDGES), true);
+  assert.strictEqual(M.conflictsWith('prompt', 'code', EDGES), false);  // NOT symmetric
+  assert.strictEqual(M.conflictsWith('code', 'prose', EDGES), false);   // compatible
+  assert.strictEqual(M.conflictsWith('code', 'code', EDGES), false);    // not self-conflicting
 });
 
 // ---- decide(): the corrected trigger rule -------------------------------------------------
 t('pre-load: code engaged + incoming prompt → triggers, switches away from code', () => {
   const lines = [loadLine({ medium: 'code', uuid: 'A' })];
-  const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prompt' });
   assert.strictEqual(d.trigger, true);
   assert.deepStrictEqual(d.current, ['code']);
   assert.strictEqual(d.incoming, 'prompt');
@@ -61,27 +62,30 @@ t('pre-load: code engaged + incoming prompt → triggers, switches away from cod
 });
 t('pre-load: code engaged + incoming prose → NO trigger (compatible coexist)', () => {
   const lines = [loadLine({ medium: 'code', uuid: 'A' })];
-  const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prose' });
+  const d = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prose' });
   assert.strictEqual(d.trigger, false);
   assert.strictEqual(d.reason, 'compatible');
 });
 t('pre-load: reload of the same craft → NO trigger (same-medium)', () => {
   const lines = [loadLine({ medium: 'code', uuid: 'A' })];
-  const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'code' });
+  const d = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'code' });
   assert.strictEqual(d.trigger, false);
   assert.strictEqual(d.reason, 'same-medium');
 });
 t('pre-load: nothing engaged + incoming prompt → NO trigger (first-craft)', () => {
-  const d = M.decide([chatLine('hi')], { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide([chatLine('hi')], { conflictEdges: EDGES, incomingMedium: 'prompt' });
   assert.strictEqual(d.trigger, false);
   assert.strictEqual(d.reason, 'first-craft');
 });
-t('pre-load: symmetry — prompt engaged + incoming code → triggers, switches away from prompt', () => {
+// THE REVERSE ORDERING IS ALLOWED, and this is the regression that would otherwise reappear
+// silently. Writing a prompt and then turning to code is ordinary work; only code-then-prompt
+// corrupts anything. A gate that refused here would deny a legitimate load AND offer a
+// tombstone-or-rewind switch, so the false refusal costs real conversation, not just a warning.
+t('pre-load: prompt engaged + incoming code → NO trigger (the edge runs one way)', () => {
   const lines = [loadLine({ medium: 'prompt', uuid: 'P' })];
-  const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'code' });
-  assert.strictEqual(d.trigger, true);
-  assert.deepStrictEqual(d.current, ['prompt']);
-  assert.strictEqual(d.incoming, 'code');
+  const d = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'code' });
+  assert.strictEqual(d.trigger, false);
+  assert.strictEqual(d.reason, 'compatible');
 });
 t('pre-load: compatible set (code+prose+ticket-ish) + incoming prompt → triggers, names code', () => {
   const lines = [
@@ -89,7 +93,7 @@ t('pre-load: compatible set (code+prose+ticket-ish) + incoming prompt → trigge
     chatLine('work'),
     loadLine({ medium: 'prose', uuid: 'B', ts: '2026-08-09T00:01:00.000Z' }),
   ];
-  const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prompt' });
   assert.strictEqual(d.trigger, true);
   assert.deepStrictEqual(d.current, ['code']);                   // the conflicting one, not the newest (prose)
   assert.deepStrictEqual(d.conflictIndices, [0]);
@@ -99,17 +103,25 @@ t('post-hoc: code+prompt both on disk → triggers; newest is incoming', () => {
     loadLine({ medium: 'code', uuid: 'A', ts: '2026-08-09T00:00:00.000Z' }),
     loadLine({ medium: 'prompt', uuid: 'B', ts: '2026-08-09T00:05:00.000Z' }),
   ];
-  const d = M.decide(lines, { incompatiblePairs: PAIRS });
+  const d = M.decide(lines, { conflictEdges: EDGES });
   assert.strictEqual(d.trigger, true);
   assert.strictEqual(d.incoming, 'prompt');                // newest
   assert.deepStrictEqual(d.current, ['code']);
+});
+t('post-hoc: prompt THEN code on disk → NO trigger (the harmless ordering)', () => {
+  const lines = [
+    loadLine({ medium: 'prompt', uuid: 'P', ts: '2026-08-09T00:00:00.000Z' }),
+    loadLine({ medium: 'code', uuid: 'C', ts: '2026-08-09T00:05:00.000Z' }),
+  ];
+  const d = M.decide(lines, { conflictEdges: EDGES });
+  assert.strictEqual(d.trigger, false, 'the repair path must not tombstone a legitimate ordering');
 });
 t('post-hoc: code+prose both on disk → NO trigger', () => {
   const lines = [
     loadLine({ medium: 'code', uuid: 'A', ts: '2026-08-09T00:00:00.000Z' }),
     loadLine({ medium: 'prose', uuid: 'B', ts: '2026-08-09T00:05:00.000Z' }),
   ];
-  const d = M.decide(lines, { incompatiblePairs: PAIRS });
+  const d = M.decide(lines, { conflictEdges: EDGES });
   assert.strictEqual(d.trigger, false);
 });
 // ---- more than one engaged craft conflicts with the incoming one ----------------------------
@@ -117,7 +129,7 @@ t('post-hoc: code+prose both on disk → NO trigger', () => {
 // incompatible-crafts.txt is explicitly designed to grow into. The contract under test: a switch
 // retires the whole conflicting SET. Retiring one member reports success and leaves the session
 // still unable to load the craft it switched to, which is the defect the gate exists to prevent.
-const TWO_PAIRS = [['code', 'prompt'], ['prose', 'prompt']];
+const TWO_EDGES = [['code', 'prompt'], ['prose', 'prompt']];  // two crafts, each refusing incoming prompt
 // code and prose are compatible with each OTHER, so both can be engaged; both conflict with prompt.
 // The uuids are pinned rather than generated, because the rewind assertions below are ABOUT which
 // record the anchor lands on — a fixture with unpredictable uuids could not tell the oldest-anchor
@@ -134,7 +146,7 @@ const twoConflicts = () => [
 ];
 
 t('two conflicting crafts engaged → BOTH are named, oldest first', () => {
-  const d = M.decide(twoConflicts(), { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide(twoConflicts(), { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
   assert.strictEqual(d.trigger, true);
   assert.deepStrictEqual(d.current, ['code', 'prose']);
   assert.deepStrictEqual(d.conflictIndices, [1, 3]);
@@ -142,14 +154,14 @@ t('two conflicting crafts engaged → BOTH are named, oldest first', () => {
 
 t('a compatible craft is never swept in with the conflicting ones', () => {
   // Only prompt conflicts with code here, so prose must be left alone despite being engaged.
-  const d = M.decide(twoConflicts(), { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide(twoConflicts(), { conflictEdges: EDGES, incomingMedium: 'prompt' });
   assert.deepStrictEqual(d.current, ['code']);
   assert.deepStrictEqual(d.conflictIndices, [1]);
 });
 
 t('tombstone retires EVERY conflicting craft, not just one', () => {
   const lines = twoConflicts();
-  const d = M.decide(lines, { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide(lines, { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
   const out = M.applySwitch(lines, d, 'tombstone', {}).lines;
   // The contract is observable through the module's own detector: after the switch, neither
   // retired craft still reads as a live load, so a resumed session engages neither.
@@ -159,7 +171,7 @@ t('tombstone retires EVERY conflicting craft, not just one', () => {
 });
 
 t('the rewind anchor is the OLDEST conflict, so no older one survives above it', () => {
-  const d = M.decide(twoConflicts(), { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide(twoConflicts(), { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
   // Anchoring on the newest (uuid B) would rewind to a point where code is ALREADY loaded.
   assert.strictEqual(d.rewind.summarizeTo, 'A');
   assert.strictEqual(d.rewind.discardTo, 'c0');
@@ -167,7 +179,7 @@ t('the rewind anchor is the OLDEST conflict, so no older one survives above it',
 
 t('rewind_discard leaves no conflicting craft reachable', () => {
   const lines = twoConflicts();
-  const d = M.decide(lines, { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide(lines, { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
   const out = M.applySwitch(lines, d, 'rewind_discard', { severUuid: 'sev' }).lines;
   const leaf = JSON.parse(out[out.length - 1]);
   assert.strictEqual(leaf.type, 'last-prompt');
@@ -185,7 +197,7 @@ t('rewind_discard leaves no conflicting craft reachable', () => {
 
 t('rewind_summarize retires every conflicting craft in the FILE, not just the reachable one', () => {
   const lines = twoConflicts();
-  const d = M.decide(lines, { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  const d = M.decide(lines, { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
   const out = M.applySwitch(lines, d, 'rewind_summarize',
     { severUuid: 'sev', summaryUuid: 'sum', now: '2026-08-09T00:09:00.000Z', summary: 'what I did' }).lines;
   // Reachability alone cannot see this: the anchor is the OLDEST conflict, so every other one is
@@ -201,12 +213,12 @@ t('rewind_summarize retires every conflicting craft in the FILE, not just the re
 
 t('recommendation: shallow → tombstone, deep → rewind_summarize', () => {
   const shallow = [loadLine({ medium: 'code', uuid: 'A' })];
-  assert.strictEqual(M.decide(shallow, { incompatiblePairs: PAIRS, incomingMedium: 'prompt' }).recommended, 'tombstone');
+  assert.strictEqual(M.decide(shallow, { conflictEdges: EDGES, incomingMedium: 'prompt' }).recommended, 'tombstone');
   // force "deep" by setting a tiny threshold
-  assert.strictEqual(M.decide(shallow, { incompatiblePairs: PAIRS, incomingMedium: 'prompt', largeTokens: 1 }).recommended, 'rewind_summarize');
+  assert.strictEqual(M.decide(shallow, { conflictEdges: EDGES, incomingMedium: 'prompt', largeTokens: 1 }).recommended, 'rewind_summarize');
 });
-t('decide throws without incompatiblePairs (no silent never-trigger)', () => {
-  assert.throws(() => M.decide([loadLine({ medium: 'code' })], { incomingMedium: 'prompt' }), /incompatiblePairs is required/);
+t('decide throws without conflictEdges (no silent never-trigger)', () => {
+  assert.throws(() => M.decide([loadLine({ medium: 'code' })], { incomingMedium: 'prompt' }), /conflictEdges is required/);
 });
 
 // ---- exciseAt(): targeted tombstone -------------------------------------------------------
@@ -247,7 +259,7 @@ t('run repairs an incompatible stack in place; leaves a compatible stack alone',
     loadLine({ medium: 'code', uuid: 'A', ts: '2026-08-09T00:00:00.000Z' }),
     loadLine({ medium: 'prompt', uuid: 'B', ts: '2026-08-09T00:05:00.000Z' }),
   ].join('\n') + '\n');
-  const rb = M.run(bad, { incompatiblePairs: PAIRS });
+  const rb = M.run(bad, { conflictEdges: EDGES });
   assert.strictEqual(rb.changed, true);
   assert.deepStrictEqual(rb.stubbed, ['code']);
   const out = fs.readFileSync(bad, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -261,7 +273,7 @@ t('run repairs an incompatible stack in place; leaves a compatible stack alone',
     loadLine({ medium: 'prose', uuid: 'D', ts: '2026-08-09T00:05:00.000Z' }),
   ].join('\n') + '\n';
   fs.writeFileSync(ok, okContent);
-  const ro = M.run(ok, { incompatiblePairs: PAIRS });
+  const ro = M.run(ok, { conflictEdges: EDGES });
   assert.strictEqual(ro.changed, false);
   assert.strictEqual(fs.readFileSync(ok, 'utf8'), okContent); // byte-identical
   fs.rmSync(dir, { recursive: true, force: true });
@@ -377,7 +389,7 @@ function switchFixture() {
 }
 const ENV = { severUuid: 'nowhere-uuid', summaryUuid: 'sum-1', now: '2026-08-20T00:00:00.000Z' };
 function decisionFor(lines) {
-  return M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
+  return M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prompt' });
 }
 
 t('applySwitch reject: transcript untouched and nothing to resume into', () => {
@@ -429,7 +441,7 @@ t('applySwitch rejects an unknown choice instead of doing nothing', () => {
 });
 t('applySwitch refuses a decision that never triggered', () => {
   const lines = [loadLine({ medium: 'code', uuid: 'A' })];
-  const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prose' }); // compatible
+  const d = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prose' }); // compatible
   assert.strictEqual(d.trigger, false);
   assert.throws(() => M.applySwitch(lines, d, 'tombstone', ENV), /did not trigger/);
 });

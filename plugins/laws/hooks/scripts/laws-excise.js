@@ -12,9 +12,16 @@
 // in /skills/<medium>.
 //
 // COMPATIBILITY, NOT "ONE AT A TIME": crafts COEXIST by default. code+prose+ticket is normal,
-// complementary work. What the gate fires on is a genuine INCOMPATIBLE pair — two standards
-// that corrupt each other stacked — per the policy in incompatible-crafts.txt (today: only
-// code<->prompt). Two compatible crafts on disk are left completely alone.
+// complementary work. What the gate fires on is a genuine conflicting ORDERING — an engaged
+// craft whose standard corrupts the one now being loaded — per the policy in
+// incompatible-crafts.txt (today: only code→prompt). Anything else is left completely alone.
+//
+// THE RULE IS DIRECTED, not a mutual incompatibility. code degrades prompts; prompt does not
+// degrade code. So laws:code engaged + incoming laws:prompt is refused, while laws:prompt
+// engaged + incoming laws:code is ordinary allowed work. Treating this as symmetric — as an
+// earlier version did — produces a FALSE REFUSAL in the harmless direction, and the cost is
+// not a warning: the user is offered a tombstone-or-rewind switch and may spend real
+// conversation escaping a conflict that never existed.
 //
 // Why tombstone, not delete: the transcript is a DAG keyed by uuid/parentUuid. Deleting a line
 // orphans its children. Tombstoning preserves uuid/parentUuid/linkage and only empties the
@@ -24,7 +31,7 @@
 //   read here AND by skill-router.sh; this module hard-codes no craft-pair rule.
 // [LAW:single-enforcer] this file is the one place that decides what "loaded" means and which
 //   engaged craft an incoming one must switch away from.
-// [LAW:effects-at-boundaries] the pure core (parsePolicy/craftsIncompatible/findHits/decide/
+// [LAW:effects-at-boundaries] the pure core (parsePolicy/conflictsWith/findHits/decide/
 //   exciseAt) never touches the filesystem; the edges (loadPolicy/run) do the I/O.
 // [LAW:no-silent-failure] a parse/shape miss is passed through untouched, never dropped; a
 //   missing policy file throws at the boundary rather than reading as "all crafts coexist".
@@ -43,8 +50,9 @@ const PREFIX = 'Base directory for this skill:';
 const TOMBSTONE = '[TOMBSTONE]';
 
 // --- policy: the boundary read + the pure predicate ------------------------------------------
-// Parse the shared policy file's text into symmetric craft pairs. Pure: same shape the router's
-// bash reader produces (strip '# comments', drop blank lines, split each pair on whitespace).
+// Parse the shared policy file's text into DIRECTED edges [engaged, refused]. Pure: same shape
+// the router's bash reader produces (strip '# comments', drop blank lines, split on whitespace).
+// Order within a line is meaningful and is preserved exactly as written.
 function parsePolicy(text) {
   return text.split('\n')
     .map((l) => l.replace(/#.*$/, '').trim())
@@ -62,10 +70,18 @@ function loadPolicy(policyPath) {
   return parsePolicy(fs.readFileSync(p, 'utf8'));
 }
 
-// True iff crafts a and b are an incompatible pair per the policy. Symmetric; pure. Mirrors
-// crafts_incompatible() in skill-router.sh exactly — same data, same rule, two enforcers.
-function craftsIncompatible(a, b, pairs) {
-  return (pairs || []).some(([x, y]) => (x === a && y === b) || (x === b && y === a));
+// True iff an already-loaded `engaged` craft forbids loading `incoming`. DIRECTED and pure:
+// conflictsWith(a, b) and conflictsWith(b, a) are different questions with different answers.
+// Mirrors conflicts_with() in skill-router.sh exactly — same data, same rule, two enforcers.
+//
+// The parameters are NAMED for their roles rather than taken as an interchangeable pair,
+// because the direction is the one thing a caller can get wrong and the old symmetric
+// signature could not carry it: two callsites passed their arguments in opposite orders for
+// months with no symptom, since the predicate could not tell them apart. A signature that
+// makes the mistake unrepresentable beats a comment asking callers to be careful.
+// [LAW:types-are-the-program]
+function conflictsWith(engaged, incoming, edges) {
+  return (edges || []).some(([from, to]) => from === engaged && to === incoming);
 }
 
 // --- detecting craft loads -------------------------------------------------------------------
@@ -88,10 +104,11 @@ function craftMediumOf(o) {
 // never be re-read as a live load.
 function stubText(medium, activeMedium) {
   const because = activeMedium
-    ? 'laws:' + activeMedium + ' is now the active craft, and it is incompatible with this one'
-    : 'a craft incompatible with this one is now active';
+    ? 'laws:' + activeMedium + ' is now the active craft, and this one degrades it'
+    : 'a craft this one degrades is now active';
   return TOMBSTONE + ' laws:' + medium + ' skill guidance excised. ' + because +
-    ' — the two corrupt each other stacked. This medium is no longer active: do not act on it.';
+    ' — the damage runs that way, which is why this side was retired and not the other. ' +
+    'This medium is no longer active: do not act on it.';
 }
 
 // One place that parses the raw lines and finds every craft-load line (the survivor picks are
@@ -154,16 +171,16 @@ const SWITCH_OPTIONS = [
 const LARGE_TOKENS = 60000;                               // ~ where the in-place tombstone stops being cheap
 const estimateTokens = (chars) => Math.round(chars / 4);  // rough; errs high → conservative
 
-// decide(transcriptLines, { incompatiblePairs, incomingMedium?, largeTokens? })
-//   incompatiblePairs REQUIRED — the policy pairs from loadPolicy(); a correct trigger decision
+// decide(transcriptLines, { conflictEdges, incomingMedium?, largeTokens? })
+//   conflictEdges REQUIRED — the policy pairs from loadPolicy(); a correct trigger decision
 //                     cannot be made without it, so its absence throws rather than silently
 //                     never-triggering. [LAW:no-silent-failure]
 //   incomingMedium given  → pre-load gate (injected Skill-call intercept): the transcript holds the
 //                           engaged crafts; the incoming one is not yet on disk.
 //   incomingMedium absent → post-hoc: loads already present; the newest is the incoming one.
 function decide(rawLines, opts = {}) {
-  const pairs = opts.incompatiblePairs;
-  if (!Array.isArray(pairs)) throw new Error('decide: incompatiblePairs is required (call loadPolicy first)');
+  const edges = opts.conflictEdges;
+  if (!Array.isArray(edges)) throw new Error("decide: conflictEdges is required (call loadPolicy first)");
   const largeAt = opts.largeTokens ?? LARGE_TOKENS;
   const { parsed, hits } = findHits(rawLines);
 
@@ -182,7 +199,7 @@ function decide(rawLines, opts = {}) {
 
   // The engaged craft(s) that CONFLICT with the incoming one, per policy. Switch away from the
   // newest such load. Compatible crafts (or a reload of the same craft) are not conflicts.
-  const conflicts = engagedHits.filter((h) => h.medium !== incoming && craftsIncompatible(h.medium, incoming, pairs));
+  const conflicts = engagedHits.filter((h) => h.medium !== incoming && conflictsWith(h.medium, incoming, edges));
   if (conflicts.length === 0) {
     const reason = engagedHits.some((h) => h.medium === incoming) ? 'same-medium' : 'compatible';
     return { trigger: false, reason };
@@ -375,18 +392,20 @@ function writeAtomic(file, contents) {
   fs.renameSync(tmp, file);
 }
 
-// Standalone "make this transcript satisfy the policy" repair: while any incompatible pair is
-// engaged, tombstone the older side (keep the newer). Compatible stacks are left alone.
+// Standalone "make this transcript satisfy the policy" repair: while an engaged craft forbids a
+// later one, tombstone the FORBIDDING side (keep the newer). The direction comes from the policy,
+// so a legitimate ordering — prompt then code — is left completely alone rather than "repaired"
+// into a tombstone it never needed. Compatible stacks are likewise untouched.
 function run(file, opts = {}) {
   const dryRun = opts.dryRun || false;
-  const pairs = opts.incompatiblePairs || loadPolicy(opts.policyPath); // boundary read (may throw — loud)
+  const pairs = opts.conflictEdges || loadPolicy(opts.policyPath); // boundary read (may throw — loud)
   const text = fs.readFileSync(file, 'utf8');
   const eol = text.endsWith('\n');
   let rawLines = text.split('\n');
   if (eol) rawLines.pop(); // trailing '' from final newline — restore on write
   const stubbedAll = [];
   for (;;) {
-    const d = decide(rawLines, { incompatiblePairs: pairs });
+    const d = decide(rawLines, { conflictEdges: pairs });
     if (!d.trigger) break;
     const r = exciseAt(rawLines, d.conflictIndices, d.incoming);
     if (!r.changed) break;                                 // guard against a non-advancing loop
@@ -410,13 +429,13 @@ function applyRequest(requestPath, opts = {}) {
   for (const field of ['transcript', 'choice', 'incomingMedium']) {
     if (!req[field]) throw new Error('switch request is missing ' + field + ': ' + requestPath);
   }
-  const pairs = opts.incompatiblePairs || loadPolicy(opts.policyPath);
+  const pairs = opts.conflictEdges || loadPolicy(opts.policyPath);
   const text = fs.readFileSync(req.transcript, 'utf8');
   const eol = text.endsWith('\n');
   const rawLines = text.split('\n');
   if (eol) rawLines.pop();
 
-  const decision = decide(rawLines, { incompatiblePairs: pairs, incomingMedium: req.incomingMedium });
+  const decision = decide(rawLines, { conflictEdges: pairs, incomingMedium: req.incomingMedium });
   // The conflict must still be there. If it is not, the session changed under us — say so instead
   // of writing a "successful" no-op the user will read as a completed switch. [LAW:no-silent-failure]
   if (!decision.trigger) {
@@ -436,7 +455,7 @@ function applyRequest(requestPath, opts = {}) {
 }
 
 module.exports = {
-  parsePolicy, loadPolicy, craftsIncompatible,
+  parsePolicy, loadPolicy, conflictsWith,
   craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS,
   applyRequest, run,
 };

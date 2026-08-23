@@ -5,24 +5,33 @@ persuasive guidance, each written to the standard of one medium and built to kee
 firing deep in a session against competing defaults. An agent that reads one and then
 does other work carries that standard into the other work: reading one skill puts its
 whole standard on duty and biases what you do next. Most standards sit together fine -
-code, its ticket, and its docs are complementary work - but some *contradict*, and
-reading two that contradict stacks standards that corrupt each other. That stacking is
-the failure that has already ruined a session here.
+code, its ticket, and its docs are complementary work. But one standard actively damages
+another: read laws:code and the prompts you write afterwards come out corrupted by it.
+That is the failure that has already ruined a session here, and it runs one way - the
+damage is code's effect on prompts, not a quarrel between equals.
 
 So there is one rule, and a way to work under it.
 
 ## The rule
 
-Compatible crafts coexist; incompatible ones do not. Most media are complementary, so a
-session that produces code and its ticket and its docs may hold those crafts together -
-their standards do not fight, and the guard lets them share a session. What must never
-stack is an *incompatible* pair: two standards that contradict each other, the failure
-that has ruined a session here. The known incompatible pair is laws:code and laws:prompt
-- code is nothing like prompt-for-an-LLM, so each craft's rules are actively wrong for
-the other's work, and the guard refuses the second of that pair. When you need a craft
-that conflicts with one already engaged, you don't load it here: consult it through a
-disposable subagent, or - if the session's whole job has become that craft - /clear and
-load it clean.
+Crafts coexist; one *ordering* does not. Most media are complementary, so a session that
+produces code and its ticket and its docs may hold those crafts together - their
+standards do not fight, and the guard lets them share a session.
+
+The rule is directed, and the direction is the whole of it: **once laws:code is engaged,
+laws:prompt may not be loaded.** Code's standard degrades prompts written under it, and
+that is the failure that has ruined a session here. The reverse is not a failure at all -
+write a prompt first, turn to code afterwards, and both come out fine, so the guard
+allows it. It is not a mutually incompatible pair; it is a one-way edge.
+
+That asymmetry has a practical consequence worth planning around. If a task needs both
+media, **do the prompt first.** Ordering the work that way costs nothing and leaves the
+session free to pick up code afterwards; ordering it the other way puts the session in a
+state where the prompt work can only be reached by retiring the code craft.
+
+When you do need a craft the session's current state refuses, you don't load it here:
+consult it through a disposable subagent, or - if the session's whole job has become
+that craft - /clear and load it clean.
 
 ## What to read instead
 

@@ -88,11 +88,18 @@ assert_allow "  ... laws:ticket added too" "$(run guard "$(skill_payload S9 laws
 assert_deny "laws:prompt refused against code+prose+ticket, naming code" \
   "$(run guard "$(skill_payload S9 laws:prompt)")" "laws:code" "laws:prompt"
 
-# 5c. SYMMETRY: incompatibility is a pair, not a hub - loading laws:code after laws:prompt is
-#     refused just the same. (There is no "exclusive" craft; only this pair conflicts.)
+# 5c. DIRECTION: the conflict edge runs ONE WAY. code degrades prompts, so code-then-prompt is
+#     refused (5b above) - but prompt-then-code is ordinary work and must be ALLOWED. This is the
+#     guard's half of the asymmetry, and it is the direction where a wrong answer costs the most:
+#     a false refusal here also offers a tombstone-or-rewind switch, so the user can spend real
+#     conversation escaping a conflict that never existed.
+#
+#     It is also the assertion that pins the ARGUMENT ORDER at the callsite. Under the old
+#     symmetric predicate the guard passed (incoming, engaged) while the gate passed
+#     (engaged, incoming), and nothing could tell; reversing them now inverts this exact case.
 run guard "$(skill_payload S10 laws:prompt)" >/dev/null
-assert_deny "laws:code after laws:prompt refused (symmetric)" \
-  "$(run guard "$(skill_payload S10 laws:code)")" "laws:code" "laws:prompt"
+assert_allow "laws:code after laws:prompt is allowed (the edge runs one way)" \
+  "$(run guard "$(skill_payload S10 laws:code)")"
 
 # 5d. laws:chat is in no incompatible pair, so it coexists with everything, both directions.
 run guard "$(skill_payload S11 laws:prompt)" >/dev/null

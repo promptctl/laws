@@ -11,10 +11,13 @@
 #                    agent which craft to load; nothing before this observed the actual
 #                    load. Compatible crafts may coexist in one session - code plus its
 #                    ticket plus its docs is normal, complementary work - so what this
-#                    refuses is not a second craft but an INCOMPATIBLE one: two standards
-#                    that corrupt each other stacked. The one such pair today is laws:code
-#                    with laws:prompt. This turns "what is loaded" from luck into owned
-#                    state and refuses a conflicting addition, naming the craft it clashes.
+#                    refuses is not a second craft but a conflicting ORDERING: an engaged
+#                    craft whose standard corrupts the one now being loaded. The one such
+#                    edge today is laws:code THEN laws:prompt. It runs ONE WAY - loading
+#                    laws:code after laws:prompt is allowed - so the guard must be read as
+#                    a directed rule, never a mutual incompatibility. This turns "what is
+#                    loaded" from luck into owned state and refuses a conflicting addition,
+#                    naming the craft it clashes with.
 #
 # Routing is re-injected on EVERY message, not only at session start, so it carries the
 # same durability as a line in a system prompt: a long or compacted session can bury a
@@ -51,14 +54,14 @@ EOT
 # CLAUDE.md entry. Same formatting constraints as ENGAGE_TEXT: single-line, straight
 # quotes, no backslashes, so it needs no JSON escaping.
 read -r -d '' ROUTE_TEXT <<'EOT'
-Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Compatible crafts may share a session, but laws:code and laws:prompt corrupt each other's work when stacked and cannot both be loaded - the guard refuses the conflicting second.
+Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Crafts may share a session. One ordering is refused: once laws:code is loaded, laws:prompt cannot be - laws:code degrades prompts written under it. The reverse is fine, so if a task needs both, write the prompt FIRST and turn to code after.
 EOT
 
 # The incompatibility policy is DATA, and it lives in one file read by BOTH enforcers -
 # this guard AND the runtime gate (laws-excise.js) - so the rule has a single home
 # ([LAW:one-source-of-truth], the divergence the two used to risk). This script hard-codes
 # no craft name; changing the policy is editing incompatible-crafts.txt. Comments (#) and
-# blank lines are stripped HERE, so crafts_incompatible below sees only "a b" pair lines,
+# blank lines are stripped HERE, so conflicts_with below sees only "a b" pair lines,
 # exactly the shape the former inline heredoc handed it - the read is re-derived every
 # process launch, so the file is the source and this variable is just its cache, never a
 # second copy that can drift.
@@ -67,7 +70,7 @@ POLICY_FILE="$SCRIPT_DIR/incompatible-crafts.txt"
 INCOMPATIBLE=""
 [ -r "$POLICY_FILE" ] && INCOMPATIBLE="$(sed -E 's/#.*$//' "$POLICY_FILE" | grep -E '[^[:space:]]')"
 # One condition for both ways the policy can fail to arrive, because they have identical
-# consequences: no pairs means crafts_incompatible answers false for everything and the guard
+# consequences: no edges means conflicts_with answers false for everything and the guard
 # is off. Unreadable and readable-but-pairless are the same degraded state, so they get the
 # same warning rather than one being announced and the other passing as "everything coexists"
 # - which is what an unchecked `grep` exit status used to do to a comment-only policy file.
@@ -124,14 +127,21 @@ slot_dir_for() {
   printf '%s/%s' "$(lock_dir_for "$sid")" "$slot"
 }
 
-# True (exit 0) iff crafts $1 and $2 are an incompatible pair per the INCOMPATIBLE policy.
-# Symmetric: it matches a line in either order. It reads the policy data and hard-codes no
-# craft name, so changing the rule is editing INCOMPATIBLE, never this function.
-crafts_incompatible() {
-  local a=$1 b=$2 x y
-  while read -r x y; do
-    [ -n "$x" ] || continue
-    if { [ "$x" = "$a" ] && [ "$y" = "$b" ]; } || { [ "$x" = "$b" ] && [ "$y" = "$a" ]; }; then
+# True (exit 0) iff an already-loaded $1 forbids loading an incoming $2, per the INCOMPATIBLE
+# policy. DIRECTED: it matches a line in THAT ORDER ONLY, because the policy's edges run one way
+# (code degrades prompts; prompt does not degrade code). It reads the policy data and hard-codes
+# no craft name, so changing the rule is editing INCOMPATIBLE, never this function.
+#
+# THE ARGUMENT ORDER IS THE CONTRACT. This was symmetric once, and under symmetry the two
+# enforcers could - and did - pass their arguments in opposite orders with no symptom, because
+# the predicate was incapable of telling them apart. Mirrors conflictsWith(engaged, incoming) in
+# laws-excise.js exactly; if these two ever disagree about the order, the guard and the gate
+# enforce opposite rules. [LAW:single-enforcer] [LAW:types-are-the-program]
+conflicts_with() {
+  local engaged=$1 incoming=$2 from to
+  while read -r from to; do
+    [ -n "$from" ] || continue
+    if [ "$from" = "$engaged" ] && [ "$to" = "$incoming" ]; then
       return 0
     fi
   done <<EOF
@@ -242,7 +252,7 @@ case "$HOOK_TYPE" in
     # load leaves no phantom engagement) and deny, naming the crafts it clashes with. Two racing
     # incompatible loads each claim, each see the other, and each release+deny - neither ends up
     # engaged, an over-refusal the agent recovers from by retrying one. That is the safe
-    # direction: never silently co-engage an incompatible pair.
+    # direction: never silently co-engage a conflicting ordering.
     #
     # THE WHOLE SET IS COLLECTED BEFORE DENYING, rather than denying on the first marker the glob
     # returns. The gate retires EVERY conflicting craft (laws-excise decide()), so naming only the
@@ -254,7 +264,10 @@ case "$HOOK_TYPE" in
       [ -e "$other" ] || continue
       other=${other##*/}
       [ "$other" = "$(sanitize "$craft")" ] && continue
-      if crafts_incompatible "$craft" "$other"; then
+      # (engaged, incoming) — $other is the marker already on disk, $craft is the load being
+      # attempted. Passing these the other way round asks whether the INCOMING craft would
+      # forbid the engaged one, which is a different question with a different answer.
+      if conflicts_with "$other" "$craft"; then
         conflicts="${conflicts:+$conflicts,}$other"
       fi
     done
@@ -311,7 +324,7 @@ case "$HOOK_TYPE" in
             fi
           fi
         fi
-        deny "Craft already engaged this session: $conflicts_pretty. It and laws:$craft corrupt each other's work when stacked, so they cannot both be loaded in one session - the compatibility rule this plugin enforces (design-docs/working-with-skills.md). Compatible crafts may coexist, but this pair may not. To do laws:$craft work, dispatch a fresh subagent seeded with only that skill and keep just its answer; do not load it here. If this whole session's job has genuinely become laws:$craft, run /clear first, then load it clean.$switch_offer"
+        deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft on top of it would corrupt your laws:$craft work - the damage runs THIS WAY ONLY, so it is this ordering that is refused, not the pairing (design-docs/working-with-skills.md). Had you loaded laws:$craft first, adding $conflicts_pretty afterwards would have been fine. Crafts otherwise coexist freely. To do laws:$craft work now, dispatch a fresh subagent seeded with only that skill and keep just its answer; do not load it here. If this whole session's job has genuinely become laws:$craft, run /clear first, then load it clean.$switch_offer"
         exit 0
     fi
     exit 0
