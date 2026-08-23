@@ -381,6 +381,17 @@ check("the same forged pid resolves when the age is older instead of younger",
       picked(run(depth=2, sleep=2, forge_age="99:00:00")) == "%99",
       "without this the forging fixture, not the age check, could be doing the work")
 
+# The walk refuses an elapsed time it cannot read rather than folding it into an
+# age of zero, and pinning that needs a value the format rejects which ageof()
+# still reads as LARGE. Garbage that folds to zero (`abc`) proves nothing here:
+# zero is younger than the descendant, so the age check refuses it and the format
+# guard could be deleted with no case noticing. `1:2:3:4` has too many fields for
+# [[dd-]hh:]mm:ss yet folds to ~62 hours, so it clears the age comparison and only
+# the format check stands between it and a claimed pane.
+done = run(depth=2, sleep=2, forge_age="1:2:3:4")
+check("an elapsed time the walk cannot read refuses the pane",
+      picked(done) == DECLINED, picked(done))
+
 # --- precedence -----------------------------------------------------------
 # Both candidates must be resolvable, or the case cannot see which one won. An
 # earlier version handed discovery the unresolvable `%5 1 0` set, so $TMUX_PANE
