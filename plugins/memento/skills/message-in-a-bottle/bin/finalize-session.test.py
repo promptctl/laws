@@ -128,20 +128,30 @@ exit $?
 """
 
 PS_FORGING = r"""#!/bin/bash
-# The real process table with one ancestor's elapsed time forged young - the
-# signature a recycled pid leaves, and the one thing no live machine will
-# produce on cue.
+# The real process table with one ancestor's elapsed time rewritten to
+# $FIXTURE_FORGE_AGE - a pid younger than the descendant claiming it is the
+# signature of a recycled pid, and the one thing no live machine will produce on
+# cue.
+#
+# The age is a parameter rather than a constant so the same wrapper can also
+# forge an age that is OLDER, which the walk must still accept. That pairing is
+# the control: both runs drive this identical rewrite of $3 for the identical
+# pid and differ only in the value written, so a wrapper that mangled `ps -eo`
+# into an unparseable table would fail the accepting run instead of quietly
+# handing the refusing one a pass it did not earn. A control that skips this
+# wrapper entirely - as the first version did - cannot see that failure mode at
+# all, because it never runs the thing it is controlling for.
 #
 # Only the whole-table form is forged. A per-pid query carries no pid column to
 # key on, so rewriting its fields would corrupt the launcher's answer instead of
-# forging an age - and a fixture that breaks the subject reports a pass it did
-# not earn. Anything else passes straight through.
+# forging an age. Anything else passes straight through.
 set -uo pipefail
 out=$(/bin/ps "$@") || exit $?
 case "${1:-}" in
   -e*) printf '%s\n' "$out" \
          | /usr/bin/awk -v forge="$(cat "$FIXTURE_ROOT_PID")" \
-             '$1 == forge { $3 = "00:00" } { print }' ;;
+                        -v age="$FIXTURE_FORGE_AGE" \
+             '$1 == forge { $3 = age } { print }' ;;
   *)   printf '%s\n' "$out" ;;
 esac
 """
@@ -163,23 +173,60 @@ FORGE_DIR = os.path.join(FIXTURES, "forge")
 os.mkdir(FORGE_DIR)
 install(FORGE_DIR, "ps", PS_FORGING)
 
+# A PATH holding everything the launcher needs and provably no tmux. The absence
+# has to be BUILT, not observed: tmux lives in /usr/bin on every mainstream Linux
+# package, so "the real directories happen to have no tmux" is a fact about this
+# machine - true where Homebrew keeps tmux in /opt, false on the platforms whose
+# `ps` the real process tree exists to exercise. Asserting it would fail the
+# whole suite on a correct implementation.
+#
+# The hazard is confined to the tmux-absent case, which runs with FIXTURES off
+# PATH. Everywhere else FIXTURES comes first and the fixture tmux shadows any
+# real one, wherever the host keeps it.
+# It mirrors REAL_DIRS entry for entry rather than listing what the launcher
+# needs. A hand-kept list rots the moment the launcher grows a call, and it fails
+# as rc 127 inside a case about something else - which is exactly what the first
+# version of this did, having omitted `dirname` and `basename`. Subtracting one
+# name from the real environment cannot drift that way.
+NO_TMUX_BIN = os.path.join(FIXTURES, "notmux")
+os.mkdir(NO_TMUX_BIN)
+for directory in REAL_DIRS.split(":"):
+    for entry in sorted(os.listdir(directory)):
+        link = os.path.join(NO_TMUX_BIN, entry)
+        # Skipping an existing link keeps REAL_DIRS' own precedence, the way a
+        # PATH search would resolve it.
+        if entry != "tmux" and not os.path.lexists(link):
+            os.symlink(os.path.join(directory, entry), link)
 
-def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge=False,
+# A live process that is provably not an ancestor of the launcher: the runner is
+# an ancestor of every `nest` chain, so a child of the runner is their sibling.
+# Structural, unlike naming a low pid and hoping the platform has one - the same
+# host-assumption the tmux directory above exists to avoid.
+STRANGER = subprocess.Popen(["sleep", "600"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge_age=None,
         rehost_at=None, tmux_pane=None, sleep=None):
     """Launch finalize-session under a real `nest` chain and return its dry-run report."""
     workdir = tempfile.mkdtemp(prefix="finalize-case.")
     pidfile = os.path.join(workdir, "root.pid")
-    path = [FIXTURES] if tmux_on_path else []
-    if forge:
+    # The two PATHs are different shapes rather than one with an entry dropped:
+    # the tmux-absent case must not carry REAL_DIRS at all, because that is
+    # precisely where a packaged tmux lives.
+    path = [FIXTURES, REAL_DIRS] if tmux_on_path else [NO_TMUX_BIN]
+    if forge_age is not None:
         path.insert(0, FORGE_DIR)
     env = {
-        "PATH": ":".join(path + [REAL_DIRS]),
+        "PATH": ":".join(path),
         "HOME": os.environ.get("HOME", workdir),
         "TMPDIR": workdir,
         "FINALIZE_DRY_RUN": "1",
         "NEST_PUBLISH_PID": pidfile,
         "FIXTURE_ROOT_PID": pidfile,
     }
+    if forge_age is not None:
+        env["FIXTURE_FORGE_AGE"] = forge_age
     if panes is not None:
         env["FIXTURE_PANES"] = panes
     if rehost_at is not None:
@@ -223,9 +270,14 @@ def picked(done):
 # a real tmux where it meant to find none, would pass while proving nothing.
 
 check("the launcher under test exists and is executable", os.access(LAUNCHER, os.X_OK), LAUNCHER)
-check("no real tmux leaks in through the bare PATH",
-      shutil.which("tmux", path=REAL_DIRS) is None,
-      "a tmux in /usr/bin or /bin would answer the fixture's cases")
+# This pins the constructed directory, not the host. Asking whether REAL_DIRS
+# holds a tmux would answer a question about the machine and fail the entire
+# suite on any Linux that packages one into /usr/bin.
+check("the tmux-absent PATH contains no tmux",
+      shutil.which("tmux", path=NO_TMUX_BIN) is None, NO_TMUX_BIN)
+check("the tmux-absent PATH can still run the launcher",
+      shutil.which("bash", path=NO_TMUX_BIN) is not None,
+      "the launcher's `#!/usr/bin/env bash` resolves bash through PATH")
 
 # --- resolution through a real ancestry -----------------------------------
 
@@ -271,8 +323,20 @@ check("a server with no panes selects no transport", picked(done) == DECLINED, p
 done = run(tmux_on_path=False)
 check("tmux absent from PATH: selects no transport", picked(done) == DECLINED, picked(done))
 
+# The promise in one case: a live pane, owned by a real process, that no ancestor
+# accounts for - and it must be refused rather than claimed for want of anything
+# better. Nothing else in the suite forces a rejection: every other pane is dead,
+# out of ancestry AND out of the walk's reach, or genuinely owned.
+done = run(depth=2, panes=f"%5 {STRANGER.pid} 0")
+check("a live pane owned by a stranger is refused, not claimed",
+      picked(done) == DECLINED, picked(done))
+
+# Distinct from the case above, and easy to mistake for it: the walk exits at
+# `pid + 0 <= 1` on reaching init, so a pane_pid of 1 is never even tested
+# against the ancestry. This pins that termination guard, not the descent match.
 done = run(depth=2, panes="%5 1 0")
-check("a pane owned by someone else is not claimed", picked(done) == DECLINED, picked(done))
+check("the walk stops at init rather than climbing past it",
+      picked(done) == DECLINED, picked(done))
 
 # --- the two forgeries a bare pid match cannot see -------------------------
 
@@ -284,11 +348,17 @@ done = run(depth=2, panes="%99 ROOTPID 1\n%98 ROOTPID 0")
 check("a live pane is still found past a dead one holding the same pid",
       picked(done) == "%98", f"rc={done.returncode} out={done.stdout!r}")
 
-done = run(depth=2, sleep=2, forge=True)
+done = run(depth=2, sleep=2, forge_age="00:00")
 check("an ancestor younger than its own descendant is refused as a recycled pid",
       picked(done) == DECLINED, picked(done))
-check("the same aged chain resolves once the elapsed time is not forged",
-      picked(run(depth=2, sleep=2)) == "%99",
+# The control runs UNDER the forging ps, differing only in the value written.
+# Re-running the chain without the wrapper would leave the one spurious-pass mode
+# open that `picked()` cannot see: a mangled process table declining cleanly with
+# the no-transport code, for a reason having nothing to do with the age check.
+# Only a run that forges and still resolves proves the wrapper leaves the subject
+# intact.
+check("the same forged pid resolves when the age is older instead of younger",
+      picked(run(depth=2, sleep=2, forge_age="99:00:00")) == "%99",
       "without this the forging fixture, not the age check, could be doing the work")
 
 # --- precedence -----------------------------------------------------------
@@ -297,6 +367,8 @@ done = run(depth=2, panes="%5 1 0", tmux_pane="%42")
 check("an inherited $TMUX_PANE wins outright and discovery never runs",
       picked(done) == "%42", f"rc={done.returncode} out={done.stdout!r}")
 
+STRANGER.terminate()
+STRANGER.wait()
 shutil.rmtree(FIXTURES, ignore_errors=True)
 print(f"\n{len(failures)} failed")
 sys.exit(1 if failures else 0)
