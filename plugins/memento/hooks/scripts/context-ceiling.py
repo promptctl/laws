@@ -180,7 +180,15 @@ def context_tokens(records: List[Dict[str, Any]]) -> int:
     Zero when the transcript holds no main-chain assistant record - which is a
     true answer (a session that has not answered yet has no context to speak of),
     not a stand-in for a failed read. `session_tail` guarantees the search saw
-    the whole file before this can happen."""
+    the whole file before this can happen.
+
+    The two arms read this at different distances from the truth, measured
+    against a live session rather than assumed: at Stop time the finishing
+    turn's own record is not in the transcript yet, so `gate` sees the PREVIOUS
+    turn's number and lands a few thousand tokens past the ceiling instead of
+    exactly on it. `notice` has no such lag - the record carrying a tool_use is
+    written before the tool runs - which is the other reason the PostToolUse arm
+    earns its keep rather than being redundant with the gate."""
     usage = _last_usage(records)
     if usage is None:
         return 0
