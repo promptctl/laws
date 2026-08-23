@@ -356,6 +356,18 @@ done = run(depth=2, panes="%99 ROOTPID 1\n%98 ROOTPID 0")
 check("a live pane is still found past a dead one holding the same pid",
       picked(done) == "%98", f"rc={done.returncode} out={done.stdout!r}")
 
+# A pane record with no dead column: the fixture's `read` leaves $dead empty, so
+# #{pane_dead} expands to nothing - which is precisely what a tmux predating that
+# format emits, since tmux renders an unknown field as the empty string rather
+# than leaving the token literal. The row reaches awk with three fields, and a
+# guard written as `$4 != 1` would read the uninitialised $4 as alive and admit
+# the pane, turning the whole dead-pane check off with nothing to show for it.
+# The positive cases above are this one's counterpart: they supply the column and
+# resolve.
+done = run(depth=2, panes="%99 ROOTPID")
+check("a pane whose liveness tmux never stated is refused, not assumed",
+      picked(done) == DECLINED, picked(done))
+
 done = run(depth=2, sleep=2, forge_age="00:00")
 check("an ancestor younger than its own descendant is refused as a recycled pid",
       picked(done) == DECLINED, picked(done))

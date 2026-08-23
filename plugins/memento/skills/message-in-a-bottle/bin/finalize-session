@@ -199,7 +199,17 @@ _discover_tmux_pane() {
       for (i = 1; i <= fields; i++) seconds = seconds * 60 + parts[i] + 0
       return days * 86400 + seconds
     }
-    $1 == "pane" { if ($4 != 1) pane[$3] = $2; next }
+    # [LAW:parse-dont-validate] a whitelist, not a blacklist of the dead value:
+    # only a row that positively asserts liveness joins the match set. tmux
+    # expands a format field it does not know to the empty string (verified on
+    # 3.6a: `#{no_such_field}` renders as nothing, it does not survive as a
+    # literal), so on a tmux predating #{pane_dead} the row arrives with three
+    # fields and an uninitialised $4 — and `$4 != 1` would read that as alive,
+    # silently reverting discovery to the bare pid match this guard exists to
+    # close. The price of strictness is that such a tmux matches no pane at all
+    # and the caller declines; that is the safe direction, and the one the
+    # elapsed-time check below already takes for the same reason.
+    $1 == "pane" { if (NF == 4 && $4 == "0") pane[$3] = $2; next }
     NF == 3      { parent[$1] = $2; elapsed[$1] = $3 }
     END {
       pid = self
