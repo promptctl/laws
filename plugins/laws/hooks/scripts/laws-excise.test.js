@@ -52,9 +52,9 @@ t('pre-load: code engaged + incoming prompt → triggers, switches away from cod
   const lines = [loadLine({ medium: 'code', uuid: 'A' })];
   const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
   assert.strictEqual(d.trigger, true);
-  assert.strictEqual(d.current, 'code');
+  assert.deepStrictEqual(d.current, ['code']);
   assert.strictEqual(d.incoming, 'prompt');
-  assert.strictEqual(d.conflictIndex, 0);
+  assert.deepStrictEqual(d.conflictIndices, [0]);
   assert.strictEqual(d.rewind.summarizeTo, 'A');           // the code load line
   assert.strictEqual(d.rewind.discardTo, null);            // its parentUuid
   assert.deepStrictEqual(d.options.map((o) => o.id), ['reject', 'tombstone', 'rewind_summarize', 'rewind_discard']);
@@ -80,7 +80,7 @@ t('pre-load: symmetry — prompt engaged + incoming code → triggers, switches 
   const lines = [loadLine({ medium: 'prompt', uuid: 'P' })];
   const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'code' });
   assert.strictEqual(d.trigger, true);
-  assert.strictEqual(d.current, 'prompt');
+  assert.deepStrictEqual(d.current, ['prompt']);
   assert.strictEqual(d.incoming, 'code');
 });
 t('pre-load: compatible set (code+prose+ticket-ish) + incoming prompt → triggers, names code', () => {
@@ -91,8 +91,8 @@ t('pre-load: compatible set (code+prose+ticket-ish) + incoming prompt → trigge
   ];
   const d = M.decide(lines, { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
   assert.strictEqual(d.trigger, true);
-  assert.strictEqual(d.current, 'code');                   // the conflicting one, not the newest (prose)
-  assert.strictEqual(d.conflictIndex, 0);
+  assert.deepStrictEqual(d.current, ['code']);                   // the conflicting one, not the newest (prose)
+  assert.deepStrictEqual(d.conflictIndices, [0]);
 });
 t('post-hoc: code+prompt both on disk → triggers; newest is incoming', () => {
   const lines = [
@@ -102,7 +102,7 @@ t('post-hoc: code+prompt both on disk → triggers; newest is incoming', () => {
   const d = M.decide(lines, { incompatiblePairs: PAIRS });
   assert.strictEqual(d.trigger, true);
   assert.strictEqual(d.incoming, 'prompt');                // newest
-  assert.strictEqual(d.current, 'code');
+  assert.deepStrictEqual(d.current, ['code']);
 });
 t('post-hoc: code+prose both on disk → NO trigger', () => {
   const lines = [
@@ -112,6 +112,93 @@ t('post-hoc: code+prose both on disk → NO trigger', () => {
   const d = M.decide(lines, { incompatiblePairs: PAIRS });
   assert.strictEqual(d.trigger, false);
 });
+// ---- more than one engaged craft conflicts with the incoming one ----------------------------
+// Unreachable under the single shipped pair, so these use a TWO-pair policy - the same shape
+// incompatible-crafts.txt is explicitly designed to grow into. The contract under test: a switch
+// retires the whole conflicting SET. Retiring one member reports success and leaves the session
+// still unable to load the craft it switched to, which is the defect the gate exists to prevent.
+const TWO_PAIRS = [['code', 'prompt'], ['prose', 'prompt']];
+// code and prose are compatible with each OTHER, so both can be engaged; both conflict with prompt.
+// The uuids are pinned rather than generated, because the rewind assertions below are ABOUT which
+// record the anchor lands on — a fixture with unpredictable uuids could not tell the oldest-anchor
+// contract from the newest-anchor bug it exists to catch.
+const said = (uuid, parentUuid, text) => JSON.stringify({
+  type: 'user', uuid, parentUuid, message: { role: 'user', content: [{ type: 'text', text }] },
+});
+const twoConflicts = () => [
+  said('c0', null, 'before any craft'),
+  loadLine({ medium: 'code', uuid: 'A', parentUuid: 'c0', ts: '2026-08-09T00:00:00.000Z' }),
+  said('c1', 'A', 'work under code'),
+  loadLine({ medium: 'prose', uuid: 'B', parentUuid: 'c1', ts: '2026-08-09T00:01:00.000Z' }),
+  said('c2', 'B', 'work under prose'),
+];
+
+t('two conflicting crafts engaged → BOTH are named, oldest first', () => {
+  const d = M.decide(twoConflicts(), { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  assert.strictEqual(d.trigger, true);
+  assert.deepStrictEqual(d.current, ['code', 'prose']);
+  assert.deepStrictEqual(d.conflictIndices, [1, 3]);
+});
+
+t('a compatible craft is never swept in with the conflicting ones', () => {
+  // Only prompt conflicts with code here, so prose must be left alone despite being engaged.
+  const d = M.decide(twoConflicts(), { incompatiblePairs: PAIRS, incomingMedium: 'prompt' });
+  assert.deepStrictEqual(d.current, ['code']);
+  assert.deepStrictEqual(d.conflictIndices, [1]);
+});
+
+t('tombstone retires EVERY conflicting craft, not just one', () => {
+  const lines = twoConflicts();
+  const d = M.decide(lines, { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  const out = M.applySwitch(lines, d, 'tombstone', {}).lines;
+  // The contract is observable through the module's own detector: after the switch, neither
+  // retired craft still reads as a live load, so a resumed session engages neither.
+  const stillLoaded = out.map((l) => { try { return M.craftMediumOf(JSON.parse(l)); } catch (_e) { return null; } })
+                         .filter(Boolean);
+  assert.deepStrictEqual(stillLoaded, [], 'a conflicting craft survived the switch: ' + stillLoaded);
+});
+
+t('the rewind anchor is the OLDEST conflict, so no older one survives above it', () => {
+  const d = M.decide(twoConflicts(), { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  // Anchoring on the newest (uuid B) would rewind to a point where code is ALREADY loaded.
+  assert.strictEqual(d.rewind.summarizeTo, 'A');
+  assert.strictEqual(d.rewind.discardTo, 'c0');
+});
+
+t('rewind_discard leaves no conflicting craft reachable', () => {
+  const lines = twoConflicts();
+  const d = M.decide(lines, { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  const out = M.applySwitch(lines, d, 'rewind_discard', { severUuid: 'sev' }).lines;
+  const leaf = JSON.parse(out[out.length - 1]);
+  assert.strictEqual(leaf.type, 'last-prompt');
+  assert.strictEqual(leaf.leafUuid, 'c0', 'landed somewhere a conflicting craft is still loaded');
+  // What matters is REACHABILITY, not attachment: a resumed session rebuilds the conversation by
+  // walking up from the leaf, so the test walks the same chain. Records below the severed link
+  // remain in the file by design (the rewind is non-destructive) and are simply never reached.
+  const byUuid = new Map();
+  for (const l of out) { let o; try { o = JSON.parse(l); } catch (_e) { continue; } if (o.uuid) byUuid.set(o.uuid, o); }
+  const reached = [];
+  for (let o = byUuid.get(leaf.leafUuid); o; o = o.parentUuid ? byUuid.get(o.parentUuid) : null) reached.push(o);
+  const survivors = reached.map(M.craftMediumOf).filter(Boolean);
+  assert.deepStrictEqual(survivors, [], 'a conflicting craft is still reachable: ' + survivors);
+});
+
+t('rewind_summarize retires every conflicting craft in the FILE, not just the reachable one', () => {
+  const lines = twoConflicts();
+  const d = M.decide(lines, { incompatiblePairs: TWO_PAIRS, incomingMedium: 'prompt' });
+  const out = M.applySwitch(lines, d, 'rewind_summarize',
+    { severUuid: 'sev', summaryUuid: 'sum', now: '2026-08-09T00:09:00.000Z', summary: 'what I did' }).lines;
+  // Reachability alone cannot see this: the anchor is the OLDEST conflict, so every other one is
+  // already severed below it. The assertion is on the file, because the rewind is non-destructive
+  // by design — the orphaned branch stays on disk, and a craft left live there is a retired craft
+  // that is still written down as loaded. [LAW:no-silent-failure]
+  const live = out.map((l) => { try { return M.craftMediumOf(JSON.parse(l)); } catch (_e) { return null; } })
+                  .filter(Boolean);
+  assert.deepStrictEqual(live, [], 'a conflicting craft is still a live load on disk: ' + live);
+  const leaf = JSON.parse(out[out.length - 1]);
+  assert.strictEqual(leaf.parentUuid, 'A', 'the summary must hang off the oldest conflict');
+});
+
 t('recommendation: shallow → tombstone, deep → rewind_summarize', () => {
   const shallow = [loadLine({ medium: 'code', uuid: 'A' })];
   assert.strictEqual(M.decide(shallow, { incompatiblePairs: PAIRS, incomingMedium: 'prompt' }).recommended, 'tombstone');
