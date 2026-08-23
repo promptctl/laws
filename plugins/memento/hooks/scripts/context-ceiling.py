@@ -19,7 +19,9 @@ non-blocking error: the session continues and the breakage is visible.
 
 import json
 import os
+import shlex
 import sys
+from pathlib import Path
 
 CEILING = int(os.environ.get("MEMENTO_CONTEXT_CEILING", 350_000))
 LAUNCHER = os.path.join(
@@ -31,6 +33,9 @@ LAUNCHER = os.path.join(
 COUNTED = ("input_tokens", "cache_creation_input_tokens",
            "cache_read_input_tokens", "output_tokens")
 
+# {launcher} arrives shell-quoted. The agent runs that line verbatim, and a plugin
+# root like ~/Library/Application Support/... would otherwise split into two arguments
+# and lose the only exit from the block.
 INSTRUCTION = """CONTEXT CEILING: this session is at ~{tokens:,} tokens, past the {ceiling:,} hard maximum. Close it out now so the next session can pick the work back up. Commit or push everything outstanding first - a handoff across a reset loses whatever is not committed - then run the close-out:
     {launcher} '<handoff message>'
 Load Skill(memento:message-in-a-bottle) for the handoff contract. That message is the ONLY thing the next session wakes up with, so it says what you were doing, exactly where you stopped, and the next concrete step. Do not start new work, and do not ask the user whether to finalize."""
@@ -44,7 +49,7 @@ def context_tokens(transcript_path):
     into this same file, and reading its usage would report a session that just
     crossed 350k as sitting at 20k. Compaction needs no handling: it shrinks the
     following record, so the latest one tracks the drop."""
-    for line in reversed(open(transcript_path, "rb").read().split(b"\n")):
+    for line in reversed(Path(transcript_path).read_bytes().split(b"\n")):
         try:
             record = json.loads(line)
         except ValueError:
@@ -61,15 +66,23 @@ tokens = context_tokens(hook["transcript_path"])
 
 if tokens >= CEILING:
     # Blocked once, never twice: a second block would spend more context on the
-    # problem that IS too much context. stop_hook_active is true only on a stop
-    # this hook already blocked, so the agent gets one forced chance and then the
-    # gate opens - saying so where the user can see it, because a ceiling that
+    # problem that IS too much context, so the agent gets one forced chance and then
+    # the gate opens - saying so where the user can see it, because a ceiling that
     # quietly gave up would be worse than no ceiling at all.
+    #
+    # The message claims the count and that the chance is spent, and leaves whether the
+    # close-out ran conditional. Deliberately: the compliant path - block, finalize,
+    # stop again - is exactly when stop_hook_active is true, so asserting failure would
+    # call every successful close-out a failure. The flag is also Claude Code's
+    # transcript-wide "a Stop hook blocked the last stop", not this hook's own, so a
+    # second Stop hook could open this gate with its block; the wording holds there too.
     print(json.dumps(
         {"systemMessage": f"memento: context ceiling breached (~{tokens:,} > "
-                          f"{CEILING:,}) and this session was NOT closed out - the "
-                          f"next session starts with nothing."}
+                          f"{CEILING:,}) and this session has spent its one forced "
+                          f"close-out attempt, so the stop proceeds. If the close-out "
+                          f"did not run, the next session starts with nothing."}
         if hook.get("stop_hook_active") else
         {"decision": "block",
-         "reason": INSTRUCTION.format(tokens=tokens, ceiling=CEILING, launcher=LAUNCHER)}
+         "reason": INSTRUCTION.format(tokens=tokens, ceiling=CEILING,
+                                      launcher=shlex.quote(LAUNCHER))}
     ))
