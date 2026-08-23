@@ -25,6 +25,7 @@ log() { printf 'claude-laws: %s\n' "$1" >&2; }
 
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXCISE="$PLUGIN_DIR/hooks/scripts/laws-excise.js"
+ROUTER="$PLUGIN_DIR/hooks/scripts/skill-router.sh"
 
 CLAUDE_BIN="${LAWS_CLAUDE_BIN:-$(command -v claude || true)}"
 [ -n "$CLAUDE_BIN" ] || { log "no 'claude' on PATH; nothing to launch"; exit 127; }
@@ -60,28 +61,53 @@ export PATH="$PLUGIN_DIR/bin:$PATH"
 
 REQUEST="$LAWS_SWITCH_DIR/request.json"
 
-# Relaunch keeps the original flags and appends --resume. A positional prompt would be re-sent on
-# relaunch; that only arises in one-shot usage, where a mid-session craft switch cannot happen.
+# The user's flags are the fixed part of every relaunch and are never rewritten; the resume is the
+# part that varies, so it is held separately and REPLACED each pass rather than appended. Appending
+# to "$@" would accumulate a second --resume on the second switch of one session.
+# A positional prompt would be re-sent on relaunch; that only arises in one-shot usage, where a
+# mid-session craft switch cannot happen.
+USER_ARGS=("$@")
+RESUME_ARGS=()
+
 while :; do
-  "$CLAUDE_BIN" "$@"
+  # bash 3.2 under `set -u` treats "${empty[@]}" as unbound, so expand through the +alternate form.
+  "$CLAUDE_BIN" ${USER_ARGS[@]+"${USER_ARGS[@]}"} ${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}
   status=$?
 
   [ -f "$REQUEST" ] || exit "$status"
 
-  applied="$(node "$EXCISE" --apply "$REQUEST" 2>&1)"
-  if [ $? -ne 0 ]; then
-    log "the craft switch could not be applied, so the transcript is unchanged:"
-    log "$applied"
+  # stdout carries the result JSON and stderr carries diagnostics, so they are kept apart: folding
+  # stderr in would let one node warning corrupt the value the next step parses. [LAW:no-silent-failure]
+  if ! applied="$(node "$EXCISE" --apply "$REQUEST")"; then
+    log "the craft switch could not be applied, so the transcript is unchanged (see the error above)"
     exit 1
   fi
   rm -f "$REQUEST"
 
-  sid="$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write(JSON.parse(d).sessionId||"")}catch(e){}})')"
-  if [ -z "$sid" ]; then
-    log "the switch was applied but the session id is missing, so the session cannot be resumed"
+  # One read of the result, tab-separated. A malformed result throws out of node rather than being
+  # caught and returned as an empty string that later reads as "no session to resume".
+  if ! parsed="$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d);process.stdout.write([r.sessionId||"",r.switchedFrom||"",r.switchedTo||"",r.choice||""].join("\t"))})')"; then
+    log "the switch was applied but its result could not be read: $applied"
+    exit 1
+  fi
+  IFS=$'\t' read -r sid switched_from switched_to choice <<< "$parsed"
+
+  if [ -z "$sid" ] || [ -z "$switched_from" ]; then
+    log "the switch was applied but names no session or no retired craft, so it cannot be completed: $applied"
     exit 1
   fi
 
-  log "$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d);console.log("switched from laws:"+r.switchedFrom+" to laws:"+r.switchedTo+" via "+r.choice+"; resuming")})')"
-  set -- "$@" --resume "$sid"
+  # The second half of retiring the craft. Without it the resumed session still holds the engaged
+  # marker and the guard refuses the craft this switch was performed to reach. The lock lives behind
+  # the router, which owns its layout. [LAW:one-source-of-truth]
+  #
+  # A failure here is loud but not fatal: the transcript surgery already happened, so refusing to
+  # relaunch would strand the user's session entirely, which is strictly worse than a session that
+  # comes back and still refuses one skill. Tell them exactly what will happen instead.
+  if ! printf '{"session_id":"%s","craft":"%s"}' "$sid" "$switched_from" | "$ROUTER" retire-craft; then
+    log "could not release laws:$switched_from from the engaged set; resuming anyway, but laws:$switched_to will still be refused this session"
+  fi
+
+  log "switched from laws:$switched_from to laws:$switched_to via $choice; resuming"
+  RESUME_ARGS=(--resume "$sid")
 done
