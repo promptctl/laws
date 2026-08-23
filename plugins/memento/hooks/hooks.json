@@ -1,23 +1,12 @@
 {
-  "description": "The context ceiling: two injection points enforcing that a session past the hard token maximum closes itself out with message-in-a-bottle before it ends. PostToolUse warns mid-turn, while the agent still has a tool loop to commit its work and write a handoff; Stop refuses to let the turn end until the close-out has run.",
+  "description": "The context ceiling: a Stop hook that refuses to let a session past the hard token maximum end its turn until it has run the message-in-a-bottle close-out.",
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/context-ceiling.py\" notice"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/context-ceiling.py\" gate"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/context-ceiling.py\""
           }
         ]
       }
