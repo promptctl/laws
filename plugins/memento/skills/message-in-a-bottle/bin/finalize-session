@@ -135,24 +135,81 @@ _find_claude_pid() {
 # "an ancestor of mine is some pane's process." Ask the territory, not the map
 # that went missing.
 #
-# [LAW:no-silent-failure] the match is pid identity and nothing else — never the
+# [LAW:no-silent-failure] the match is descent and nothing else — never the
 # working directory, never "the only pane that looks plausible." A process with
 # no pane ancestor gets no pane: this returns 1 and the caller falls through to
 # the next transport, rather than pasting a handoff into an unrelated window.
+#
+# WHY DESCENT NEEDS MORE THAN A PID. Pids are recycled, so "an ancestor's pid
+# equals a pane's pid" is not by itself proof that the pane's process is that
+# ancestor. Two forgeries are available to a recycled pid, and each is closed by
+# making the snapshot carry a fact the recycled pid cannot supply:
+#
+#   A pane outliving its process. With remain-on-exit set, a pane whose process
+#   has exited stays listed and keeps advertising that dead pid (observed: kill a
+#   pane's process and list-panes still reports its pid, with pane_dead=1). Once
+#   that pid is reissued to something in this chain, the pid match is a
+#   coincidence and the handoff lands in a window showing a corpse. #{pane_dead}
+#   is what tells them apart, so it rides along in the snapshot and dead rows
+#   never enter the match set.
+#
+#   An ancestor exiting mid-walk. Age tells this one apart: a parent is never
+#   younger than its child, so elapsed time must not decrease as the walk climbs.
+#   A pid reissued after its holder died is younger than the descendant that
+#   claimed it, and the walk stops rather than wandering into a stranger's tree.
+#
+# Together they are a proof, not a narrowing. Non-decreasing age from hop zero
+# means every matched ancestor is at least as old as this process, so it has held
+# its pid continuously since before this process existed — which is before the
+# pane list was read. Two processes cannot hold one pid at one instant, so the
+# live pane recorded at that pid is that ancestor.
+#
+# [LAW:effects-at-boundaries] both snapshots are taken here, at the edge, and the
+# resolution below is arithmetic over those two values. One whole-table ps rather
+# than a query per hop is what makes that true: pid and age are read at a single
+# instant, so nothing shifts underneath the walk.
 _discover_tmux_pane() {
-  local panes pid i pane_id pane_pid
+  local panes proctable
   command -v tmux >/dev/null 2>&1 || return 1
-  panes=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null) || return 1
+  panes=$(tmux list-panes -a -F 'pane #{pane_id} #{pane_pid} #{pane_dead}' 2>/dev/null) || return 1
   [ -n "$panes" ] || return 1
-  pid=$$
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
-    [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
-    while read -r pane_id pane_pid; do
-      if [ "$pane_pid" = "$pid" ]; then printf '%s' "$pane_id"; return 0; fi
-    done <<< "$panes"
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
-  done
-  return 1
+  proctable=$(ps -eo pid=,ppid=,etime=) || return 1
+  # The literal 'pane' lead-in is tmux labelling its own rows, so one pass can
+  # tell the two snapshots apart without a separator line to get out of step.
+  printf '%s\n%s\n' "$panes" "$proctable" | awk -v self=$$ -v maxhops=16 '
+    # ps renders elapsed time as [[dd-]hh:]mm:ss; fold it left into seconds so
+    # any of the three widths compares against any other.
+    function ageof(raw,   days, parts, fields, i, seconds) {
+      days = 0
+      if (raw ~ /-/) {
+        days = substr(raw, 1, index(raw, "-") - 1) + 0
+        raw = substr(raw, index(raw, "-") + 1)
+      }
+      fields = split(raw, parts, ":")
+      seconds = 0
+      for (i = 1; i <= fields; i++) seconds = seconds * 60 + parts[i] + 0
+      return days * 86400 + seconds
+    }
+    $1 == "pane" { if ($4 != 1) pane[$3] = $2; next }
+    NF == 3      { parent[$1] = $2; elapsed[$1] = $3 }
+    END {
+      pid = self
+      descendant_age = -1
+      for (hop = 0; hop < maxhops; hop++) {
+        if (!(pid in parent)) exit 1
+        # [LAW:parse-dont-validate] an elapsed time this cannot read is not an
+        # age of zero, which would quietly reduce the walk to bare pid matching.
+        # It is a failure to establish descent, and it refuses the pane.
+        if (elapsed[pid] !~ /^([0-9]+-)?([0-9]+:)?[0-9]+:[0-9][0-9]$/) exit 1
+        age = ageof(elapsed[pid])
+        if (age < descendant_age) exit 1
+        if (pid in pane) { print pane[pid]; exit 0 }
+        descendant_age = age
+        pid = parent[pid]
+        if (pid + 0 <= 1) exit 1
+      }
+      exit 1
+    }'
 }
 
 # The flags claude was launched with, reduced to a safe whitelist: permission
