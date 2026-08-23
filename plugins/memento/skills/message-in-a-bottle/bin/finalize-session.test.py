@@ -87,13 +87,21 @@ case "${1:-}" in
         *)  fmt="$1"; shift ;;
       esac
     done
-    known=""
+    # ':.' is not a pane id but a target expression meaning current-session:
+    # current-window.current-pane, and tmux resolves it to a REAL pane - which is
+    # why an unresolvable id rendering into ':.' was dangerous rather than merely
+    # wrong. The first live record stands in for "current" here.
+    known=""; pane_dead=""; resolved=""
     while read -r id pid dead; do
       [ -n "$id" ] || continue
-      [ "$id" = "$pane" ] && known=yes
+      [ "$id" = "$pane" ] && { known=yes; pane_dead="$dead"; resolved="$id"; }
+      [ "$pane" = ":." ] && [ "$dead" = 0 ] && [ -z "$resolved" ] \
+        && { known=yes; pane_dead="$dead"; resolved="$id"; }
     done <<< "${FIXTURE_PANES:-}"
+    pane="$resolved"
     if [ -n "$known" ]; then
       line="${fmt//\#\{pane_id\}/$pane}"
+      line="${line//\#\{pane_dead\}/$pane_dead}"
       line="${line//\#\{session_name\}/target-for-$pane}"
       line="${line//\#\{window_index\}/0}"
       line="${line//\#\{pane_index\}/0}"
@@ -101,6 +109,7 @@ case "${1:-}" in
       # Every field empty, exit 0 - tmux's actual answer for a pane it does not
       # own, and the reason ":." reaches the launcher looking like a target.
       line="${fmt//\#\{pane_id\}/}"
+      line="${line//\#\{pane_dead\}/}"
       line="${line//\#\{session_name\}/}"
       line="${line//\#\{window_index\}/}"
       line="${line//\#\{pane_index\}/}"
@@ -458,6 +467,25 @@ check("a stale $TMUX_PANE hands the question on and discovery answers it",
 done = run(depth=2, panes="%5 1 0", tmux_pane="%4242")
 check("a stale $TMUX_PANE with nothing to discover declines rather than guessing",
       picked(done) == DECLINED, picked(done))
+
+# Owning a pane and displaying a live process are different facts, and
+# remain-on-exit is what separates them: tmux keeps answering for a pane whose
+# process has exited. So an inherited $TMUX_PANE can name a pane that is real,
+# owned, and dead - it echoes its own id back exactly as a live one does, and an
+# id-only check would take it, skip discovery, and send the handoff into a corpse.
+done = run(depth=2, panes=f"%99 ROOTPID 0\n%77 {STRANGER.pid} 1", tmux_pane="%77")
+check("an inherited $TMUX_PANE naming a dead pane loses to a live discovered one",
+      picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r}")
+
+# ':.' is what an unresolvable pane id renders into, and it is not inert - tmux
+# reads it as current-session:current-window.current-pane and hands back a real,
+# live pane. Liveness cannot refuse it, because the pane it resolves to IS alive;
+# only comparing the echoed id against the id asked for can. %77 is listed first
+# so 'current' is a pane the ancestry does not own, which is what makes taking it
+# a wrong answer rather than a lucky one.
+done = run(depth=2, panes=f"%77 {STRANGER.pid} 0\n%99 ROOTPID 0", tmux_pane=":.")
+check("a $TMUX_PANE that resolves to someone else's live pane is refused",
+      picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r}")
 
 STRANGER.terminate()
 STRANGER.wait()

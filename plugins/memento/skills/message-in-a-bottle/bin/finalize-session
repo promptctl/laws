@@ -231,19 +231,6 @@ _discover_tmux_pane() {
     }'
 }
 
-# The flags claude was launched with, reduced to a safe whitelist: permission
-# mode, model, and the skip-permissions toggles — the ones that make the fresh
-# session match the user's setup. Everything else is dropped, and scanning STOPS
-# at the first positional argument.
-#
-# [LAW:types-are-the-program] this is load-bearing, not defensive. message-in-a-
-# bottle hands the message off as a positional PROMPT (iTerm2 relaunch does
-# `claude ... "$(cat msgfile)"`), so a session that was itself born from a prior
-# handoff carries a giant multi-word prompt in its own argv. The old "keep every
-# token that isn't argv0/resume" logic then splices that entire prompt into the
-# next relaunch's flag string, corrupting it. Whitelisting and halting at the
-# first positional makes that impossible by construction. [LAW:no-silent-failure]
-# we would rather drop an exotic flag than smuggle a prompt into the flags.
 # A pane id resolved to the tmux target that addresses it, or 1 if tmux does not
 # own that pane.
 #
@@ -261,15 +248,41 @@ _discover_tmux_pane() {
 # Asking for #{pane_id} alongside the target makes the reply carry its own proof:
 # a target is this pane's target only if the id tmux echoes back is the id we
 # asked about. That refuses the stale id and the degenerate ":." alike.
+#
+# The id alone is not enough, for the same reason the walk above carries
+# #{pane_dead}: owning a pane and displaying a live process are different facts,
+# and remain-on-exit separates them. A dead pane answers exactly like a live one
+# — verified on 3.6a by killing a pane's process on a scratch server, after which
+# `display-message` still exits 0 and still echoes `%0 1 t:1.1`. Admitted on the
+# id alone it would satisfy this, short-circuit the discovery that would have
+# refused it, and leave the worker sending keys into a corpse. So liveness is
+# demanded here in the same words the walk demands it: a positive "0", never the
+# absence of a "1". A tmux too old to know #{pane_dead} renders it empty and is
+# refused by both, which is the point of saying it the same way twice.
 _pane_target() {
-  local pane="${1:-}" reply
+  local pane="${1:-}" reply rest
   [ -n "$pane" ] || return 1
   reply=$(tmux display-message -p -t "$pane" \
-            '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) || return 1
+            '#{pane_id} #{pane_dead} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) || return 1
   [ "${reply%% *}" = "$pane" ] || return 1
-  printf '%s' "${reply#* }"
+  rest="${reply#* }"
+  [ "${rest%% *}" = "0" ] || return 1
+  printf '%s' "${rest#* }"
 }
 
+# The flags claude was launched with, reduced to a safe whitelist: permission
+# mode, model, and the skip-permissions toggles — the ones that make the fresh
+# session match the user's setup. Everything else is dropped, and scanning STOPS
+# at the first positional argument.
+#
+# [LAW:types-are-the-program] this is load-bearing, not defensive. message-in-a-
+# bottle hands the message off as a positional PROMPT (iTerm2 relaunch does
+# `claude ... "$(cat msgfile)"`), so a session that was itself born from a prior
+# handoff carries a giant multi-word prompt in its own argv. The old "keep every
+# token that isn't argv0/resume" logic then splices that entire prompt into the
+# next relaunch's flag string, corrupting it. Whitelisting and halting at the
+# first positional makes that impossible by construction. [LAW:no-silent-failure]
+# we would rather drop an exotic flag than smuggle a prompt into the flags.
 _claude_flags() {
   local cmd="$1" out="" tok next i n
   local -a toks
