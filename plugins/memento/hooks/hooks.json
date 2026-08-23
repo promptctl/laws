@@ -1,0 +1,15 @@
+{
+  "description": "The context ceiling: a Stop hook that refuses to let a session past the hard token maximum end its turn until it has run the message-in-a-bottle close-out.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/context-ceiling.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
