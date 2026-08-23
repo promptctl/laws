@@ -211,6 +211,50 @@ t('rewind_summarize retires every conflicting craft in the FILE, not just the re
   assert.strictEqual(leaf.parentUuid, 'A', 'the summary must hang off the oldest conflict');
 });
 
+// ---- debris on disk is not an engaged craft -------------------------------------------------
+// A rewind severs without deleting, so the retired craft survives as a well-formed craft-load
+// line on an orphan branch. Counting it again is not merely untidy: the rewind anchor is the
+// OLDEST conflict, so the stale record WINS, and the second switch of a session anchors inside
+// a branch the resumed session will never see.
+t('a craft load left on a severed branch is not engaged on the next switch', () => {
+  let lines = [
+    said('r0', null, 'start'),
+    loadLine({ medium: 'code', uuid: 'K1', parentUuid: 'r0', ts: '2026-08-09T00:01:00.000Z' }),
+    said('w1', 'K1', 'work under the first code load'),
+  ];
+  const first = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prompt' });
+  lines = M.applySwitch(lines, first, 'rewind_discard', { severUuid: 'SEV' }).lines;
+
+  // The session resumes at r0 and does fresh work, engaging code again.
+  lines.push(said('r1', 'r0', 'fresh work'),
+             loadLine({ medium: 'code', uuid: 'K2', parentUuid: 'r1', ts: '2026-08-09T00:05:00.000Z' }));
+
+  const second = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prompt' });
+  assert.deepStrictEqual(second.current, ['code'], 'the severed load was counted a second time');
+  assert.strictEqual(second.rewind.summarizeTo, 'K2', 'the anchor landed on the severed orphan');
+  assert.strictEqual(second.rewind.discardTo, 'r1');
+  // ...and the discard that used to throw now lands in the live conversation.
+  const out = M.applySwitch(lines, second, 'rewind_discard', { severUuid: 'SEV2' }).lines;
+  assert.strictEqual(JSON.parse(out[out.length - 1]).leafUuid, 'r1');
+});
+
+t('a subagent sidechain craft load is not engaged in the parent session', () => {
+  // The router isolates subagents by keying craft locks on agent_id; the gate ignoring
+  // isSidechain is that same isolation broken on the other side.
+  const sidechained = (line) => {
+    const o = JSON.parse(line);
+    o.isSidechain = true;
+    return JSON.stringify(o);
+  };
+  const lines = [
+    said('a0', null, 'start'),
+    sidechained(loadLine({ medium: 'code', uuid: 'SC', parentUuid: 'a0' })),
+  ];
+  const d = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prompt' });
+  assert.strictEqual(d.trigger, false, 'a subagent’s craft load blocked the parent session');
+  assert.strictEqual(d.reason, 'first-craft');
+});
+
 t('recommendation: shallow → tombstone, deep → rewind_summarize', () => {
   const shallow = [loadLine({ medium: 'code', uuid: 'A' })];
   assert.strictEqual(M.decide(shallow, { conflictEdges: EDGES, incomingMedium: 'prompt' }).recommended, 'tombstone');
