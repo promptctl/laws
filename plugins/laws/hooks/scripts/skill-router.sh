@@ -54,7 +54,7 @@ EOT
 # CLAUDE.md entry. Same formatting constraints as ENGAGE_TEXT: single-line, straight
 # quotes, no backslashes, so it needs no JSON escaping.
 read -r -d '' ROUTE_TEXT <<'EOT'
-Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Crafts may share a session. One ordering is refused: once laws:code is loaded, laws:prompt cannot be - laws:code degrades prompts written under it. The reverse is fine, so if a task needs both, write the prompt FIRST and turn to code after.
+Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Once laws:code is engaged, laws:prompt is refused - the code standard degrades prompts written under it. Avoid stacking crafts even where allowed; each body is large and context is scarce. Do the other craft's work in a fresh subagent seeded with only that skill - never a fork or context-inheriting subagent, which brings the engaged craft along where the guard cannot see it.
 EOT
 
 # The incompatibility policy is DATA, and it lives in one file read by BOTH enforcers -
@@ -324,7 +324,7 @@ case "$HOOK_TYPE" in
             fi
           fi
         fi
-        deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft on top of it would corrupt your laws:$craft work - the damage runs THIS WAY ONLY, so it is this ordering that is refused, not the pairing (design-docs/working-with-skills.md). Had you loaded laws:$craft first, adding $conflicts_pretty afterwards would have been fine. Crafts otherwise coexist freely. To do laws:$craft work now, dispatch a fresh subagent seeded with only that skill and keep just its answer; do not load it here. If this whole session's job has genuinely become laws:$craft, run /clear first, then load it clean.$switch_offer"
+        deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft on top of it would corrupt your laws:$craft work - the damage runs THIS WAY ONLY, so it is this ordering that is refused, not the pairing (design-docs/working-with-skills.md). To do laws:$craft work now, dispatch a fresh subagent seeded with only that skill, and keep only its answer. Not a fork, and not any subagent that inherits this conversation: it starts with the engaged craft already in its context, so it reproduces exactly this corruption - and the guard cannot catch that, because the craft lock is per-agent and records loads, not inherited context. If this session's whole job has become laws:$craft, run /clear, then load it clean.$switch_offer"
         exit 0
     fi
     exit 0
