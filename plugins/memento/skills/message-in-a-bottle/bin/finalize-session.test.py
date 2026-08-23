@@ -299,10 +299,18 @@ done = run(depth=3, panes="%1 4 0\n%99 ROOTPID 0\n%7 5 0")
 check("picks the pane that owns it, not the first pane listed",
       picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r}")
 
-# The case the whole mechanism exists for: a hop that re-hosts the session off
-# the pane's shell, taking $TMUX and $TMUX_PANE with it.
-done = run(depth=5, rehost_at=3)
-check("resolves through a `claude daemon run --bg-pty-host` re-hosting hop",
+# The case the whole mechanism exists for: a hop that re-hosts the session off the
+# pane's shell, taking $TMUX and $TMUX_PANE with it. $TMUX_PANE must be SET here,
+# and set to a pane the ancestry does not own - otherwise the shim's `env -u` has
+# nothing to strip and the case quietly degrades into another depth-6 chain,
+# passing just as well with the strip deleted outright.
+#
+# This and the inherited-$TMUX_PANE case at the end are the two directions of one
+# precedence rule - the environment wins while the chain is intact, discovery wins
+# once a re-host has broken it. They look alike and are not: neither can be
+# dropped as a duplicate of the other.
+done = run(depth=5, rehost_at=3, tmux_pane="%77")
+check("a re-hosting hop drops the stale $TMUX_PANE and discovery wins",
       picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
 
 # --- no pane to be had ----------------------------------------------------
