@@ -168,8 +168,12 @@ switch_payload() { # <session_id> <skill> <transcript_path>
 }
 
 swdir=$(mktemp -d)
+# The transcript must really exist: the guard now refuses to advertise a switch backed by a
+# path it cannot resolve, so a fixture pointing at a nonexistent file would test the refusal
+# rather than the offer.
+sw1=$(mktemp "$TMPDIR/sw1.XXXXXX.jsonl")
 run guard "$(skill_payload SW1 laws:code)" >/dev/null            # engage code
-out=$(LAWS_SWITCH_DIR="$swdir" printf '%s' "$(switch_payload SW1 laws:prompt /tmp/sw1.jsonl)" | LAWS_SWITCH_DIR="$swdir" "$ROUTER" guard 2>/dev/null)
+out=$(LAWS_SWITCH_DIR="$swdir" printf '%s' "$(switch_payload SW1 laws:prompt "$sw1")" | LAWS_SWITCH_DIR="$swdir" "$ROUTER" guard 2>/dev/null)
 assert_deny "under claude-laws, the deny still refuses and also offers the switch" \
   "$out" "laws:code" "laws:prompt" "laws-switch" "rewind_summarize"
 case "$out" in
@@ -184,7 +188,7 @@ if [ -f "$swdir/pending.json" ]; then
     *) bad "  ... pending.json has the wrong shape (got: $pend)";;
   esac
   case "$pend" in
-    *'/tmp/sw1.jsonl'*) ok "  ... and the transcript the launcher must operate on";;
+    *"$sw1"*) ok "  ... and the transcript the launcher must operate on";;
     *) bad "  ... pending.json is missing the transcript path (got: $pend)";;
   esac
 else
@@ -270,6 +274,76 @@ run guard "$(skill_payload R5x laws:prose)" >/dev/null
 printf '%s' "$(retire_payload R5x ../../R5/main/code)" | "$ROUTER" retire-craft >/dev/null 2>&1
 assert_deny "a traversal craft name cannot release another session's marker" \
   "$(run guard "$(skill_payload R5 laws:prompt)")" "laws:code"
+
+# 11. The switch is offered ONLY where it can be enacted. Each case below is a session that
+#     would be told to run laws-switch and then find no route - the offer must be withheld
+#     instead, and the deny itself must survive intact every time.
+sub_payload() { # <session_id> <agent_id> <skill> <transcript_path>
+  printf '{"session_id":"%s","agent_id":"%s","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$1" "$2" "$4" "$3"
+}
+
+# 11a. A SUBAGENT must never be offered it. laws-switch would end the session through the
+#      launcher's inspector - killing the PARENT - and operate on the parent's transcript.
+#      The subagent escape hatch the deny recommends would destroy its own caller.
+swdir2=$(mktemp -d); sw2=$(mktemp "$TMPDIR/sw2.XXXXXX.jsonl")
+printf '%s' "$(sub_payload SUB1 AGENT7 laws:code "$sw2")"   | LAWS_SWITCH_DIR="$swdir2" "$ROUTER" guard >/dev/null 2>&1
+out=$(printf '%s' "$(sub_payload SUB1 AGENT7 laws:prompt "$sw2")" | LAWS_SWITCH_DIR="$swdir2" "$ROUTER" guard 2>/dev/null)
+assert_deny "a subagent is still refused the incompatible craft" "$out" "laws:code" "laws:prompt"
+case "$out" in
+  *"laws-switch"*) bad "  ... but was offered a switch that would kill its parent session";;
+  *) ok "  ... and is offered no switch that would kill its parent session";;
+esac
+[ -f "$swdir2/pending.json" ] && bad "  ... and wrote a pending decision the parent would enact" \
+                              || ok "  ... and wrote no pending decision for the parent to enact"
+rm -rf "$swdir2"
+
+# 11b. A transcript path that does not resolve. json_field's grammar truncates at an embedded
+#      quote, so a mangled read reaches here as a path to nothing; acting on it would write a
+#      pending.json naming a transcript the launcher cannot operate on.
+swdir3=$(mktemp -d)
+run guard "$(skill_payload SW3 laws:code)" >/dev/null
+out=$(printf '%s' "$(switch_payload SW3 laws:prompt "$TMPDIR/does-not-exist.jsonl")" | LAWS_SWITCH_DIR="$swdir3" "$ROUTER" guard 2>/dev/null)
+assert_deny "an unresolvable transcript path still refuses the load" "$out" "laws:code"
+case "$out" in
+  *"laws-switch"*) bad "  ... but offered a switch backed by a transcript that does not exist";;
+  *) ok "  ... and offers no switch backed by a transcript that does not exist";;
+esac
+rm -rf "$swdir3"
+
+# 11c. A quote in a real transcript path must land ESCAPED, so pending.json stays parseable.
+#      This is the case the old json_field contract comment wrongly claimed could not arise.
+swdir4=$(mktemp -d); qdir=$(mktemp -d)
+qpath="$qdir/say\"hi\".jsonl"; : > "$qpath"
+run guard "$(skill_payload SW4 laws:code)" >/dev/null
+printf '{"session_id":"SW4","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}' \
+  "$(printf '%s' "$qpath" | sed 's/"/\\"/g')" | LAWS_SWITCH_DIR="$swdir4" "$ROUTER" guard >/dev/null 2>&1
+if [ -f "$swdir4/pending.json" ]; then
+  if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$swdir4/pending.json" 2>/dev/null; then
+    ok "pending.json stays valid JSON when the transcript path contains a quote"
+  else
+    bad "pending.json is unparseable with a quote in the path (got: $(cat "$swdir4/pending.json"))"
+  fi
+else
+  # Withholding the offer is also correct here - what must never happen is a corrupt file.
+  ok "pending.json stays valid JSON when the transcript path contains a quote (offer withheld)"
+fi
+rm -rf "$swdir4" "$qdir"
+
+# 11d. An unwritable switch dir. The directory existing does not make it writable, and an
+#      offer whose decision never landed sends the agent to "no pending craft switch".
+swdir5=$(mktemp -d); sw5=$(mktemp "$TMPDIR/sw5.XXXXXX.jsonl"); chmod 500 "$swdir5"
+run guard "$(skill_payload SW5 laws:code)" >/dev/null
+out=$(printf '%s' "$(switch_payload SW5 laws:prompt "$sw5")" | LAWS_SWITCH_DIR="$swdir5" "$ROUTER" guard 2>/dev/null)
+err=$(printf '%s' "$(switch_payload SW5 laws:prompt "$sw5")" | LAWS_SWITCH_DIR="$swdir5" "$ROUTER" guard 2>&1 >/dev/null)
+case "$out" in
+  *"laws-switch"*) bad "an unwritable switch dir still advertised the switch";;
+  *) ok "an unwritable switch dir offers no switch";;
+esac
+case "$err" in
+  *"could not record the pending craft switch"*) ok "  ... and says so on stderr rather than failing quietly";;
+  *) bad "  ... and warned nothing (got: $err)";;
+esac
+chmod 700 "$swdir5"; rm -rf "$swdir5"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

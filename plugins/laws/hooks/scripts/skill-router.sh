@@ -23,11 +23,17 @@
 # CLAUDE.md to stay loaded. Engagement rides along in the same per-message text.
 #
 # No external dependencies - pure bash (3.2+), so it runs anywhere Claude Code does.
-# The guard parses a few string fields out of the hook's JSON stdin without jq; that is
-# safe here because every field it reads (session_id, agent_id, source, tool_name, and
-# tool_input.skill) is a constrained token - a UUID, a hex id, a lowercase word, or a
-# skill name like "laws:code" - none of which can contain a quote, backslash, or newline
-# that would need real JSON decoding.
+# The guard parses a few string fields out of the hook's JSON stdin without jq. That is
+# sound for the CONSTRAINED tokens - session_id, agent_id, source, tool_name, and
+# tool_input.skill are a UUID, a hex id, a lowercase word, or a skill name like
+# "laws:code", none of which can contain a quote, backslash, or newline that would need
+# real JSON decoding.
+#
+# transcript_path is the one field that is NOT such a token: it is an absolute filesystem
+# path, and a quote or backslash in it truncates json_field's "[^"]*" grammar mid-value.
+# The read is therefore treated as untrusted rather than assumed exact - the guard requires
+# the extracted path to name an existing file before it will act on it, so a mangled read
+# withholds the switch offer instead of writing a corrupt one. See the guard branch below.
 
 HOOK_TYPE="$1"
 
@@ -132,25 +138,27 @@ EOF
 }
 
 # --- emitters -------------------------------------------------------------------------
-# The two substitutions are defensive: the routing text as written needs no escaping, but
-# a later edit could reintroduce a backslash or newline, and either would silently break
-# the emitted JSON. Escaping them here keeps that guarantee off the editor's memory.
-emit() {
-  local ctx=$2
-  ctx=${ctx//\\/\\\\}
-  ctx=${ctx//$'\n'/ }
-  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$1" "$ctx"
+# Escaping a value for inclusion in a JSON string. Every emitter and every file this script
+# writes goes through here, so the rule has one home instead of a copy per call site that
+# can drift - the divergence [LAW:one-source-of-truth] exists to prevent. Backslash first,
+# or it would re-escape the escapes the other substitutions introduce.
+json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  printf '%s' "${s//$'\n'/\\n}"
 }
 
-# Refuse the tool call and hand the reason back to the agent. The reason is assembled
-# below from a skill name, so it can carry a quote in principle; escape all three JSON
-# metacharacters, not just the two emit() handles.
+# The escaping is defensive here: the routing text as written needs none, but a later edit
+# could reintroduce a backslash or newline, and either would silently break the emitted JSON.
+emit() {
+  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$1" "$(json_escape "$2")"
+}
+
+# Refuse the tool call and hand the reason back to the agent. The reason is assembled below
+# from a skill name, so it can carry a quote in principle.
 deny() {
-  local reason=$1
-  reason=${reason//\\/\\\\}
-  reason=${reason//\"/\\\"}
-  reason=${reason//$'\n'/ }
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$(json_escape "$1")"
 }
 
 case "$HOOK_TYPE" in
@@ -243,12 +251,35 @@ case "$HOOK_TYPE" in
         # VALUE - empty when unavailable - and always appended, so the deny path itself is the
         # same code every time. [LAW:dataflow-not-control-flow]
         switch_offer=""
-        if [ -n "${LAWS_SWITCH_DIR:-}" ] && [ -d "${LAWS_SWITCH_DIR:-}" ]; then
+        # A SUBAGENT IS NEVER OFFERED THE SWITCH, and this is the load-bearing condition.
+        # A subagent shares the parent's session_id and is told apart only by agent_id, but
+        # laws-switch carries neither: it writes one unscoped pending.json and ends the session
+        # through the launcher's inspector - which terminates the PARENT, and runs the surgery
+        # against the parent's conversation. The subagent escape hatch this very deny recommends
+        # would kill its caller. Only the launcher-owned main session has a relaunch to hand a
+        # decision to, so anywhere else the switch is a route that does not exist.
+        # [LAW:composability] no hidden dependence on being the top-level session - it is checked.
+        if [ -z "$aid" ] && [ -n "${LAWS_SWITCH_DIR:-}" ] && [ -d "${LAWS_SWITCH_DIR:-}" ]; then
           transcript=$(json_field transcript_path)
-          if [ -n "$transcript" ]; then
-            printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
-              "$sid" "$transcript" "$other" "$craft" > "$LAWS_SWITCH_DIR/pending.json" || true
-            switch_offer=" OR SWITCH: this session can move to laws:$craft by retiring laws:$other, keeping your work on disk either way. Run 'laws-switch <option>': reject (stay in laws:$other, change nothing); tombstone (keep the whole conversation, retire the laws:$other guidance in place - cheapest to reason about, most expensive when the session is deep); rewind_summarize --summary '<what you did since laws:$other loaded>' (rewind to that point and carry your work forward as a summary you write now, because after the rewind only you know it - summarize YOUR WORK ONLY and carry none of laws:$other's guidance into it, or you re-inject the guidance this switch exists to retire); rewind_discard (rewind to just before laws:$other loaded and drop the conversation since). Files you have written are never reverted by any option. Ask the user which they want unless they have already said."
+          # A transcript path is not a constrained token (see the header), so the extraction is
+          # not assumed exact - it has to name a file that is really there. A path truncated at
+          # an embedded quote fails this and the deny goes out with no switch, rather than
+          # advertising one backed by a corrupt pending.json. [LAW:parse-dont-validate] the check
+          # yields a path known to resolve, not a promise that it does.
+          if [ -f "$transcript" ]; then
+            if printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
+                 "$(json_escape "$sid")" "$(json_escape "$transcript")" \
+                 "$(json_escape "$other")" "$(json_escape "$craft")" \
+                 > "$LAWS_SWITCH_DIR/pending.json"; then
+              switch_offer=" OR SWITCH: this session can move to laws:$craft by retiring laws:$other, keeping your work on disk either way. Run 'laws-switch <option>': reject (stay in laws:$other, change nothing); tombstone (keep the whole conversation, retire the laws:$other guidance in place - cheapest to reason about, most expensive when the session is deep); rewind_summarize --summary '<what you did since laws:$other loaded>' (rewind to that point and carry your work forward as a summary you write now, because after the rewind only you know it - summarize YOUR WORK ONLY and carry none of laws:$other's guidance into it, or you re-inject the guidance this switch exists to retire); rewind_discard (rewind to just before laws:$other loaded and drop the conversation since). Files you have written are never reverted by any option. Ask the user which they want unless they have already said."
+            else
+              # The offer is only made when the decision it depends on was actually recorded.
+              # Advertising it after a failed write would send the agent to laws-switch to be told
+              # "no pending craft switch" - which contradicts the deny it is holding and points it
+              # at the wrong diagnosis. Withhold the offer and say why, matching the empty-session_id
+              # and unwritable-lock branches above. [LAW:no-silent-failure]
+              echo "laws skill-router guard: could not record the pending craft switch in $LAWS_SWITCH_DIR; denying without a switch offer" >&2
+            fi
           fi
         fi
         deny "Craft already engaged this session: laws:$other. It and laws:$craft corrupt each other's work when stacked, so they cannot both be loaded in one session - the compatibility rule this plugin enforces (design-docs/working-with-skills.md). Compatible crafts may coexist, but this pair may not. To do laws:$craft work, dispatch a fresh subagent seeded with only that skill and keep just its answer; do not load it here. If this whole session's job has genuinely become laws:$craft, run /clear first, then load it clean.$switch_offer"
