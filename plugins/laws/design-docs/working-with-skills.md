@@ -24,14 +24,37 @@ that is the failure that has ruined a session here. The reverse is not a failure
 write a prompt first, turn to code afterwards, and both come out fine, so the guard
 allows it. It is not a mutually incompatible pair; it is a one-way edge.
 
-That asymmetry has a practical consequence worth planning around. If a task needs both
-media, **do the prompt first.** Ordering the work that way costs nothing and leaves the
-session free to pick up code afterwards; ordering it the other way puts the session in a
-state where the prompt work can only be reached by retiring the code craft.
+## Don't stack crafts even where the guard allows it
 
-When you do need a craft the session's current state refuses, you don't load it here:
-consult it through a disposable subagent, or - if the session's whole job has become
-that craft - /clear and load it clean.
+The guard enforces correctness, and correctness is not the only cost. A craft body is
+large, and two of them in one context window is a real price paid out of the budget the
+actual work needs. So the ordering rule is the floor, not the goal: **prefer doing the
+second craft's work in a subagent, whatever the order.** The legal ordering is a
+fallback for when that is impractical, not the thing to aim for.
+
+That means the answer to "this task needs a prompt and some code" is not "sequence them
+carefully in one session." It is: do one of them here, and dispatch the other.
+
+### The subagent must be a fresh one
+
+This is the part that is easy to get wrong, because the obvious convenience is exactly
+the thing that breaks it.
+
+A **fresh** subagent starts with an empty context, loads only the craft it needs, and
+returns its answer. That is sound. A **fork** - any subagent that inherits the parent's
+conversation - is not: it carries the parent's already-loaded craft body along with it,
+so it does the work under precisely the standard we were trying to keep away from it.
+
+The guard cannot save you here. The craft lock is keyed by session *and agent*, so a
+forked agent gets a fresh, empty lock slot and the guard will happily allow the load -
+the lock records what was *loaded*, not what was *inherited*, and a fork is the case
+where those two diverge. Nothing will refuse it and nothing will warn you.
+
+The cost of a fresh agent is that you must write the task context into its prompt
+instead of getting it for free. That is the correct price.
+
+If the session's whole job has become that craft, the other option is /clear and load it
+clean.
 
 ## What to read instead
 
