@@ -57,7 +57,6 @@ t('pre-load: code engaged + incoming prompt → triggers, switches away from cod
   assert.strictEqual(d.conflictIndex, 0);
   assert.strictEqual(d.rewind.summarizeTo, 'A');           // the code load line
   assert.strictEqual(d.rewind.discardTo, null);            // its parentUuid
-  assert.strictEqual(d.rewind.summaryExcludesCraft, true);
   assert.deepStrictEqual(d.options.map((o) => o.id), ['reject', 'tombstone', 'rewind_summarize', 'rewind_discard']);
 });
 t('pre-load: code engaged + incoming prose → NO trigger (compatible coexist)', () => {
@@ -265,7 +264,7 @@ t('rewindTo carries the sessionId off the anchor record, not from the caller', (
 });
 t('rewindTo composes with exciseAt: rewind_summarize keeps the tombstoned craft line as the leaf', () => {
   // Option 3 anchors ON the craft-load line: it is tombstoned, stays rooted, and everything the
-  // session did after it is stranded — the ordering contract decide() carries as summaryExcludesCraft.
+  // session did after it is stranded. Excise-first keeps the tombstone ON the leaf the rewind lands on.
   const lines = [
     chainLine('root', null, 'earlier work'),
     loadLine({ medium: 'code', uuid: 'K', parentUuid: 'root' }),

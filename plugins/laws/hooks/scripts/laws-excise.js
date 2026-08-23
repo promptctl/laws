@@ -132,11 +132,19 @@ function newest(hitList) {
 // Rewind is conversation-only and NEVER reverts code, so on-disk file deliverables survive EVERY
 // option, 'discard' included. The frontier is over conversation context + cache cost, not on-disk work.
 //
-// ORDERING INVARIANT for #3 (rewind_summarize): the craft is TOMBSTONED BEFORE the summary is
-// generated, never after — otherwise the summarizer would see the law text and could fold it back
-// in, re-injecting the exact guidance we are excising. Excise-first means the summary source already
-// shows [TOMBSTONE] where the craft body was. (decide() carries this as rewind.summaryExcludesCraft;
-// the injected tool sequences excise → summarize.)
+// WHAT PROTECTS #3 (rewind_summarize), stated honestly. The risk is that the summary folds the
+// craft's guidance back in and re-injects the very text the switch excised. An earlier design
+// claimed to prevent this by tombstoning BEFORE the summary was composed — that ordering is NOT
+// achievable here and the claim has been removed rather than left to reassure a reader. The
+// summary can only be written from the live session's own context, and that context necessarily
+// still holds the craft: the live message store is closure-local, so nothing can excise the craft
+// from a running session's context before asking it to summarize (see hooks/injector/SEAMS.md).
+// The excise does run before the summary is APPENDED TO THE FILE, but that is file ordering and
+// buys nothing against a summary already composed under the craft's influence.
+// So the protection that actually acts is the INSTRUCTION the agent composes against — carried in
+// the deny message and in laws-switch's usage — which tells it to summarize its work and not the
+// craft's guidance. That is a weaker guarantee than a structural one, and it is named here as
+// weaker so no future reader mistakes it for enforcement. [LAW:comments-carry-meaning]
 const SWITCH_OPTIONS = [
   { id: 'reject',           keeps: 'everything — stay in the current craft',              cache: 'none',       reclaim: 'none' },
   { id: 'tombstone',        keeps: 'full conversation, verbatim',                         cache: 'worst-deep', reclaim: 'craft body only' },
@@ -190,12 +198,13 @@ function decide(rawLines, opts = {}) {
     current, incoming, deep,
     tombstoneTokens,                                       // the cost that varies with depth (option 'tombstone')
     conflictIndex: target.i,                               // the line the injector tombstones (option 'tombstone')
-    // Auto-targets for the native-rewind options, so the user never hunts for the craft message:
+    // Auto-targets for the rewind options, so the user never hunts for the craft message:
     //   summarizeTo = the switched-away craft's load line  (#3: rewind-to-craft, then tombstone + summarize)
     //   discardTo   = the message before it                (#4: rewind-to-pre-craft, then discard)
-    // summaryExcludesCraft: #3 must tombstone the craft BEFORE summarizing — an execution-ORDER
-    //   contract for the tool (excise → summarize), so the craft can never leak into the summary.
-    rewind: { summarizeTo: cur.uuid, discardTo: cur.parentUuid, summaryExcludesCraft: true },
+    // A summaryExcludesCraft flag used to ride along here asserting that the craft could never leak
+    // into the summary. Nothing consumed it and the flow does not deliver it, so it is gone rather
+    // than left as a constant that reads like a guarantee. [LAW:types-are-the-program]
+    rewind: { summarizeTo: cur.uuid, discardTo: cur.parentUuid },
     options: SWITCH_OPTIONS,
     recommended: deep ? 'rewind_summarize' : 'tombstone',
   };
@@ -307,10 +316,11 @@ const SWITCH_ACTIONS = {
   // Keep the whole conversation; empty only the superseded craft's guidance.
   tombstone: (lines, d) => ({ lines: exciseAt(lines, [d.conflictIndex], d.incoming).lines, resume: true }),
 
-  // Excise FIRST, then rewind, then attach the summary. The order is the contract decide() carries
-  // as rewind.summaryExcludesCraft: the agent writes the summary from its own live context, so the
-  // craft body must already be a tombstone by the time this text is composed — which is why the
-  // summary arrives as an argument rather than being generated here.
+  // Excise, then rewind, then attach the summary. Excising first keeps the tombstone on the leaf
+  // that the rewind then lands on; it is NOT a guard against the craft leaking into the summary,
+  // which was already composed inside the live session (see the note on SWITCH_OPTIONS). The
+  // summary arrives as an argument because only the live agent can write it — after the rewind
+  // the context it describes no longer exists.
   rewind_summarize: (lines, d, env) => {
     if (!env.summary) throw new Error('rewind_summarize: a summary is required (the live agent writes it)');
     const excised = exciseAt(lines, [d.conflictIndex], d.incoming).lines;

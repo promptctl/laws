@@ -48,8 +48,12 @@ if (choice === 'reject') {
   process.exit(0);
 }
 
+// The summary is the one place the excised craft can climb back into the conversation: it is
+// composed while that craft is still fully loaded, and nothing can strip it from a running
+// session's context first. This instruction is the only thing standing in the way, so it says so
+// outright rather than assuming the point is obvious. [LAW:no-silent-failure]
 if (choice === 'rewind_summarize' && !summary) {
-  die('rewind_summarize needs --summary "<what you did since the craft loaded>". You are the only one who can write it: the summary is composed from your live context, and after the rewind that context is gone.', 2);
+  die('rewind_summarize needs --summary "<what you did since the craft loaded>". You are the only one who can write it: the summary is composed from your live context, and after the rewind that context is gone. Summarize YOUR WORK ONLY — what you did, decided, and left unfinished. Do NOT restate, paraphrase, or carry over any of the retiring craft\'s guidance, rules, or vocabulary: that guidance is being excised on purpose, and a summary that smuggles it back in defeats the switch you asked for.', 2);
 }
 
 fs.writeFileSync(path.join(dir, 'request.json'), JSON.stringify({
