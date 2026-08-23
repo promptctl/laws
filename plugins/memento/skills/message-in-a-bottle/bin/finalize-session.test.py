@@ -73,12 +73,42 @@ case "${1:-}" in
     done <<< "$FIXTURE_PANES"
     ;;
   display-message)
-    pane=""
+    # Real tmux does NOT validate -t here: for a pane no server owns it exits 0
+    # with every field empty, so the launcher's format renders as the bare ":."
+    # - non-empty, and a live tmux address for the CURRENT pane at that. Modelling
+    # this as a failure would be the comfortable lie; it is what let a stale
+    # $TMUX_PANE retarget the handoff unnoticed. Known panes echo their id and a
+    # target naming them, so an assertion can see which pane won.
+    pane=""; fmt=""
     while [ $# -gt 0 ]; do
-      case "$1" in -t) pane="${2:-}"; shift 2 ;; *) shift ;; esac
+      case "$1" in
+        -t) pane="${2:-}"; shift 2 ;;
+        -p) shift ;;
+        *)  fmt="$1"; shift ;;
+      esac
     done
-    [ -n "$pane" ] || exit 1
-    printf '%s\n' "target-for-$pane"
+    known=""
+    while read -r id pid dead; do
+      [ -n "$id" ] || continue
+      [ "$id" = "$pane" ] && known=yes
+    done <<< "${FIXTURE_PANES:-}"
+    if [ -n "$known" ]; then
+      line="${fmt//\#\{pane_id\}/$pane}"
+      line="${line//\#\{session_name\}/target-for-$pane}"
+      line="${line//\#\{window_index\}/0}"
+      line="${line//\#\{pane_index\}/0}"
+    else
+      # Every field empty, exit 0 - tmux's actual answer for a pane it does not
+      # own, and the reason ":." reaches the launcher looking like a target.
+      line="${fmt//\#\{pane_id\}/}"
+      line="${line//\#\{session_name\}/}"
+      line="${line//\#\{window_index\}/}"
+      line="${line//\#\{pane_index\}/}"
+    fi
+    case "$line" in
+      *'#{'*) echo "fixture tmux: cannot expand '$fmt'" >&2; exit 2 ;;
+    esac
+    printf '%s\n' "$line"
     ;;
   *) echo "fixture tmux: unexpected subcommand ${1:-}" >&2; exit 2 ;;
 esac
@@ -259,7 +289,9 @@ def picked(done):
     """
     for line in done.stdout.splitlines():
         if line.startswith("[dry-run] transport=tmux target=target-for-"):
-            return line.split("target-for-", 1)[1].split(" ", 1)[0]
+            # The fixture's target is `target-for-<pane>:0.0`; take the pane back
+            # out of it rather than matching the whole rendered string.
+            return line.split("target-for-", 1)[1].split(" ", 1)[0].split(":", 1)[0]
     if done.returncode == NO_TRANSPORT_RC:
         return DECLINED
     return f"<no decision: rc={done.returncode} out={done.stdout!r} err={done.stderr!r}>"
@@ -309,7 +341,15 @@ check("picks the pane that owns it, not the first pane listed",
 # precedence rule - the environment wins while the chain is intact, discovery wins
 # once a re-host has broken it. They look alike and are not: neither can be
 # dropped as a duplicate of the other.
-done = run(depth=5, rehost_at=3, tmux_pane="%77")
+#
+# %77 has to be a pane tmux still owns, not merely a name in the environment.
+# Once the launcher learned to hand a stale $TMUX_PANE on to discovery, an
+# unresolvable %77 reached %99 whether or not the strip ran, and this case went
+# quiet again - the same inertness in a new disguise, introduced by making the
+# launcher more forgiving. A live %77 is one discovery would never choose, so
+# only the strip can decide the outcome.
+done = run(depth=5, rehost_at=3, tmux_pane="%77",
+           panes=f"%99 ROOTPID 0\n%77 {STRANGER.pid} 0")
 check("a re-hosting hop drops the stale $TMUX_PANE and discovery wins",
       picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
 
@@ -399,9 +439,25 @@ check("an elapsed time the walk cannot read refuses the pane",
 # that read as pinning precedence while pinning nothing. Here discovery can reach
 # %99 and the environment names %42, so the two genuinely compete.
 
-done = run(depth=2, tmux_pane="%42")
+done = run(depth=2, panes=f"%99 ROOTPID 0\n%42 {STRANGER.pid} 0", tmux_pane="%42")
 check("an inherited $TMUX_PANE wins outright and discovery never runs",
       picked(done) == "%42", f"rc={done.returncode} out={done.stdout!r}")
+
+# A $TMUX_PANE naming a pane that has since gone - the map outliving its
+# territory, which is the whole reason discovery exists. It must not be able to
+# consume the attempt: tmux answers display-message for an unowned pane with exit
+# 0 and empty fields, so the target renders as the bare ":." - non-empty, and a
+# live tmux address for whatever pane is current. Taking it would hand the session
+# to whichever window the user happened to be looking at.
+done = run(depth=2, tmux_pane="%4242")
+check("a stale $TMUX_PANE hands the question on and discovery answers it",
+      picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r}")
+
+# And with nothing to fall back to, the answer is still no pane - never the ":."
+# that an unresolvable id renders into.
+done = run(depth=2, panes="%5 1 0", tmux_pane="%4242")
+check("a stale $TMUX_PANE with nothing to discover declines rather than guessing",
+      picked(done) == DECLINED, picked(done))
 
 STRANGER.terminate()
 STRANGER.wait()

@@ -244,6 +244,32 @@ _discover_tmux_pane() {
 # next relaunch's flag string, corrupting it. Whitelisting and halting at the
 # first positional makes that impossible by construction. [LAW:no-silent-failure]
 # we would rather drop an exotic flag than smuggle a prompt into the flags.
+# A pane id resolved to the tmux target that addresses it, or 1 if tmux does not
+# own that pane.
+#
+# [LAW:parse-dont-validate] display-message cannot be asked this question
+# directly, because it answers the same way whether or not the pane exists: given
+# a pane id no server owns it exits 0 with every field empty, so the target format
+# renders as the literal ":." — an answer-shaped void, non-empty and therefore
+# indistinguishable from a real target to any caller that only checks emptiness.
+# Worse, tmux then reads ":." as a live address meaning current-session:current-
+# window.current-pane, so a stale pane id does not fail loudly; it silently
+# retargets the handoff at whatever the user happens to be looking at when the
+# worker fires. (Verified on tmux 3.6a: `display-message -t %4242` exits 0 and
+# renders ":.", while `list-panes -t %4242` exits 1.)
+#
+# Asking for #{pane_id} alongside the target makes the reply carry its own proof:
+# a target is this pane's target only if the id tmux echoes back is the id we
+# asked about. That refuses the stale id and the degenerate ":." alike.
+_pane_target() {
+  local pane="${1:-}" reply
+  [ -n "$pane" ] || return 1
+  reply=$(tmux display-message -p -t "$pane" \
+            '#{pane_id} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) || return 1
+  [ "${reply%% *}" = "$pane" ] || return 1
+  printf '%s' "${reply#* }"
+}
+
 _claude_flags() {
   local cmd="$1" out="" tok next i n
   local -a toks
@@ -386,12 +412,15 @@ case "$MODE" in
     # process is a child of the pane's shell, discovered from ancestry when a
     # daemon broke that chain — and they collapse to a single value here so no
     # code below has to know which spelling answered. [LAW:one-source-of-truth]
-    PANE="${TMUX_PANE:-}"
-    [[ -n "$PANE" ]] || PANE=$(_discover_tmux_pane) || PANE=""
-    if [[ -n "$PANE" ]] \
-       && TARGET=$(tmux display-message -p -t "$PANE" \
-            '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) \
-       && [[ -n "$TARGET" ]]; then
+    # Each spelling is accepted only once tmux confirms it still names that pane,
+    # and a spelling that fails to resolve hands the question on rather than
+    # consuming the attempt. The inherited copy going stale is the same "the map
+    # went missing" failure discovery exists for, so it must not be able to lose
+    # the handoff on discovery's behalf. [FRAMING:representation]
+    TARGET=$(_pane_target "${TMUX_PANE:-}") \
+      || TARGET=$(_pane_target "$(_discover_tmux_pane || true)") \
+      || TARGET=""
+    if [[ -n "$TARGET" ]]; then
       if [[ -n "${FINALIZE_DRY_RUN:-}" ]]; then
         echo "[dry-run] transport=tmux target=$TARGET reset=/$RESET msgfile=$MSGFILE"
         echo "[dry-run] carried goal: ${GOAL:-(none)}"
