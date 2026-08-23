@@ -1,3 +1,11 @@
 # Local research scratch — reference material, not part of the deliverable.
 eval-docs/
 skill_content_analysis/
+
+# Claude Code plugin bookkeeping. This repo is registered as a directory-source
+# marketplace, so its install location IS the working tree — Claude writes its
+# per-PID liveness registry here instead of under ~/.claude/plugins/cache/.
+.in_use/
+
+# Python bytecode from the address-pr-reviews provider modules.
+__pycache__/
