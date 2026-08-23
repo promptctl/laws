@@ -61,11 +61,24 @@ function connect(wsurl, { timeoutMs = 15000 } = {}) {
     }
     resolve(m);
   };
+  // The connect timeout is CLEARED once `ready` settles, because a pending Node timer keeps the
+  // event loop alive: left running, every user of this module sat for the full timeoutMs after
+  // its work was done (measured: work complete at 6ms, process exit at 15007ms). That tail is
+  // not cosmetic here — `laws-switch` runs as a Bash tool call INSIDE the session it just told
+  // to exit, so the session cannot finish the call and act on the queued /exit until the timer
+  // fires, and the user watches an already-successful switch do nothing for fifteen seconds.
+  //
+  // Cleared on settle rather than `.unref()`-ed: an unref-ed timer stops holding the loop open
+  // but also stops being a dependable timeout, and a connect that genuinely hangs must still
+  // fail loudly. This removes the tail without weakening the guarantee. [LAW:no-silent-failure]
+  let readyTimer;
   const ready = new Promise((resolve, reject) => {
     ws.onopen = async () => { try { await send('Runtime.enable'); resolve(); } catch (err) { reject(err); } };
     ws.onerror = (e) => reject(new Error('inspector ws error: ' + String(e && e.message || e)));
-    setTimeout(() => reject(new Error('inspector connect timeout after ' + timeoutMs + 'ms')), timeoutMs);
+    readyTimer = setTimeout(() => reject(new Error('inspector connect timeout after ' + timeoutMs + 'ms')), timeoutMs);
   });
+  const clearReadyTimer = () => clearTimeout(readyTimer);
+  ready.then(clearReadyTimer, clearReadyTimer);   // both arms; the derived promise is discarded
 
   // Evaluate an expression in the process's global context. Rejects (never silently) on either
   // way this can fail: an uncaught exception INSIDE the process (exceptionDetails, handled here)
