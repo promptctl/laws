@@ -147,5 +147,36 @@ else
   bad "the session was never relaunched a second time"
 fi
 
+# ---- 3. the session the switch belongs to is pinned, and one-shot mode gets no switch --------
+# The launcher exports LAWS_SWITCH_DIR and BUN_INSPECT into every process the agent spawns, so a
+# nested claude inherits the whole handshake. Pinning the session id is what lets the guard tell
+# the owning session from anything else by identity rather than inference.
+export STUB_SID="LAUNCH3"
+export STUB_TRANSCRIPT="$TMPDIR/launch3.jsonl"
+export STUB_SWITCH_ON=""
+write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
+rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+export LAWS_CLAUDE_BIN="$STUB"
+
+"$LAUNCHER" --model opus >/dev/null 2>&1
+case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
+  *"--session-id "*) ok "the launcher pins the session id it owns";;
+  *) bad "the launcher did not pin a session id (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
+esac
+
+# One-shot: a relaunch would re-send the positional prompt and re-execute the user's request, so
+# the switch is unavailable rather than dangerous. Enforced by withholding the pin the guard
+# requires, not by a warning alone.
+rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+out=$("$LAUNCHER" -p 'do the thing' 2>&1 >/dev/null)
+case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
+  *"--session-id "*) bad "one-shot mode still pinned a session, so the switch stays reachable";;
+  *) ok "one-shot mode pins no session, so the guard can offer no switch";;
+esac
+case "$out" in
+  *"one-shot"*) ok "  ... and says why on stderr";;
+  *) bad "  ... and said nothing about it (stderr: $out)";;
+esac
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

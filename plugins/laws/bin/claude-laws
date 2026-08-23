@@ -55,23 +55,50 @@ trap 'rm -rf "$LAWS_SWITCH_DIR"' EXIT
 
 export LAWS_SWITCH_DIR
 export BUN_INSPECT="ws://127.0.0.1:$PORT/dbg"
+
+# WHO OWNS THIS SWITCH. Both variables above land in the environment of every process the agent
+# spawns, so a nested `claude` from a Bash call inherits the whole handshake and looks exactly
+# like the session that started it. Pinning the session id up front turns "is this my session"
+# into an equality test the guard can run, instead of something it has to infer.
+#
+# One-shot mode gets no switch at all. A relaunch re-sends the positional prompt, which would
+# re-execute the user's whole request; rather than parse claude's flags to strip it - where a
+# flag that takes a value is indistinguishable from a positional, and a wrong guess silently
+# drops or duplicates the prompt - the feature is simply unavailable there. The guard offers
+# nothing without LAWS_SWITCH_SESSION, so this is enforced by absence, not by a warning nobody
+# reads. [LAW:no-silent-failure] it still says so.
+one_shot=""
+for arg in "$@"; do
+  case "$arg" in -p|--print) one_shot=1; break;; esac
+done
+
+FIRST_ARGS=()
+if [ -n "$one_shot" ]; then
+  log "one-shot session (-p): craft switching disabled, since a relaunch would re-send the prompt"
+elif ! LAWS_SWITCH_SESSION="$(node -e 'console.log(require("crypto").randomUUID())' 2>/dev/null)" \
+     || [ -z "$LAWS_SWITCH_SESSION" ]; then
+  log "could not mint a session id; launching without craft switching"
+else
+  export LAWS_SWITCH_SESSION
+  FIRST_ARGS=(--session-id "$LAWS_SWITCH_SESSION")
+fi
 # The deny message tells the agent to run `laws-switch`, so it has to BE runnable. Putting
 # this bin dir on PATH is what makes that instruction true rather than aspirational.
 export PATH="$PLUGIN_DIR/bin:$PATH"
 
 REQUEST="$LAWS_SWITCH_DIR/request.json"
 
-# The user's flags are the fixed part of every relaunch and are never rewritten; the resume is the
-# part that varies, so it is held separately and REPLACED each pass rather than appended. Appending
-# to "$@" would accumulate a second --resume on the second switch of one session.
-# A positional prompt would be re-sent on relaunch; that only arises in one-shot usage, where a
-# mid-session craft switch cannot happen.
+# The user's flags are the fixed part of every relaunch and are never rewritten. The session
+# selector is the part that varies: --session-id pins the FIRST launch, and each switch replaces
+# it with --resume. Held separately and replaced rather than appended, because appending to "$@"
+# would accumulate a second --resume on the second switch of one session, and would leave the
+# initial --session-id sitting alongside a --resume that supersedes it.
 USER_ARGS=("$@")
-RESUME_ARGS=()
+SESSION_ARGS=(${FIRST_ARGS[@]+"${FIRST_ARGS[@]}"})
 
 while :; do
   # bash 3.2 under `set -u` treats "${empty[@]}" as unbound, so expand through the +alternate form.
-  "$CLAUDE_BIN" ${USER_ARGS[@]+"${USER_ARGS[@]}"} ${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}
+  "$CLAUDE_BIN" ${USER_ARGS[@]+"${USER_ARGS[@]}"} ${SESSION_ARGS[@]+"${SESSION_ARGS[@]}"}
   status=$?
 
   [ -f "$REQUEST" ] || exit "$status"
@@ -109,5 +136,6 @@ while :; do
   fi
 
   log "switched from laws:$switched_from to laws:$switched_to via $choice; resuming"
-  RESUME_ARGS=(--resume "$sid")
+  # Replaces the initial --session-id, and replaces itself on every switch after the first.
+  SESSION_ARGS=(--resume "$sid")
 done
