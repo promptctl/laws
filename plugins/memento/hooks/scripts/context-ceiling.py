@@ -167,13 +167,18 @@ def reason(template, tokens):
     return template.format(tokens=tokens, ceiling=CEILING, launcher=shlex.quote(LAUNCHER))
 
 
-# The event arrives as argv rather than read from the payload, so a registration that
-# points the wrong event at this script fails here instead of being silently handled
-# as the other one.
-EVENTS = {"stop": stop, "pretool": pretool}
+# Keyed on the name Claude Code puts in the payload, never on an argv the registration
+# has to restate. [LAW:one-source-of-truth] the harness already names the event it is
+# delivering; a copy in the command line is a second map of that fact, maintained by
+# hand, free to drift - and it drifted. Registrations for this script exist in every
+# cached plugin version a session might still be running, three of them invoking it
+# bare and two more with an older pair of verbs, so requiring argv turned a stale
+# registration into an IndexError traceback in a live session. Reading the payload
+# makes every one of those spellings work, including the ones already on disk.
+EVENTS = {"Stop": stop, "PreToolUse": pretool}
 
-event = EVENTS[sys.argv[1]]
 hook = json.load(sys.stdin)
+event = EVENTS[hook["hook_event_name"]]
 tokens = context_tokens(hook["transcript_path"])
 
 # [LAW:dataflow-not-control-flow] the measurement runs on every event; only the value

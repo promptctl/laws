@@ -37,7 +37,7 @@ def assistant(tokens, sidechain=False):
 
 
 def run(records, stop_hook_active=False, ceiling=None, hook=HOOK,
-        event="stop", tool_name=None, tool_input=None):
+        event="stop", tool_name=None, tool_input=None, argv=()):
     """Invoke the hook as Claude Code does. Returns (exit code, parsed stdout, stderr)."""
     handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
     handle.write("".join(json.dumps(r) + "\n" for r in records))
@@ -52,8 +52,11 @@ def run(records, stop_hook_active=False, ceiling=None, hook=HOOK,
         payload["tool_name"] = tool_name
         payload["tool_input"] = tool_input or {}
     try:
-        done = subprocess.run([sys.executable, hook, event], text=True, capture_output=True,
-                              env=env, input=json.dumps(payload))
+        # No argv: the event is read from the payload, and every registration spelling
+        # still on disk - bare, or carrying one of three historical verbs - reaches the
+        # same handler. `argv` exists so those spellings can be exercised below.
+        done = subprocess.run([sys.executable, hook] + list(argv), text=True,
+                              capture_output=True, env=env, input=json.dumps(payload))
     finally:
         os.unlink(handle.name)
     return done.returncode, json.loads(done.stdout) if done.stdout.strip() else None, done.stderr
@@ -208,16 +211,30 @@ check("the denial says the call did not run and must not be retried",
 check("the close-out line in the denial parses as one launcher invocation",
       launcher_argv(denial) == [LAUNCHER, "<handoff message>"], str(out))
 
-# A registration pointing the wrong event at this script must fail here, not be quietly
-# handled as the other one.
-done = subprocess.run([sys.executable, HOOK, "onstop"], input="{}", text=True, capture_output=True)
-check("an unknown event argv fails loudly", done.returncode == 1 and "onstop" in done.stderr,
+# Regression, from a live session. The event used to be read from argv, so the three
+# cached registrations that invoke this script bare - versions a session may still be
+# running - crashed it with an IndexError on every turn. The payload names the event;
+# requiring the registration to restate it is a second copy of that fact, and it drifted.
+for spelling, argv in (("bare, as the cached Stop registrations invoke it", ()),
+                       ("carrying the current argv", ("stop",)),
+                       ("carrying an older verb", ("gate",))):
+    code, out, err = run([user, assistant(360_000)], argv=argv)
+    check(f"invoked {spelling}, the ceiling still blocks",
+          code == 0 and out and out.get("decision") == "block", f"{code} {out} {err}")
+
+# An event this script has no handler for is a wiring mistake, and must be loud rather
+# than silently handled as whichever handler happened to be first.
+done = subprocess.run([sys.executable, HOOK], text=True, capture_output=True,
+                      input=json.dumps({"hook_event_name": "PreCompact",
+                                        "transcript_path": "/nonexistent"}))
+check("an unhandled event fails loudly", done.returncode == 1 and "PreCompact" in done.stderr,
       str(done))
 
 code, out, err = run([user], ceiling="lots")
 check("an unparseable ceiling fails loudly", code == 1 and "lots" in err, f"{code} {err}")
 
-done = subprocess.run([sys.executable, HOOK, "stop"], input="{}", text=True, capture_output=True)
+done = subprocess.run([sys.executable, HOOK], text=True, capture_output=True,
+                      input=json.dumps({"hook_event_name": "Stop"}))
 check("a payload with no transcript_path fails loudly",
       done.returncode == 1 and "transcript_path" in done.stderr, str(done))
 
@@ -256,14 +273,16 @@ check("the hook is registered on Stop and PreToolUse",
 # are exactly where new work would continue.
 check("PreToolUse is registered for every tool, not a matched subset",
       "matcher" not in registered["PreToolUse"][0], str(registered["PreToolUse"][0]))
-# Registering the event is half the wiring; pointing it at this script with the right
-# event argv is the other half, and a move that updates one without the other would
-# otherwise pass silently.
-for hook_event, argv in (("Stop", "stop"), ("PreToolUse", "pretool")):
+# Registering the event is half the wiring; pointing it at this script is the other half,
+# and a move that updates one without the other would otherwise pass silently.
+for hook_event in ("Stop", "PreToolUse"):
     command = registered[hook_event][0]["hooks"][0]["command"]
-    check(f"the {hook_event} command runs this script from the plugin root, as '{argv}'",
-          os.path.basename(HOOK) in command and "${CLAUDE_PLUGIN_ROOT}" in command
-          and command.rstrip().endswith(" " + argv), command)
+    check(f"the {hook_event} command runs this script from the plugin root",
+          os.path.basename(HOOK) in command and "${CLAUDE_PLUGIN_ROOT}" in command, command)
+    # An argv here would read as the thing that selects the handler. It is not - the
+    # payload is - and a registration that looks authoritative is how the two drifted.
+    check(f"the {hook_event} command passes no event argv",
+          command.rstrip().endswith('"'), command)
 check("the hook is executable", os.access(HOOK, os.X_OK), HOOK)
 
 print(f"\n{len(failures)} failed")
