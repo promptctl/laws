@@ -43,6 +43,7 @@ import json
 import math
 import os
 import shlex
+import string
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +66,9 @@ LAUNCHER = os.path.join(PLUGIN_ROOT, "skills", "message-in-a-bottle", "bin", "fi
 # and what the model just wrote back.
 COUNTED = ("input_tokens", "cache_creation_input_tokens",
            "cache_read_input_tokens", "output_tokens")
+# Big enough that the newest assistant record is in the first read essentially always,
+# small enough that being wrong about that costs one more seek rather than the file.
+TAIL_CHUNK = 256 * 1024
 
 # {launcher} arrives shell-quoted. The agent runs that line verbatim, and a plugin
 # root like ~/Library/Application Support/... would otherwise split into two arguments
@@ -87,29 +91,89 @@ Load Skill(memento:message-in-a-bottle) for the handoff contract. That message i
 # which `git status` and `git diff` supply through the git that stays permitted.
 CLOSEOUT_SKILL = "memento:message-in-a-bottle"
 LAUNCHER_NAME = os.path.basename(LAUNCHER)
-OPERATORS = ("&&", "||", ";", ";;", "|", "&")
+# The characters the shell leaves alone outside quotes - shlex.quote's own safe set.
+# None of them expands, substitutes, redirects, groups, or globs, so a word built only
+# from these reaches the command exactly as written here.
+INERT = frozenset(string.ascii_letters + string.digits + "_@%+=:,./-")
+ENDS_WORD = frozenset(" \t")
+# Every character bash builds a control operator from, plus the newline that IS one.
+# Held as a set of characters rather than a list of operators so that "&&", "||", "|",
+# ";", ";;", "|&", ";;&" and any future spelling made of them all end a segment - the
+# thing an enumeration of operators cannot promise.
+ENDS_SEGMENT = frozenset("&|;\n")
+# What expands inside double quotes: parameter and command substitution, and the
+# escape that hides them. A double-quoted span with none of these is as inert as a
+# single-quoted one, which is the only reason double quotes are allowed at all.
+EXPANDS = frozenset("$`\\")
 
 
 def segments(command):
-    """The command's pipeline segments, tokenized the way the shell will tokenize it.
+    """The commands this string runs - or ValueError, meaning what it runs is unclear.
 
-    Parsed, not pattern-matched. A regex split on ';' '|' '&' also cuts inside quotes,
-    and the handoff message is free prose that routinely contains all three - so the
-    first live run of this gate denied the close-out itself, splitting
-    `finalize-session '...no next step; if the user says X...'` at the semicolon and
-    judging the remainder as new work. The one call that is the way out was the one
-    call refused."""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    parts, current = [], []
-    for token in lexer:
-        if token in OPERATORS:
-            parts.append(current)
-            current = []
+    Parsed, not pattern-matched, and every character is default-reject. The earlier
+    version of this went the other way: tokenize with shlex, then split on an
+    enumerated list of operators. That list can never be finished. `&&` `||` `;` `|`
+    were listed; `|&` was not, so `git status |& rm -rf x` read as one git segment.
+    A bare newline is a statement separator too, but shlex spends it as whitespace, so
+    `git status\\nrm -rf x` read as one git segment as well. And `$(...)` inside a
+    quoted argument is opaque to any tokenizer while the shell happily runs it. Three
+    reported bypasses, one cause: a blocklist over a grammar that keeps growing.
+
+    [LAW:parse-dont-validate] so the question changed from "does this string contain
+    anything I know is dangerous" to "is this string one I can prove is plain" - every
+    unquoted character must be one the shell is known to leave alone, single quotes are
+    inert by bash's own guarantee (which is what lets the handoff message stay free
+    prose), double quotes are allowed only when they contain nothing that expands, and
+    anything else at all raises. What comes back is therefore the words the shell will
+    actually run, not a guess at them.
+
+    This governs which *tools* run, not what a trusted tool is then asked to do: `git`
+    is permitted whole, so a git invocation that reconfigures git to run something else
+    is outside what this can see. The ceiling is a limit on a session that would talk
+    itself into continuing, not a sandbox around one trying to escape."""
+    parts, words, word = [], [], []
+    index = 0
+    while index < len(command):
+        char = command[index]
+        index += 1
+        if char == "'":
+            close = command.find("'", index)
+            if close < 0:
+                raise ValueError("unterminated single quote")
+            word.append(command[index:close])
+            index = close + 1
+        elif char == '"':
+            close = command.find('"', index)
+            if close < 0:
+                raise ValueError("unterminated double quote")
+            span = command[index:close]
+            if EXPANDS & set(span):
+                raise ValueError(f"expansion inside double quotes: {span!r}")
+            word.append(span)
+            index = close + 1
+        # The middle of `'it'\''s'`, the one way to put an apostrophe in a
+        # single-quoted argument - and handoff prose is full of apostrophes. A
+        # backslash before a quote is the only escape accepted; every other use of it
+        # falls through to the raise below.
+        elif char == "\\" and command[index:index + 1] == "'":
+            word.append("'")
+            index += 1
+        elif char in INERT:
+            word.append(char)
+        elif char in ENDS_WORD or char in ENDS_SEGMENT:
+            if word:
+                words.append("".join(word))
+                word = []
+            if char in ENDS_SEGMENT and words:
+                parts.append(words)
+                words = []
         else:
-            current.append(token)
-    parts.append(current)
-    return [part for part in parts if part]
+            raise ValueError(f"shell-active character {char!r} in {command!r}")
+    if word:
+        words.append("".join(word))
+    if words:
+        parts.append(words)
+    return parts
 
 
 def parse_ceiling(written, source):
@@ -152,6 +216,30 @@ def resolve_ceiling():
     return parse_ceiling(written, CEILING_FILE) if written.strip() else DEFAULT_CEILING
 
 
+def lines_backward(handle, end):
+    """The file's lines newest-first, reading only as far back as the caller consumes.
+
+    The whole file used to be read for every measurement, which was affordable while
+    only Stop measured - once per turn. PreToolUse measures on every tool call, and the
+    transcript only grows, so re-reading it whole made the cost of a long autonomous
+    run quadratic in its own transcript: the 757-call session in the module docstring
+    would have re-scanned tens of megabytes 757 times to answer a question whose answer
+    is always in the last few kilobytes.
+
+    [LAW:dataflow-not-control-flow] the reader does not decide how far back is far
+    enough; it yields, and whoever is looking stops when it has found what it wants."""
+    tail = b""
+    while end > 0:
+        start = max(0, end - TAIL_CHUNK)
+        handle.seek(start)
+        pieces = (handle.read(end - start) + tail).split(b"\n")
+        # The first piece began before `start`, so it is only the tail of its line -
+        # unless start is 0, where there is nothing earlier and the line is whole.
+        tail = b"" if start == 0 else pieces.pop(0)
+        yield from reversed(pieces)
+        end = start
+
+
 def context_tokens(transcript_path):
     """Tokens in this session's context, read from the transcript because no hook
     payload carries the number.
@@ -160,15 +248,17 @@ def context_tokens(transcript_path):
     into this same file, and reading its usage would report a session that just
     crossed 350k as sitting at 20k. Compaction needs no handling: it shrinks the
     following record, so the latest one tracks the drop."""
-    for line in reversed(Path(transcript_path).read_bytes().split(b"\n")):
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue  # a blank line, or the tail of a write still in flight
-        if record.get("type") == "assistant" and not record.get("isSidechain"):
-            usage = record["message"].get("usage")
-            if usage:
-                return sum(usage.get(field, 0) for field in COUNTED)
+    with open(transcript_path, "rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        for line in lines_backward(handle, handle.tell()):
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue  # a blank line, or the tail of a write still in flight
+            if record.get("type") == "assistant" and not record.get("isSidechain"):
+                usage = record["message"].get("usage")
+                if usage:
+                    return sum(usage.get(field, 0) for field in COUNTED)
     return 0
 
 
