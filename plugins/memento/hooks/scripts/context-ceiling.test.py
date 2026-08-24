@@ -37,7 +37,8 @@ def assistant(tokens, sidechain=False):
 
 
 def run(records, stop_hook_active=False, ceiling=None, hook=HOOK,
-        event="stop", tool_name=None, tool_input=None, argv=(), ceiling_file=None):
+        event="stop", tool_name=None, tool_input=None, argv=(), ceiling_file=None,
+        log_file=None):
     """Invoke the hook as Claude Code does. Returns (exit code, parsed stdout, stderr)."""
     handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
     handle.write("".join(json.dumps(r) + "\n" for r in records))
@@ -47,6 +48,9 @@ def run(records, stop_hook_active=False, ceiling=None, hook=HOOK,
     # every assertion below would read whatever the person running the tests happens to
     # have configured, and the suite would pass or fail on their machine's state.
     env["MEMENTO_CEILING_FILE"] = ceiling_file or os.path.join(tempfile.mkdtemp(), "absent")
+    # Same reason as the ceiling file, plus one more: without it the suite would append
+    # to the log a real session is writing to.
+    env["MEMENTO_CEILING_LOG"] = log_file or os.path.join(tempfile.mkdtemp(), "ceiling.log")
     if ceiling:
         env["MEMENTO_CONTEXT_CEILING"] = ceiling
     payload = {"session_id": "s-1", "transcript_path": handle.name,
@@ -188,6 +192,47 @@ for bad in ("banana", "-5", "3.5", "350k", "500,000"):
 check("the loud failure names the file to fix, and is one line rather than a stack trace",
       "context-ceiling" in with_file("banana")[2]
       and "Traceback" not in with_file("banana")[2], with_file("banana")[2])
+
+# --- the log ------------------------------------------------------------------------
+# The permitting case is the one that matters. A hook that allows writes nothing to
+# stdout, and neither does a hook that was never invoked; from outside they are the same
+# silence, which is how a dead ceiling stayed invisible for a day. Only the log tells
+# them apart, so the assertion that earns its keep is that a permitted call is logged.
+
+def logged(**kwargs):
+    path = os.path.join(tempfile.mkdtemp(), "ceiling.log")
+    run(log_file=path, **kwargs)
+    return open(path).read() if os.path.exists(path) else ""
+
+entry = logged(records=[user, assistant(100_000)])
+check("a call the ceiling permits is still logged - silence must not be ambiguous",
+      "allow-under" in entry and "tokens=100000" in entry, repr(entry))
+check("the log names the session, the event and the ceiling in force",
+      "session=s-1" in entry and "event=Stop" in entry and "ceiling=350000" in entry, repr(entry))
+
+check("a blocked stop is logged as blocked",
+      "-> block" in logged(records=[user, assistant(360_000)]), "")
+check("a spent stop is logged as spent",
+      "-> spent" in logged(records=[user, assistant(360_000)], stop_hook_active=True), "")
+check("a denied tool call is logged with the tool that was refused",
+      "-> deny" in (e := logged(records=[user, assistant(360_000)], event="pretool",
+                                tool_name="Write", tool_input={"file_path": "/tmp/x"}))
+      and "tool=Write" in e, repr(e))
+check("a permitted close-out is logged as such, not left silent",
+      "-> allow-closeout" in logged(records=[user, assistant(360_000)], event="pretool",
+                                    tool_name="Bash", tool_input={"command": "git status"}), "")
+
+# Instrumentation must not be able to take down the thing it instruments: a log that
+# cannot be written is reported on stderr, and the gate still returns its verdict.
+unwritable = os.path.join(tempfile.mkdtemp(), "ceiling.log")
+os.chmod(os.path.dirname(unwritable), 0o500)
+try:
+    code, out, err = run([user, assistant(360_000)], log_file=unwritable)
+    check("an unwritable log still lets the ceiling block, and says so on stderr",
+          code == 0 and out and out.get("decision") == "block" and "cannot write" in err,
+          f"{code} {out} {err}")
+finally:
+    os.chmod(os.path.dirname(unwritable), 0o700)
 
 # An explicit instruction to this process is not overruled by an ambient file.
 path = os.path.join(tempfile.mkdtemp(), "context-ceiling")

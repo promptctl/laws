@@ -44,6 +44,7 @@ import math
 import os
 import shlex
 import sys
+from datetime import datetime
 from pathlib import Path
 
 DEFAULT_CEILING = 350_000
@@ -55,6 +56,9 @@ CEILING_FILE = Path(os.environ.get("MEMENTO_CEILING_FILE")
 # Written by a person who wants the gate to stop, so the spellings that obviously mean
 # that all work rather than one blessed token.
 DISABLED = ("off", "none", "never", "disabled")
+LOG_FILE = Path(os.environ.get("MEMENTO_CEILING_LOG")
+                or Path.home() / ".claude" / "memento" / "context-ceiling.log")
+LOG_CAP = 2_000_000
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LAUNCHER = os.path.join(PLUGIN_ROOT, "skills", "message-in-a-bottle", "bin", "finalize-session")
 # Everything the next request will carry: fresh input, cache written, cache read,
@@ -191,6 +195,36 @@ def is_closeout(tool_name, tool_input):
     return False
 
 
+def log(hook, tokens, verdict):
+    """One line per invocation, including - especially - the ones that permit.
+
+    [LAW:no-silent-failure] a hook that allows emits nothing on stdout, and nothing is
+    exactly what a hook that never ran emits. That ambiguity is not theoretical: it hid
+    a ceiling that had been dead for a day, and it is unresolvable from the outside
+    because both cases look like silence. The log is the only place the difference
+    exists, so it records what was seen and decided every time, not just at the
+    interesting moments - a log that spoke up only when the gate fired would leave the
+    dead-gate case looking exactly like the quiet one all over again.
+
+    Its own failure is reported but not fatal. Raising here would exit non-zero on every
+    event and take the gate down with the instrumentation, which inverts the point of
+    having it."""
+    line = (f"{datetime.now().isoformat(timespec='seconds')} "
+            f"session={str(hook.get('session_id'))[:8]} event={hook.get('hook_event_name')} "
+            f"tokens={tokens} ceiling={CEILING} tool={hook.get('tool_name', '-')} "
+            f"-> {verdict}\n")
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Truncate rather than rotate: this is a diagnostic tail, and a cap keeps a
+        # per-tool-call writer from growing without bound on a long autonomous run.
+        if LOG_FILE.exists() and LOG_FILE.stat().st_size > LOG_CAP:
+            LOG_FILE.write_text(f"[truncated at {LOG_CAP} bytes]\n")
+        with LOG_FILE.open("a") as handle:
+            handle.write(line)
+    except OSError as failure:
+        print(f"memento context ceiling: cannot write {LOG_FILE}: {failure}", file=sys.stderr)
+
+
 def stop(hook, tokens):
     """Blocked once, never twice: a second block would spend more context on the
     problem that IS too much context, so the agent gets one forced chance and then the
@@ -204,20 +238,20 @@ def stop(hook, tokens):
     transcript-wide "a Stop hook blocked the last stop", not this hook's own, so a
     second Stop hook could open this gate with its block; the wording holds there too."""
     if hook.get("stop_hook_active"):
-        return {"systemMessage": f"memento: context ceiling breached (~{tokens:,} > "
+        return "spent", {"systemMessage": f"memento: context ceiling breached (~{tokens:,} > "
                                  f"{CEILING:,}) and this session has spent its one forced "
                                  f"close-out attempt, so the stop proceeds. If the close-out "
-                                 f"did not run, the next session starts with nothing."}
-    return {"decision": "block", "reason": reason(INSTRUCTION, tokens)}
+                                          f"did not run, the next session starts with nothing."}
+    return "block", {"decision": "block", "reason": reason(INSTRUCTION, tokens)}
 
 
 def pretool(hook, tokens):
     """The close-out is the only work left, so it is the only work permitted."""
     if is_closeout(hook["tool_name"], hook.get("tool_input") or {}):
-        return None
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                   "permissionDecision": "deny",
-                                   "permissionDecisionReason": reason(DENIAL, tokens)}}
+        return "allow-closeout", None
+    return "deny", {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                           "permissionDecision": "deny",
+                                           "permissionDecisionReason": reason(DENIAL, tokens)}}
 
 
 def reason(template, tokens):
@@ -239,8 +273,12 @@ hook = json.load(sys.stdin)
 event = EVENTS[hook["hook_event_name"]]
 tokens = context_tokens(hook["transcript_path"])
 
-# [LAW:dataflow-not-control-flow] the measurement runs on every event; only the value
-# it produces decides whether anything is emitted.
-verdict = event(hook, tokens) if tokens >= CEILING else None
+# [LAW:dataflow-not-control-flow] the measurement runs on every event, and every
+# invocation leaves a log line; only the value produced decides what is emitted.
+# The label comes back from the handler that decided rather than being re-derived here
+# from the shape of the payload - [LAW:one-source-of-truth], the decision is named once,
+# where it is made.
+label, verdict = ("allow-under", None) if tokens < CEILING else event(hook, tokens)
+log(hook, tokens, label)
 if verdict:
     print(json.dumps(verdict))
