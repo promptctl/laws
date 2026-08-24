@@ -336,6 +336,20 @@ for allowed in ("git status", "git diff --stat", "git log --oneline -5", "git sh
 check("an impostor named finalize-session is not the launcher",
       denies("Bash", {"command": "/tmp/finalize-session 'handoff'"})
       and denies("Bash", {"command": "./finalize-session 'handoff'"}))
+# git gets the opposite question, on purpose. It is not one file - `/usr/bin/git` and
+# `/opt/homebrew/bin/git` are both genuinely git - so it is matched by role rather than by
+# identity. Resolving it the way the launcher is resolved is the symmetry this looks like
+# it wants and would leave the same bug standing: on a machine whose PATH names the
+# Homebrew git, the two resolve to different files, so the gate would bless whichever one
+# PATH happened to name and refuse every other real git on the box. These paths are
+# therefore asserted without regard to what exists on the machine running the suite.
+check("git written out in full is still git",
+      not denies("Bash", {"command": "/usr/bin/git status"})
+      and not denies("Bash", {"command": "/opt/homebrew/bin/git commit -m 'wip'"}))
+check("a full path to git buys no more than the bare word does",
+      denies("Bash", {"command": "/usr/bin/git reset --hard"})
+      and denies("Bash", {"command": "/usr/bin/git"})
+      and denies("Bash", {"command": "/usr/bin/git -c alias.z=!id z"}))
 check("a multi-part git command is permitted",
       not denies("Bash", {"command": "git add -A && git commit -m 'wip'"}))
 check("the close-out itself is permitted",

@@ -287,16 +287,34 @@ def context_tokens(transcript_path):
 
 
 def permitted(part):
-    """Whether this one command is part of closing the session out."""
-    if part[0] == "git":
+    """Whether this one command is part of closing the session out.
+
+    The two programs are matched by different questions, and the asymmetry is the design
+    rather than an oversight. The launcher is ONE file, so the question is *identity*:
+    resolved, not name-matched, because any other executable that happens to be called
+    finalize-session would otherwise answer "is this the close-out" by spelling alone,
+    and the gate would go on to record a close-out that never happened. git is not one
+    file - `/usr/bin/git` and `/opt/homebrew/bin/git` are both genuinely git - so the
+    question is *role*, and a name is what carries a role.
+
+    Resolving git the way the launcher is resolved is the symmetry this looks like it
+    wants, and it is wrong: on a machine whose PATH names the Homebrew git, `git` and
+    `/usr/bin/git` resolve to two different files, so the gate would silently bless
+    whichever one PATH happened to name and refuse every other real git on the box. The
+    literal `part[0] == "git"` it replaces had the same shape of bug, one step earlier:
+    a fully-qualified `/usr/bin/git commit` was refused while the denial message went on
+    promising that git still worked.
+
+    Matching by name accepts a git the agent planted under a path of its own. That is in
+    scope for a sandbox and out of scope here, for the reason the module docstring
+    already gives: this bounds a session that would talk itself into continuing, not one
+    trying to escape."""
+    if os.path.basename(part[0]) == "git":
         # The subcommand is the second word, with no global option allowed before it.
         # Skipping options would mean knowing which of them take a value, and `git -c`
         # takes one that can define an alias running anything at all - so refusing the
         # whole shape is both the simpler rule and the tighter one.
         return len(part) > 1 and part[1] in GIT_SUBCOMMANDS
-    # Resolved, not name-matched. The launcher is one specific file; any other
-    # executable that happens to be called finalize-session is not it, and matching on
-    # the name alone made "is this the close-out" a question about spelling.
     return os.path.realpath(part[0]) == os.path.realpath(LAUNCHER)
 
 
