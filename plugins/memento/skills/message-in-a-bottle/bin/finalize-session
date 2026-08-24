@@ -3,20 +3,33 @@
 # self-handoff into the current session. The launcher returns immediately; a
 # detached worker delivers the handoff after a fixed delay.
 #
-# Two transports, most reliable first:
-#   tmux    — in-place reset (/clear or /compact) verified by reading the pane
-#             back, then paste the message. Deterministic; no focus concerns.
-#   iTerm2  — kill the running claude and relaunch it fresh with the message as
-#             its initial prompt, via `write text` to the exact session (no focus
-#             steal, no readback needed — a new process is guaranteed fresh).
-# Neither available is a hard failure. There is no third arm: delivery into a live
-# session is what this script does, and a session it cannot reach is one it cannot
-# close out.
+# Three transports, most reliable first:
+#   tmux      — in-place reset (/clear or /compact) verified by reading the pane
+#               back, then paste the message. Deterministic; no focus concerns.
+#   iTerm2    — kill the running claude and relaunch it fresh with the message as
+#               its initial prompt, via `write text` to the exact session (no
+#               focus steal, no readback needed — a new process is guaranteed
+#               fresh).
+#   detached  — neither of the above reaches this process (no pane owns it, no
+#               iTerm2 session names it — the ordinary shape of a session hosted
+#               by `claude daemon run`). Spawn a brand-new detached tmux window,
+#               launch claude in it with the message as its initial prompt
+#               (the same `claude "$(cat msgfile)"` trick as the iTerm2 relaunch),
+#               and once it is confirmed ready, retire the old process. A window
+#               nobody was already using cannot collide with anybody's live work.
+#
+# [LAW:no-mode-explosion] every session must end up equally capable of continuing
+# an autonomy chain — foreground and background alike, no subclass excluded, per
+# owner decision 2026-08-23. tmux/iTerm2 already give a pane- or window-owning
+# session that capability; detached is what gives it to a session that owns
+# neither. Only a machine with no tmux binary at all has genuinely nothing to
+# hand off into — that is the sole remaining hard failure.
 #
 # Modes:
-#   launcher:       finalize-session [message...]
-#   tmux worker:    finalize-session --worker <target> <reset> <msgfile> <goalfile>
-#   iTerm2 worker:  finalize-session --iterm-worker <uuid> <claude_pid> <msgfile> <goalfile> <flags>
+#   launcher:         finalize-session [message...]
+#   tmux worker:      finalize-session --worker <target> <reset> <msgfile> <goalfile>
+#   iTerm2 worker:    finalize-session --iterm-worker <uuid> <claude_pid> <msgfile> <goalfile> <flags>
+#   detached worker:  finalize-session --detached-worker <session> <cwd> <msgfile> <goalfile> <flags> <old_claude_pid> <claude_bin>
 
 set -euo pipefail
 
@@ -344,9 +357,10 @@ OSA
 # [LAW:types-are-the-program] one discriminator at the entry; everything
 # downstream operates on validated, typed inputs for exactly one mode.
 case "${1:-}" in
-  --worker)       MODE=tmux-worker; shift ;;
-  --iterm-worker) MODE=iterm-worker; shift ;;
-  *)              MODE=launcher ;;
+  --worker)          MODE=tmux-worker; shift ;;
+  --iterm-worker)    MODE=iterm-worker; shift ;;
+  --detached-worker) MODE=detached-worker; shift ;;
+  *)                 MODE=launcher ;;
 esac
 
 case "$MODE" in
@@ -463,6 +477,45 @@ case "$MODE" in
       trap - EXIT
       echo "handoff scheduled → iTerm2 (kill+relaunch, fresh) in ${HANDOFF_DELAY_SECONDS}s (log: $LOGFILE)"
 
+    elif command -v tmux >/dev/null 2>&1; then
+      # Neither an owned pane nor a reachable iTerm2 session — the shape of a
+      # session hosted by `claude daemon run`, which inherits neither. tmux
+      # itself needs no server already running: `new-session -d` starts one.
+      # [LAW:one-source-of-truth] the process to relaunch as, and the flags it
+      # carries, are found the same way the iTerm2 transport finds them — one
+      # function, reused, not a second copy of the same lookup.
+      CLAUDE_PID=$(_find_claude_pid) \
+        || { echo "detached transport: cannot locate the claude process to relaunch" >&2; exit 2; }
+      FLAGS=$(_claude_flags "$(ps -o command= -p "$CLAUDE_PID" 2>/dev/null)")
+      # A fresh detached window's default shell is a login shell that resources
+      # dotfiles before running anything handed to it, so it can rebuild PATH
+      # out from under whatever this process currently has — unlike the iTerm2
+      # transport, which types into an already-running, already-initialized
+      # shell. Resolving the absolute path HERE, once, and handing it down as
+      # data removes the dependency instead of hoping the two PATHs agree.
+      # [LAW:no-silent-failure] "claude" resolving to nothing is the genuine
+      # no-transport case, not a reason to fall back to a bare command name
+      # that may resolve to something else, or nothing, once the login shell
+      # finishes its own startup.
+      CLAUDE_BIN=$(command -v claude) \
+        || { echo "detached transport: 'claude' is not resolvable on PATH; cannot name what to relaunch" >&2; exit 2; }
+      CWD=$(pwd -P)
+      # tmux session names may not contain ':' or '.'; $$ and epoch seconds are
+      # digits only, and collide only if two handoffs from the same pid fire in
+      # the same second — near-impossible given HANDOFF_DELAY_SECONDS.
+      SESSION="finalize-$$-$(date +%s)"
+      if [[ -n "${FINALIZE_DRY_RUN:-}" ]]; then
+        echo "[dry-run] transport=detached session=$SESSION cwd=$CWD claude_pid=$CLAUDE_PID claude_bin=$CLAUDE_BIN flags=[$FLAGS]"
+        echo "[dry-run] would launch: $CLAUDE_BIN ${FLAGS:+$FLAGS }\"\$(cat '$MSGFILE')\" in a fresh detached tmux window"
+        echo "[dry-run] carried goal: ${GOAL:-(none)}"
+        exit 0
+      fi
+      LOGFILE=$(mktemp -t finalize-log.XXXXXX)
+      nohup "$SELF" --detached-worker "$SESSION" "$CWD" "$MSGFILE" "$GOALFILE" "$FLAGS" "$CLAUDE_PID" "$CLAUDE_BIN" \
+        </dev/null >>"$LOGFILE" 2>&1 &
+      trap - EXIT
+      echo "handoff scheduled → fresh detached tmux window '$SESSION' in ${HANDOFF_DELAY_SECONDS}s (log: $LOGFILE)"
+
     else
       # [LAW:parse-dont-validate] the failure arm of the parse above. Exiting
       # nonzero is the whole of it: the close-out did not happen, and the caller
@@ -471,11 +524,11 @@ case "$MODE" in
       # answer-shaped void — exit 0 with the shape of delivery and none of the
       # substance, since nothing reads that file. A message parked on disk is a
       # message lost, and lost loudly beats lost while claiming success.
-      echo "finalize-session: no tmux or iTerm2 transport; nothing to deliver into." >&2
-      echo "Claude must be running in a tmux pane or an iTerm2 session to close out." >&2
-      echo "No pane owns this process: neither \$TMUX_PANE nor any ancestor pid" >&2
-      echo "matches a live tmux pane, so there is no window that is showing this" >&2
-      echo "session to hand off into." >&2
+      # This is now the sole genuine no-transport case: no owned pane, no
+      # reachable iTerm2 session, and no tmux binary to spawn a fresh window
+      # with either — there is truly nothing on this machine to deliver into.
+      echo "finalize-session: no tmux, iTerm2, or tmux binary to spawn a fresh window with." >&2
+      echo "Nothing on this machine to deliver the close-out into." >&2
       exit 2
       # MSGFILE and GOALFILE cleaned by the EXIT trap.
     fi
@@ -660,5 +713,90 @@ OSA2
 
     # Give the shell time to read the message file before the trap removes it.
     sleep 3
+    ;;
+
+  detached-worker)
+    if [[ $# -ne 7 ]]; then
+      echo "internal error: detached-worker expects exactly 7 args" >&2
+      exit 2
+    fi
+    SESSION="$1"
+    CWD="$2"
+    MSGFILE="$3"
+    GOALFILE="$4"
+    FLAGS="$5"
+    OLD_CLAUDE_PID="$6"
+    CLAUDE_BIN="$7"
+
+    GOALBUF="finalize-goal-$$"
+    trap 'rm -f "$MSGFILE" "$GOALFILE"' EXIT
+    log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
+
+    log "waking; detached session=$SESSION cwd=$CWD old_claude_pid=$OLD_CLAUDE_PID claude_bin=$CLAUDE_BIN flags=[$FLAGS]"
+    sleep "$HANDOFF_DELAY_SECONDS"
+
+    # Same trick as the iTerm2 relaunch: the shell in the new window evaluates
+    # $(cat msgfile) itself, so the message never touches argv or tmux quoting —
+    # [LAW:effects-at-boundaries] the only escaping done here is the single
+    # embedded path, not the message content. CLAUDE_BIN is the absolute path
+    # resolved in the launcher, not the bare "claude" the login shell about to
+    # spawn might or might not still have on its PATH.
+    RELAUNCH="'${CLAUDE_BIN}' ${FLAGS:+$FLAGS }\"\$(cat '${MSGFILE}')\""
+    if ! tmux new-session -d -s "$SESSION" -c "$CWD" "$RELAUNCH" 2>>/dev/stderr; then
+      log "ERROR: could not create detached tmux session $SESSION; nothing delivered"
+      exit 1
+    fi
+    log "detached session $SESSION created; waiting for claude to become ready"
+
+    # [LAW:no-silent-failure] poll for the fresh boot's banner rather than a
+    # blind sleep — the same readiness contract the iTerm2 worker uses, so the
+    # goal is never queued into a window whose input box isn't up yet.
+    READY=""
+    DEADLINE=$(( $(date +%s) + CLAUDE_READY_TIMEOUT_SECONDS ))
+    while [[ $(date +%s) -le $DEADLINE ]]; do
+      if tmux has-session -t "$SESSION" 2>/dev/null \
+         && tmux capture-pane -t "$SESSION" -p 2>/dev/null | grep -qE 'Claude Code v[0-9]'; then
+        READY=1
+        break
+      fi
+      sleep "$CLAUDE_READY_POLL_SECONDS"
+    done
+
+    if [[ -z "$READY" ]]; then
+      log "ERROR: detached session $SESSION did not become ready within ${CLAUDE_READY_TIMEOUT_SECONDS}s"
+      if [[ -s "$GOALFILE" ]]; then
+        log "carried goal NOT delivered: /goal $(cat "$GOALFILE")"
+      fi
+      # Leave the old process alone: a spawn that never came up is not grounds
+      # to kill the one process that was actually still running.
+      exit 1
+    fi
+
+    log "claude ready in $SESSION"
+    if [[ -s "$GOALFILE" ]]; then
+      sleep 1
+      log "re-establishing carried goal"
+      { printf '/goal '; cat "$GOALFILE"; } | tmux load-buffer -b "$GOALBUF" -
+      tmux paste-buffer -d -b "$GOALBUF" -t "$SESSION" -p
+      sleep 0.5
+      tmux send-keys -t "$SESSION" Enter
+    fi
+
+    # The successor is confirmed up and has the message; retire the old
+    # process so this handoff leaves exactly one live agent, the same
+    # guarantee the tmux (in-place reset) and iTerm2 (kill+relaunch)
+    # transports already give. TERM first, escalate to KILL if it lingers —
+    # identical escalation to the iTerm2 worker's.
+    if kill -0 "$OLD_CLAUDE_PID" 2>/dev/null; then
+      kill -TERM "$OLD_CLAUDE_PID" 2>/dev/null || true
+      for _ in $(seq 1 20); do kill -0 "$OLD_CLAUDE_PID" 2>/dev/null || break; sleep 0.5; done
+      if kill -0 "$OLD_CLAUDE_PID" 2>/dev/null; then
+        log "old claude $OLD_CLAUDE_PID survived TERM; sending KILL"
+        kill -KILL "$OLD_CLAUDE_PID" 2>/dev/null || true
+      fi
+      log "old claude $OLD_CLAUDE_PID terminated"
+    else
+      log "old claude $OLD_CLAUDE_PID already gone"
+    fi
     ;;
 esac
