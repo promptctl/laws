@@ -14,6 +14,16 @@ one fixture, because a pane's dead-but-still-listed state cannot be conjured on
 demand, and the forging ps in the pid-reuse case wraps the real one rather than
 replacing it.
 
+That same real-process-tree honesty extends to the detached-transport cases:
+every "no pane found" case now falls to the detached transport rather than
+declining, because `_find_claude_pid` walks the REAL ancestry above this test
+runner and finds whatever real `claude` process is actually running it. That is
+realistic for how this suite is actually run (inside Claude Code), but it is a
+genuine environmental coupling, not a fixture - a runner with no claude-named
+ancestor at all would see those cases decline instead, for a true reason
+(nothing to relaunch as) this suite does not separately distinguish from "no
+transport at all."
+
 Run: python3 finalize-session.test.py
 """
 
@@ -282,25 +292,30 @@ def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge_age=None,
 
 
 DECLINED = "declined"
+DETACHED = "detached"
 NO_TRANSPORT_RC = 2  # the launcher's own code for "no transport to deliver into"
 
 
 def picked(done):
-    """The pane id the launcher resolved to, or DECLINED when it found no
-    transport and said so with the no-transport exit code.
+    """The pane id the launcher resolved to, DETACHED when it fell all the way
+    to the fresh-window transport, or DECLINED when it found no transport at
+    all and said so with the no-transport exit code.
 
-    [LAW:parse-dont-validate] returning a bare None for the second case would be
-    an answer-shaped void: a launcher that deliberately declined and one that
-    crashed on its way to an answer would read identically, and every negative
-    case below would pass on either. So the exit code is read here, once, and a
-    run that is neither a pane nor a clean decline comes back as its own report -
-    a value no assertion matches, carrying the evidence into the failure message.
+    [LAW:parse-dont-validate] returning a bare None for the no-decision case
+    would be an answer-shaped void: a launcher that deliberately declined and
+    one that crashed on its way to an answer would read identically, and every
+    negative case below would pass on either. So the exit code is read here,
+    once, and a run that is neither a pane, a detached pick, nor a clean
+    decline comes back as its own report - a value no assertion matches,
+    carrying the evidence into the failure message.
     """
     for line in done.stdout.splitlines():
         if line.startswith("[dry-run] transport=tmux target=target-for-"):
             # The fixture's target is `target-for-<pane>:0.0`; take the pane back
             # out of it rather than matching the whole rendered string.
             return line.split("target-for-", 1)[1].split(" ", 1)[0].split(":", 1)[0]
+        if line.startswith("[dry-run] transport=detached "):
+            return DETACHED
     if done.returncode == NO_TRANSPORT_RC:
         return DECLINED
     return f"<no decision: rc={done.returncode} out={done.stdout!r} err={done.stderr!r}>"
@@ -362,44 +377,52 @@ done = run(depth=5, rehost_at=3, tmux_pane="%77",
 check("a re-hosting hop drops the stale $TMUX_PANE and discovery wins",
       picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
 
-# --- no pane to be had ----------------------------------------------------
+# --- no pane to be had, but tmux still gives a transport --------------------
+# [LAW:no-mode-explosion] owner decision 2026-08-23: every session gets the same
+# capability, no subclass excluded. Refusing a PANE is still correct in every
+# case below - the walk's job is unchanged - but refusing a pane no longer means
+# refusing to deliver AT ALL, because the launcher falls to the detached
+# transport whenever a claude process is findable to relaunch. This suite's
+# `nest` chain always runs as a real descendant of the test runner's own claude
+# session, so that process is always findable here; DECLINED survives only where
+# tmux itself is unreachable to spawn a fresh window with.
 
 done = run(panes=None)
-check("no tmux server: selects no transport", picked(done) == DECLINED, picked(done))
-# [LAW:single-enforcer] the exit code is the whole of the no-transport report, so
-# it is pinned once, here, as its own contract. Every other decline below asserts
-# DECLINED, which already carries it - re-asserting the code beside each one
-# would be the same invariant enforced in six places, drifting apart on the day
-# the code changes.
-check("declining is reported by exit code, not by prose alone",
-      done.returncode == NO_TRANSPORT_RC, f"rc={done.returncode}")
+check("no tmux server: falls to the detached transport", picked(done) == DETACHED, picked(done))
 
 done = run(panes="")
-check("a server with no panes selects no transport", picked(done) == DECLINED, picked(done))
+check("a server with no panes falls to the detached transport", picked(done) == DETACHED, picked(done))
 
 done = run(tmux_on_path=False)
-check("tmux absent from PATH: selects no transport", picked(done) == DECLINED, picked(done))
+check("tmux absent from PATH: this is the one true decline - nothing left to spawn a window with",
+      picked(done) == DECLINED, picked(done))
+# [LAW:single-enforcer] the exit code is the whole of the no-transport report,
+# pinned once here against the sole remaining decline case, rather than
+# re-asserted beside every refused-pane case below (which no longer decline).
+check("declining is reported by exit code, not by prose alone",
+      done.returncode == NO_TRANSPORT_RC, f"rc={done.returncode}")
 
 # The promise in one case: a live pane, owned by a real process, that no ancestor
 # accounts for - and it must be refused rather than claimed for want of anything
 # better. Nothing else in the suite forces a rejection: every other pane is dead,
-# out of ancestry AND out of the walk's reach, or genuinely owned.
+# out of ancestry AND out of the walk's reach, or genuinely owned. Refusing this
+# pane still lands on the detached transport, not on silence.
 done = run(depth=2, panes=f"%5 {STRANGER.pid} 0")
-check("a live pane owned by a stranger is refused, not claimed",
-      picked(done) == DECLINED, picked(done))
+check("a live pane owned by a stranger is refused, not claimed - falls to detached",
+      picked(done) == DETACHED, picked(done))
 
 # Distinct from the case above, and easy to mistake for it: the walk exits at
 # `pid + 0 <= 1` on reaching init, so a pane_pid of 1 is never even tested
 # against the ancestry. This pins that termination guard, not the descent match.
 done = run(depth=2, panes="%5 1 0")
-check("the walk stops at init rather than climbing past it",
-      picked(done) == DECLINED, picked(done))
+check("the walk stops at init rather than climbing past it - falls to detached",
+      picked(done) == DETACHED, picked(done))
 
 # --- the two forgeries a bare pid match cannot see -------------------------
 
 done = run(depth=2, panes="%99 ROOTPID 1")
-check("a dead pane still advertising an ancestor's pid is refused",
-      picked(done) == DECLINED, picked(done))
+check("a dead pane still advertising an ancestor's pid is refused - falls to detached",
+      picked(done) == DETACHED, picked(done))
 
 done = run(depth=2, panes="%99 ROOTPID 1\n%98 ROOTPID 0")
 check("a live pane is still found past a dead one holding the same pid",
@@ -414,12 +437,12 @@ check("a live pane is still found past a dead one holding the same pid",
 # The positive cases above are this one's counterpart: they supply the column and
 # resolve.
 done = run(depth=2, panes="%99 ROOTPID")
-check("a pane whose liveness tmux never stated is refused, not assumed",
-      picked(done) == DECLINED, picked(done))
+check("a pane whose liveness tmux never stated is refused, not assumed - falls to detached",
+      picked(done) == DETACHED, picked(done))
 
 done = run(depth=2, sleep=2, forge_age="00:00")
-check("an ancestor younger than its own descendant is refused as a recycled pid",
-      picked(done) == DECLINED, picked(done))
+check("an ancestor younger than its own descendant is refused as a recycled pid - falls to detached",
+      picked(done) == DETACHED, picked(done))
 # The control runs UNDER the forging ps, differing only in the value written.
 # Re-running the chain without the wrapper would leave the one spurious-pass mode
 # open that `picked()` cannot see: a mangled process table declining cleanly with
@@ -438,8 +461,8 @@ check("the same forged pid resolves when the age is older instead of younger",
 # [[dd-]hh:]mm:ss yet folds to ~62 hours, so it clears the age comparison and only
 # the format check stands between it and a claimed pane.
 done = run(depth=2, sleep=2, forge_age="1:2:3:4")
-check("an elapsed time the walk cannot read refuses the pane",
-      picked(done) == DECLINED, picked(done))
+check("an elapsed time the walk cannot read refuses the pane - falls to detached",
+      picked(done) == DETACHED, picked(done))
 
 # --- precedence -----------------------------------------------------------
 # Both candidates must be resolvable, or the case cannot see which one won. An
@@ -463,10 +486,11 @@ check("a stale $TMUX_PANE hands the question on and discovery answers it",
       picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r}")
 
 # And with nothing to fall back to, the answer is still no pane - never the ":."
-# that an unresolvable id renders into.
+# that an unresolvable id renders into - though the launcher still has the
+# detached transport left to try.
 done = run(depth=2, panes="%5 1 0", tmux_pane="%4242")
-check("a stale $TMUX_PANE with nothing to discover declines rather than guessing",
-      picked(done) == DECLINED, picked(done))
+check("a stale $TMUX_PANE with nothing to discover falls to detached rather than guessing a pane",
+      picked(done) == DETACHED, picked(done))
 
 # Owning a pane and displaying a live process are different facts, and
 # remain-on-exit is what separates them: tmux keeps answering for a pane whose
