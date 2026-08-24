@@ -37,12 +37,16 @@ def assistant(tokens, sidechain=False):
 
 
 def run(records, stop_hook_active=False, ceiling=None, hook=HOOK,
-        event="stop", tool_name=None, tool_input=None, argv=()):
+        event="stop", tool_name=None, tool_input=None, argv=(), ceiling_file=None):
     """Invoke the hook as Claude Code does. Returns (exit code, parsed stdout, stderr)."""
     handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
     handle.write("".join(json.dumps(r) + "\n" for r in records))
     handle.close()
     env = {k: v for k, v in os.environ.items() if k != "MEMENTO_CONTEXT_CEILING"}
+    # Pointed away from ~/.claude/memento/context-ceiling unconditionally. Without this
+    # every assertion below would read whatever the person running the tests happens to
+    # have configured, and the suite would pass or fail on their machine's state.
+    env["MEMENTO_CEILING_FILE"] = ceiling_file or os.path.join(tempfile.mkdtemp(), "absent")
     if ceiling:
         env["MEMENTO_CONTEXT_CEILING"] = ceiling
     payload = {"session_id": "s-1", "transcript_path": handle.name,
@@ -139,6 +143,59 @@ _, out, _ = run([user, assistant(100_000)], ceiling="50000")
 check("the ceiling override is honoured",
       out and out.get("decision") == "block" and "50,000" in out["reason"], str(out))
 
+# --- the ceiling as a live knob ------------------------------------------------------
+# The hook is a fresh process per event, so a number written to the file takes effect on
+# the next tool call. The environment variable cannot do that: it is fixed at launch.
+
+def with_file(contents, tokens=400_000):
+    """Run at `tokens` with the ceiling file holding `contents` (None = no file)."""
+    path = os.path.join(tempfile.mkdtemp(), "context-ceiling")
+    if contents is not None:
+        open(path, "w").write(contents)
+    return run([user, assistant(tokens)], ceiling_file=path)
+
+code, out, _ = with_file(None)
+check("no ceiling file falls back to the 350k default",
+      out and "350,000" in out.get("reason", ""), f"{code} {out}")
+
+code, out, _ = with_file("500000\n")
+check("a number in the file raises the ceiling", code == 0 and out is None, f"{code} {out}")
+
+code, out, _ = with_file("500_000\n")
+check("underscores in the file are read as digit separators",
+      code == 0 and out is None, f"{code} {out}")
+
+code, out, _ = with_file("200000\n")
+check("a number in the file can also lower the ceiling",
+      out and "200,000" in out.get("reason", ""), f"{code} {out}")
+
+for spelling in ("off", "OFF", "  none  ", "never", "disabled"):
+    code, out, _ = with_file(spelling)
+    check(f"{spelling.strip()!r} in the file disables the ceiling entirely",
+          code == 0 and out is None, f"{code} {out}")
+
+# `> the-file` is how a shell clears a setting, so this is "unconfigured", not "invalid".
+code, out, _ = with_file("")
+check("a file emptied with > reads as unconfigured, not as a broken value",
+      out and "350,000" in out.get("reason", ""), f"{code} {out}")
+
+# [LAW:no-silent-failure] the dangerous outcome is not a crash, it is a typo that reads
+# as 350k while its author believes they moved the ceiling - a limit they would trust.
+for bad in ("banana", "-5", "3.5", "350k", "500,000"):
+    code, out, err = with_file(bad)
+    check(f"{bad!r} in the file fails loudly instead of falling back to the default",
+          code == 1 and repr(bad) in err and "350,000" not in err, f"{code} {out} {err}")
+check("the loud failure names the file to fix, and is one line rather than a stack trace",
+      "context-ceiling" in with_file("banana")[2]
+      and "Traceback" not in with_file("banana")[2], with_file("banana")[2])
+
+# An explicit instruction to this process is not overruled by an ambient file.
+path = os.path.join(tempfile.mkdtemp(), "context-ceiling")
+open(path, "w").write("off")
+code, out, _ = run([user, assistant(400_000)], ceiling="50000", ceiling_file=path)
+check("the environment override beats the file",
+      out and "50,000" in out.get("reason", ""), f"{code} {out}")
+
 # --- PreToolUse: the gate an autonomous session cannot loop around -------------------
 # A session that never ends a turn never reaches Stop. These cover the event that fires
 # on every tool call instead, and the accept/reject table for what stays permitted.
@@ -153,9 +210,16 @@ for tool, tool_input in (("Write", {"file_path": "/tmp/x", "content": "y"}),
                          ("SomeToolInventedNextRelease", {})):
     check(f"above the ceiling {tool} is denied", denies(tool, tool_input))
 
+# Reads look harmless and are not: the ceiling caps context, and a Read grows it. One
+# large file pulled in while ostensibly closing out defeats the close-out.
 for tool in ("Read", "Grep", "Glob"):
-    check(f"above the ceiling {tool} stays permitted - the handoff must not be written blind",
-          not denies(tool, {"file_path": "/tmp/x", "pattern": "y"}))
+    check(f"above the ceiling {tool} is denied - a read grows the context being capped",
+          denies(tool, {"file_path": "/tmp/x", "pattern": "y"}))
+# What a handoff actually needs from the world is the state of the tree, and that comes
+# through git rather than through the read tools.
+check("the state a handoff needs is still reachable through git",
+      not denies("Bash", {"command": "git status --short"})
+      and not denies("Bash", {"command": "git diff --stat"}))
 
 check("above the ceiling the handoff contract may still be loaded",
       not denies("Skill", {"skill": "memento:message-in-a-bottle"}))

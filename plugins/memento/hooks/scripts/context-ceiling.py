@@ -16,8 +16,9 @@ session the ceiling exists to catch, and precisely the session Stop cannot see.
 [LAW:no-ambient-temporal-coupling] a ceiling enforced only at an incidental lifecycle
 event is enforced by luck. So it is also enforced where a loop cannot avoid it:
 PreToolUse fires on every tool call. Above the ceiling the permitted set narrows to
-the close-out itself - the launcher, git, and the reads needed to write an accurate
-handoff - and everything else is denied.
+the close-out itself - the launcher, git, and the handoff contract - and everything
+else is denied, reads included: the ceiling is a limit on context, so a tool that
+grows context cannot be part of respecting it.
 [LAW:types-are-the-program] starting new work above the ceiling stops being
 discouraged and becomes unrepresentable.
 
@@ -27,18 +28,33 @@ turn and reports, which is the correct terminal state for a session that has run
 of room. That is why PreToolUse needs no spent-attempt escape valve and keeps no
 state of its own: there is nothing to unwedge.
 
-Anything unexpected - no transcript_path, an unreadable file, a bad ceiling, an
-unknown event - raises, and Python's traceback on stderr with exit 1 is exactly
-Claude Code's non-blocking error: the session continues and the breakage is visible.
+The ceiling itself is configurable while sessions run, because the hook is a fresh
+process per event: MEMENTO_CONTEXT_CEILING in the environment, else the number written
+in ~/.claude/memento/context-ceiling, else 350k. A value that does not parse exits with
+one line naming where to fix it - that is a person's mistake and deserves a sentence,
+not a stack trace.
+
+Anything unexpected - no transcript_path, an unreadable transcript, an unknown event -
+raises, and Python's traceback on stderr with exit 1 is exactly Claude Code's
+non-blocking error: the session continues and the breakage is visible.
 """
 
 import json
+import math
 import os
 import shlex
 import sys
 from pathlib import Path
 
-CEILING = int(os.environ.get("MEMENTO_CONTEXT_CEILING", 350_000))
+DEFAULT_CEILING = 350_000
+# Re-read on every invocation, which is what makes it a live knob: the hook is a fresh
+# process per event, so a number written here takes effect on the very next tool call.
+# The environment variable cannot do that - it is fixed when the session launches.
+CEILING_FILE = Path(os.environ.get("MEMENTO_CEILING_FILE")
+                    or Path.home() / ".claude" / "memento" / "context-ceiling")
+# Written by a person who wants the gate to stop, so the spellings that obviously mean
+# that all work rather than one blessed token.
+DISABLED = ("off", "none", "never", "disabled")
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LAUNCHER = os.path.join(PLUGIN_ROOT, "skills", "message-in-a-bottle", "bin", "finalize-session")
 # Everything the next request will carry: fresh input, cache written, cache read,
@@ -55,13 +71,16 @@ Load Skill(memento:message-in-a-bottle) for the handoff contract. That message i
 
 # Repeated on every refused call, so it states the way out and stops - the ceiling is
 # a context problem and the denial must not itself become a context cost.
-DENIAL = """CONTEXT CEILING: this session is at ~{tokens:,} tokens, past the {ceiling:,} hard maximum, so new work is refused until it closes out. This tool call was NOT run. git and file reads are still permitted: commit anything outstanding, then run the close-out:
+DENIAL = """CONTEXT CEILING: this session is at ~{tokens:,} tokens, past the {ceiling:,} hard maximum, so new work is refused until it closes out. This tool call was NOT run. git is still permitted: commit anything outstanding, then run the close-out:
     {launcher} '<handoff message>'
 Load Skill(memento:message-in-a-bottle) for the handoff contract. That message is the ONLY thing the next session wakes up with. Do not retry this call, and do not ask the user whether to finalize."""
 
-# Reads inform the handoff and cannot create work, so they stay open: a close-out
-# written blind is a close-out the next session cannot use.
-CLOSEOUT_READS = ("Read", "Grep", "Glob")
+# Reads are NOT open, though the argument for opening them is seductive: a handoff
+# should not be written blind. It does not survive the ceiling being a *context* limit.
+# Every Read grows the session the gate exists to stop growing - one large file pulled
+# in while ostensibly closing out defeats the close-out - and the two things a handoff
+# actually needs are recall, which is already in context, and the state of the tree,
+# which `git status` and `git diff` supply through the git that stays permitted.
 CLOSEOUT_SKILL = "memento:message-in-a-bottle"
 LAUNCHER_NAME = os.path.basename(LAUNCHER)
 OPERATORS = ("&&", "||", ";", ";;", "|", "&")
@@ -87,6 +106,46 @@ def segments(command):
             current.append(token)
     parts.append(current)
     return [part for part in parts if part]
+
+
+def parse_ceiling(written, source):
+    """The ceiling a configured value names, or a clean refusal saying where to fix it.
+
+    [LAW:no-silent-failure] a typo must not read as the default. A file saying 50000
+    that quietly enforced 350000 would be a ceiling its author believes they moved and
+    did not - worse than no ceiling at all, because they would trust it. So a value
+    that does not parse stops the hook loudly, naming the source and what it read,
+    rather than falling back to a number nobody asked for."""
+    text = written.strip()
+    if text.lower() in DISABLED:
+        # [LAW:dataflow-not-control-flow] disabling is a value the same comparison
+        # consumes, not a branch around the comparison.
+        return math.inf
+    digits = text.replace("_", "")
+    if digits.isdigit():
+        return int(digits)
+    sys.exit(f"memento context ceiling: {source} should hold a number of tokens or one "
+             f"of {'/'.join(DISABLED)}, but reads {text!r}. Fix it or remove it.")
+
+
+def resolve_ceiling():
+    """The ceiling in force for this invocation.
+
+    [LAW:single-enforcer] the one place the ceiling is decided, so the precedence
+    between the two ways of saying it exists once rather than at each reader. The
+    environment wins because it is an explicit instruction to this process - a test or
+    a one-off probe - and a process launched with an override should not be overruled
+    by an ambient file it never mentioned."""
+    override = os.environ.get("MEMENTO_CONTEXT_CEILING")
+    if override is not None:
+        return parse_ceiling(override, "MEMENTO_CONTEXT_CEILING")
+    try:
+        written = CEILING_FILE.read_text()
+    except FileNotFoundError:
+        return DEFAULT_CEILING
+    # `> the-file` is how a shell clears a setting, so an empty file reads as
+    # unconfigured rather than as a value that failed to parse.
+    return parse_ceiling(written, CEILING_FILE) if written.strip() else DEFAULT_CEILING
 
 
 def context_tokens(transcript_path):
@@ -117,8 +176,6 @@ def is_closeout(tool_name, tool_input):
     as tools are added - a tool nobody thought about here is refused, not waved
     through, so the gap shows up as a blocked close-out rather than as a session that
     quietly kept working past the ceiling."""
-    if tool_name in CLOSEOUT_READS:
-        return True
     if tool_name == "Skill":
         return tool_input.get("skill") == CLOSEOUT_SKILL
     if tool_name == "Bash":
@@ -175,6 +232,7 @@ def reason(template, tokens):
 # bare and two more with an older pair of verbs, so requiring argv turned a stale
 # registration into an IndexError traceback in a live session. Reading the payload
 # makes every one of those spellings work, including the ones already on disk.
+CEILING = resolve_ceiling()
 EVENTS = {"Stop": stop, "PreToolUse": pretool}
 
 hook = json.load(sys.stdin)
