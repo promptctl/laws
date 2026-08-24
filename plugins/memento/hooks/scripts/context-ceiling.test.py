@@ -36,13 +36,13 @@ def assistant(tokens, sidechain=False):
         "cache_read_input_tokens": tokens - 2, "output_tokens": 0}}}
 
 
-def run(records, stop_hook_active=False, ceiling=None, hook=HOOK,
-        event="stop", tool_name=None, tool_input=None, argv=(), ceiling_file=None,
-        log_file=None):
-    """Invoke the hook as Claude Code does. Returns (exit code, parsed stdout, stderr)."""
-    handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
-    handle.write("".join(json.dumps(r) + "\n" for r in records))
-    handle.close()
+def isolated(ceiling=None, ceiling_file=None, log_file=None):
+    """The environment every invocation in this suite runs under.
+
+    [LAW:one-source-of-truth] one place, because two calls once bypassed it and became
+    the only two assertions in the file that could fail on a machine whose real
+    ~/.claude/memento/context-ceiling holds something unparseable - which is to say, on
+    the machine of anyone developing this plugin."""
     env = {k: v for k, v in os.environ.items() if k != "MEMENTO_CONTEXT_CEILING"}
     # Pointed away from ~/.claude/memento/context-ceiling unconditionally. Without this
     # every assertion below would read whatever the person running the tests happens to
@@ -53,6 +53,17 @@ def run(records, stop_hook_active=False, ceiling=None, hook=HOOK,
     env["MEMENTO_CEILING_LOG"] = log_file or os.path.join(tempfile.mkdtemp(), "ceiling.log")
     if ceiling:
         env["MEMENTO_CONTEXT_CEILING"] = ceiling
+    return env
+
+
+def run(records, stop_hook_active=False, ceiling=None, hook=HOOK,
+        event="stop", tool_name=None, tool_input=None, argv=(), ceiling_file=None,
+        log_file=None):
+    """Invoke the hook as Claude Code does. Returns (exit code, parsed stdout, stderr)."""
+    handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+    handle.write("".join(json.dumps(r) + "\n" for r in records))
+    handle.close()
+    env = isolated(ceiling, ceiling_file, log_file)
     payload = {"session_id": "s-1", "transcript_path": handle.name,
                "hook_event_name": "Stop" if event == "stop" else "PreToolUse",
                "stop_hook_active": stop_hook_active}
@@ -273,6 +284,35 @@ check("above the ceiling any other skill is denied - a new craft is new work",
 
 check("above the ceiling git is permitted, so outstanding work can be committed",
       not denies("Bash", {"command": "git status"}))
+
+# git is not permitted wholesale, and the reason is the gate's own purpose rather than
+# security: a handoff exists to carry uncommitted work across a reset, and these are the
+# commands that destroy it. A session thrashing near the ceiling is the likeliest one to
+# reach for them.
+for destructive in ("git reset --hard HEAD~3", "git clean -xdf", "git checkout -- .",
+                    "git restore .", "git stash", "git rebase --abort",
+                    "git branch -D memento-context-ceiling-pretool"):
+    check(f"denied, because it destroys what the handoff would carry: {destructive!r}",
+          denies("Bash", {"command": destructive}))
+# `git -c` can define an alias that runs anything, so no global option may precede the
+# subcommand - which is one rule rather than a table of which options take a value.
+check("a global option before the subcommand is denied, alias injection with it",
+      denies("Bash", {"command": "git -c alias.z=!id z"})
+      and denies("Bash", {"command": "git -C /elsewhere status"})
+      and denies("Bash", {"command": "git --no-pager log"}))
+check("git with no subcommand at all is denied",
+      denies("Bash", {"command": "git"}))
+for allowed in ("git status", "git diff --stat", "git log --oneline -5", "git show HEAD",
+                "git rev-parse --abbrev-ref HEAD", "git add -A",
+                "git commit -m 'wip'", "git push"):
+    check(f"a close-out still needs it, so it stays permitted: {allowed!r}",
+          not denies("Bash", {"command": allowed}))
+
+# The launcher is one specific file. Matching its name alone made "is this the close-out"
+# a question about spelling, which any executable can answer.
+check("an impostor named finalize-session is not the launcher",
+      denies("Bash", {"command": "/tmp/finalize-session 'handoff'"})
+      and denies("Bash", {"command": "./finalize-session 'handoff'"}))
 check("a multi-part git command is permitted",
       not denies("Bash", {"command": "git add -A && git commit -m 'wip'"}))
 check("the close-out itself is permitted",
@@ -362,15 +402,24 @@ check("a multi-line git command is judged line by line, not refused outright",
 PERMITTED_TOOLS = {"git", "finalize-session"}
 SHIMS = tempfile.mkdtemp()
 INVOKED = os.path.join(SHIMS, "invoked")
+# The gate resolves the launcher from its own location, so the hook is run from a plugin
+# root built here and the launcher it trusts is a shim - the real one would deliver a
+# handoff into a live tmux pane, and a test may not do that.
+SHIM_ROOT = tempfile.mkdtemp()
+SHIM_HOOK = os.path.join(SHIM_ROOT, "hooks", "scripts", os.path.basename(HOOK))
+SHIM_LAUNCHER = os.path.join(SHIM_ROOT, "skills", "message-in-a-bottle", "bin",
+                             "finalize-session")
+os.makedirs(os.path.dirname(SHIM_HOOK))
+os.makedirs(os.path.dirname(SHIM_LAUNCHER))
+shutil.copy(HOOK, SHIM_HOOK)
 # Absolute interpreter, deliberately. `#!/usr/bin/env python3` under a PATH holding only
 # shims resolves to a python3 shim, which re-execs itself until the machine gives up.
-for _name in ("git", "finalize-session", "rm", "curl", "npm", "id", "echo", "cat"):
-    _shim = os.path.join(SHIMS, _name)
+for _shim in [os.path.join(SHIMS, name) for name in
+              ("git", "rm", "curl", "npm", "id", "echo", "cat")] + [SHIM_LAUNCHER]:
     with open(_shim, "w") as _handle:
         _handle.write(f"#!{sys.executable}\nimport os, sys\n"
                       f"open({INVOKED!r}, 'a').write(os.path.basename(sys.argv[0]) + '\\n')\n")
     os.chmod(_shim, 0o755)
-SHIMMED_LAUNCHER = os.path.join(SHIMS, "finalize-session")
 
 
 def bash_runs(command):
@@ -386,15 +435,17 @@ for permitted in ("git status --short",
                   "git add -A && git commit -m 'wip'",
                   "git add -A\ngit commit -m 'wip'",
                   'git commit -m "wip on the ceiling gate"',
-                  f"{SHIMMED_LAUNCHER} '/next'",
-                  f"{SHIMMED_LAUNCHER} 'ran a | b and c && d; see notes'",
-                  f"{SHIMMED_LAUNCHER} 'fixed `$PATH` handling in the installer'",
-                  f"{SHIMMED_LAUNCHER} 'the user said don'\\''t stop; carry on'",
-                  f"{SHIMMED_LAUNCHER} " + shlex.quote("it isn't done; see PR #25")):
+                  "git log --oneline -5 | git show",
+                  f"{SHIM_LAUNCHER} '/next'",
+                  f"{SHIM_LAUNCHER} 'ran a | b and c && d; see notes'",
+                  f"{SHIM_LAUNCHER} 'fixed `$PATH` handling in the installer'",
+                  f"{SHIM_LAUNCHER} 'the user said don'\\''t stop; carry on'",
+                  f"{SHIM_LAUNCHER} " + shlex.quote("it isn't done; see PR #25")):
+    _, _out, _err = run([user, assistant(360_000)], event="pretool", hook=SHIM_HOOK,
+                        tool_name="Bash", tool_input={"command": permitted})
     check(f"the gate permits it, so bash runs only the close-out: {permitted!r}",
-          not denies("Bash", {"command": permitted})
-          and bash_runs(permitted) <= PERMITTED_TOOLS,
-          f"bash ran {bash_runs(permitted)}")
+          _out is None and bash_runs(permitted) <= PERMITTED_TOOLS,
+          f"gate said {_out or 'permit'}{_err}; bash ran {bash_runs(permitted)}")
 
 # --- measuring a transcript larger than one read -------------------------------------
 # PreToolUse measures on every tool call and the transcript only grows, so the whole
@@ -442,6 +493,15 @@ check("the denial names the count, the ceiling and the launcher",
 # retrying it - both are how a ceiling breach turns into corrupted work.
 check("the denial says the call did not run and must not be retried",
       "NOT run" in denial and "Do not retry" in denial, str(out))
+# The denial is the agent's only account of what it may still run, so it has to be the
+# same account the gate enforces - a hand-kept second list would be a promise the gate
+# is free to stop keeping, and the agent has no way to discover the difference except by
+# being denied again.
+check("the denial names the git it permits, and names nothing it does not",
+      all(sub in denial for sub in ("status", "diff", "log", "show", "rev-parse",
+                                    "add", "commit", "push"))
+      and not any(sub in denial for sub in ("reset", "clean", "checkout", "branch",
+                                            "restore", "stash", "rebase")), denial)
 check("the close-out line in the denial parses as one launcher invocation",
       launcher_argv(denial) == [LAUNCHER, "<handoff message>"], str(out))
 
@@ -459,6 +519,7 @@ for spelling, argv in (("bare, as the cached Stop registrations invoke it", ()),
 # An event this script has no handler for is a wiring mistake, and must be loud rather
 # than silently handled as whichever handler happened to be first.
 done = subprocess.run([sys.executable, HOOK], text=True, capture_output=True,
+                      env=isolated(),
                       input=json.dumps({"hook_event_name": "PreCompact",
                                         "transcript_path": "/nonexistent"}))
 check("an unhandled event fails loudly", done.returncode == 1 and "PreCompact" in done.stderr,
@@ -468,6 +529,7 @@ code, out, err = run([user], ceiling="lots")
 check("an unparseable ceiling fails loudly", code == 1 and "lots" in err, f"{code} {err}")
 
 done = subprocess.run([sys.executable, HOOK], text=True, capture_output=True,
+                      env=isolated(),
                       input=json.dumps({"hook_event_name": "Stop"}))
 check("a payload with no transcript_path fails loudly",
       done.returncode == 1 and "transcript_path" in done.stderr, str(done))

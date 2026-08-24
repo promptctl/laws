@@ -16,9 +16,11 @@ session the ceiling exists to catch, and precisely the session Stop cannot see.
 [LAW:no-ambient-temporal-coupling] a ceiling enforced only at an incidental lifecycle
 event is enforced by luck. So it is also enforced where a loop cannot avoid it:
 PreToolUse fires on every tool call. Above the ceiling the permitted set narrows to
-the close-out itself - the launcher, git, and the handoff contract - and everything
-else is denied, reads included: the ceiling is a limit on context, so a tool that
-grows context cannot be part of respecting it.
+the close-out itself - the launcher resolved to its own path, the read-and-commit half
+of git, and the handoff contract - and everything else is denied, reads included: the
+ceiling is a limit on context, so a tool that grows context cannot be part of
+respecting it. Not the destructive half of git either, because uncommitted work is
+what a handoff carries and `git reset --hard` is how a session loses it.
 [LAW:types-are-the-program] starting new work above the ceiling stops being
 discouraged and becomes unrepresentable.
 
@@ -79,7 +81,7 @@ Load Skill(memento:message-in-a-bottle) for the handoff contract. That message i
 
 # Repeated on every refused call, so it states the way out and stops - the ceiling is
 # a context problem and the denial must not itself become a context cost.
-DENIAL = """CONTEXT CEILING: this session is at ~{tokens:,} tokens, past the {ceiling:,} hard maximum, so new work is refused until it closes out. This tool call was NOT run. git is still permitted: commit anything outstanding, then run the close-out:
+DENIAL = """CONTEXT CEILING: this session is at ~{tokens:,} tokens, past the {ceiling:,} hard maximum, so new work is refused until it closes out. This tool call was NOT run. `git {git}` are still permitted: get anything outstanding committed, then run the close-out:
     {launcher} '<handoff message>'
 Load Skill(memento:message-in-a-bottle) for the handoff contract. That message is the ONLY thing the next session wakes up with. Do not retry this call, and do not ask the user whether to finalize."""
 
@@ -90,7 +92,18 @@ Load Skill(memento:message-in-a-bottle) for the handoff contract. That message i
 # actually needs are recall, which is already in context, and the state of the tree,
 # which `git status` and `git diff` supply through the git that stays permitted.
 CLOSEOUT_SKILL = "memento:message-in-a-bottle"
-LAUNCHER_NAME = os.path.basename(LAUNCHER)
+# What a close-out needs of git: see the tree, and get what is outstanding committed and
+# pushed. The rest is denied by default, and the destructive half of git is the reason -
+# `git reset --hard`, `git clean -xdf`, `git checkout -- .` all destroy precisely the
+# uncommitted work a handoff exists to carry across a reset. A session thrashing near
+# the ceiling is the one most likely to reach for them, so permitting git wholesale
+# would have let this gate defeat its own purpose while reporting that it held.
+# `branch` is absent on purpose: `git branch -D` is as destructive as the rest, and what
+# a handoff wants from it - which branch am I on - `git status` and `git rev-parse`
+# already answer. Narrowing the list is the fix; a list of forbidden *flags* would be the
+# same blocklist mistake one layer down.
+GIT_SUBCOMMANDS = frozenset(("status", "diff", "log", "show", "rev-parse",
+                             "add", "commit", "push"))
 # The characters the shell leaves alone outside quotes - shlex.quote's own safe set.
 # None of them expands, substitutes, redirects, groups, or globs, so a word built only
 # from these reaches the command exactly as written here.
@@ -262,6 +275,20 @@ def context_tokens(transcript_path):
     return 0
 
 
+def permitted(part):
+    """Whether this one command is part of closing the session out."""
+    if part[0] == "git":
+        # The subcommand is the second word, with no global option allowed before it.
+        # Skipping options would mean knowing which of them take a value, and `git -c`
+        # takes one that can define an alias running anything at all - so refusing the
+        # whole shape is both the simpler rule and the tighter one.
+        return len(part) > 1 and part[1] in GIT_SUBCOMMANDS
+    # Resolved, not name-matched. The launcher is one specific file; any other
+    # executable that happens to be called finalize-session is not it, and matching on
+    # the name alone made "is this the close-out" a question about spelling.
+    return os.path.realpath(part[0]) == os.path.realpath(LAUNCHER)
+
+
 def is_closeout(tool_name, tool_input):
     """Whether this call is part of closing the session out, and so still permitted
     above the ceiling.
@@ -279,9 +306,7 @@ def is_closeout(tool_name, tool_input):
             return False  # an unbalanced quote - what the shell would run is unclear
         # Judged on what each segment *runs*, not on what it mentions: a command that
         # merely quotes the launcher's path inside an argument is not the close-out.
-        return bool(parts) and all(
-            part[0] == "git" or os.path.basename(part[0]) == LAUNCHER_NAME
-            for part in parts)
+        return bool(parts) and all(permitted(part) for part in parts)
     return False
 
 
@@ -345,7 +370,13 @@ def pretool(hook, tokens):
 
 
 def reason(template, tokens):
-    return template.format(tokens=tokens, ceiling=CEILING, launcher=shlex.quote(LAUNCHER))
+    # [LAW:one-source-of-truth] the denial names the permitted git subcommands, and
+    # names them by reading the set that decides them - a hand-kept second list would
+    # be a promise to the agent that the gate is free to stop keeping. Templates that
+    # do not mention a field simply ignore it.
+    return template.format(tokens=tokens, ceiling=CEILING,
+                           git="/".join(sorted(GIT_SUBCOMMANDS)),
+                           launcher=shlex.quote(LAUNCHER))
 
 
 # Keyed on the name Claude Code puts in the payload, never on an argv the registration
