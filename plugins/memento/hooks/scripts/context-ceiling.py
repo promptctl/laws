@@ -310,6 +310,42 @@ def is_closeout(tool_name, tool_input):
     return False
 
 
+def launched(tool_name, tool_input):
+    """Whether this call is the launcher itself, rather than something the close-out is
+    merely allowed to do on the way there.
+
+    `is_closeout` is too generous to answer this: it says yes to `git status`, which is
+    permitted during a close-out but is not one."""
+    if tool_name != "Bash":
+        return False
+    try:
+        parts = segments(tool_input.get("command", ""))
+    except ValueError:
+        return False
+    return any(os.path.realpath(part[0]) == os.path.realpath(LAUNCHER) for part in parts)
+
+
+def last_tool_call(transcript_path):
+    """The most recent tool this session invoked, as (name, input).
+
+    The transcript is the only record of it - no hook payload carries what the session
+    did before this event - and it is the same file the count comes from, read the same
+    way, so this costs one more tail read on the rare event that asks."""
+    with open(transcript_path, "rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        for line in lines_backward(handle, handle.tell()):
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if record.get("type") != "assistant" or record.get("isSidechain"):
+                continue
+            for block in reversed(record["message"].get("content") or []):
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    return block.get("name"), block.get("input") or {}
+    return None, {}
+
+
 def log(hook, tokens, verdict):
     """One line per invocation, including - especially - the ones that permit.
 
@@ -351,7 +387,18 @@ def stop(hook, tokens):
     stop again - is exactly when stop_hook_active is true, so asserting failure would
     call every successful close-out a failure. The flag is also Claude Code's
     transcript-wide "a Stop hook blocked the last stop", not this hook's own, so a
-    second Stop hook could open this gate with its block; the wording holds there too."""
+    second Stop hook could open this gate with its block; the wording holds there too.
+
+    A session that just ran the launcher is not asked to run it again. Observed live:
+    the close-out was permitted at 19:49:25, and four seconds later this handler blocked
+    the stop and instructed the agent to close out - which a compliant agent obeys,
+    scheduling a second handoff into the same pane behind the first. The contract says
+    the turn is over once the launcher is called, so a stop arriving right after that
+    call is the stop the contract asked for, not one to refuse."""
+    if launched(*last_tool_call(hook["transcript_path"])):
+        return "closed-out", {"systemMessage": f"memento: the close-out ran at ~{tokens:,} "
+                                               f"tokens, past the {CEILING:,} ceiling, so "
+                                               f"the stop proceeds."}
     if hook.get("stop_hook_active"):
         return "spent", {"systemMessage": f"memento: context ceiling breached (~{tokens:,} > "
                                  f"{CEILING:,}) and this session has spent its one forced "

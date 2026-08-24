@@ -151,6 +151,29 @@ check("giving up does not claim the close-out failed",
       out and "If the close-out did not run" in out.get("systemMessage", "")
       and "was NOT closed out" not in out.get("systemMessage", ""), str(out))
 
+def tool_call(name, tool_input, tokens=360_000):
+    """An assistant record that invoked a tool, which is how the transcript records one."""
+    record = assistant(tokens)
+    record["message"]["content"] = [{"type": "tool_use", "name": name, "input": tool_input}]
+    return record
+
+
+# Observed live, session 3b20dc93: the close-out was permitted at 22:37:32 and four
+# seconds later Stop blocked and told the agent to close out - which a compliant agent
+# obeys, scheduling a second handoff into the same pane behind the first.
+code, out, _ = run([user, tool_call("Bash", {"command": f"{shlex.quote(LAUNCHER)} 'bye'"})])
+check("a stop straight after the close-out is not blocked into running it twice",
+      code == 0 and out and "decision" not in out
+      and "close-out ran" in out.get("systemMessage", ""), f"{code} {out}")
+# Only the launcher ends it. git is permitted during a close-out but is not one, and
+# reading it as one would open the gate to any session that ran `git status` last.
+code, out, _ = run([user, tool_call("Bash", {"command": "git status"})])
+check("a stop after some other permitted call is still blocked",
+      out and out.get("decision") == "block", f"{code} {out}")
+code, out, _ = run([user, tool_call("Skill", {"skill": "memento:message-in-a-bottle"})])
+check("loading the handoff contract is not the same as having closed out",
+      out and out.get("decision") == "block", f"{code} {out}")
+
 code, out, _ = run([user], ceiling="1")
 check("a transcript with no assistant record reads as zero", code == 0 and out is None, str(out))
 
