@@ -399,27 +399,42 @@ def classify(tool_name, tool_input):
     return CLOSEOUT if parts and all(permitted(part) for part in parts) else NEW_WORK
 
 
-def launched(tool_name, tool_input):
-    """Whether this call is the launcher itself, rather than something the close-out is
-    merely allowed to do on the way there.
+def launched(tool_name, tool_input, ran):
+    """Whether this call is the launcher itself and actually ran, rather than something
+    the close-out is merely allowed to do on the way there.
 
-    `is_closeout` is too generous to answer this: it says yes to `git status`, which is
-    permitted during a close-out but is not one."""
-    if tool_name != "Bash":
+    `classify` is too generous to answer the first half: it says yes to `git status`,
+    which is permitted during a close-out but is not one.
+
+    `ran` is the half no reading of the command can supply, and leaving it out was the
+    worst failure this gate had - its success and its total defeat spelled identically.
+    A call PreToolUse denied is written into the transcript exactly like one that ran:
+    same assistant record, same `tool_use` block. So a session refused permission to
+    leave - `echo hi; finalize-session 'msg'`, denied whole because `echo` is new work,
+    then giving up rather than retrying - read here as a session that had left, and Stop
+    let it end with no handoff written at all. [FRAMING:representation] the command text
+    is a map of what was attempted; only the result records what happened."""
+    if not ran or tool_name != "Bash":
         return False
     try:
-        parts = segments(tool_input.get("command", ""))
+        parts = segments(tool_input.get("command") or "")
     except ValueError:
         return False
     return any(os.path.realpath(part[0]) == os.path.realpath(LAUNCHER) for part in parts)
 
 
 def last_tool_call(transcript_path):
-    """The most recent tool this session invoked, as (name, input).
+    """The most recent tool this session invoked, as (name, input, ran).
 
     The transcript is the only record of it - no hook payload carries what the session
     did before this event - and it is the same file the count comes from, read the same
-    way, so this costs one more tail read on the rare event that asks."""
+    way, so this costs one more tail read on the rare event that asks.
+
+    `ran` is read off the call's own result: a refused or failed call comes back as a
+    `tool_result` carrying `is_error`, and a successful one carries no such key at all.
+    Reading newest-first means a call's result is met before the call, which is why one
+    backward pass answers both halves."""
+    failed = set()
     with open(transcript_path, "rb") as handle:
         handle.seek(0, os.SEEK_END)
         for line in lines_backward(handle, handle.tell()):
@@ -427,12 +442,20 @@ def last_tool_call(transcript_path):
                 record = json.loads(line)
             except ValueError:
                 continue
-            if record.get("type") != "assistant" or record.get("isSidechain"):
+            # A dispatched subagent writes its own calls into this same file, and they
+            # are a different conversation - the same reason the count skips them.
+            if record.get("isSidechain"):
                 continue
-            for block in reversed(record["message"].get("content") or []):
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    return block.get("name"), block.get("input") or {}
-    return None, {}
+            content = record.get("message", {}).get("content")
+            for block in reversed(content if isinstance(content, list) else []):
+                if not isinstance(block, dict):
+                    continue
+                if block.get("is_error"):
+                    failed.add(block.get("tool_use_id"))
+                if block.get("type") == "tool_use":
+                    return (block.get("name"), block.get("input") or {},
+                            block.get("id") not in failed)
+    return None, {}, False
 
 
 def log(hook, tokens, verdict):

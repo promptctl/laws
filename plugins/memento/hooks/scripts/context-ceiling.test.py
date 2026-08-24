@@ -153,11 +153,24 @@ check("giving up does not claim the close-out failed",
       out and "If the close-out did not run" in out.get("systemMessage", "")
       and "was NOT closed out" not in out.get("systemMessage", ""), str(out))
 
-def tool_call(name, tool_input, tokens=360_000):
+def tool_call(name, tool_input, tokens=360_000, call_id="toolu_1"):
     """An assistant record that invoked a tool, which is how the transcript records one."""
     record = assistant(tokens)
-    record["message"]["content"] = [{"type": "tool_use", "name": name, "input": tool_input}]
+    record["message"]["content"] = [{"type": "tool_use", "id": call_id,
+                                     "name": name, "input": tool_input}]
     return record
+
+
+def tool_result(call_id="toolu_1", **block):
+    """The record Claude Code writes back for a tool call.
+
+    A call the gate DENIED gets one of these exactly like a call that ran - same
+    assistant record before it, same tool_use block - and `is_error` is the only mark
+    that separates them. Success is spelled two ways in real transcripts, with the key
+    absent or explicitly false, so both are reachable from here rather than assumed
+    equivalent."""
+    return {"type": "user", "isSidechain": False, "message": {"content": [
+        dict({"type": "tool_result", "tool_use_id": call_id, "content": "..."}, **block)]}}
 
 
 # Observed live, session 3b20dc93: the close-out was permitted at 22:37:32 and four
@@ -167,6 +180,29 @@ code, out, _ = run([user, tool_call("Bash", {"command": f"{shlex.quote(LAUNCHER)
 check("a stop straight after the close-out is not blocked into running it twice",
       code == 0 and out and "decision" not in out
       and "close-out ran" in out.get("systemMessage", ""), f"{code} {out}")
+
+# The gate's success and its total defeat were spelled identically. Observed live in
+# session 523b97e3: the gate denied a close-out because the handoff prose held a
+# semicolon. Had that session given up rather than retrying, the launcher would still
+# have been the last thing named in the transcript, Stop would have called it closed-out,
+# and the session would have ended with no handoff written at all - the one outcome this
+# whole file exists to prevent, reported as the one it exists to produce.
+CLOSEOUT_CALL = tool_call("Bash", {"command": f"{shlex.quote(LAUNCHER)} 'bye'"})
+code, out, _ = run([user, CLOSEOUT_CALL, tool_result(is_error=True)])
+check("a close-out the gate refused is not a close-out, and the stop is still blocked",
+      out and out.get("decision") == "block", f"{code} {out}")
+for spelling, result in (("with no is_error key at all", tool_result()),
+                         ("with is_error explicitly false", tool_result(is_error=False))):
+    code, out, _ = run([user, CLOSEOUT_CALL, result])
+    check(f"a close-out that ran lets the stop proceed, {spelling}",
+          code == 0 and out and "close-out ran" in out.get("systemMessage", ""), f"{code} {out}")
+# Read the result, not the command. Re-deriving permission here instead would call this
+# unfinished business - the launcher DID run, a handoff WAS delivered, and the session
+# would be sent to deliver a second one into the same pane.
+code, out, _ = run([user, tool_call("Bash", {"command": f"npm test; {shlex.quote(LAUNCHER)} 'bye'"}),
+                    tool_result()])
+check("a launcher that ran counts as having run, whatever ran beside it",
+      code == 0 and out and "close-out ran" in out.get("systemMessage", ""), f"{code} {out}")
 # Only the launcher ends it. git is permitted during a close-out but is not one, and
 # reading it as one would open the gate to any session that ran `git status` last.
 code, out, _ = run([user, tool_call("Bash", {"command": "git status"})])
