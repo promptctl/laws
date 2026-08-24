@@ -220,6 +220,23 @@ def parse_ceiling(written, source):
              f"of {'/'.join(DISABLED)}, but reads {text!r}. Fix it or remove it.")
 
 
+def configured(written):
+    """Whether a source is saying anything at all.
+
+    `> the-file` and `VAR=` are the same gesture - the shell's two ways of clearing a
+    setting - so neither blank is a value that failed to parse; both are silence, and
+    silence falls through to the next source.
+
+    [LAW:one-source-of-truth] one rule, because a rule kept per source drifts per source,
+    and it had: the file honoured this and the environment did not, so an exported-empty
+    MEMENTO_CONTEXT_CEILING reached `parse_ceiling`, matched neither the disabling words
+    nor a digit, and exited the process at import - before the payload was ever read.
+    Which, by this module's own semantics, is a non-blocking error: the ceiling simply
+    stopped being enforced for that call. Copying the check into the second reader would
+    have fixed that instance and left the third reader free to forget it again."""
+    return bool(written.strip())
+
+
 def resolve_ceiling():
     """The ceiling in force for this invocation.
 
@@ -228,16 +245,14 @@ def resolve_ceiling():
     environment wins because it is an explicit instruction to this process - a test or
     a one-off probe - and a process launched with an override should not be overruled
     by an ambient file it never mentioned."""
-    override = os.environ.get("MEMENTO_CONTEXT_CEILING")
-    if override is not None:
+    override = os.environ.get("MEMENTO_CONTEXT_CEILING", "")
+    if configured(override):
         return parse_ceiling(override, "MEMENTO_CONTEXT_CEILING")
     try:
         written = CEILING_FILE.read_text()
     except FileNotFoundError:
         return DEFAULT_CEILING
-    # `> the-file` is how a shell clears a setting, so an empty file reads as
-    # unconfigured rather than as a value that failed to parse.
-    return parse_ceiling(written, CEILING_FILE) if written.strip() else DEFAULT_CEILING
+    return parse_ceiling(written, CEILING_FILE) if configured(written) else DEFAULT_CEILING
 
 
 def lines_backward(handle, end):

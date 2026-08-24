@@ -51,7 +51,9 @@ def isolated(ceiling=None, ceiling_file=None, log_file=None):
     # Same reason as the ceiling file, plus one more: without it the suite would append
     # to the log a real session is writing to.
     env["MEMENTO_CEILING_LOG"] = log_file or os.path.join(tempfile.mkdtemp(), "ceiling.log")
-    if ceiling:
+    # `is not None`, not truthiness: "" is a value this suite has to be able to set, since
+    # an exported-but-empty variable is its own case and used to take the hook down.
+    if ceiling is not None:
         env["MEMENTO_CONTEXT_CEILING"] = ceiling
     return env
 
@@ -274,6 +276,20 @@ open(path, "w").write("off")
 code, out, _ = run([user, assistant(400_000)], ceiling="50000", ceiling_file=path)
 check("the environment override beats the file",
       out and "50,000" in out.get("reason", ""), f"{code} {out}")
+
+# `VAR=` is the shell's other way of clearing a setting, and it arrives here as "" rather
+# than as absent. Read as a configured value it matches neither a number nor a disabling
+# word, so the hook exited before it ever read the payload - which by this module's own
+# semantics is a non-blocking error, i.e. the ceiling silently stopped being enforced for
+# that call. The file already treated its own blank as silence; only this reader did not.
+code, out, err = run([user, assistant(400_000)], ceiling="")
+check("an environment variable cleared with VAR= reads as unconfigured, not as broken",
+      out and "350,000" in out.get("reason", ""), f"{code} {out} {err}")
+cleared = os.path.join(tempfile.mkdtemp(), "context-ceiling")
+open(cleared, "w").write("500000")
+code, out, err = run([user, assistant(400_000)], ceiling="", ceiling_file=cleared)
+check("a cleared environment variable falls through to the file rather than shadowing it",
+      code == 0 and out is None, f"{code} {out} {err}")
 
 # --- PreToolUse: the gate an autonomous session cannot loop around -------------------
 # A session that never ends a turn never reaches Stop. These cover the event that fires
