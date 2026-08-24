@@ -398,6 +398,14 @@ check("git chained to new work is denied, not waved through on its first segment
       denies("Bash", {"command": "git commit -m 'wip' && npm run build"}))
 check("an empty command is denied rather than reading as a permitted no-op",
       denies("Bash", {"command": "   "}))
+# The payload is JSON from outside the process, so the field is read once, liberally, at
+# the edge. It used to be read twice with two different spellings of that liberality, and
+# the stricter one turned a null command into a TypeError - which is to say, into a tool
+# call that proceeded because the gate had crashed. `denies` fails on any stderr, so a
+# regression here reports as a crash rather than as a quiet permit.
+check("a null command is denied rather than crashing the gate",
+      denies("Bash", {"command": None}))
+check("a tool_input with no command at all is denied too", denies("Bash", {}))
 
 # --- what a permitted command may not smuggle ----------------------------------------
 # Reported against the first version of this gate, which tokenized with shlex and split
@@ -580,6 +588,26 @@ _, out, _ = run([user, assistant(360_000)], event="pretool",
 check("a call that was never the close-out gets the ordinary denial",
       "this IS the close-out" not in
       out["hookSpecificOutput"]["permissionDecisionReason"], str(out))
+
+
+def denial_reason(command):
+    """What the gate says when it refuses this command."""
+    _, refused, _ = run([user, assistant(360_000)], event="pretool",
+                        tool_name="Bash", tool_input={"command": command})
+    return (refused or {}).get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+
+
+# Reaching for the launcher and merely naming it are different sessions. One is trying to
+# leave and needs the rewrite; the other is inspecting a file, or writing a note, and
+# would spend one of its scarce remaining attempts rewriting a command that was never a
+# close-out. The coaching used to go to both, because the test above only ever asserted
+# that naming the launcher was denied and never which refusal it got.
+for names_it in (f"cat {LAUNCHER}",
+                 f'echo "$(cat {LAUNCHER})"',
+                 f"echo 'run {LAUNCHER} later' > /tmp/note"):
+    check(f"naming the launcher is refused as ordinary new work: {names_it!r}",
+          denies("Bash", {"command": names_it})
+          and "this IS the close-out" not in denial_reason(names_it), denial_reason(names_it))
 
 check("the denial names the git it permits, and names nothing it does not",
       all(sub in denial for sub in ("status", "diff", "log", "show", "rev-parse",

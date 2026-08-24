@@ -96,6 +96,16 @@ MISQUOTED = """CONTEXT CEILING: this IS the close-out, and it was NOT run - beca
 The handoff must be ONE single-quoted argument. No $(...), no backticks, no heredoc, no double quotes: the gate cannot tell what those would run, so it refuses them. Newlines inside the single quotes are fine, so a long multi-paragraph message needs nothing special. Write an apostrophe as '\\'' - end the quote, backslash-quote, reopen. Run exactly this shape:
     {launcher} '<handoff message>'"""
 
+# What a call above the ceiling can be, and the whole of it. These double as the log's
+# verdict labels because they are the same fact: what the gate decided this call was.
+CLOSEOUT = "allow-closeout"
+MISQUOTED_CLOSEOUT = "deny-misquoted"
+NEW_WORK = "deny"
+# [LAW:one-source-of-truth] which classification is refused, and in which words, decided
+# here rather than at the branch that emits. The close-out's absence from this table is
+# what permits it - one fewer thing that can be said two ways.
+DENIALS = {NEW_WORK: DENIAL, MISQUOTED_CLOSEOUT: MISQUOTED}
+
 # Reads are NOT open, though the argument for opening them is seductive: a handoff
 # should not be written blind. It does not survive the ceiling being a *context* limit.
 # Every Read grows the session the gate exists to stop growing - one large file pulled
@@ -333,25 +343,60 @@ def permitted(part):
     return os.path.realpath(part[0]) == os.path.realpath(LAUNCHER)
 
 
-def is_closeout(tool_name, tool_input):
-    """Whether this call is part of closing the session out, and so still permitted
-    above the ceiling.
+def first_word(command):
+    """The word a command line starts with - best effort, and best effort is enough.
+
+    This is consulted only to choose which denial to send. The permission decision was
+    already made, by `segments`, and this runs precisely where `segments` refused to make
+    sense of the string - so shlex's tolerance is the right instrument here and would be
+    the wrong one there. When the quoting is itself what broke, whitespace is what is
+    left to split on."""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    return words[0] if words else ""
+
+
+def classify(tool_name, tool_input):
+    """What this call is above the ceiling: the close-out, the close-out written in a
+    form the parser cannot read, or new work.
 
     Default-deny: an unrecognised tool is new work. That is what keeps the set honest
     as tools are added - a tool nobody thought about here is refused, not waved
     through, so the gap shows up as a blocked close-out rather than as a session that
-    quietly kept working past the ceiling."""
+    quietly kept working past the ceiling.
+
+    [LAW:types-are-the-program] three names covering the whole domain, so the verdict,
+    the wording and the log label all read one value instead of each deriving its own
+    answer from the command text. They used to derive their own, and both derivations
+    had drifted from this one: a bare `LAUNCHER in command` called `cat <launcher>` a
+    misquoted close-out and coached the agent to rewrite a command that was never one,
+    and a `get("command", "")` here against a `get("command") or ""` three lines away
+    meant a null command crashed the gate through one reader and was handled by the
+    other. Neither is patched below; there is simply one reader now."""
     if tool_name == "Skill":
-        return tool_input.get("skill") == CLOSEOUT_SKILL
-    if tool_name == "Bash":
-        try:
-            parts = segments(tool_input.get("command", ""))
-        except ValueError:
-            return False  # an unbalanced quote - what the shell would run is unclear
-        # Judged on what each segment *runs*, not on what it mentions: a command that
-        # merely quotes the launcher's path inside an argument is not the close-out.
-        return bool(parts) and all(permitted(part) for part in parts)
-    return False
+        return CLOSEOUT if tool_input.get("skill") == CLOSEOUT_SKILL else NEW_WORK
+    if tool_name != "Bash":
+        return NEW_WORK
+    # The outermost edge: this arrives as JSON on stdin from outside the process, so it
+    # is accepted liberally here, at the checkpoint, and nowhere inland
+    # [LAW:parse-dont-validate]. An empty command parses to no segments and is refused
+    # below by the same rule that refuses everything else, with no case of its own.
+    command = tool_input.get("command") or ""
+    try:
+        parts = segments(command)
+    except ValueError:
+        # The one refusal that is about spelling rather than about permission - so it is
+        # reachable only from here, where the parse actually failed, and only for a
+        # command that *starts* with the launcher. A command that merely mentions the
+        # launcher's path somewhere is not a session trying to leave.
+        return (MISQUOTED_CLOSEOUT
+                if os.path.realpath(first_word(command)) == os.path.realpath(LAUNCHER)
+                else NEW_WORK)
+    # Judged on what each segment *runs*, not on what it mentions: a command that
+    # merely quotes the launcher's path inside an argument is not the close-out.
+    return CLOSEOUT if parts and all(permitted(part) for part in parts) else NEW_WORK
 
 
 def launched(tool_name, tool_input):
@@ -454,20 +499,18 @@ def stop(hook, tokens):
 def pretool(hook, tokens):
     """The close-out is the only work left, so it is the only work permitted.
 
-    A refused call that names the launcher was trying to leave, not trying to stay, and
-    is told which of the two it hit. [LAW:dataflow-not-control-flow] one value chooses
-    the words and the log line together, so the log says which denial an agent is stuck
-    on - the diagnostic that was missing when a live session spent two attempts on a
-    heredoc and the log recorded both as plain `deny`."""
-    tool_name, tool_input = hook["tool_name"], hook.get("tool_input") or {}
-    if is_closeout(tool_name, tool_input):
-        return "allow-closeout", None
-    misquoted = tool_name == "Bash" and LAUNCHER in (tool_input.get("command") or "")
-    return ("deny-misquoted" if misquoted else "deny",
-            {"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                    "permissionDecision": "deny",
-                                    "permissionDecisionReason":
-                                        reason(MISQUOTED if misquoted else DENIAL, tokens)}})
+    A refused call that was reaching for the launcher was trying to leave, not trying to
+    stay, and is told which of the two it hit. [LAW:dataflow-not-control-flow] one value
+    chooses the words and the log line together, so the log says which denial an agent is
+    stuck on - the diagnostic that was missing when a live session spent two attempts on
+    a heredoc and the log recorded both as plain `deny`."""
+    label = classify(hook["tool_name"], hook.get("tool_input") or {})
+    template = DENIALS.get(label)
+    if template is None:
+        return label, None
+    return label, {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                          "permissionDecision": "deny",
+                                          "permissionDecisionReason": reason(template, tokens)}}
 
 
 def reason(template, tokens):
