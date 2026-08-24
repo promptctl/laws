@@ -77,13 +77,24 @@ TAIL_CHUNK = 256 * 1024
 # and lose the only exit from the block.
 INSTRUCTION = """CONTEXT CEILING: this session is at ~{tokens:,} tokens, past the {ceiling:,} hard maximum. Close it out now so the next session can pick the work back up. Commit or push everything outstanding first - a handoff across a reset loses whatever is not committed - then run the close-out:
     {launcher} '<handoff message>'
-Load Skill(memento:message-in-a-bottle) for the handoff contract. That message is the ONLY thing the next session wakes up with, so it says what you were doing, exactly where you stopped, and the next concrete step. Do not start new work, and do not ask the user whether to finalize."""
+Load Skill(memento:message-in-a-bottle) for the handoff contract. That message is the ONLY thing the next session wakes up with, so it says what you were doing, exactly where you stopped, and the next concrete step. Quote it with single quotes and nothing else - no $(...), no heredoc, no double quotes - writing an apostrophe as '\\''. Newlines inside the quotes are fine. Do not start new work, and do not ask the user whether to finalize."""
 
 # Repeated on every refused call, so it states the way out and stops - the ceiling is
 # a context problem and the denial must not itself become a context cost.
 DENIAL = """CONTEXT CEILING: this session is at ~{tokens:,} tokens, past the {ceiling:,} hard maximum, so new work is refused until it closes out. This tool call was NOT run. `git {git}` are still permitted: get anything outstanding committed, then run the close-out:
     {launcher} '<handoff message>'
 Load Skill(memento:message-in-a-bottle) for the handoff contract. That message is the ONLY thing the next session wakes up with. Do not retry this call, and do not ask the user whether to finalize."""
+
+# The close-out, attempted in a form the parser will not accept. It needs its own words
+# because an ordinary denial and a misquoted close-out otherwise read identically, and an
+# agent that cannot tell "you may not do this" from "you may, but not spelled that way"
+# retries the same spelling. Observed live, session 3b20dc93: it reached for
+# `--reset compact "$(cat <<'EOF' ... EOF)"` - the standard idiom for long multi-line
+# text - and spent two denials and ~10k tokens discovering that the plain form was
+# wanted. The gate refusing its own way out is the worst failure it has.
+MISQUOTED = """CONTEXT CEILING: this IS the close-out, and it was NOT run - because of how the command is written, not because closing out is refused. Rewrite it and run it again.
+The handoff must be ONE single-quoted argument. No $(...), no backticks, no heredoc, no double quotes: the gate cannot tell what those would run, so it refuses them. Newlines inside the single quotes are fine, so a long multi-paragraph message needs nothing special. Write an apostrophe as '\\'' - end the quote, backslash-quote, reopen. Run exactly this shape:
+    {launcher} '<handoff message>'"""
 
 # Reads are NOT open, though the argument for opening them is seductive: a handoff
 # should not be written blind. It does not survive the ceiling being a *context* limit.
@@ -408,12 +419,22 @@ def stop(hook, tokens):
 
 
 def pretool(hook, tokens):
-    """The close-out is the only work left, so it is the only work permitted."""
-    if is_closeout(hook["tool_name"], hook.get("tool_input") or {}):
+    """The close-out is the only work left, so it is the only work permitted.
+
+    A refused call that names the launcher was trying to leave, not trying to stay, and
+    is told which of the two it hit. [LAW:dataflow-not-control-flow] one value chooses
+    the words and the log line together, so the log says which denial an agent is stuck
+    on - the diagnostic that was missing when a live session spent two attempts on a
+    heredoc and the log recorded both as plain `deny`."""
+    tool_name, tool_input = hook["tool_name"], hook.get("tool_input") or {}
+    if is_closeout(tool_name, tool_input):
         return "allow-closeout", None
-    return "deny", {"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                           "permissionDecision": "deny",
-                                           "permissionDecisionReason": reason(DENIAL, tokens)}}
+    misquoted = tool_name == "Bash" and LAUNCHER in (tool_input.get("command") or "")
+    return ("deny-misquoted" if misquoted else "deny",
+            {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                    "permissionDecision": "deny",
+                                    "permissionDecisionReason":
+                                        reason(MISQUOTED if misquoted else DENIAL, tokens)}})
 
 
 def reason(template, tokens):

@@ -520,6 +520,37 @@ check("the denial says the call did not run and must not be retried",
 # same account the gate enforces - a hand-kept second list would be a promise the gate
 # is free to stop keeping, and the agent has no way to discover the difference except by
 # being denied again.
+# Verbatim from session 3b20dc93, which was trying to leave and could not find the door.
+# A heredoc inside command substitution is the standard idiom for a long multi-line
+# argument, so this is what a capable agent reaches for - and the gate must answer it
+# with the fix rather than with the same words it gives to `npm run build`.
+HEREDOC = (f"{LAUNCHER} --reset compact \"$(cat <<'EOF'\n"
+           "/compact Resume the PR review loop on #411 - it is NOT merged.\n"
+           "EOF\n)\"")
+_, out, _ = run([user, assistant(360_000)], event="pretool",
+                tool_name="Bash", tool_input={"command": HEREDOC})
+misquoted = (out or {}).get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+check("a heredoc close-out is still denied - the gate cannot tell what it would run",
+      (out or {}).get("hookSpecificOutput", {}).get("permissionDecision") == "deny", str(out))
+check("but it is told this IS the close-out and the writing is the problem",
+      "this IS the close-out" in misquoted and "not because closing out is refused" in misquoted,
+      misquoted)
+check("and it is told the one form that works, not just what is forbidden",
+      "single-quoted" in misquoted and "Newlines inside the single quotes are fine" in misquoted
+      and r"'\''" in misquoted, misquoted)
+# The distinction has to reach the log too, or a session stuck on its own quoting looks
+# exactly like one that keeps trying to start new work.
+_, _, _ = run([user, assistant(360_000)], event="pretool", tool_name="Bash",
+              tool_input={"command": HEREDOC}, log_file=(_ml := os.path.join(tempfile.mkdtemp(), "l")))
+check("the log distinguishes a misquoted close-out from an ordinary refusal",
+      "deny-misquoted" in open(_ml).read(), open(_ml).read())
+# An ordinary refusal must NOT get the close-out coaching - it would read as permission.
+_, out, _ = run([user, assistant(360_000)], event="pretool",
+                tool_name="Bash", tool_input={"command": "npm run build"})
+check("a call that was never the close-out gets the ordinary denial",
+      "this IS the close-out" not in
+      out["hookSpecificOutput"]["permissionDecisionReason"], str(out))
+
 check("the denial names the git it permits, and names nothing it does not",
       all(sub in denial for sub in ("status", "diff", "log", "show", "rev-parse",
                                     "add", "commit", "push"))
