@@ -801,6 +801,22 @@ OSA2
       if [[ -s "$GOALFILE" ]]; then
         log "carried goal NOT delivered: /goal $(cat "$GOALFILE")"
       fi
+      # Tear the new session down before giving up. A readiness timeout does NOT
+      # mean nothing happened on the new side: the handoff message rides in the
+      # `tmux new-session` argv, so the successor is already carrying it and a boot
+      # that lands one second past the deadline would leave TWO live agents — the
+      # old one never retired, the new one working the handoff — which is the exact
+      # invariant this transport exists to provide. Collapsing back to "the old
+      # process is the only one" is the only outcome that keeps it, and it also
+      # stops a hung session lingering as an orphan nobody discovers.
+      # [LAW:no-silent-failure] the `|| true` is the narrow legitimate case: a
+      # session that never existed, or already died, is the state this line is
+      # trying to reach, so its failure is genuinely irrelevant to everything
+      # downstream — and the timeout itself is already reported, loudly, above.
+      # SESSION is only ever torn down here; retiring the OLD process instead
+      # would be the wrong direction, per the note below.
+      tmux kill-session -t "$SESSION" 2>/dev/null || true
+      log "detached session $SESSION torn down; the old process remains the only live agent"
       # Leave the old process alone: a spawn that never came up is not grounds
       # to kill the one process that was actually still running.
       exit 1
