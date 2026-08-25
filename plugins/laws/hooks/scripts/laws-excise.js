@@ -8,8 +8,9 @@
 // A craft skill, when loaded via the Skill tool, lands as ONE transcript line:
 //   type:"user", isMeta:true, sourceToolUseID:<Skill tool_use id>,
 //   message.content[0] = { type:"text", text:"Base directory for this skill: <dir>\n\n<SKILL.md body>" }
-// The laws media are code/prose/prompt/application-spec/chat — identified by a base dir ending
-// in /skills/<medium>.
+// A craft is any skill under the laws plugin — identified by a base dir ending in
+// /laws/<...>/skills/<craft>, which is the path form of the same `laws:` namespace the router
+// keys on. The craft set is never enumerated here.
 //
 // COMPATIBILITY, NOT "ONE AT A TIME": crafts COEXIST by default. code+prose+ticket is normal,
 // complementary work. What the gate fires on is a genuine conflicting ORDERING — an engaged
@@ -41,9 +42,20 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const MEDIA = ['code', 'prose', 'prompt', 'application-spec', 'chat'];
-// base dir ".../skills/<medium>" (tolerates the plugin-cache path and the repo path alike)
-const BASEDIR_RE = new RegExp('/skills/(' + MEDIA.join('|') + ')(?:/|$|\\s)');
+// WHICH CRAFTS EXIST IS DERIVED, NEVER ENUMERATED. skill-router.sh's guard treats any
+// `laws:<x>` skill as a craft precisely so that "a new craft is covered the day it is added";
+// this half used to recognise only five hardcoded names, so adding a craft directory and wiring
+// it into incompatible-crafts.txt — the workflow both files advertise as the whole point of
+// keeping the policy in one file — gave the router a live edge the day it was written while
+// findHits here stayed blind to that craft's load line, with no symptom on either side.
+// [LAW:single-enforcer] one rule about what a craft is, read the same way by both enforcers.
+//
+// The namespace signal in a base dir is a path segment `laws` above `skills/<craft>`, which is
+// what both shipped layouts look like: the repo's ".../plugins/laws/skills/code" and the plugin
+// cache's versioned ".../cache/<owner>/laws/<version>/skills/code". Anchoring on `/skills/`
+// alone would claim every OTHER plugin's skills as laws crafts; anchoring on `/laws/skills/`
+// would miss the cache path. [LAW:parse-dont-validate] the capture IS the craft name.
+const BASEDIR_RE = /\/laws\/(?:[^/\s]+\/)*skills\/([^/\s]+)(?:\/|\s|$)/;
 const PREFIX = 'Base directory for this skill:';
 // The documented tombstone marker. A tombstoned line no longer starts with PREFIX, so it is
 // already un-detectable as a live load; the marker is the explicit guard for idempotence.
@@ -372,8 +384,13 @@ function rewindTo(rawLines, anchorUuid, severUuid) {
 
 // --- enacting a chosen switch ----------------------------------------------------------------
 // The four options are DATA, not four code paths: one table keyed by option id, each entry a pure
-// (lines, decision, env) -> lines. Adding a fifth option is a table entry, never a new branch in
-// the caller. [LAW:dataflow-not-control-flow] [LAW:one-type-per-behavior]
+// (lines, decision, env) -> { lines, resume, changed }. Adding a fifth option is a table entry,
+// never a new branch in the caller. [LAW:dataflow-not-control-flow] [LAW:one-type-per-behavior]
+//
+// `changed` is reported BY the action because only the action knows: the boundary that writes the
+// file used to re-derive it as `r.lines !== rawLines`, a second answer to a question already
+// answered here, agreeing with this one today only because every action happens to return a fresh
+// array exactly when it edited something. [LAW:one-source-of-truth]
 //
 // TIMING, and it is load-bearing: every action here edits the transcript of a session that must
 // ALREADY HAVE EXITED. A running Claude Code appends records as it works, so surgery against a live
@@ -405,10 +422,13 @@ function recordByUuid(rawLines, uuid) {
 const SWITCH_ACTIONS = {
   // Stay in the current craft. The incoming load was already denied, so the transcript is correct
   // as it stands and there is nothing to resume into.
-  reject: (lines) => ({ lines, resume: false }),
+  reject: (lines) => ({ lines, resume: false, changed: false }),
 
   // Keep the whole conversation; empty the guidance of every superseded craft.
-  tombstone: (lines, d) => ({ lines: exciseAt(lines, d.conflictIndices, d.incoming).lines, resume: true }),
+  tombstone: (lines, d) => {
+    const r = exciseAt(lines, d.conflictIndices, d.incoming);
+    return { lines: r.lines, resume: true, changed: r.changed };
+  },
 
   // Excise, then rewind, then attach the summary. Excising first keeps the tombstone on the leaf
   // that the rewind then lands on; it is NOT a guard against the craft leaking into the summary,
@@ -422,7 +442,7 @@ const SWITCH_ACTIONS = {
     const rewound = rewindTo(excised, anchorUuid, env.severUuid).lines;
     const anchorRec = recordByUuid(rewound, anchorUuid);
     rewound.push(summaryRecord(anchorRec, anchorUuid, env, env.summary));
-    return { lines: rewound, resume: true };
+    return { lines: rewound, resume: true, changed: true };
   },
 
   // Drop the conversation from just before the craft loaded. Files on disk are untouched — nothing
@@ -432,11 +452,11 @@ const SWITCH_ACTIONS = {
     // A craft loaded as the very first message has no predecessor to land on. Refuse rather than
     // silently rewinding somewhere else. [LAW:no-silent-failure]
     if (!anchorUuid) throw new Error('rewind_discard: the craft load is the first message; nothing precedes it to rewind to');
-    return { lines: rewindTo(lines, anchorUuid, env.severUuid).lines, resume: true };
+    return { lines: rewindTo(lines, anchorUuid, env.severUuid).lines, resume: true, changed: true };
   },
 };
 
-// applySwitch(rawLines, decision, choice, env) -> { lines, resume }
+// applySwitch(rawLines, decision, choice, env) -> { lines, resume, changed }
 // `env` carries the values that would otherwise be effects (uuids, clock, the agent's summary), so
 // this stays pure and testable. [LAW:effects-at-boundaries]
 function applySwitch(rawLines, decision, choice, env = {}) {
@@ -513,7 +533,7 @@ function applyRequest(requestPath, opts = {}) {
     summary: req.summary,
   };
   const r = applySwitch(rawLines, decision, req.choice, env);
-  const changed = r.lines !== rawLines;
+  const changed = r.changed;
   if (changed && !opts.dryRun) writeAtomic(req.transcript, r.lines.join('\n') + (eol ? '\n' : ''));
   return { transcript: req.transcript, choice: req.choice, resume: r.resume, changed,
     sessionId: req.sessionId, switchedFrom: decision.current, switchedTo: decision.incoming };
