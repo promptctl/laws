@@ -51,6 +51,17 @@ def check_raises(name, exc_type, fn, must_mention=()):
         check(name, False, "did not raise")
 
 
+def check_returns(name, fn, expected):
+    """A success path asserted so that raising is a reported failure, not a
+    traceback that aborts the run before the later checks get to speak."""
+    try:
+        got = fn()
+    except BaseException as e:  # noqa: BLE001 - raising IS the failure here
+        check(name, False, f"raised {type(e).__name__}: {e}")
+    else:
+        check(name, got == expected, f"got {got!r}, want {expected!r}")
+
+
 # --- the fake gh ----------------------------------------------------------
 
 
@@ -218,6 +229,76 @@ check("cursor omission: no extra page was requested",
       len(fake.calls) == 2, f"made {len(fake.calls)} gh calls: {fake.calls}")
 
 
+# --- hasNextPage false is the whole answer, cursor present or not ----------
+# The case above omits endCursor on the last page, but that is the SHAPE THE
+# FIXTURE HAPPENED TO PICK, not the shape GitHub sends: a real final page
+# carries a perfectly good endCursor naming its own last node, and only
+# hasNextPage says the walk is over. A loop that consulted the cursor's
+# presence instead of hasNextPage would pass every test above and then walk
+# forever against the real API on the very first call — page one of a
+# single-page PR is a final page. So the terminating signal is asserted
+# against the shape production actually returns, on both loops at once: the
+# threads page and the comments block below it each end with hasNextPage
+# false AND a live cursor. [LAW:verifiable-goals]
+
+fake = install(paged_graphql({
+    None: threads_page([thread_node("t1", [comment("bot", "one")],
+                                    has_next=False, end="comment-cursor-Z")],
+                       has_next=False, end="thread-cursor-Z"),
+}))
+findings = gt.fetch(PR)["findings"]
+check("terminal page: hasNextPage false ends the walk even with a live cursor",
+      [f["thread_id"] for f in findings] == ["t1"],
+      f'got {[f["thread_id"] for f in findings]}')
+check("terminal page: the live cursor was not followed",
+      len(fake.calls) == 1, f"made {len(fake.calls)} gh calls: {fake.calls}")
+
+
+# --- a promised page nobody named is a loud error, never a quiet stop ------
+# hasNextPage true with endCursor null/absent is the malformed shape Relay's
+# convention forbids and GitHub's contract does not guarantee against. Looping
+# on the null cursor would make `_graphql` omit it and re-read page one forever;
+# stopping would return a partial set as if it were whole. Both are silent, so
+# the contract is: RAISE, and name the PR. Each case below asserts the raise AND
+# that no further page was requested — a hang would blow FakeGh.CALL_CAP with a
+# "runaway pagination" message that mentions neither, so it fails too.
+
+for label, bad_page_info in [
+    ("endCursor null", {"hasNextPage": True, "endCursor": None}),
+    ("endCursor absent", {"hasNextPage": True}),
+    ("endCursor empty string", {"hasNextPage": True, "endCursor": ""}),
+]:
+    fake = install(lambda args, pi=bad_page_info: json.dumps(
+        {"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "pageInfo": pi,
+            "nodes": [thread_node("t1", [comment("bot", "one")])],
+        }}}}}
+    ))
+    check_raises(f"threads: {label} with hasNextPage true raises",
+                 RuntimeError, lambda: gt.fetch(PR),
+                 must_mention=("hasNextPage", "endCursor", "o/r#7"))
+    check(f"threads: {label} stops before re-requesting page one",
+          len(fake.calls) == 1, f"made {len(fake.calls)} gh calls: {fake.calls}")
+
+
+def unnamed_comment_page(args):
+    """First thread page is well-formed; the thread's comments promise a page
+    the response never names."""
+    variables = gh_vars(args)
+    if "reviewThreads(" in variables["query"]:
+        return json.dumps(threads_page([thread_node(
+            "t1", [comment("bot", "c1")], has_next=True, end=None)]))
+    raise AssertionError(f"comment page requested with cursor {variables.get('cursor')!r}")
+
+
+fake = install(unnamed_comment_page)
+check_raises("comments: a promised page with no endCursor raises",
+             RuntimeError, lambda: gt.fetch(PR),
+             must_mention=("hasNextPage", "endCursor", "t1"))
+check("comments: no comment page was requested with a null cursor",
+      len(fake.calls) == 1, f"made {len(fake.calls)} gh calls: {fake.calls}")
+
+
 # --- --paginate + --jq JSONL concatenation in change_requests -------------
 # Real gh applies the --jq filter per page and concatenates the results, so the
 # body is JSONL spanning page boundaries — with a trailing newline per page,
@@ -278,6 +359,63 @@ install(null_node_handler)
 check_raises("shape: null data.node in the comment page names that field",
              RuntimeError, lambda: gt.fetch(PR),
              must_mention=("data.node", "t1"))
+
+
+# --- the verified mutations: a no-op must not pass as done ----------------
+# resolve() and dismiss_review() exist so the review loop cannot march on with
+# a thread still open or a review still blocking. Their whole value is the
+# confirmation check, so each is asserted from both sides: the confirmed shape
+# returns, and an unconfirmed one raises naming what it acted on.
+
+
+def resolve_handler(confirmation):
+    def handler(args):
+        if args[:2] != ["api", "graphql"]:
+            raise AssertionError(f"unexpected gh call: {args}")
+        variables = gh_vars(args)
+        if "resolveReviewThread" not in variables["query"]:
+            raise AssertionError(f"not the resolve mutation: {variables['query']!r}")
+        if variables["id"] != "T_abc":
+            raise AssertionError(f"resolving the wrong thread: {variables['id']!r}")
+        return confirmation
+
+    return handler
+
+
+install(resolve_handler("true"))
+check_returns("resolve: a confirmed resolution returns the resolved thread",
+              lambda: gt.resolve("T_abc"),
+              {"thread_id": "T_abc", "is_resolved": True})
+
+for label, confirmation in [("false", "false"), ("absent", ""), ("null", "null")]:
+    install(resolve_handler(confirmation))
+    check_raises(f"resolve: confirmation {label} raises and names the thread",
+                 RuntimeError, lambda: gt.resolve("T_abc"),
+                 must_mention=("T_abc", "NOT resolved"))
+
+
+def dismiss_handler(state):
+    def handler(args):
+        if args[:4] != ["api", "--method", "PUT",
+                        "repos/o/r/pulls/7/reviews/11/dismissals"]:
+            raise AssertionError(f"unexpected gh call: {args}")
+        if gh_vars(args)["message"] != "addressed":
+            raise AssertionError(f"message not forwarded: {args}")
+        return state
+
+    return handler
+
+
+install(dismiss_handler("DISMISSED"))
+check_returns("dismiss_review: a confirmed dismissal returns the review",
+              lambda: gt.dismiss_review(PR, 11, "addressed"),
+              {"review_id": 11, "is_dismissed": True})
+
+for label, state in [("still pending", "CHANGES_REQUESTED"), ("empty", "")]:
+    install(dismiss_handler(state))
+    check_raises(f"dismiss_review: state {label} raises and names the review",
+                 RuntimeError, lambda: gt.dismiss_review(PR, 11, "addressed"),
+                 must_mention=("11", "still blocks"))
 
 
 print(f"\n{len(failures)} failing" if failures else "\nall passing")

@@ -97,6 +97,36 @@ def _response_path(data: dict, *path: str, subject: str) -> dict:
     return node
 
 
+def _next_cursor(block: dict, *, subject: str) -> str | None:
+    """The cursor naming the page after this one, or None when this page is last.
+
+    [LAW:single-enforcer] the one place this module decides whether pagination
+    continues, so both loops obey the same rule and neither can drift into
+    trusting a convention the other checks.
+
+    [LAW:no-silent-failure] `hasNextPage` true paired with no `endCursor` is a
+    contradiction — another page is promised and nothing names it. Relay's
+    convention says it cannot happen; GitHub's contract does not guarantee it.
+    Both of the alternatives to raising are worse than a loud error: looping on
+    a null cursor makes `_graphql` omit the argument and re-read page one
+    forever (an unbounded hang with no error and no timeout), and stopping here
+    would return a partial set as if it were whole — the exact silent partial
+    fetch this pagination exists to prevent.
+    """
+    page_info = block["pageInfo"]
+    if not page_info["hasNextPage"]:
+        return None
+    cursor = page_info.get("endCursor")
+    if not cursor:
+        raise RuntimeError(
+            f"GraphQL pagination for {subject} promised another page "
+            f"(hasNextPage true) but named no endCursor (got {cursor!r}). "
+            "The next page cannot be requested and the set read so far is "
+            "incomplete — do not treat it as the whole set."
+        )
+    return cursor
+
+
 def _page_of_threads(owner: str, repo: str, pr_num: int, cursor: str | None) -> dict:
     data = _graphql(_THREADS_QUERY, owner=owner, repo=repo, num=pr_num, cursor=cursor)
     return _response_path(
@@ -114,14 +144,14 @@ def _complete_comments(thread: dict) -> None:
     reads `thread_comments` to see its own prior plan and the reviewer's replies,
     so dropping the tail would re-plan a finding that was already answered.
     """
+    subject = f"comments of review thread {thread['id']}"
     block = thread["comments"]
-    while block["pageInfo"]["hasNextPage"]:
-        data = _graphql(_COMMENTS_QUERY, id=thread["id"], cursor=block["pageInfo"]["endCursor"])
-        block = _response_path(
-            data, "data", "node", "comments",
-            subject=f"comments of review thread {thread['id']}",
-        )
+    cursor = _next_cursor(block, subject=subject)
+    while cursor is not None:
+        data = _graphql(_COMMENTS_QUERY, id=thread["id"], cursor=cursor)
+        block = _response_path(data, "data", "node", "comments", subject=subject)
         thread["comments"]["nodes"].extend(block["nodes"])
+        cursor = _next_cursor(block, subject=subject)
 
 
 def _fetch_threads(owner: str, repo: str, pr_num: int) -> list[dict]:
@@ -134,16 +164,18 @@ def _fetch_threads(owner: str, repo: str, pr_num: int) -> list[dict]:
     findings sat unread — but a PR that survives several review rounds crosses 100
     threads as a matter of course, and at that point the loop cannot run at all.
     [LAW:no-silent-failure] is satisfied by returning the whole set, not by
-    detecting that we failed to.
+    detecting that we failed to — and when a page promises a successor it does
+    not name, `_next_cursor` raises rather than let an unwalkable set pass as
+    complete or the loop spin forever.
     """
     threads: list[dict] = []
     cursor: str | None = None
     while True:
         block = _page_of_threads(owner, repo, pr_num, cursor)
         threads.extend(block["nodes"])
-        if not block["pageInfo"]["hasNextPage"]:
+        cursor = _next_cursor(block, subject=f"{owner}/{repo}#{pr_num} review threads")
+        if cursor is None:
             break
-        cursor = block["pageInfo"]["endCursor"]
     for thread in threads:
         _complete_comments(thread)
     return threads
