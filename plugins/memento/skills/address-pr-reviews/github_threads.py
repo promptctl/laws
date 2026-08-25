@@ -72,19 +72,37 @@ def _graphql(query: str, **variables) -> dict:
     return json.loads(gh(*args))
 
 
+def _response_path(data: dict, *path: str, subject: str) -> dict:
+    """Walk the response path a query asked for, or name the field that failed.
+
+    [LAW:single-enforcer] the one place this module asks "did GraphQL give us the
+    shape we asked for". Every null along the path comes back with HTTP 200, so
+    without this the only signal is a bare `TypeError: 'NoneType' object is not
+    subscriptable` at whichever accessor happened to touch it first — and each
+    accessor would otherwise carry its own hand-written copy of the check.
+
+    [LAW:no-silent-failure] a null on the path means the object is missing or
+    inaccessible, which is an error, never an empty result set.
+    """
+    node: object = data
+    for depth, field in enumerate(path):
+        child = node.get(field) if isinstance(node, dict) else None
+        if child is None:
+            raise RuntimeError(
+                f"GraphQL response for {subject} has no "
+                f"{'.'.join(path[:depth + 1])} (querying {'.'.join(path)}) — "
+                "that object is missing or inaccessible, not empty."
+            )
+        node = child
+    return node
+
+
 def _page_of_threads(owner: str, repo: str, pr_num: int, cursor: str | None) -> dict:
     data = _graphql(_THREADS_QUERY, owner=owner, repo=repo, num=pr_num, cursor=cursor)
-    repository = (data.get("data") or {}).get("repository")
-    pull_request = repository.get("pullRequest") if repository else None
-    # A null repository/pullRequest comes back with HTTP 200; that means the PR is
-    # missing or inaccessible — an error, never an empty finding set.
-    # [LAW:no-silent-failure]
-    if pull_request is None:
-        raise RuntimeError(
-            f"reviewThreads query returned no pullRequest for {owner}/{repo}#{pr_num} "
-            "— the PR is missing or inaccessible, not thread-free."
-        )
-    return pull_request["reviewThreads"]
+    return _response_path(
+        data, "data", "repository", "pullRequest", "reviewThreads",
+        subject=f"{owner}/{repo}#{pr_num} review threads",
+    )
 
 
 def _complete_comments(thread: dict) -> None:
@@ -99,7 +117,10 @@ def _complete_comments(thread: dict) -> None:
     block = thread["comments"]
     while block["pageInfo"]["hasNextPage"]:
         data = _graphql(_COMMENTS_QUERY, id=thread["id"], cursor=block["pageInfo"]["endCursor"])
-        block = data["data"]["node"]["comments"]
+        block = _response_path(
+            data, "data", "node", "comments",
+            subject=f"comments of review thread {thread['id']}",
+        )
         thread["comments"]["nodes"].extend(block["nodes"])
 
 
