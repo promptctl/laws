@@ -61,6 +61,21 @@ function connect(wsurl, { timeoutMs = 15000 } = {}) {
     }
     resolve(m);
   };
+  // A DEAD SOCKET IS THE THIRD ARM. A reply and an error frame both settle their entry in
+  // `pending`; a socket that closes or errors mid-call settles nothing, so every in-flight
+  // call is left holding a promise nobody will ever touch again. That hang is worse than a
+  // failure: laws-switch drives `/exit` inside a try/catch whose catch tells the user to exit
+  // manually, and a hang produces neither success nor rejection, so the recovery path that
+  // exists for exactly this never runs and the user gets no diagnostic at all. Draining
+  // `pending` into rejections turns a dropped connection back into something a caller can
+  // catch. [LAW:no-silent-failure] [LAW:dataflow-not-control-flow] every entry ends the same
+  // way — with an outcome — whichever arm the socket ends on.
+  const failPending = (why) => {
+    const entries = [...pending.values()];
+    pending.clear();
+    for (const p of entries) p.reject(new Error('inspector connection lost: ' + why));
+  };
+  ws.onclose = () => failPending('socket closed');
   // The connect timeout is CLEARED once `ready` settles, because a pending Node timer keeps the
   // event loop alive: left running, every user of this module sat for the full timeoutMs after
   // its work was done (measured: work complete at 6ms, process exit at 15007ms). That tail is
@@ -74,7 +89,13 @@ function connect(wsurl, { timeoutMs = 15000 } = {}) {
   let readyTimer;
   const ready = new Promise((resolve, reject) => {
     ws.onopen = async () => { try { await send('Runtime.enable'); resolve(); } catch (err) { reject(err); } };
-    ws.onerror = (e) => reject(new Error('inspector ws error: ' + String(e && e.message || e)));
+    // Both arms, always: before `ready` settles the error IS the connect failure, and after it
+    // has settled `reject` is a no-op and the in-flight calls are the only thing left to tell.
+    ws.onerror = (e) => {
+      const detail = String(e && e.message || e);
+      reject(new Error('inspector ws error: ' + detail));
+      failPending('socket error: ' + detail);
+    };
     readyTimer = setTimeout(() => reject(new Error('inspector connect timeout after ' + timeoutMs + 'ms')), timeoutMs);
   });
   const clearReadyTimer = () => clearTimeout(readyTimer);
