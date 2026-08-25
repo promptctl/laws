@@ -129,19 +129,26 @@ case "${1:-}" in
     esac
     printf '%s\n' "$line"
     ;;
-  new-session|has-session|capture-pane|load-buffer|paste-buffer|send-keys)
-    # The detached WORKER's half of the fixture. It needs no state: the worker
-    # only ever asks whether the new session is up and whether its banner is
-    # drawn, so a session that is always up and always ready is the whole model.
+  new-session|has-session|capture-pane|load-buffer|paste-buffer|send-keys|kill-session)
+    # The detached WORKER's half of the fixture. It needs almost no state: the
+    # worker only ever asks whether the new session is up and whether its banner
+    # is drawn, so a session that is always up plus one value for what its pane
+    # shows is the whole model.
     # $FIXTURE_TMUX_FAIL names one subcommand to fail instead, which is how a
-    # goal delivery that dies mid-way is staged.
+    # goal delivery that dies mid-way - or a session that cannot be created at all
+    # - is staged. $FIXTURE_TMUX_PANE_TEXT is what capture-pane shows: a session
+    # that never finishes booting is that same always-up session with a different
+    # value in this one field, not a second mode.
+    # Every subcommand appends its whole argv to $FIXTURE_TMUX_LOG, which is how a
+    # case can see that a teardown the worker owes actually happened - a log line
+    # from the worker only says it meant to.
     sub="$1"
     if [ "${FIXTURE_TMUX_FAIL:-}" = "$sub" ]; then
       echo "fixture tmux: failing '$sub' on request" >&2
       exit 1
     fi
     printf '%s\n' "$*" >> "${FIXTURE_TMUX_LOG:-/dev/null}"
-    [ "$sub" = capture-pane ] && printf 'Claude Code v1.2.3\n'
+    [ "$sub" = capture-pane ] && printf '%s\n' "${FIXTURE_TMUX_PANE_TEXT:-Claude Code v1.2.3}"
     exit 0
     ;;
   *) echo "fixture tmux: unexpected subcommand ${1:-}" >&2; exit 2 ;;
@@ -316,7 +323,8 @@ STRANGER = subprocess.Popen(["sleep", "600"],
 
 
 def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge_age=None,
-        rehost_at=None, tmux_pane=None, sleep=None, mute_identity=False):
+        rehost_at=None, tmux_pane=None, sleep=None, mute_identity=False,
+        message="handoff"):
     """Launch finalize-session under a real `nest` chain and return its dry-run report."""
     workdir = tempfile.mkdtemp(prefix="finalize-case.")
     pidfile = os.path.join(workdir, "root.pid")
@@ -355,7 +363,7 @@ def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge_age=None,
     if sleep is not None:
         env["NEST_SLEEP"] = str(sleep)
     try:
-        done = subprocess.run([NEST_BIN, str(depth), LAUNCHER, "handoff"],
+        done = subprocess.run([NEST_BIN, str(depth), LAUNCHER, message],
                               text=True, capture_output=True, env=env, timeout=120)
         # The chain's top pid, read before the workdir goes away. It names both the
         # pane fixtures' ROOTPID and the planted claude - they are one process - so
@@ -649,6 +657,55 @@ done = run(depth=2, panes=f"%77 {STRANGER.pid} 0\n%99 ROOTPID 0", tmux_pane=":."
 check("a $TMUX_PANE that resolves to someone else's live pane is refused",
       picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r}")
 
+# --- the reset mode inferred from the message ------------------------------
+# The only inference in the script: with no --reset flag, the handoff's own prose
+# decides /clear vs /compact. It is deliberately biased toward clear because the
+# two errors cost different amounts, and it already has a production incident in
+# its own comments - on 2026-08-16 a message reading "Do NOT use /compact" compacted,
+# because a word-boundary match cannot see a negation, so the more emphatically an
+# author forbade compaction the surer it was to happen. Nothing in the repo pinned
+# that, which left the negation list and the mention pattern free to regress in
+# silence.
+#
+# These read the launcher's own dry-run report rather than calling the shell
+# function, so the whole path - argv, sentence split, negation screen, default -
+# is what is under test. [LAW:behavior-not-structure]
+
+
+def chose_reset(done):
+    """The reset mode the launcher settled on, per its dry-run report."""
+    for line in done.stdout.splitlines():
+        if line.startswith("[dry-run] transport=tmux "):
+            for field in line.split():
+                if field.startswith("reset=/"):
+                    return field.split("/", 1)[1]
+    return f"<no reset: rc={done.returncode} out={done.stdout!r} err={done.stderr!r}>"
+
+
+done = run(message="Pick up where I left off. Use /compact so the context survives.")
+check("an affirmative /compact mention infers compact", chose_reset(done) == "compact",
+      chose_reset(done))
+
+# The incident itself. A message that forbids compaction must not compact - and
+# under a matcher blind to negation, this is the case that inverts.
+done = run(message="Do NOT use /compact here, a blank slate is required.")
+check("a negated /compact mention infers clear, not compact", chose_reset(done) == "clear",
+      chose_reset(done))
+
+# Negation screens the SENTENCE, not the message: skipping one ambiguous sentence
+# must still leave a later affirmative one able to decide. Without this case, a
+# regression that gave up at the first negated mention - refusing compact for the
+# rest of the message - would read exactly like the fix above.
+done = run(message="Do NOT use /compact blindly. Use /compact for this handoff.")
+check("a negated sentence does not veto a later affirmative one",
+      chose_reset(done) == "compact", chose_reset(done))
+
+# The default, and the reason the bias points where it does: no mention at all is
+# not an absence of evidence to guess around, it is the answer.
+done = run(message="Pick up the next ticket and keep going.")
+check("a message that never mentions compaction infers clear",
+      chose_reset(done) == "clear", chose_reset(done))
+
 # --- the detached worker: what it retires, and in what order ----------------
 # Everything above drives the LAUNCHER in dry-run, so the promise the detached
 # transport makes at the other end - after the handoff, exactly one live agent -
@@ -657,15 +714,17 @@ check("a $TMUX_PANE that resolves to someone else's live pane is refused",
 # dead when it finishes, never by a log line claiming one or the other.
 
 
-def worker_case(identity, goal="", fail_on=None):
+def worker_case(identity, goal="", fail_on=None, pane_text=None):
     """Run one detached worker over a real process standing in for the old claude.
 
     Returns (retired, done): whether the victim was actually signalled, and the
-    worker's own result. The identity handed to the worker is read with the same
-    `ps` fields the launcher captures, so `identity="match"` passes the genuine
-    article rather than something shaped like it; `identity="reused"` keeps that
-    reading and swaps the command out, which is what the pid holds after the OS
-    reissues it to a stranger.
+    worker's own result, carrying `done.tmux_log` - every tmux argv the worker
+    issued. The identity handed to the worker is read with the same `ps` fields
+    the launcher captures, so `identity="match"` passes the genuine article
+    rather than something shaped like it; `identity="reused"` keeps that reading
+    and swaps the command out, which is what the pid holds after the OS reissues
+    it to a stranger. `pane_text` is what the new session's pane shows, so a
+    session that never finishes booting is expressed as a value, not a mode.
     """
     proc = subprocess.Popen(["sleep", "600"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -682,13 +741,17 @@ def worker_case(identity, goal="", fail_on=None):
         handle.write("handoff")
     with open(goalfile, "w") as handle:
         handle.write(goal)
+    tmuxlog = os.path.join(workdir, "tmux.log")
     env = {
         "PATH": ":".join([FIXTURES, REAL_DIRS]),
         "HOME": os.environ.get("HOME", workdir),
         "TMPDIR": workdir,
+        "FIXTURE_TMUX_LOG": tmuxlog,
     }
     if fail_on is not None:
         env["FIXTURE_TMUX_FAIL"] = fail_on
+    if pane_text is not None:
+        env["FIXTURE_TMUX_PANE_TEXT"] = pane_text
     try:
         done = subprocess.run(
             [LAUNCHER, "--detached-worker", "fixture-session", workdir, msgfile,
@@ -699,6 +762,7 @@ def worker_case(identity, goal="", fail_on=None):
             retired = True
         except subprocess.TimeoutExpired:
             retired = False
+        done.tmux_log = open(tmuxlog).read() if os.path.exists(tmuxlog) else ""
         return retired, done
     finally:
         proc.kill()
@@ -709,13 +773,23 @@ def worker_case(identity, goal="", fail_on=None):
 # Each worker sleeps out the full HANDOFF_DELAY_SECONDS, so the cases run
 # alongside each other rather than one after another. They share nothing: each
 # owns its victim process and its own workdir.
-with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
     same_pid = pool.submit(worker_case, "match")
     reused_pid = pool.submit(worker_case, "reused")
     # The goal delivery is staged to fail at its first tmux call, which under the
     # worker's `set -euo pipefail` aborts the script on the spot.
     goal_fails = pool.submit(worker_case, "match", goal="ship the thing",
                              fail_on="load-buffer")
+    # The spawn that never happens, and the spawn that never comes up: the worker's
+    # two "the successor is not there" arms. Both promise the old process is left
+    # running, and until now that promise was made only in a comment.
+    spawn_fails = pool.submit(worker_case, "match", fail_on="new-session")
+    # A pane that shows something other than the boot banner for the whole
+    # readiness window - the slow or wedged boot. This one sleeps out the full
+    # CLAUDE_READY_TIMEOUT_SECONDS on top of the handoff delay, so it is the
+    # longest case in the suite.
+    never_ready = pool.submit(worker_case, "match", goal="ship the thing",
+                              pane_text="waiting for the shell to start")
 
 retired, done = same_pid.result()
 check("the worker retires the old process it was given",
@@ -738,6 +812,39 @@ check("and the worker says why it left that pid alone",
 retired, done = goal_fails.result()
 check("a failed goal delivery cannot leave the old process alive",
       retired, f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+
+# A successor that could not be spawned at all. The old process is the only agent
+# there is, so it must still be running when the worker gives up - and the worker
+# must say it failed rather than exiting 0 over a handoff that never landed.
+retired, done = spawn_fails.result()
+check("a session that cannot be created leaves the old process running",
+      not retired, f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+check("and the failed spawn is reported as a failure, not a quiet no-op",
+      done.returncode == 1 and "could not create detached tmux session" in done.stdout,
+      f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+# Nothing was created, so nothing is torn down. This is the counterpart that keeps
+# the teardown assertion below honest: a worker that killed the session on every
+# failure path would satisfy that one while being wrong here.
+check("a spawn that never happened tears nothing down",
+      "kill-session" not in done.tmux_log, f"tmux_log={done.tmux_log!r}")
+
+# The dangerous one. The handoff message rides in the `tmux new-session` argv, so a
+# readiness timeout does not mean the successor got nothing - it usually means the
+# successor is still booting. Left alone, a boot finishing one second past the
+# deadline yields two live agents: the old one never retired, the new one already
+# working the handoff. The worker collapses that back to one by tearing the new
+# session down, and only the tmux log can show it happened; the worker's own log
+# line would say so either way.
+retired, done = never_ready.result()
+check("a successor that never becomes ready is torn down, not left racing the old process",
+      "kill-session -t fixture-session" in done.tmux_log,
+      f"rc={done.returncode} out={done.stdout!r} tmux_log={done.tmux_log!r}")
+check("and the old process survives the timeout - a spawn that never came up kills nobody",
+      not retired, f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+check("and the timeout is reported as a failure, with the undelivered goal named",
+      done.returncode == 1 and "did not become ready" in done.stdout
+      and "carried goal NOT delivered" in done.stdout,
+      f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
 
 STRANGER.terminate()
 STRANGER.wait()
