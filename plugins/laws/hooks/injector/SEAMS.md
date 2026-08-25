@@ -133,14 +133,16 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
 - DONE (2026-08-16): the rewind for options 3/4 is disk surgery — `rewindTo()`, sever + repoint,
   verified live against a real transcript. **SEAM 2a is not needed**, and neither is native
   `/rewind` with its modal arrow-key driving. See the resolved section above.
-- OPEN: the reload. All four options edit the transcript, and a RESUMED session reads it; the
-  already-running one does not. Options 3/4 move the leaf, so restart-in-place (Path B) fits them
-  exactly; option 2 needs the same reload. Pick Path A or B, wire detection→gate→reload, then
-  live-verify the four effects with the on-disk-files-survive invariant — which holds by
-  construction today (`rewindTo`/`exciseAt` write nothing but the transcript) but has not been
-  exercised end-to-end. Distribution of the launcher is sibling `promptctl-routing-rat.7`.
+- DONE (2026-08-23): the reload — Path B, via `../../bin/claude-laws`. All four options edit the
+  transcript, and a RESUMED session reads it while the already-running one does not; the launcher
+  closes that gap by relaunching, applying the surgery after exit, and `--resume`ing so the
+  corrected transcript is reread. `claude-laws.test.sh` exercises the four options end to end,
+  including the multi-craft, one-shot and session-selector cases. The on-disk-files-survive
+  invariant still holds by construction (`rewindTo`/`exciseAt` write nothing but the transcript)
+  and is now exercised rather than only argued. Distribution of the launcher is sibling
+  `promptctl-routing-rat.7`.
 - DONE (2026-08-16): SEAM 1 is unnecessary, confirmed by probe — the PreToolUse payload carries
   `transcript_path` alongside `tool_input.skill`, so detection + `decide()` run in the hook off
   public surfaces. **With SEAM 1 and SEAM 2a both retired, the gate carries NO minified anchor at
-  all**: detection is a hook, enactment is two pure functions over the transcript, and the only
-  remaining question is the reload. Nothing here needs re-deriving when Claude Code updates.
+  all**: detection is a hook, enactment is two pure functions over the transcript, and the reload
+  is a launcher driving the public CLI. Nothing here needs re-deriving when Claude Code updates.
