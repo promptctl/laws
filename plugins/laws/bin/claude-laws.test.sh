@@ -204,6 +204,25 @@ case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
   *) bad "the launcher swallowed the user's selector (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
 esac
 
+# A user-supplied --session-id is the same class of broken launch: minting a second id would put
+# TWO --session-id flags on one command line, so claude either refuses or opens a session under an
+# id the user never asked for. The assertion counts the flag rather than looking for the pin,
+# because "the launcher added one of its own" and "the user's is still there" are both wrong to
+# miss and the count catches either.
+rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+out=$("$LAUNCHER" --session-id USER-PINNED-ID 2>&1 >/dev/null)
+n=$(grep -o -- '--session-id' "$STUB_STATE/argv.1" 2>/dev/null | wc -l | tr -d ' ')
+[ "$n" = 1 ] && ok "a user-supplied --session-id is not joined by a second, conflicting pin" \
+             || bad "argv carries $n --session-id flags: $(cat "$STUB_STATE/argv.1" 2>/dev/null)"
+case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
+  *"--session-id USER-PINNED-ID"*) ok "  ... and the id the user chose is the one that survives";;
+  *) bad "  ... but the surviving id is not the user's (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
+esac
+case "$out" in
+  *"session id"*) ok "  ... and says why the switch is unavailable on stderr";;
+  *) bad "  ... and said nothing about it (stderr: $out)";;
+esac
+
 # ---- 4. a switch that retires MORE THAN ONE craft releases every one of them -----------------
 # The shipped policy has a single pair, so two conflicting crafts can never both be engaged under
 # it and this path would be untestable in place. So the whole launcher is run from a temp plugin
@@ -257,6 +276,205 @@ case "$out" in
   *'"deny"'*) bad "a craft survived the switch, so laws:prompt is still refused ($out)";;
   *) ok "every retired craft is released, so the switched-to craft can finally load";;
 esac
+
+# ---- 5. laws-switch reads the choice by POSITION, never by "first token without a dash" -------
+# `--summary "some text"` puts a bare word in argv that is not a choice. A scan for the first
+# non-flag token picks that word up and reports `unknown choice "some text"`, which blames the
+# caller for the parser's mistake. The choice is args[0] or it is a usage error.
+SWITCH="$HERE/laws-switch"
+sw_dir="$TMPDIR/switchargs"
+mkdir -p "$sw_dir"
+write_pending() { # <dir>
+  printf '{"sessionId":"SWITCHARGS","transcript":"%s","incomingMedium":"prompt","current":"code"}\n' \
+    "$TMPDIR/switchargs.jsonl" > "$1/pending.json"
+}
+
+write_pending "$sw_dir"
+out=$(env -u BUN_INSPECT LAWS_SWITCH_DIR="$sw_dir" "$SWITCH" --summary "some text" rewind_summarize 2>&1 >/dev/null)
+status=$?
+case "$out" in
+  *"some text"*) bad "the summary value was taken for the choice (stderr: $out)";;
+  *) ok "a --summary value before the positional is never mistaken for the choice";;
+esac
+[ "$status" -ne 0 ] && ok "  ... and a choice that is not first is a usage error, not a guess" \
+                    || bad "  ... but the misordered invocation was accepted (exit $status)"
+[ -f "$sw_dir/pending.json" ] && ok "  ... and the pending decision is left intact for a real choice" \
+                              || bad "  ... but the pending decision was consumed by a failed parse"
+case "$out" in
+  *"the choice comes first"*) ok "  ... and the error names the real problem: the order";;
+  *) bad "  ... but the error misdiagnoses it (stderr: $out)";;
+esac
+
+# The positive half: the documented order still resolves, all the way to a written request. The
+# session cannot be ended here (no inspector), which is a later, separate failure - the request
+# on disk is the evidence the choice parsed.
+rm -f "$sw_dir/request.json"
+env -u BUN_INSPECT LAWS_SWITCH_DIR="$sw_dir" "$SWITCH" rewind_summarize --summary "what I did" >/dev/null 2>&1
+if [ -f "$sw_dir/request.json" ]; then
+  got=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.choice+"|"+r.summary)' "$sw_dir/request.json")
+  [ "$got" = "rewind_summarize|what I did" ] \
+    && ok "the positional choice and its summary are recorded as given" \
+    || bad "the request recorded $got"
+else
+  bad "the documented argument order wrote no request at all"
+fi
+
+# ---- 6. a switch that cannot be completed hands the session back --------------------------------
+# Every failure between "claude exited" and "resume" used to exit with no relaunch, leaving the
+# user with NO session - worse than the state they were in before asking for the switch. These
+# three are the failures, and each must reopen the session with the same selector that opened it.
+#
+# The real laws-excise cannot be made to fail on demand without lying about the transcript, so the
+# launcher runs from a temp plugin root whose excise is a double. Everything else is the real
+# launcher, including the argv it builds - which is what the assertions read.
+tpr2="$TMPDIR/plugin-recover"
+mkdir -p "$tpr2/bin" "$tpr2/hooks/scripts"
+cp "$LAUNCHER" "$tpr2/bin/claude-laws"
+cp "$HERE/../hooks/scripts/skill-router.sh" "$tpr2/hooks/scripts/"
+cp "$HERE/../hooks/scripts/incompatible-crafts.txt" "$tpr2/hooks/scripts/"
+cat > "$tpr2/hooks/scripts/laws-excise.js" <<'EOJ'
+// Test double for `laws-excise.js --apply`. FAKE_APPLY names which of the launcher's post-apply
+// failures to produce; anything else is a bug in the test, so it exits loudly rather than 0.
+const m = process.env.FAKE_APPLY;
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+if (m === 'fail') { process.stderr.write('fake-excise: the apply failed\n'); process.exit(1); }
+else if (m === 'garbage') { process.stdout.write('this is not json\n'); }
+else if (m === 'noresumefield') { out({ sessionId: process.env.STUB_SID, switchedFrom: ['code'], switchedTo: 'prompt', choice: 'tombstone' }); }
+else if (m === 'nameless') { out({ sessionId: '', switchedFrom: [], switchedTo: 'prompt', choice: 'tombstone', resume: true }); }
+else if (m === 'noresume') { out({ sessionId: process.env.STUB_SID, switchedFrom: ['code'], switchedTo: 'prompt', choice: 'reject', resume: false }); }
+// One completed switch, then a failure - the only way to reach recovery on a LATER pass, where the
+// launcher's selector is already `--resume` rather than the initial pin.
+else if (m === 'okthenfail') {
+  const fs = require('fs'), f = process.env.STUB_STATE + '/apply-count';
+  const n = Number(fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : 0) + 1;
+  fs.writeFileSync(f, String(n));
+  if (n === 1) out({ sessionId: process.env.STUB_SID, switchedFrom: ['code'], switchedTo: 'prompt', choice: 'tombstone', resume: true });
+  else { process.stderr.write('fake-excise: the apply failed\n'); process.exit(1); }
+}
+else { process.stderr.write('fake-excise: FAKE_APPLY unset\n'); process.exit(3); }
+EOJ
+
+export STUB_TRANSCRIPT="$TMPDIR/recover.jsonl"
+export STUB_SWITCH_ON="1"
+for mode in fail garbage noresumefield nameless; do
+  export FAKE_APPLY="$mode"
+  export STUB_SID="RECOVER-$mode"
+  write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
+  rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+
+  err=$("$tpr2/bin/claude-laws" --model opus 2>&1 >/dev/null)
+  status=$?
+
+  [ "$(cat "$STUB_STATE/count" 2>/dev/null)" = 2 ] \
+    && ok "$mode: the session is reopened rather than left closed" \
+    || bad "$mode: expected 2 launches, got $(cat "$STUB_STATE/count" 2>/dev/null)"
+  # The assertion is on the SHAPE of the recovery argv, not on whether the stub accepted it. A stub
+  # takes any argv, including one the real claude refuses - "Session ID <uuid> is already in use."
+  # for a second claim on the pinned id - so "recovery relaunched" would pass while the shipped
+  # launcher reopens nothing. The id must come back as a --resume, and the pin must be gone.
+  if [ -f "$STUB_STATE/argv.2" ]; then
+    first=$(cat "$STUB_STATE/argv.1"); second=$(cat "$STUB_STATE/argv.2")
+    pinned=${first##*--session-id }; pinned=${pinned%% *}
+    case "$second" in
+      *"--resume $pinned"*) ok "$mode:   ... by RESUMING the id the first launch pinned";;
+      *) bad "$mode:   ... but did not resume $pinned (argv: $second)";;
+    esac
+    case "$second" in
+      *--session-id*) bad "$mode:   ... and re-pinned --session-id, which claude refuses (argv: $second)";;
+      *) ok "$mode:   ... never re-pinning an id claude has already held";;
+    esac
+    case "$second" in
+      *"--model opus"*) ok "$mode:   ... and keeps the user's own flags";;
+      *) bad "$mode:   ... but dropped the user's flags (argv: $second)";;
+    esac
+  else
+    bad "$mode:   ... (no second launch to compare)"
+    bad "$mode:   ... (pin check skipped)"
+    bad "$mode:   ... (flag check skipped)"
+  fi
+  [ "$status" -eq 1 ] && ok "$mode:   ... and the failed switch is still reported by the exit status" \
+                      || bad "$mode:   ... but exited $status"
+  case "$err" in
+    *"reopening the session as it was"*) ok "$mode:   ... and says on stderr what it did";;
+    *) bad "$mode:   ... and said nothing about it (stderr: $err)";;
+  esac
+done
+unset FAKE_APPLY
+
+# Recovery on a LATER pass, where the launcher's selector is already `--resume <sid>` from a switch
+# that completed. Nothing may be re-derived here either: the selector passes through as it stands,
+# still resuming the same session, still carrying the user's flags. Covered separately from the
+# first-pass cases because a fix that only rewrites the initial pin would leave this pass wrong -
+# and because it is the only pass whose expected id is one the test knows up front.
+export FAKE_APPLY=okthenfail
+export STUB_SID="RECOVER-later"
+export STUB_SWITCH_ON="1 2"
+write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
+rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.* "$STUB_STATE/apply-count"
+
+err=$("$tpr2/bin/claude-laws" --model opus 2>&1 >/dev/null)
+status=$?
+
+[ "$(cat "$STUB_STATE/count" 2>/dev/null)" = 3 ] \
+  && ok "later-pass: a failure after one completed switch still reopens the session" \
+  || bad "later-pass: expected 3 launches, got $(cat "$STUB_STATE/count" 2>/dev/null)"
+[ "$status" -eq 1 ] && ok "later-pass:   ... and still reports the failed switch by exit status" \
+                    || bad "later-pass:   ... but exited $status"
+if [ -f "$STUB_STATE/argv.3" ]; then
+  third=$(cat "$STUB_STATE/argv.3")
+  case "$third" in
+    *"--resume $STUB_SID"*) ok "later-pass:   ... carrying the existing --resume through unchanged";;
+    *) bad "later-pass:   ... but lost the --resume $STUB_SID (argv: $third)";;
+  esac
+  case "$third" in
+    *--session-id*) bad "later-pass:   ... and re-pinned --session-id (argv: $third)";;
+    *) ok "later-pass:   ... with no --session-id anywhere on the relaunch";;
+  esac
+  case "$third" in
+    *"--model opus"*) ok "later-pass:   ... and keeps the user's own flags";;
+    *) bad "later-pass:   ... but dropped the user's flags (argv: $third)";;
+  esac
+else
+  bad "later-pass:   ... (no third launch to inspect)"
+  bad "later-pass:   ... (pin check skipped)"
+  bad "later-pass:   ... (flag check skipped)"
+fi
+unset FAKE_APPLY
+
+# ---- 7. resume:false is honored as data, not re-derived from the other fields ------------------
+# SWITCH_ACTIONS decides once whether a choice leaves anything to resume into; `reject` says no.
+# A launcher that infers "there is a session id, so resume" would release a craft the choice
+# deliberately kept engaged. The surviving lock is what makes that difference visible.
+export FAKE_APPLY=noresume
+export STUB_SID="NORESUME1"
+export STUB_TRANSCRIPT="$TMPDIR/noresume.jsonl"
+export STUB_SWITCH_ON="1"
+write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
+rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+
+printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:code"}}' \
+  "$STUB_SID" | "$ROUTER" guard >/dev/null 2>&1
+
+"$tpr2/bin/claude-laws" --model opus >/dev/null 2>&1
+status=$?
+[ "$status" -eq 0 ] && ok "a resume:false result is not a failure" || bad "exited $status on resume:false"
+
+if [ -f "$STUB_STATE/argv.2" ]; then
+  case "$(cat "$STUB_STATE/argv.2")" in
+    *"--resume"*) bad "resume:false still relaunched with --resume ($(cat "$STUB_STATE/argv.2"))";;
+    *) ok "a resume:false result relaunches without --resume";;
+  esac
+else
+  bad "the session was not reopened after a resume:false result"
+fi
+
+out=$(printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}' \
+  "$STUB_SID" | "$ROUTER" guard 2>/dev/null)
+case "$out" in
+  *'"deny"'*) ok "  ... and retires nothing, so the craft it kept is still engaged";;
+  *) bad "  ... but the craft was retired anyway, so laws:prompt now loads (got: $out)";;
+esac
+unset FAKE_APPLY
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
