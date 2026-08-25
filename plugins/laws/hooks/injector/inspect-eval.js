@@ -32,14 +32,32 @@
 // Open the inspector socket and return { evaluate, injectStdin, close }. `wsurl` is the exact
 // ws URL set in BUN_INSPECT (e.g. ws://127.0.0.1:9933/dbg) — for the compiled binary there is no
 // http://host/json/list discovery endpoint; the ws URL you set IS the endpoint.
-function connect(wsurl, { timeoutMs = 15000 } = {}) {
+function connect(wsurl, { timeoutMs = 15000, callTimeoutMs = 15000 } = {}) {
   const J = JSON.stringify;
   const ws = new WebSocket(wsurl);
   let id = 0;
   const pending = new Map();
+  // A SILENT TARGET IS THE FOURTH ARM, and it is the one no socket event covers. `onmessage`
+  // settles a call that gets a reply and `failPending` settles one whose socket dies, but a
+  // process that is deadlocked — event loop blocked, WebSocket still technically open — fires
+  // neither: no reply ever arrives and no close/error ever does either, so the call hangs with
+  // no diagnostic and walks straight past laws-switch's try/catch exactly as the dropped-socket
+  // bug did. The connect-time timer cannot cover this; it is cleared the moment `ready` settles,
+  // which is long before these calls are made. So every call carries its own clock and every
+  // call ends in an outcome. [LAW:no-silent-failure] [LAW:dataflow-not-control-flow]
+  //
+  // The timer is CLEARED on settle rather than unref-ed, for the reason spelled out on the
+  // connect timer below: an unref-ed timer stops being a dependable timeout, and a pending one
+  // would hold the event loop open for callTimeoutMs after the work is done.
   const send = (method, params = {}) => new Promise((resolve, reject) => {
     const i = ++id;
-    pending.set(i, { resolve, reject });
+    const timer = setTimeout(() => {
+      pending.delete(i);
+      reject(new Error('inspector call timeout after ' + callTimeoutMs + 'ms: ' + method +
+                       ' got no reply on an open socket'));
+    }, callTimeoutMs);
+    const settle = (fn) => (v) => { clearTimeout(timer); fn(v); };
+    pending.set(i, { resolve: settle(resolve), reject: settle(reject) });
     ws.send(J({ id: i, method, params }));
   });
   // A CDP reply carries EITHER `result` OR `error` — they are the two arms of one response, so
