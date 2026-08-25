@@ -56,9 +56,9 @@ function installFakeWS(reply) {
 }
 
 // Every test opens its own channel; Runtime.enable is answered blandly unless a test overrides it.
-function open(reply) {
+function open(reply, opts) {
   installFakeWS(reply);
-  return require('./inspect-eval.js').connect('ws://127.0.0.1:0/dbg', { timeoutMs: 2000 });
+  return require('./inspect-eval.js').connect('ws://127.0.0.1:0/dbg', { timeoutMs: 2000, ...opts });
 }
 const ok = (m) => ({ id: m.id, result: {} });
 const returns = (value) => (m) =>
@@ -151,6 +151,10 @@ async function rejects(promise, matching) {
   // so every row above stays green with the leak present. Only a child process allowed to end on
   // its own terms can observe it. [LAW:behavior-not-structure] the contract is "this module lets
   // your process exit", which is not visible from inside the module.
+  //
+  // BOTH clocks are on trial here. The child makes a call that IS answered, so a per-call timer
+  // left running after its reply holds the loop open for the full default 15s exactly as the
+  // connect timer did — which is why the per-call timeout clears on settle rather than unrefs.
   await t('connect() lets the process exit once ready has settled', () => {
     const { execFileSync } = require('child_process');
     const fs = require('fs'), os = require('os'), path = require('path');
@@ -269,6 +273,35 @@ async function rejects(promise, matching) {
     dropSocket('onclose');
     await rejects(orHang(a, 'the first call'), /connection lost/);
     await rejects(orHang(b, 'the second call'), /connection lost/);
+  });
+
+  // ---- the socket that stays OPEN and never answers -------------------------------------------
+  // A DISTINCT trigger from the drops above, and the drop fix cannot reach it: a target whose event
+  // loop is blocked still holds the connection, so no reply, no close and no error ever arrive and
+  // every socket-driven settler stays silent. The connect timer is no help either — it is cleared
+  // the moment `ready` settles, long before these calls are made. Each row below therefore leaves
+  // the socket OPEN on purpose: a close-based row would be settled by `failPending` and would pass
+  // with the per-call clock removed, proving nothing about it.
+  await t('a call on an open-but-silent socket times out instead of hanging forever', async () => {
+    const c = open(silent, { callTimeoutMs: 120 });
+    await c.ready;
+    const inflight = c.evaluate('whatever');
+    assert.ok(!lastWS.closed, 'this row closed the socket, which the previous fix already covers');
+    await rejects(orHang(inflight, 'evaluate'), /call timeout after 120ms/);
+  });
+
+  await t('a silent socket reaches laws-switch’s catch through injectStdin too', async () => {
+    const c = open(silent, { callTimeoutMs: 120 });
+    await c.ready;
+    await rejects(orHang(c.injectStdin('/exit\r'), 'injectStdin'), /call timeout after 120ms/);
+  });
+
+  await t('a silent socket times out EVERY pending call, not just the first', async () => {
+    const c = open(silent, { callTimeoutMs: 120 });
+    await c.ready;
+    const a = c.evaluate('one'), b = c.evaluate('two');
+    await rejects(orHang(a, 'the first call'), /call timeout/);
+    await rejects(orHang(b, 'the second call'), /call timeout/);
   });
 
   finished = true;
