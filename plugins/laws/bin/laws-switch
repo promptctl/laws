@@ -23,11 +23,20 @@ const CHOICES = Object.keys(M.SWITCH_ACTIONS);
 function die(msg, code = 1) { process.stderr.write('laws-switch: ' + msg + '\n'); process.exit(code); }
 
 const args = process.argv.slice(2);
-const choice = args.find((a) => !a.startsWith('--'));
+// The choice is POSITIONAL AND FIRST, never searched for. Scanning for "the first token that is
+// not a flag" would have to know which flags take values — `--summary "some text"` puts a bare
+// word in argv that is not a choice — and a scanner that must track that is the same argv-parsing
+// hazard claude-laws refuses to take on for claude's own flags, plus a new maintenance debt every
+// time a flag is added. A fixed position cannot mistake a value for a positional.
+const choice = args[0];
 const sumAt = args.indexOf('--summary');
 const summary = sumAt >= 0 ? args[sumAt + 1] : undefined;
 
 if (!choice) die('usage: laws-switch <' + CHOICES.join('|') + '> [--summary <text>]', 2);
+// A leading flag is its own error, never "unknown choice <flag>": the caller who wrote
+// `--summary "some text" rewind_summarize` needs to hear that the ORDER is wrong, not that their
+// summary is an unrecognised choice - which is the misdiagnosis the scan used to produce.
+if (choice.startsWith('--')) die('the choice comes first: laws-switch <' + CHOICES.join('|') + '> [--summary <text>] — flags follow it, and a flag\'s value is never read as the choice.', 2);
 if (!CHOICES.includes(choice)) die('unknown choice ' + JSON.stringify(choice) + '; expected one of ' + CHOICES.join(', '), 2);
 
 // The launcher owns this directory; its absence means the session was not started via claude-laws,

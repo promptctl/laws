@@ -82,6 +82,13 @@ export BUN_INSPECT="ws://127.0.0.1:$PORT/dbg"
 #                Adding --fork-session would make the pair legal and is deliberately not done: it
 #                would silently turn the user's "continue" into a fork of their conversation,
 #                redefining the flag they handed us. Withhold the switch instead.
+#
+#   --session-id the user pinned their own id. Minting a second one would put two --session-id
+#                flags on one command line, so claude either refuses the launch or opens the
+#                session under an id the user never asked for. Reusing THEIR id is deliberately
+#                not done either: the pin exists so "is this my session" is an equality test on
+#                an id this launcher alone minted, and adopting an id the user may also have
+#                handed to something else gives that test a second claimant.
 no_switch=""
 for arg in "$@"; do
   case "$arg" in
@@ -89,6 +96,8 @@ for arg in "$@"; do
       no_switch="one-shot session (-p): a relaunch would re-send the prompt"; break;;
     -c|--continue|-r|--resume)
       no_switch="session selector ($arg): claude refuses --session-id alongside it, and the switch needs a pinned id"; break;;
+    --session-id)
+      no_switch="session id (--session-id): you pinned your own id, and the switch needs one this launcher minted"; break;;
   esac
 done
 
@@ -116,6 +125,30 @@ REQUEST="$LAWS_SWITCH_DIR/request.json"
 USER_ARGS=("$@")
 SESSION_ARGS=(${FIRST_ARGS[@]+"${FIRST_ARGS[@]}"})
 
+# A switch that cannot be completed must still leave the user IN a session. Exiting here would
+# degrade the failure to no session at all - strictly worse than the state before the switch was
+# asked for, and the opposite of what this file's header promises. The last-known-good
+# SESSION_ARGS names the session the user was just in, so recovery reopens THAT session and then
+# reports the failure through the exit status.
+#
+# RECOVERY RESUMES; IT NEVER RE-PINS. By the time this runs, claude has already held a session
+# under the pinned id, and a second claim on it is refused outright - "Error: Session ID <uuid> is
+# already in use." (measured against the real binary), exit 1, no session. So relaunching with the
+# first pass's --session-id would reintroduce the exact "user left with nothing" failure this
+# function exists to prevent. --resume on the same id reopens it instead.
+#
+# SESSION_ARGS is always empty or a <selector> <id> pair, so index 1 is the id whichever selector
+# put it there: the first pass's --session-id and every later pass's --resume both recover the same
+# way, with no pass-number special case. An empty SESSION_ARGS (no pin was minted) stays empty and
+# the relaunch is the user's own argv, unchanged. [LAW:dataflow-not-control-flow]
+# [LAW:no-silent-failure] loud AND recovered - the message says what failed before the relaunch.
+recover() { # <what failed>
+  log "$1"
+  log "the switch was not completed; reopening the session as it was"
+  "$CLAUDE_BIN" ${USER_ARGS[@]+"${USER_ARGS[@]}"} ${SESSION_ARGS[@]+--resume "${SESSION_ARGS[1]}"}
+  exit 1
+}
+
 while :; do
   # bash 3.2 under `set -u` treats "${empty[@]}" as unbound, so expand through the +alternate form.
   "$CLAUDE_BIN" ${USER_ARGS[@]+"${USER_ARGS[@]}"} ${SESSION_ARGS[@]+"${SESSION_ARGS[@]}"}
@@ -126,27 +159,44 @@ while :; do
   # stdout carries the result JSON and stderr carries diagnostics, so they are kept apart: folding
   # stderr in would let one node warning corrupt the value the next step parses. [LAW:no-silent-failure]
   if ! applied="$(node "$EXCISE" --apply "$REQUEST")"; then
-    log "the craft switch could not be applied, so the transcript is unchanged (see the error above)"
-    exit 1
+    rm -f "$REQUEST"
+    recover "the craft switch could not be applied, so the transcript is unchanged (see the error above)"
   fi
   rm -f "$REQUEST"
 
-  # One read of the result, tab-separated. A malformed result throws out of node rather than being
-  # caught and returned as an empty string that later reads as "no session to resume".
+  # One read of the result, US-separated (\x1f). A malformed result throws out of node rather than
+  # being caught and returned as an empty string that later reads as "no session to resume".
+  #
+  # The separator is deliberately NOT a tab: bash collapses runs of IFS WHITESPACE, so an empty
+  # leading field would shift every later field left and the emptiness checks below would read a
+  # neighbour's value instead of the missing one. \x1f is not whitespace, so one separator is
+  # exactly one field boundary and an absent value stays absent.
   #
   # switchedFrom is a SET - a switch can retire more than one engaged craft - and is joined on ','
   # explicitly rather than left to Array.prototype.toString, so the wire format is chosen here
   # instead of inherited from a coercion a future refactor could change without noticing. Craft
   # names are media slugs, so ',' cannot occur inside one and the split below is unambiguous.
-  if ! parsed="$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d);const from=Array.isArray(r.switchedFrom)?r.switchedFrom.join(","):(r.switchedFrom||"");process.stdout.write([r.sessionId||"",from,r.switchedTo||"",r.choice||""].join("\t"))})')"; then
-    log "the switch was applied but its result could not be read: $applied"
-    exit 1
+  #
+  # `resume` is READ, never re-derived. laws-excise's SWITCH_ACTIONS table already decided whether
+  # this choice leaves anything to resume into (reject: false; tombstone and both rewinds: true),
+  # and inferring it downstream from a non-empty sid would be a second answer to a question the
+  # apply result already answers. A result that omits it throws rather than defaulting, so the two
+  # can never quietly disagree. [LAW:one-source-of-truth]
+  if ! parsed="$(printf '%s' "$applied" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d);if(typeof r.resume!=="boolean")throw new Error("apply result carries no resume decision");const from=Array.isArray(r.switchedFrom)?r.switchedFrom.join(","):(r.switchedFrom||"");process.stdout.write([r.sessionId||"",from,r.switchedTo||"",r.choice||"",r.resume?"1":""].join("\x1f"))})')"; then
+    recover "the switch was applied but its result could not be read: $applied"
   fi
-  IFS=$'\t' read -r sid switched_from switched_to choice <<< "$parsed"
+  IFS=$'\x1f' read -r sid switched_from switched_to choice resume <<< "$parsed"
+
+  # Nothing to resume into means nothing to release either: the choice that reports resume:false
+  # is the one that left the transcript exactly as it was, so retiring a craft here would undo an
+  # engagement the switch deliberately kept. Same loop body, different value. [LAW:dataflow-not-control-flow]
+  if [ -z "$resume" ]; then
+    log "$choice leaves the session as it stands, so nothing is retired; reopening it unchanged"
+    continue
+  fi
 
   if [ -z "$sid" ] || [ -z "$switched_from" ]; then
-    log "the switch was applied but names no session or no retired craft, so it cannot be completed: $applied"
-    exit 1
+    recover "the switch was applied but names no session or no retired craft, so it cannot be completed: $applied"
   fi
 
   # The second half of retiring the crafts. Without it the resumed session still holds the engaged
