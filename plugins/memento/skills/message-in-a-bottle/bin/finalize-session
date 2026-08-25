@@ -29,7 +29,7 @@
 #   launcher:         finalize-session [message...]
 #   tmux worker:      finalize-session --worker <target> <reset> <msgfile> <goalfile>
 #   iTerm2 worker:    finalize-session --iterm-worker <uuid> <claude_pid> <msgfile> <goalfile> <flags>
-#   detached worker:  finalize-session --detached-worker <session> <cwd> <msgfile> <goalfile> <flags> <old_claude_pid> <claude_bin>
+#   detached worker:  finalize-session --detached-worker <session> <cwd> <msgfile> <goalfile> <flags> <old_claude_pid> <claude_bin> <old_claude_ident>
 
 set -euo pipefail
 
@@ -129,6 +129,30 @@ _find_claude_pid() {
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
   done
   return 1
+}
+
+# What a pid is holding, as a value that survives the pid being reissued: the
+# process's start time and its command line. Empty output — the pid holds nothing
+# — is a failure to identify, never an identity of its own.
+#
+# [FRAMING:representation] a pid is a map, not the territory. The kernel is free to
+# reissue it the instant its holder exits, so "pid 4711 is alive" and "pid 4711 is
+# still the claude I captured" are different facts, and only the second one licenses
+# a signal. Start time is what tells them apart: two processes cannot hold one pid at
+# one instant, so a pid whose start time still matches is the same process.
+#
+# This is the same bar `_discover_tmux_pane` holds itself to. That walk goes to real
+# lengths to PROVE descent rather than narrow it — pane_dead, non-decreasing age
+# while climbing — precisely because a recycled pid forges a match. The detached
+# worker signals a pid up to ~41s after capturing it (10s delay + up to 30s of
+# readiness polling), which is far more room for reuse than the walk ever has, so it
+# cannot hold a lower bar than the walk does.
+_process_identity() {
+  local pid="${1:-}" raw
+  [ -n "$pid" ] || return 1
+  raw=$(ps -o lstart=,command= -p "$pid" 2>/dev/null) || return 1
+  [ -n "$raw" ] || return 1
+  printf '%s' "$raw"
 }
 
 # The tmux pane this process is running inside, discovered from process ancestry
@@ -487,6 +511,14 @@ case "$MODE" in
       CLAUDE_PID=$(_find_claude_pid) \
         || { echo "detached transport: cannot locate the claude process to relaunch" >&2; exit 2; }
       FLAGS=$(_claude_flags "$(ps -o command= -p "$CLAUDE_PID" 2>/dev/null)")
+      # [LAW:one-source-of-truth] the identity is captured HERE, at the same instant
+      # the pid is, and travels with it as data. The worker re-reads it and compares
+      # rather than re-deriving what "the old claude" means at kill time — by then
+      # the pid may name a stranger, and a second derivation would simply describe
+      # the stranger. [LAW:no-silent-failure] a pid we cannot identify is not a pid
+      # we may later signal, so this is a hard stop, not a degraded mode.
+      CLAUDE_IDENT=$(_process_identity "$CLAUDE_PID") \
+        || { echo "detached transport: cannot read the identity of claude process $CLAUDE_PID" >&2; exit 2; }
       # A fresh detached window's default shell is a login shell that resources
       # dotfiles before running anything handed to it, so it can rebuild PATH
       # out from under whatever this process currently has — unlike the iTerm2
@@ -507,11 +539,12 @@ case "$MODE" in
       if [[ -n "${FINALIZE_DRY_RUN:-}" ]]; then
         echo "[dry-run] transport=detached session=$SESSION cwd=$CWD claude_pid=$CLAUDE_PID claude_bin=$CLAUDE_BIN flags=[$FLAGS]"
         echo "[dry-run] would launch: $CLAUDE_BIN ${FLAGS:+$FLAGS }\"\$(cat '$MSGFILE')\" in a fresh detached tmux window"
+        echo "[dry-run] old-process identity: $CLAUDE_IDENT"
         echo "[dry-run] carried goal: ${GOAL:-(none)}"
         exit 0
       fi
       LOGFILE=$(mktemp -t finalize-log.XXXXXX)
-      nohup "$SELF" --detached-worker "$SESSION" "$CWD" "$MSGFILE" "$GOALFILE" "$FLAGS" "$CLAUDE_PID" "$CLAUDE_BIN" \
+      nohup "$SELF" --detached-worker "$SESSION" "$CWD" "$MSGFILE" "$GOALFILE" "$FLAGS" "$CLAUDE_PID" "$CLAUDE_BIN" "$CLAUDE_IDENT" \
         </dev/null >>"$LOGFILE" 2>&1 &
       trap - EXIT
       echo "handoff scheduled → fresh detached tmux window '$SESSION' in ${HANDOFF_DELAY_SECONDS}s (log: $LOGFILE)"
@@ -716,8 +749,8 @@ OSA2
     ;;
 
   detached-worker)
-    if [[ $# -ne 7 ]]; then
-      echo "internal error: detached-worker expects exactly 7 args" >&2
+    if [[ $# -ne 8 ]]; then
+      echo "internal error: detached-worker expects exactly 8 args" >&2
       exit 2
     fi
     SESSION="$1"
@@ -727,6 +760,7 @@ OSA2
     FLAGS="$5"
     OLD_CLAUDE_PID="$6"
     CLAUDE_BIN="$7"
+    OLD_CLAUDE_IDENT="$8"
 
     GOALBUF="finalize-goal-$$"
     trap 'rm -f "$MSGFILE" "$GOALFILE"' EXIT
@@ -773,21 +807,32 @@ OSA2
     fi
 
     log "claude ready in $SESSION"
-    if [[ -s "$GOALFILE" ]]; then
-      sleep 1
-      log "re-establishing carried goal"
-      { printf '/goal '; cat "$GOALFILE"; } | tmux load-buffer -b "$GOALBUF" -
-      tmux paste-buffer -d -b "$GOALBUF" -t "$SESSION" -p
-      sleep 0.5
-      tmux send-keys -t "$SESSION" Enter
-    fi
 
     # The successor is confirmed up and has the message; retire the old
     # process so this handoff leaves exactly one live agent, the same
     # guarantee the tmux (in-place reset) and iTerm2 (kill+relaunch)
     # transports already give. TERM first, escalate to KILL if it lingers —
     # identical escalation to the iTerm2 worker's.
-    if kill -0 "$OLD_CLAUDE_PID" 2>/dev/null; then
+    #
+    # [LAW:no-ambient-temporal-coupling] this runs BEFORE the optional goal
+    # delivery below, and the ordering is the whole enforcement. Readiness is
+    # retirement's only precondition and it is already established above; goal
+    # delivery is optional and fallible, and under the script's `set -e` a single
+    # failing tmux command down there would abort the worker with the old process
+    # still live — an optional step silently suppressing the mandatory one. Ordered
+    # this way that cannot happen, and it cannot come back the next time a fallible
+    # command is added below, which is what guarding each command in turn would
+    # depend on. The iTerm2 worker already retires before it delivers.
+    #
+    # [LAW:parse-dont-validate] `kill -0` answers "is some process alive at this
+    # pid," which is not the question. The identity captured with the pid in the
+    # launcher is re-read here and compared: a pid the OS reissued during the delay
+    # and readiness wait reads as a different process and is left alone. A pid
+    # holding nothing reads as empty, which matches no captured identity — the
+    # gone case and the reused case take the same arm because they license the same
+    # action, which is none.
+    IDENT_NOW=$(_process_identity "$OLD_CLAUDE_PID") || IDENT_NOW=""
+    if [[ "$IDENT_NOW" == "$OLD_CLAUDE_IDENT" ]]; then
       kill -TERM "$OLD_CLAUDE_PID" 2>/dev/null || true
       for _ in $(seq 1 20); do kill -0 "$OLD_CLAUDE_PID" 2>/dev/null || break; sleep 0.5; done
       if kill -0 "$OLD_CLAUDE_PID" 2>/dev/null; then
@@ -796,7 +841,16 @@ OSA2
       fi
       log "old claude $OLD_CLAUDE_PID terminated"
     else
-      log "old claude $OLD_CLAUDE_PID already gone"
+      log "old claude $OLD_CLAUDE_PID is gone: pid now holds [${IDENT_NOW:-nothing}], not the process captured at launch [$OLD_CLAUDE_IDENT]. Nothing to retire."
+    fi
+
+    if [[ -s "$GOALFILE" ]]; then
+      sleep 1
+      log "re-establishing carried goal"
+      { printf '/goal '; cat "$GOALFILE"; } | tmux load-buffer -b "$GOALBUF" -
+      tmux paste-buffer -d -b "$GOALBUF" -t "$SESSION" -p
+      sleep 0.5
+      tmux send-keys -t "$SESSION" Enter
     fi
     ;;
 esac

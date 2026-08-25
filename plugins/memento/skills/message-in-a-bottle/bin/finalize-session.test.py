@@ -14,19 +14,19 @@ one fixture, because a pane's dead-but-still-listed state cannot be conjured on
 demand, and the forging ps in the pid-reuse case wraps the real one rather than
 replacing it.
 
-That same real-process-tree honesty extends to the detached-transport cases:
-every "no pane found" case now falls to the detached transport rather than
-declining, because `_find_claude_pid` walks the REAL ancestry above this test
-runner and finds whatever real `claude` process is actually running it. That is
-realistic for how this suite is actually run (inside Claude Code), but it is a
-genuine environmental coupling, not a fixture - a runner with no claude-named
-ancestor at all would see those cases decline instead, for a true reason
-(nothing to relaunch as) this suite does not separately distinguish from "no
-transport at all."
+The detached-transport cases have a claude process of their own, planted in the
+chain: `nest` re-execs itself under the name `claude` at the top hop, so
+`_find_claude_pid` finds a process this suite owns and can name. It is a real
+process in the real ancestry, matched by the real walk - the fixture is the NAME
+and nothing else. Before that, those cases passed only because the walk climbed
+past the chain into whatever real `claude` was running the suite, so a plain CI
+runner with no claude-named ancestor saw them DECLINE instead of DETACH and the
+suite failed for a reason having nothing to do with the code under test.
 
 Run: python3 finalize-session.test.py
 """
 
+import concurrent.futures
 import os
 import shutil
 import subprocess
@@ -129,6 +129,21 @@ case "${1:-}" in
     esac
     printf '%s\n' "$line"
     ;;
+  new-session|has-session|capture-pane|load-buffer|paste-buffer|send-keys)
+    # The detached WORKER's half of the fixture. It needs no state: the worker
+    # only ever asks whether the new session is up and whether its banner is
+    # drawn, so a session that is always up and always ready is the whole model.
+    # $FIXTURE_TMUX_FAIL names one subcommand to fail instead, which is how a
+    # goal delivery that dies mid-way is staged.
+    sub="$1"
+    if [ "${FIXTURE_TMUX_FAIL:-}" = "$sub" ]; then
+      echo "fixture tmux: failing '$sub' on request" >&2
+      exit 1
+    fi
+    printf '%s\n' "$*" >> "${FIXTURE_TMUX_LOG:-/dev/null}"
+    [ "$sub" = capture-pane ] && printf 'Claude Code v1.2.3\n'
+    exit 0
+    ;;
   *) echo "fixture tmux: unexpected subcommand ${1:-}" >&2; exit 2 ;;
 esac
 """
@@ -139,17 +154,29 @@ NEST = r"""#!/bin/bash
 # pid to $NEST_PUBLISH_PID; the pane fixtures are written against it.
 set -uo pipefail
 depth="$1"; shift
+self="${NEST_SELF:-$0}"
 if [ -n "${NEST_PUBLISH_PID:-}" ]; then
   printf '%s' "$$" > "$NEST_PUBLISH_PID"
   unset NEST_PUBLISH_PID
 fi
+# The hop named `claude`, planted so the launcher's ancestry walk has a claude
+# process of this fixture's own making to find. Re-exec rather than fork: the pid
+# is unchanged, so the pid already published above IS this claude - which is what
+# lets an assertion name the exact process the launcher was supposed to find. The
+# name is the whole of the fixture, because the launcher matches on program name;
+# everything below this hop proceeds as ordinary nest.
+if [ "${NEST_CLAUDE_AT:-}" = "$depth" ]; then
+  unset NEST_CLAUDE_AT
+  export NEST_SELF="$self"
+  exec "$NEST_AS_CLAUDE" "$depth" "$@"
+fi
 if [ "$depth" -gt 0 ]; then
   if [ "${NEST_REHOST_AT:-}" = "$depth" ]; then
     unset NEST_REHOST_AT
-    claude daemon run --bg-pty-host -- "$0" $((depth - 1)) "$@"
+    claude daemon run --bg-pty-host -- "$self" $((depth - 1)) "$@"
     exit $?
   fi
-  "$0" $((depth - 1)) "$@"
+  "$self" $((depth - 1)) "$@"
   exit $?
 fi
 # $NEST_SLEEP holds the bottom of the chain still long enough that ps reports a
@@ -206,6 +233,29 @@ esac
 """
 
 
+PS_MUTE_IDENTITY = r"""#!/bin/bash
+# The real ps everywhere except the one query that asks what a pid is HOLDING:
+# `ps -o lstart=,command= -p <pid>` exits 0 and prints nothing, which is what a
+# pid whose holder exited between the lookup and the query actually reports. It
+# is the one answer a bare exit-code check cannot see — success, with no identity
+# in it — and the launcher must read it as "I could not identify this process",
+# never as an identity of its own.
+#
+# Selectivity is keyed on the field list, not on the subcommand shape, because
+# `-o command=` and `-o ppid=` (the ancestry hops) and `-eo pid=,ppid=,etime=`
+# (the whole-table walk) are the same `-p`/`-o` grammar and must all pass
+# through untouched. Muting them instead would collapse discovery for a reason
+# having nothing to do with the identity read, and the case would pass on the
+# wrong evidence. The control below runs under this same wrapper and still
+# resolves a pane, which is what proves the pass-through is real.
+set -uo pipefail
+for arg in "$@"; do
+  [ "$arg" = "lstart=,command=" ] && exit 0
+done
+exec /bin/ps "$@"
+"""
+
+
 def install(directory, name, body):
     path = os.path.join(directory, name)
     with open(path, "w") as handle:
@@ -218,9 +268,19 @@ FIXTURES = tempfile.mkdtemp(prefix="finalize-fixtures.")
 install(FIXTURES, "tmux", TMUX)
 install(FIXTURES, "claude", CLAUDE)
 NEST_BIN = install(FIXTURES, "nest", NEST)
+# `nest` under the one name the launcher's ancestry walk looks for. A symlink and
+# not a copy: there is one nest program, and a second copy of it that could drift
+# from the first is a bug waiting for someone to edit only one of them.
+AS_CLAUDE_DIR = os.path.join(FIXTURES, "as-claude")
+os.mkdir(AS_CLAUDE_DIR)
+NEST_AS_CLAUDE = os.path.join(AS_CLAUDE_DIR, "claude")
+os.symlink(NEST_BIN, NEST_AS_CLAUDE)
 FORGE_DIR = os.path.join(FIXTURES, "forge")
 os.mkdir(FORGE_DIR)
 install(FORGE_DIR, "ps", PS_FORGING)
+MUTE_DIR = os.path.join(FIXTURES, "mute")
+os.mkdir(MUTE_DIR)
+install(MUTE_DIR, "ps", PS_MUTE_IDENTITY)
 
 # A PATH holding everything the launcher needs and provably no tmux. The absence
 # has to be BUILT, not observed: tmux lives in /usr/bin on every mainstream Linux
@@ -256,7 +316,7 @@ STRANGER = subprocess.Popen(["sleep", "600"],
 
 
 def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge_age=None,
-        rehost_at=None, tmux_pane=None, sleep=None):
+        rehost_at=None, tmux_pane=None, sleep=None, mute_identity=False):
     """Launch finalize-session under a real `nest` chain and return its dry-run report."""
     workdir = tempfile.mkdtemp(prefix="finalize-case.")
     pidfile = os.path.join(workdir, "root.pid")
@@ -266,6 +326,8 @@ def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge_age=None,
     path = [FIXTURES, REAL_DIRS] if tmux_on_path else [NO_TMUX_BIN]
     if forge_age is not None:
         path.insert(0, FORGE_DIR)
+    if mute_identity:
+        path.insert(0, MUTE_DIR)
     env = {
         "PATH": ":".join(path),
         "HOME": os.environ.get("HOME", workdir),
@@ -273,6 +335,14 @@ def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge_age=None,
         "FINALIZE_DRY_RUN": "1",
         "NEST_PUBLISH_PID": pidfile,
         "FIXTURE_ROOT_PID": pidfile,
+        # The claude process the detached transport relaunches as is planted at the
+        # top of this chain, so the ancestry walk finds a process this fixture owns
+        # rather than whatever real claude happens to be running the suite. Every
+        # case gets one, unconditionally: a claude hop the walk cannot reach (the
+        # over-the-bound chains) is refused for the same reason a claude hop that
+        # was never planted would be, so nothing has to decide which cases need it.
+        "NEST_CLAUDE_AT": str(depth),
+        "NEST_AS_CLAUDE": NEST_AS_CLAUDE,
     }
     if forge_age is not None:
         env["FIXTURE_FORGE_AGE"] = forge_age
@@ -285,8 +355,15 @@ def run(depth=1, panes="%99 ROOTPID 0", tmux_on_path=True, forge_age=None,
     if sleep is not None:
         env["NEST_SLEEP"] = str(sleep)
     try:
-        return subprocess.run([NEST_BIN, str(depth), LAUNCHER, "handoff"],
+        done = subprocess.run([NEST_BIN, str(depth), LAUNCHER, "handoff"],
                               text=True, capture_output=True, env=env, timeout=120)
+        # The chain's top pid, read before the workdir goes away. It names both the
+        # pane fixtures' ROOTPID and the planted claude - they are one process - so
+        # an assertion can say which process the launcher picked, not merely that it
+        # picked one.
+        with open(pidfile) as handle:
+            done.root_pid = handle.read().strip()
+        return done
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -382,13 +459,56 @@ check("a re-hosting hop drops the stale $TMUX_PANE and discovery wins",
 # capability, no subclass excluded. Refusing a PANE is still correct in every
 # case below - the walk's job is unchanged - but refusing a pane no longer means
 # refusing to deliver AT ALL, because the launcher falls to the detached
-# transport whenever a claude process is findable to relaunch. This suite's
-# `nest` chain always runs as a real descendant of the test runner's own claude
-# session, so that process is always findable here; DECLINED survives only where
-# tmux itself is unreachable to spawn a fresh window with.
+# transport whenever a claude process is findable to relaunch. Every chain here
+# plants one at its top hop, so that process is always findable; DECLINED survives
+# only where tmux itself is unreachable to spawn a fresh window with.
 
 done = run(panes=None)
 check("no tmux server: falls to the detached transport", picked(done) == DETACHED, picked(done))
+# Which claude, exactly. DETACHED alone cannot tell the planted process from an
+# ambient one four levels above the test runner, and that is precisely the
+# distinction that decides whether these cases pass on a machine that is not
+# already inside a Claude Code session. Naming the pid closes it.
+check("the detached transport relaunches as the planted claude, not an ambient one",
+      f"claude_pid={done.root_pid} " in done.stdout,
+      f"root_pid={done.root_pid} out={done.stdout!r} err={done.stderr!r}")
+# A pid alone cannot license a kill 40 seconds later, so the launcher captures what
+# the pid is HOLDING and hands that down to the worker to re-check. The captured
+# text has to describe the process actually found - a constant, or the pid restated,
+# would satisfy "non-empty" and prove nothing.
+check("the launcher captures the old process's identity, not just its pid",
+      any(line.startswith("[dry-run] old-process identity: ") and NEST_AS_CLAUDE in line
+          for line in done.stdout.splitlines()),
+      f"out={done.stdout!r}")
+
+# An identity read that SUCCEEDS and says nothing. `ps` exits 0 with empty output
+# for a pid whose holder exited between the ancestry lookup and the query, so the
+# exit code alone reports "fine" over an answer that identifies nobody. Read as an
+# identity, that emptiness is fatal at exactly one remove: the launcher would hand
+# "" to the worker, the worker's own re-read of a since-reissued pid would also
+# come back "", the two would compare EQUAL, and the worker would send TERM/KILL to
+# whatever stranger now holds that pid. So the launcher refuses here, and the
+# assertion names the refusal - exit code and reason - rather than merely nonzero,
+# because a chain that never found a claude at all also exits 2.
+#
+# This has to be pinned at the LAUNCHER. At the worker the same guard is a genuine
+# no-op: `IDENT_NOW=$(_process_identity "$PID") || IDENT_NOW=""` yields the same
+# empty string whether the function returns 1 or returns 0 holding nothing, so no
+# worker case can tell the two apart. Only a caller that treats failure as a hard
+# stop can.
+done = run(panes=None, mute_identity=True)
+check("an identity read that succeeds but names nobody is a refusal, not an empty identity",
+      done.returncode == NO_TRANSPORT_RC
+      and "cannot read the identity of claude process" in done.stderr,
+      f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+# The control, under the same wrapper: everything ps answers apart from that one
+# field list still answers truthfully, so the ancestry hops and the whole-table
+# `ps -eo` walk resolve the pane exactly as they do without it. Without this, a
+# wrapper that broke ps outright would produce the refusal above for a reason
+# having nothing to do with the identity read.
+check("the identity-muting ps leaves the ancestry walk intact",
+      picked(run(depth=2, mute_identity=True)) == "%99",
+      "without this the mute wrapper, not the identity guard, could be doing the work")
 
 done = run(panes="")
 check("a server with no panes falls to the detached transport", picked(done) == DETACHED, picked(done))
@@ -427,6 +547,24 @@ check("a dead pane still advertising an ancestor's pid is refused - falls to det
 done = run(depth=2, panes="%99 ROOTPID 1\n%98 ROOTPID 0")
 check("a live pane is still found past a dead one holding the same pid",
       picked(done) == "%98", f"rc={done.returncode} out={done.stdout!r}")
+
+# The same two panes in the other order, and the reversal is the entire point.
+# Liveness is checked twice on two different paths - the walk screens what enters
+# discovery, `_pane_target` screens the inherited $TMUX_PANE - and every dead-pane
+# case above is decided by the SECOND one: the walk hands its answer straight to
+# `_pane_target`, so a dead pane the walk wrongly admitted is refused downstream
+# before any assertion here can see it, and all those cases read DETACHED either
+# way. Deleting the walk's liveness whitelist left the suite fully green (verified
+# by mutation), which would have let a later reader delete `_pane_target`'s check
+# too, believing the walk covered it, with neither guard live and nothing red.
+#
+# Order breaks the tie because the walk keeps ONE pane per pid, last row winning.
+# Listed live-then-dead, a walk that screens for liveness keeps %98 and resolves;
+# one that does not lets the dead %99 overwrite it, and the answer collapses to
+# DETACHED. Only the walk's own check can produce %98 here.
+done = run(depth=2, panes="%98 ROOTPID 0\n%99 ROOTPID 1")
+check("a dead pane listed after a live one does not displace it in the walk",
+      picked(done) == "%98", f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
 
 # A pane record with no dead column: the fixture's `read` leaves $dead empty, so
 # #{pane_dead} expands to nothing - which is precisely what a tmux predating that
@@ -510,6 +648,96 @@ check("an inherited $TMUX_PANE naming a dead pane loses to a live discovered one
 done = run(depth=2, panes=f"%77 {STRANGER.pid} 0\n%99 ROOTPID 0", tmux_pane=":.")
 check("a $TMUX_PANE that resolves to someone else's live pane is refused",
       picked(done) == "%99", f"rc={done.returncode} out={done.stdout!r}")
+
+# --- the detached worker: what it retires, and in what order ----------------
+# Everything above drives the LAUNCHER in dry-run, so the promise the detached
+# transport makes at the other end - after the handoff, exactly one live agent -
+# had no coverage at all. These cases run the real worker against the fixture tmux
+# and a real victim process, and each is decided by whether a process is alive or
+# dead when it finishes, never by a log line claiming one or the other.
+
+
+def worker_case(identity, goal="", fail_on=None):
+    """Run one detached worker over a real process standing in for the old claude.
+
+    Returns (retired, done): whether the victim was actually signalled, and the
+    worker's own result. The identity handed to the worker is read with the same
+    `ps` fields the launcher captures, so `identity="match"` passes the genuine
+    article rather than something shaped like it; `identity="reused"` keeps that
+    reading and swaps the command out, which is what the pid holds after the OS
+    reissues it to a stranger.
+    """
+    proc = subprocess.Popen(["sleep", "600"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    read = subprocess.run(["ps", "-o", "lstart=,command=", "-p", str(proc.pid)],
+                          text=True, capture_output=True)
+    # `$(...)` strips trailing newlines and nothing else; matching that exactly
+    # matters, because the whole check is a string comparison against it.
+    real = read.stdout.rstrip("\n")
+    ident = real if identity == "match" else real.replace("sleep 600", "vi Makefile")
+    workdir = tempfile.mkdtemp(prefix="finalize-worker.")
+    msgfile = os.path.join(workdir, "msg")
+    goalfile = os.path.join(workdir, "goal")
+    with open(msgfile, "w") as handle:
+        handle.write("handoff")
+    with open(goalfile, "w") as handle:
+        handle.write(goal)
+    env = {
+        "PATH": ":".join([FIXTURES, REAL_DIRS]),
+        "HOME": os.environ.get("HOME", workdir),
+        "TMPDIR": workdir,
+    }
+    if fail_on is not None:
+        env["FIXTURE_TMUX_FAIL"] = fail_on
+    try:
+        done = subprocess.run(
+            [LAUNCHER, "--detached-worker", "fixture-session", workdir, msgfile,
+             goalfile, "", str(proc.pid), "/bin/true", ident],
+            text=True, capture_output=True, env=env, timeout=180)
+        try:
+            proc.wait(timeout=5)
+            retired = True
+        except subprocess.TimeoutExpired:
+            retired = False
+        return retired, done
+    finally:
+        proc.kill()
+        proc.wait()
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+# Each worker sleeps out the full HANDOFF_DELAY_SECONDS, so the cases run
+# alongside each other rather than one after another. They share nothing: each
+# owns its victim process and its own workdir.
+with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+    same_pid = pool.submit(worker_case, "match")
+    reused_pid = pool.submit(worker_case, "reused")
+    # The goal delivery is staged to fail at its first tmux call, which under the
+    # worker's `set -euo pipefail` aborts the script on the spot.
+    goal_fails = pool.submit(worker_case, "match", goal="ship the thing",
+                             fail_on="load-buffer")
+
+retired, done = same_pid.result()
+check("the worker retires the old process it was given",
+      retired, f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+
+# The window between capturing the pid and signalling it runs to ~41s (the delay
+# plus the readiness wait), which is ample room for the OS to hand that pid to
+# something else. `kill -0` cannot see that happen - it answers "something is
+# alive here", which is true of the stranger too.
+retired, done = reused_pid.result()
+check("a pid reissued to another process during the wait is not signalled",
+      not retired, f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+check("and the worker says why it left that pid alone",
+      "not the process captured at launch" in done.stdout, f"out={done.stdout!r}")
+
+# Ordering, not guarding, is what protects the single-live-agent guarantee: the
+# goal delivery below the retirement is optional and fallible, and `set -e` turns
+# any failure there into an immediate abort. Retirement happens first, so the
+# abort finds nothing left to suppress.
+retired, done = goal_fails.result()
+check("a failed goal delivery cannot leave the old process alive",
+      retired, f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
 
 STRANGER.terminate()
 STRANGER.wait()
