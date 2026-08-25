@@ -50,12 +50,24 @@ write_transcript() { # <path> <session-id>
 
 # The stub stands in for `claude`. It records argv, and on the passes named in STUB_SWITCH_ON it
 # writes a switch request exactly as laws-switch would.
+#
+# It also records the two things about a launch that are NOT argv and that the real claude would
+# react to where a stub cannot: the switch machinery it inherited in its environment, and whether
+# the inspector port it was handed is actually free to bind. Real bun binds that port on startup and
+# dies with EADDRINUSE if it cannot (measured), so "was the reservation released before the launch"
+# is a real launch outcome, not test bookkeeping.
 STUB="$TMPDIR/claude-stub"
 cat > "$STUB" <<'EOS'
 #!/bin/bash
 n=$(( $(cat "$STUB_STATE/count" 2>/dev/null || echo 0) + 1 ))
 printf '%s' "$n" > "$STUB_STATE/count"
 printf '%s\n' "$*" > "$STUB_STATE/argv.$n"
+printf '%s|%s|%s\n' "${LAWS_SWITCH_SESSION-}" "${LAWS_SWITCH_DIR-}" "${BUN_INSPECT-}" > "$STUB_STATE/env.$n"
+if [ -n "${BUN_INSPECT-}" ]; then
+  bi_port=${BUN_INSPECT##*:}; bi_port=${bi_port%%/*}
+  node -e 'const s=require("net").createServer();s.on("error",()=>{process.stdout.write("BUSY");process.exit(0)});s.listen(Number(process.argv[1]),"127.0.0.1",()=>{process.stdout.write("FREE");s.close()})' \
+    "$bi_port" > "$STUB_STATE/port.$n"
+fi
 case " $STUB_SWITCH_ON " in
   *" $n "*)
     # The transcript starts with laws:code engaged, so the first switch moves to prompt. Every
@@ -84,12 +96,19 @@ export LAWS_CLAUDE_BIN="$STUB"
 
 count_resume() { grep -o -- '--resume' "$1" | wc -l | tr -d ' '; }
 
+# Every per-launch record the stub keeps is cleared together. Clearing argv but leaving env or port
+# behind would let a previous section's launch answer this section's question. Extra arguments are
+# additional paths to clear alongside them.
+reset_stub() { # [extra paths...]
+  rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.* "$STUB_STATE"/env.* "$STUB_STATE"/port.* "$@"
+}
+
 # ---- 1. one switch: the loop applies the surgery, releases the craft, and resumes -------------
 export STUB_SID="LAUNCH1"
 export STUB_TRANSCRIPT="$TMPDIR/launch1.jsonl"
 export STUB_SWITCH_ON="1"
 write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
-rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+reset_stub
 
 # Engage laws:code through the real guard, so the release has a real marker to remove.
 printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:code"}}' \
@@ -121,6 +140,22 @@ grep -q '\[TOMBSTONE\]' "$STUB_TRANSCRIPT" \
   && ok "the switch was applied to the transcript" \
   || bad "the transcript was not modified"
 
+# The inspector port is RESERVED by a live listener while the launcher sets up, and that reservation
+# has to be gone by the time claude runs - bun binds the port itself and dies with EADDRINUSE if it
+# cannot (measured against the real binary). A launcher that never releases its own reservation
+# hands every session a port it has already taken.
+[ "$(cat "$STUB_STATE/port.1" 2>/dev/null)" = FREE ] \
+  && ok "the port reservation is released before claude launches, so bun can bind it" \
+  || bad "claude was launched against a port still held (probe: $(cat "$STUB_STATE/port.1" 2>/dev/null))"
+
+# The baseline the recovery-session assertions in section 6 are measured against: an ORDINARY launch
+# carries the whole handshake. Without this, "the recovered session inherits nothing" would pass
+# just as well on a launcher that never exported anything at all.
+case "$(cat "$STUB_STATE/env.1" 2>/dev/null)" in
+  ''|'||') bad "an ordinary launch inherited no switch machinery at all (env: $(cat "$STUB_STATE/env.1" 2>/dev/null))";;
+  *) ok "an ordinary launch inherits the session pin, the switch dir and the inspector";;
+esac
+
 # The half that used to be missing: the resumed session must be able to load the craft it
 # switched TO. A --resume keeps the same session_id, so this is the same lock slot that refused.
 out=$(printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}' \
@@ -133,7 +168,7 @@ export STUB_SID="LAUNCH2"
 export STUB_TRANSCRIPT="$TMPDIR/launch2.jsonl"
 export STUB_SWITCH_ON="1 2"
 write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
-rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+reset_stub
 
 "$LAUNCHER" --model opus >/dev/null 2>&1
 
@@ -156,7 +191,7 @@ export STUB_SID="LAUNCH3"
 export STUB_TRANSCRIPT="$TMPDIR/launch3.jsonl"
 export STUB_SWITCH_ON=""
 write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
-rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+reset_stub
 export LAWS_CLAUDE_BIN="$STUB"
 
 "$LAUNCHER" --model opus >/dev/null 2>&1
@@ -168,7 +203,7 @@ esac
 # One-shot: a relaunch would re-send the positional prompt and re-execute the user's request, so
 # the switch is unavailable rather than dangerous. Enforced by withholding the pin the guard
 # requires, not by a warning alone.
-rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+reset_stub
 out=$("$LAUNCHER" -p 'do the thing' 2>&1 >/dev/null)
 case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
   *"--session-id "*) bad "one-shot mode still pinned a session, so the switch stays reachable";;
@@ -182,10 +217,14 @@ esac
 # A user-supplied session selector is not a degraded switch, it is a BROKEN LAUNCH: real claude
 # exits with "--session-id can only be used with --continue or --resume if --fork-session is also
 # specified". The stub cannot reproduce that refusal, so the assertion is on the argv the launcher
-# builds - the pin must never reach claude alongside the user's own selector. Every spelling is
-# covered because the scan matches exact tokens and a missed spelling fails the same way.
-for sel in -c --continue -r --resume; do
-  rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+# builds - the pin must never reach claude alongside the user's own selector.
+#
+# EVERY SPELLING, INCLUDING THE `=`-JOINED ONE. claude accepts `--resume=<uuid>` exactly as it
+# accepts `--resume <uuid>` (measured), so a scan that only recognises the space-separated form sees
+# the joined one as a positional, offers the switch, and mints the conflicting pin anyway - the
+# failure this whole section exists to prevent, reachable through a spelling nobody tested.
+for sel in -c --continue -r --resume --continue=42 --resume=USER-RESUME-ID; do
+  reset_stub
   out=$("$LAUNCHER" "$sel" 2>&1 >/dev/null)
   case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
     *"--session-id "*) bad "$sel still pinned a session, so claude would refuse to launch at all";;
@@ -198,9 +237,11 @@ for sel in -c --continue -r --resume; do
 done
 
 # The user's own selector must still REACH claude untouched - withholding the pin is the whole
-# change, and dropping the flag the user typed would be a different bug wearing the same fix.
+# change, and dropping or rewriting the flag the user typed would be a different bug wearing the
+# same fix. The last iteration above was the joined spelling, so this also proves the launcher
+# recognises that spelling without normalising it into some other one on the way through.
 case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
-  *"--resume"*) ok "the user's own session selector is passed through untouched";;
+  *"--resume=USER-RESUME-ID"*) ok "the user's own session selector is passed through untouched";;
   *) bad "the launcher swallowed the user's selector (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
 esac
 
@@ -209,7 +250,7 @@ esac
 # id the user never asked for. The assertion counts the flag rather than looking for the pin,
 # because "the launcher added one of its own" and "the user's is still there" are both wrong to
 # miss and the count catches either.
-rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+reset_stub
 out=$("$LAUNCHER" --session-id USER-PINNED-ID 2>&1 >/dev/null)
 n=$(grep -o -- '--session-id' "$STUB_STATE/argv.1" 2>/dev/null | wc -l | tr -d ' ')
 [ "$n" = 1 ] && ok "a user-supplied --session-id is not joined by a second, conflicting pin" \
@@ -217,6 +258,23 @@ n=$(grep -o -- '--session-id' "$STUB_STATE/argv.1" 2>/dev/null | wc -l | tr -d '
 case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
   *"--session-id USER-PINNED-ID"*) ok "  ... and the id the user chose is the one that survives";;
   *) bad "  ... but the surviving id is not the user's (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
+esac
+
+# The same pin in its joined spelling. Counting the flag is what catches the real failure here: a
+# scan that misses `--session-id=<id>` reads it as a positional and mints its own alongside it, and
+# the count goes to 2 while both the user's id and a valid-looking pin are still present.
+reset_stub
+out=$("$LAUNCHER" --session-id=USER-JOINED-ID 2>&1 >/dev/null)
+n=$(grep -o -- '--session-id' "$STUB_STATE/argv.1" 2>/dev/null | wc -l | tr -d ' ')
+[ "$n" = 1 ] && ok "a joined --session-id=<id> is not joined by a second, conflicting pin" \
+             || bad "argv carries $n --session-id flags: $(cat "$STUB_STATE/argv.1" 2>/dev/null)"
+case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
+  *"--session-id=USER-JOINED-ID"*) ok "  ... and the joined id reaches claude exactly as typed";;
+  *) bad "  ... but the joined id did not survive (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
+esac
+case "$out" in
+  *"session id"*) ok "  ... and says why the switch is unavailable on stderr";;
+  *) bad "  ... and said nothing about it (stderr: $out)";;
 esac
 case "$out" in
   *"session id"*) ok "  ... and says why the switch is unavailable on stderr";;
@@ -257,7 +315,7 @@ node -e '
     said("u5", "u4", "work under prose"),
   ].join("\n") + "\n");
 ' "$STUB_TRANSCRIPT" "$STUB_SID"
-rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+reset_stub
 
 # Engage both through the temp router, so both locks are real.
 tpr() { printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' \
@@ -360,7 +418,7 @@ for mode in fail garbage noresumefield nameless; do
   export FAKE_APPLY="$mode"
   export STUB_SID="RECOVER-$mode"
   write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
-  rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+  reset_stub
 
   err=$("$tpr2/bin/claude-laws" --model opus 2>&1 >/dev/null)
   status=$?
@@ -387,10 +445,20 @@ for mode in fail garbage noresumefield nameless; do
       *"--model opus"*) ok "$mode:   ... and keeps the user's own flags";;
       *) bad "$mode:   ... but dropped the user's flags (argv: $second)";;
     esac
+    # The recovered session must not be OFFERED a switch it cannot deliver. The three variables
+    # were exported once and outlive the failure, so a recovered session would write request.json,
+    # end itself, and land back in recover() - which reads nothing and exits, taking the request
+    # with it through the EXIT trap. Withdrawing them is what turns a silently discarded decision
+    # into a switch that was never on the table.
+    case "$(cat "$STUB_STATE/env.2" 2>/dev/null)" in
+      '||') ok "$mode:   ... with the switch machinery withdrawn, so no switch can be lost there";;
+      *) bad "$mode:   ... but the recovered session still carries it ($(cat "$STUB_STATE/env.2" 2>/dev/null))";;
+    esac
   else
     bad "$mode:   ... (no second launch to compare)"
     bad "$mode:   ... (pin check skipped)"
     bad "$mode:   ... (flag check skipped)"
+    bad "$mode:   ... (switch-machinery check skipped)"
   fi
   [ "$status" -eq 1 ] && ok "$mode:   ... and the failed switch is still reported by the exit status" \
                       || bad "$mode:   ... but exited $status"
@@ -410,7 +478,7 @@ export FAKE_APPLY=okthenfail
 export STUB_SID="RECOVER-later"
 export STUB_SWITCH_ON="1 2"
 write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
-rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.* "$STUB_STATE/apply-count"
+reset_stub "$STUB_STATE/apply-count"
 
 err=$("$tpr2/bin/claude-laws" --model opus 2>&1 >/dev/null)
 status=$?
@@ -434,10 +502,15 @@ if [ -f "$STUB_STATE/argv.3" ]; then
     *"--model opus"*) ok "later-pass:   ... and keeps the user's own flags";;
     *) bad "later-pass:   ... but dropped the user's flags (argv: $third)";;
   esac
+  case "$(cat "$STUB_STATE/env.3" 2>/dev/null)" in
+    '||') ok "later-pass:   ... and the recovered session is offered no switch either";;
+    *) bad "later-pass:   ... but it still carries the switch machinery ($(cat "$STUB_STATE/env.3" 2>/dev/null))";;
+  esac
 else
   bad "later-pass:   ... (no third launch to inspect)"
   bad "later-pass:   ... (pin check skipped)"
   bad "later-pass:   ... (flag check skipped)"
+  bad "later-pass:   ... (switch-machinery check skipped)"
 fi
 unset FAKE_APPLY
 
@@ -450,7 +523,7 @@ export STUB_SID="NORESUME1"
 export STUB_TRANSCRIPT="$TMPDIR/noresume.jsonl"
 export STUB_SWITCH_ON="1"
 write_transcript "$STUB_TRANSCRIPT" "$STUB_SID"
-rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.*
+reset_stub
 
 printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:code"}}' \
   "$STUB_SID" | "$ROUTER" guard >/dev/null 2>&1
@@ -459,13 +532,26 @@ printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","t
 status=$?
 [ "$status" -eq 0 ] && ok "a resume:false result is not a failure" || bad "exited $status on resume:false"
 
+# Reopening the session unchanged still means REOPENING it, and the id that pinned the first launch
+# cannot open it a second time: real claude answers "Error: Session ID <uuid> is already in use."
+# and exits 1 with no session (measured). So the relaunch here has to arrive as --resume on that
+# same id, exactly like the recovery relaunches in section 6. A stub accepts any argv, which is
+# precisely why this asserts on the SHAPE - the earlier version of this test asserted the pin was
+# still there and locked the bug in.
 if [ -f "$STUB_STATE/argv.2" ]; then
-  case "$(cat "$STUB_STATE/argv.2")" in
-    *"--resume"*) bad "resume:false still relaunched with --resume ($(cat "$STUB_STATE/argv.2"))";;
-    *) ok "a resume:false result relaunches without --resume";;
+  first=$(cat "$STUB_STATE/argv.1"); second=$(cat "$STUB_STATE/argv.2")
+  pinned=${first##*--session-id }; pinned=${pinned%% *}
+  case "$second" in
+    *"--resume $pinned"*) ok "a resume:false result reopens the pinned session by RESUMING it";;
+    *) bad "resume:false did not resume $pinned (argv: $second)";;
+  esac
+  case "$second" in
+    *--session-id*) bad "resume:false re-pinned --session-id, which claude refuses (argv: $second)";;
+    *) ok "  ... never re-pinning an id claude has already held";;
   esac
 else
   bad "the session was not reopened after a resume:false result"
+  bad "  (pin check skipped)"
 fi
 
 out=$(printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}' \

@@ -41,17 +41,52 @@ if [ ! -f "$EXCISE" ]; then
   exec "$CLAUDE_BIN" "$@"
 fi
 
-PORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{const p=s.address().port;s.close(()=>console.log(p))})' 2>/dev/null)"
-if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
-  log "could not reserve an inspector port; launching plain claude (craft switching disabled)"
-  exec "$CLAUDE_BIN" "$@"
-fi
-
 LAWS_SWITCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/laws-switch.XXXXXX")" || {
   log "could not create the switch directory; launching plain claude (craft switching disabled)"
   exec "$CLAUDE_BIN" "$@"
 }
 trap 'rm -rf "$LAWS_SWITCH_DIR"' EXIT
+
+# HOLDING THE PORT UNTIL THE LAUNCH. A port that is picked and then released is a suggestion, not a
+# reservation: between the release and bun's own bind, anything on the machine that asks the OS for
+# an ephemeral port can take this one - a second claude-laws most of all, since two of them race
+# through this same line. So the port is held by a LIVE listener and released immediately before
+# claude starts, which narrows the window to bun's own bind instead of spanning the whole setup.
+# It does not close it, and nothing here can: bun opens its own listener afterwards, and no process
+# can hold a port on another process's behalf.
+#
+# WHAT LOSING THE RACE COSTS, measured against the real binary with the port already occupied:
+# claude exits 1 with `error: Failed to start server. Is port <n> in use?` and opens no session at
+# all. So the unhandled case is a launch that fails in the user's face, never a session that
+# silently cannot switch. A retry is deliberately NOT built on top of that: recognising the failure
+# means matching bun's internal error text, and reading claude's internals is the one thing this
+# launcher refuses to do (see the header). Narrow the window; leave the rare loss loud.
+#
+# The fifo is opened READ-WRITE so this shell is its own reader and opening it cannot block, and the
+# read is time-bounded so a listener that never comes up degrades instead of hanging forever.
+#
+# THE HOLDER MUST NOT OUTLIVE THIS SHELL, and the release below is what guarantees it. A background
+# child inherits this launcher's stdout and stderr, so an orphaned holder does not merely waste a
+# port - it holds those descriptors open and wedges anything capturing claude-laws' output until it
+# dies. Observed, not theorised: with the release removed, the test suite hangs at the first
+# `out=$(claude-laws ...)` rather than merely failing. The answer is the single unconditional
+# release, not redirections that would make an orphan survivable - an orphan is not a state this
+# code can reach, and hardening against unreachable states is how a second way to be wrong appears.
+PORT_FIFO="$LAWS_SWITCH_DIR/port"
+PORT=""
+if mkfifo "$PORT_FIFO"; then
+  exec 9<>"$PORT_FIFO"
+  node -e 'const fs=require("fs"),s=require("net").createServer();s.listen(0,"127.0.0.1",()=>fs.writeFileSync(process.argv[1],s.address().port+"\n"))' "$PORT_FIFO" &
+  PORT_HOLDER=$!
+  IFS= read -r -t 10 PORT <&9
+fi
+if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+  # `exec` replaces this shell, so the EXIT trap above will never run - the directory has to be
+  # taken along by hand or it outlives the process it belonged to.
+  log "could not reserve an inspector port; launching plain claude (craft switching disabled)"
+  rm -rf "$LAWS_SWITCH_DIR"
+  exec "$CLAUDE_BIN" "$@"
+fi
 
 export LAWS_SWITCH_DIR
 export BUN_INSPECT="ws://127.0.0.1:$PORT/dbg"
@@ -89,9 +124,16 @@ export BUN_INSPECT="ws://127.0.0.1:$PORT/dbg"
 #                not done either: the pin exists so "is this my session" is an equality test on
 #                an id this launcher alone minted, and adopting an id the user may also have
 #                handed to something else gives that test a second claimant.
+#
+# THE SCAN MATCHES THE FLAG NAME, NOT THE WHOLE TOKEN. claude accepts both spellings of a flag that
+# carries a value - `claude --session-id=<uuid> -p "say ok"` and `claude --resume=<uuid> -p "say ok"`
+# both run (measured) - so a scan over whole tokens sees `--session-id=<uuid>` as an unrecognised
+# positional, offers the switch anyway, and mints a SECOND --session-id onto the same command line:
+# precisely the broken launch this scan exists to prevent. Trimming at the first `=` puts both
+# spellings of one flag on one arm, so there is one rule per flag rather than one per spelling.
 no_switch=""
 for arg in "$@"; do
-  case "$arg" in
+  case "${arg%%=*}" in
     -p|--print)
       no_switch="one-shot session (-p): a relaunch would re-send the prompt"; break;;
     -c|--continue|-r|--resume)
@@ -125,29 +167,54 @@ REQUEST="$LAWS_SWITCH_DIR/request.json"
 USER_ARGS=("$@")
 SESSION_ARGS=(${FIRST_ARGS[@]+"${FIRST_ARGS[@]}"})
 
+# REOPENING NEVER RE-PINS. Once claude has held a session under the pinned id, a second claim on it
+# is refused outright - "Error: Session ID <uuid> is already in use." (measured against the real
+# binary), exit 1, no session. So any relaunch of a session claude has ALREADY opened must arrive as
+# --resume, and the initial --session-id has to be downgraded before it is reused.
+#
+# One rule, one place. Two relaunch paths need it - the recovery relaunch and the resume:false pass
+# that reopens the session unchanged - and when each of them remembered the rule for itself, one of
+# them remembered and the other did not. [LAW:one-source-of-truth] [LAW:single-enforcer]
+#
+# SESSION_ARGS is always empty or a <selector> <id> pair, so index 1 is the id whichever selector
+# put it there: the first pass's --session-id and every later pass's --resume normalise the same
+# way, with no pass-number special case, and an already-normalised --resume normalises to itself.
+# An empty SESSION_ARGS (no pin was minted) stays empty and the relaunch is the user's own argv,
+# unchanged. [LAW:dataflow-not-control-flow]
+reopen_selector() { SESSION_ARGS=(${SESSION_ARGS[@]+--resume "${SESSION_ARGS[1]}"}); }
+
 # A switch that cannot be completed must still leave the user IN a session. Exiting here would
 # degrade the failure to no session at all - strictly worse than the state before the switch was
 # asked for, and the opposite of what this file's header promises. The last-known-good
 # SESSION_ARGS names the session the user was just in, so recovery reopens THAT session and then
 # reports the failure through the exit status.
 #
-# RECOVERY RESUMES; IT NEVER RE-PINS. By the time this runs, claude has already held a session
-# under the pinned id, and a second claim on it is refused outright - "Error: Session ID <uuid> is
-# already in use." (measured against the real binary), exit 1, no session. So relaunching with the
-# first pass's --session-id would reintroduce the exact "user left with nothing" failure this
-# function exists to prevent. --resume on the same id reopens it instead.
-#
-# SESSION_ARGS is always empty or a <selector> <id> pair, so index 1 is the id whichever selector
-# put it there: the first pass's --session-id and every later pass's --resume both recover the same
-# way, with no pass-number special case. An empty SESSION_ARGS (no pin was minted) stays empty and
-# the relaunch is the user's own argv, unchanged. [LAW:dataflow-not-control-flow]
-# [LAW:no-silent-failure] loud AND recovered - the message says what failed before the relaunch.
+# THE RECOVERED SESSION IS OFFERED NO SWITCH. LAWS_SWITCH_SESSION, LAWS_SWITCH_DIR and BUN_INSPECT
+# were exported once, near the top, and outlive this function - so a recovered session would offer
+# the switch, write request.json and end itself through the inspector, looking entirely functional,
+# and then land back HERE, where nothing reads the request and the EXIT trap deletes it. The user's
+# decision would be consumed and discarded without a word. Withdrawing the three variables makes the
+# switch genuinely unavailable rather than apparently working: the guard offers nothing, so nothing
+# is written that can be lost. [LAW:no-silent-failure] the failure is already loud through the exit
+# status; what must not happen is a second, quieter loss stacked on top of it.
 recover() { # <what failed>
   log "$1"
   log "the switch was not completed; reopening the session as it was"
-  "$CLAUDE_BIN" ${USER_ARGS[@]+"${USER_ARGS[@]}"} ${SESSION_ARGS[@]+--resume "${SESSION_ARGS[1]}"}
+  reopen_selector
+  env -u LAWS_SWITCH_SESSION -u LAWS_SWITCH_DIR -u BUN_INSPECT \
+    "$CLAUDE_BIN" ${USER_ARGS[@]+"${USER_ARGS[@]}"} ${SESSION_ARGS[@]+"${SESSION_ARGS[@]}"}
   exit 1
 }
+
+# The reservation has done its whole job the moment claude is about to start: bun binds this port
+# itself, so it must be free by now or the launch dies on EADDRINUSE. Released here and nowhere
+# earlier - every line between the reservation and this one is a line the port cannot be stolen in.
+# [LAW:no-silent-failure] exception: a holder that has already died reports a failure that is
+# indistinguishable from success here, because the only thing this cares about is that the port is
+# free, and it is free either way.
+kill "$PORT_HOLDER" 2>/dev/null
+wait "$PORT_HOLDER" 2>/dev/null
+exec 9>&-
 
 while :; do
   # bash 3.2 under `set -u` treats "${empty[@]}" as unbound, so expand through the +alternate form.
@@ -192,6 +259,9 @@ while :; do
   # engagement the switch deliberately kept. Same loop body, different value. [LAW:dataflow-not-control-flow]
   if [ -z "$resume" ]; then
     log "$choice leaves the session as it stands, so nothing is retired; reopening it unchanged"
+    # Unchanged, but not un-relaunched: claude has already held this session, and the id that opened
+    # it cannot open it a second time. Same downgrade as every other reopening.
+    reopen_selector
     continue
   fi
 
