@@ -41,6 +41,7 @@ raises, and Python's traceback on stderr with exit 1 is exactly Claude Code's
 non-blocking error: the session continues and the breakage is visible.
 """
 
+import fcntl
 import json
 import math
 import os
@@ -480,9 +481,16 @@ def log(hook, tokens, verdict):
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         # Truncate rather than rotate: this is a diagnostic tail, and a cap keeps a
         # per-tool-call writer from growing without bound on a long autonomous run.
-        if LOG_FILE.exists() and LOG_FILE.stat().st_size > LOG_CAP:
-            LOG_FILE.write_text(f"[truncated at {LOG_CAP} bytes]\n")
+        # [LAW:no-ambient-temporal-coupling] PreToolUse made concurrent writers
+        # ordinary - parallel tool calls in one turn each run their own hook process -
+        # so the check, the truncation and the append happen on one handle under one
+        # exclusive lock, not as three steps whose interleaving decides which lines
+        # survive. O_APPEND keeps every write at the true end even across a truncate.
         with LOG_FILE.open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            if os.fstat(handle.fileno()).st_size > LOG_CAP:
+                handle.truncate(0)
+                handle.write(f"[truncated at {LOG_CAP} bytes]\n")
             handle.write(line)
     except OSError as failure:
         print(f"memento context ceiling: cannot write {LOG_FILE}: {failure}", file=sys.stderr)

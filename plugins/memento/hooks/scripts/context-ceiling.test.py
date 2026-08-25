@@ -306,6 +306,17 @@ try:
 finally:
     os.chmod(os.path.dirname(unwritable), 0o700)
 
+# The cap truncates inside the same locked write that appends, so a log past the cap
+# comes back as the marker plus the new entry - never a torn state a concurrent hook
+# process could half-destroy.
+overgrown = os.path.join(tempfile.mkdtemp(), "ceiling.log")
+open(overgrown, "w").write("x" * 2_100_000)
+run([user, assistant(100_000)], log_file=overgrown)
+trimmed = open(overgrown).read()
+check("a log past its cap is truncated and still receives the new entry",
+      trimmed.startswith("[truncated at 2000000 bytes]\n") and "allow-under" in trimmed
+      and len(trimmed) < 2_000, repr(trimmed[:120]))
+
 # An explicit instruction to this process is not overruled by an ambient file.
 path = os.path.join(tempfile.mkdtemp(), "context-ceiling")
 open(path, "w").write("off")
