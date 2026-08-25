@@ -34,11 +34,15 @@ process.on('exit', (code) => {
 
 // A WebSocket that never touches the network. `reply` is the test's script: it receives each
 // outbound frame and returns the object the inspector would send back (or null to stay silent).
+// `lastWS` is how a test reaches the socket connect() opened, so it can drop it mid-call the way
+// a crashing target process does.
+let lastWS = null;
 function installFakeWS(reply) {
   globalThis.WebSocket = class {
     constructor(url) {
       this.url = url;
       this.sent = [];
+      lastWS = this;
       setImmediate(() => this.onopen && this.onopen());
     }
     send(raw) {
@@ -59,6 +63,15 @@ function open(reply) {
 const ok = (m) => ({ id: m.id, result: {} });
 const returns = (value) => (m) =>
   m.method === 'Runtime.evaluate' ? { id: m.id, result: { result: { value } } } : ok(m);
+
+// A hang has no failure of its own to assert on — awaiting it just stops the suite, and this
+// file's own exit guard would then report truncation rather than the row that hung. Racing a
+// short timer converts "never settled" into an ordinary FAIL row naming the call that hung.
+const HUNG = 400;
+function orHang(promise, what) {
+  return Promise.race([promise, new Promise((_r, rej) =>
+    setTimeout(() => rej(new Error('HUNG: ' + what + ' never settled')), HUNG))]);
+}
 
 async function rejects(promise, matching) {
   try { await promise; }
@@ -216,6 +229,46 @@ async function rejects(promise, matching) {
     // handles ready's rejection itself, so a correct run ends cleanly.
     assert.strictEqual(r.status, 0,
       'the child exited ' + r.status + ' on a failed connect (stderr: ' + String(r.stderr).slice(0, 200) + ')');
+  });
+
+  // ---- the socket dying UNDER an in-flight call ---------------------------------------------
+  // `ready` has already settled and its timer is gone, so nothing else is watching the clock: an
+  // entry left in `pending` when the socket drops is a promise with no remaining settler. The
+  // caller that matters — laws-switch injecting `/exit\r` — wraps this in a try/catch, and a
+  // hang walks straight past that catch with no diagnostic. Each row below drops the socket
+  // while the inspector is deliberately silent, so a reply can never be what settles the call.
+  const silent = (m) => (m.method === 'Runtime.evaluate' ? null : ok(m));
+  // Kill the socket the way a real one dies: it invokes the handlers that were registered and
+  // nothing else. Emulating that faithfully is what makes an UNREGISTERED handler surface as the
+  // hang it actually causes in production, instead of as a TypeError thrown by the harness.
+  const dropSocket = (handler, arg) => {
+    const ws = lastWS;
+    setImmediate(() => { if (ws[handler]) ws[handler](arg); });
+  };
+
+  await t('a socket close mid-call rejects the in-flight evaluate instead of hanging', async () => {
+    const c = open(silent);
+    await c.ready;
+    const inflight = c.evaluate('whatever');
+    dropSocket('onclose');
+    await rejects(orHang(inflight, 'evaluate'), /inspector connection lost: socket closed/);
+  });
+
+  await t('a socket error after ready rejects the in-flight injectStdin instead of hanging', async () => {
+    const c = open(silent);
+    await c.ready;
+    const inflight = c.injectStdin('/exit\r');
+    dropSocket('onerror', new Error('ECONNRESET'));
+    await rejects(orHang(inflight, 'injectStdin'), /connection lost: socket error: ECONNRESET/);
+  });
+
+  await t('a drop rejects EVERY pending call, not just the first', async () => {
+    const c = open(silent);
+    await c.ready;
+    const a = c.evaluate('one'), b = c.evaluate('two');
+    dropSocket('onclose');
+    await rejects(orHang(a, 'the first call'), /connection lost/);
+    await rejects(orHang(b, 'the second call'), /connection lost/);
   });
 
   finished = true;
