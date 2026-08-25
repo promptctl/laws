@@ -53,21 +53,46 @@ const TOMBSTONE = '[TOMBSTONE]';
 // Parse the shared policy file's text into DIRECTED edges [engaged, refused]. Pure: same shape
 // the router's bash reader produces (strip '# comments', drop blank lines, split on whitespace).
 // Order within a line is meaningful and is preserved exactly as written.
+//
+// EXACTLY TWO TOKENS, and the exactness is the point. This used to take the first two tokens of
+// any line with at least two, while the router's `read -r from to` stuffs every extra word into
+// `to` — so `code prompt extra-note` was an enforced edge here and a permanent no-op there, the
+// two enforcers quietly applying opposite rules to the same line. Both now reject any line that
+// is not exactly two tokens, and both say so. [LAW:single-enforcer] one rule, read the same way
+// by both readers.
+//
+// Both arms come back as values rather than one being reported from in here: the malformed lines
+// are as much a result of the parse as the edges are, and handing them out lets the boundary — the
+// one place that already does I/O — be the single voice that warns. [LAW:effects-at-boundaries]
+// [LAW:parse-dont-validate] the caller receives edges that are known-wellformed, never a mixed bag
+// it has to re-inspect.
 function parsePolicy(text) {
-  return text.split('\n')
+  const rows = text.split('\n')
     .map((l) => l.replace(/#.*$/, '').trim())
     .filter(Boolean)
-    .map((l) => l.split(/\s+/))
-    .filter((p) => p.length >= 2)
-    .map(([a, b]) => [a, b]);
+    .map((l) => l.split(/\s+/));
+  return {
+    edges: rows.filter((p) => p.length === 2).map(([a, b]) => [a, b]),
+    malformed: rows.filter((p) => p.length !== 2).map((p) => p.join(' ')),
+  };
 }
+
+// The one wording both enforcers use for a rejected line, so a reader who greps for it finds the
+// same sentence whichever one printed it. [LAW:one-source-of-truth]
+const MALFORMED_WARNING = 'laws policy: ignoring malformed line (expected exactly two craft names): ';
 
 // Boundary read of the shared policy file (default: sibling incompatible-crafts.txt). Throws on
 // a missing/unreadable file — the caller at the edge decides whether to degrade; the pure core
-// never silently treats an unread policy as "everything coexists". [LAW:effects-at-boundaries]
+// never silently treats an unread policy as "everything coexists". A malformed LINE is narrower:
+// it costs one edge, not the policy, so it is dropped and announced rather than thrown on — the
+// router cannot hard-fail on it without blocking skill loads, and a rule enforced identically by
+// both is worth more here than a louder failure in only one. [LAW:effects-at-boundaries]
+// [LAW:no-silent-failure]
 function loadPolicy(policyPath) {
   const p = policyPath || path.join(__dirname, 'incompatible-crafts.txt');
-  return parsePolicy(fs.readFileSync(p, 'utf8'));
+  const { edges, malformed } = parsePolicy(fs.readFileSync(p, 'utf8'));
+  for (const line of malformed) process.stderr.write(MALFORMED_WARNING + line + '\n');
+  return edges;
 }
 
 // True iff an already-loaded `engaged` craft forbids loading `incoming`. DIRECTED and pure:
@@ -495,7 +520,7 @@ function applyRequest(requestPath, opts = {}) {
 }
 
 module.exports = {
-  parsePolicy, loadPolicy, conflictsWith,
+  parsePolicy, loadPolicy, conflictsWith, MALFORMED_WARNING,
   craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS,
   applyRequest, run,
 };

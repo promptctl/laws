@@ -14,15 +14,23 @@ So there is one rule, and a way to work under it.
 
 ## The rule
 
-Crafts coexist; one *ordering* does not. Most media are complementary, so a session that
+Crafts coexist; certain *orderings* do not. Most media are complementary, so a session that
 produces code and its ticket and its docs may hold those crafts together - their
 standards do not fight, and the guard lets them share a session.
 
-The rule is directed, and the direction is the whole of it: **once laws:code is engaged,
-laws:prompt may not be loaded.** Code's standard degrades prompts written under it, and
-that is the failure that has ruined a session here. The reverse is not a failure at all -
-write a prompt first, turn to code afterwards, and both come out fine, so the guard
-allows it. It is not a mutually incompatible pair; it is a one-way edge.
+The rule is directed, and the direction is the whole of it: **an ordering listed in
+`hooks/scripts/incompatible-crafts.txt` is refused; every ordering absent from it may
+coexist.** That file is the authority - both enforcers read it, neither hard-codes a craft
+name, and adding an edge there changes the rule everywhere at once. Do not restate its
+contents as a fixed pair anywhere else. A second copy is a second thing to go stale, and
+the copy is what a reader will believe.
+
+Today it holds one edge, and it is the one that paid for this document: **once laws:code is
+engaged, laws:prompt may not be loaded.** Code's standard degrades prompts written under it,
+and that is the failure that has ruined a session here. The reverse is not a failure at all -
+write a prompt first, turn to code afterwards, and both come out fine, so that ordering is
+deliberately absent from the file. It is not a mutually incompatible pair; it is a one-way
+edge.
 
 ## Don't stack crafts even where the guard allows it
 

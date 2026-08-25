@@ -12,8 +12,9 @@
 #                    load. Compatible crafts may coexist in one session - code plus its
 #                    ticket plus its docs is normal, complementary work - so what this
 #                    refuses is not a second craft but a conflicting ORDERING: an engaged
-#                    craft whose standard corrupts the one now being loaded. The one such
-#                    edge today is laws:code THEN laws:prompt. It runs ONE WAY - loading
+#                    craft whose standard corrupts the one now being loaded. The edges live
+#                    in incompatible-crafts.txt and nothing here hard-codes them; today that
+#                    file holds laws:code THEN laws:prompt. Every edge runs ONE WAY - loading
 #                    laws:code after laws:prompt is allowed - so the guard must be read as
 #                    a directed rule, never a mutual incompatibility. This turns "what is
 #                    loaded" from luck into owned state and refuses a conflicting addition,
@@ -49,14 +50,6 @@ read -r -d '' ENGAGE_TEXT <<'EOT'
 For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.
 EOT
 
-# The routing text - injected at session start AND re-asserted on every user message
-# (see the engage case), so it stays loaded with system-prompt durability and needs no
-# CLAUDE.md entry. Same formatting constraints as ENGAGE_TEXT: single-line, straight
-# quotes, no backslashes, so it needs no JSON escaping.
-read -r -d '' ROUTE_TEXT <<'EOT'
-Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). Once laws:code is engaged, laws:prompt is refused - the code standard degrades prompts written under it. Avoid stacking crafts even where allowed; each body is large and context is scarce. Do the other craft's work in a fresh subagent seeded with only that skill - never a fork or context-inheriting subagent, which brings the engaged craft along where the guard cannot see it.
-EOT
-
 # The incompatibility policy is DATA, and it lives in one file read by BOTH enforcers -
 # this guard AND the runtime gate (laws-excise.js) - so the rule has a single home
 # ([LAW:one-source-of-truth], the divergence the two used to risk). This script hard-codes
@@ -79,6 +72,67 @@ INCOMPATIBLE=""
 if [ -z "$INCOMPATIBLE" ]; then
   echo "laws skill-router guard: no craft pairs readable from $POLICY_FILE; craft compatibility enforcement disabled this session" >&2
 fi
+
+# THE policy parser for this script - run once, at launch, so every consumer downstream reads
+# the same normalized edge list instead of re-reading the raw file with a parser of its own.
+# Emits one "engaged refused" line per WELL-FORMED edge and drops the rest loudly.
+#
+# EXACTLY TWO TOKENS, or the line is not an edge and the operator is told. `read -r from to`
+# alone silently swallows a third word INTO $to ("code prompt extra-note" -> to="prompt
+# extra-note"), which can never equal an incoming craft name - so the edge quietly became a
+# permanent no-op here while parsePolicy in laws-excise.js truncated the same line to a live
+# code->prompt edge and enforced it. Two enforcers, one file, opposite rules, no symptom. The
+# third field exists solely to catch what a two-field read would otherwise hide.
+# [LAW:single-enforcer] [LAW:no-silent-failure]
+parse_edges() {
+  local from to extra
+  while read -r from to extra; do
+    [ -n "$from" ] || continue
+    if [ -z "$to" ] || [ -n "$extra" ]; then
+      echo "laws policy: ignoring malformed line (expected exactly two craft names): $from${to:+ $to}${extra:+ $extra}" >&2
+      continue
+    fi
+    printf '%s %s\n' "$from" "$to"
+  done <<EOF
+$INCOMPATIBLE
+EOF
+}
+EDGES="$(parse_edges)"
+
+# The conflict clause of the routing text, RENDERED FROM THE POLICY rather than written out.
+# The routing text is injected at the moment an agent picks a craft, and an agent will not open
+# a file at that moment - so the clause has to name the actual edges. Naming them in prose made
+# the routing text a second copy of the policy that no one would notice going stale the day a
+# second edge was added. Rendering it from EDGES keeps the concrete wording AND leaves the file
+# the only place an edge is declared. [LAW:one-source-of-truth]
+#
+# The empty case drops the trailing sentence rather than emitting "These orderings are refused: ."
+# - a list-shaped opening with no list is an answer-shaped void, and the sentence explaining why
+# an ordering is listed has nothing to explain when nothing is. [LAW:parse-dont-validate]
+render_conflict_clause() {
+  local from to clauses=""
+  while read -r from to; do
+    [ -n "$from" ] || continue
+    clauses="${clauses:+$clauses; }once laws:$from is engaged, laws:$to is refused"
+  done <<EOF
+$EDGES
+EOF
+  if [ -z "$clauses" ]; then
+    printf '%s' "No craft ordering is currently refused."
+    return
+  fi
+  printf '%s' "These orderings are refused: $clauses. An ordering is listed only because it was shown to corrupt real work - the engaged craft's standard degrades what you would write next in the refused one."
+}
+CONFLICT_CLAUSE="$(render_conflict_clause)"
+
+# The routing text - injected at session start AND re-asserted on every user message
+# (see the engage case), so it stays loaded with system-prompt durability and needs no
+# CLAUDE.md entry. Same formatting constraints as ENGAGE_TEXT: single-line, straight
+# quotes, no backslashes, so it needs no JSON escaping. The heredoc is unquoted for the one
+# substitution it carries; nothing else in the text is shell-special.
+read -r -d '' ROUTE_TEXT <<EOT
+Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). $CONFLICT_CLAUSE Avoid stacking crafts even where allowed; each body is large and context is scarce. Do the other craft's work in a fresh subagent seeded with only that skill - never a fork or context-inheriting subagent, which brings the engaged craft along where the guard cannot see it.
+EOT
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin; session-start
 # and guard read fields out of it, engage ignores it. Harmless where unused. Newlines are
@@ -139,13 +193,16 @@ slot_dir_for() {
 # enforce opposite rules. [LAW:single-enforcer] [LAW:types-are-the-program]
 conflicts_with() {
   local engaged=$1 incoming=$2 from to
+  # Reads EDGES, the already-parsed well-formed pairs - malformed lines were rejected once, at
+  # launch, by the one parser. This used to re-parse the raw file itself, which is how a
+  # three-token line came to mean one thing here and another in laws-excise.js.
   while read -r from to; do
     [ -n "$from" ] || continue
     if [ "$from" = "$engaged" ] && [ "$to" = "$incoming" ]; then
       return 0
     fi
   done <<EOF
-$INCOMPATIBLE
+$EDGES
 EOF
   return 1
 }

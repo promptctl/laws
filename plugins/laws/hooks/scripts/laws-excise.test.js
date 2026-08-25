@@ -37,8 +37,39 @@ function chatLine(text) {
 
 // ---- policy -------------------------------------------------------------------------------
 t('parsePolicy strips comments and blanks, keeps pairs', () => {
-  const pairs = M.parsePolicy('# header\n\ncode prompt  # inline\n\n');
-  assert.deepStrictEqual(pairs, [['code', 'prompt']]);
+  const p = M.parsePolicy('# header\n\ncode prompt  # inline\n\n');
+  assert.deepStrictEqual(p.edges, [['code', 'prompt']]);
+  assert.deepStrictEqual(p.malformed, []);
+});
+
+// THE DIVERGENCE CASE, and it needs its twin in skill-router.test.sh to mean anything. A line
+// that is not exactly two tokens used to be read one way here (truncate to the first two — a
+// LIVE code→prompt edge) and another way in the router's `read -r from to` (third token swallowed
+// into $to — a permanent no-op). Same file, two enforcers, opposite rules, and nothing anywhere
+// would have noticed. Both now refuse the line, and both say so. [LAW:single-enforcer]
+t('parsePolicy refuses a line that is not exactly two tokens', () => {
+  const p = M.parsePolicy('code prompt extra-note\ncode\ncode prompt\n');
+  assert.deepStrictEqual(p.edges, [['code', 'prompt']], 'a malformed line was truncated into an edge');
+  assert.deepStrictEqual(p.malformed, ['code prompt extra-note', 'code']);
+});
+
+t('a malformed policy line is not enforced by the gate', () => {
+  const edges = M.parsePolicy('code prompt extra-note\n').edges;
+  const d = M.decide([loadLine({ medium: 'code' })], { conflictEdges: edges, incomingMedium: 'prompt' });
+  assert.strictEqual(d.trigger, false, 'the gate enforced an edge the router treats as a no-op');
+});
+
+t('loadPolicy announces every malformed line on stderr and returns only the well-formed edges', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'laws-policy-'));
+  const file = path.join(dir, 'incompatible-crafts.txt');
+  fs.writeFileSync(file, '# a policy with one good line and one typo\ncode prompt extra-note\ncode prompt\n');
+  const written = [];
+  const realWrite = process.stderr.write;
+  process.stderr.write = (s) => { written.push(String(s)); return true; };
+  try { var edges = M.loadPolicy(file); } finally { process.stderr.write = realWrite; }
+  assert.deepStrictEqual(edges, [['code', 'prompt']], 'a typo cost the file its good edge');
+  assert.strictEqual(written.length, 1, 'expected exactly one warning, got: ' + JSON.stringify(written));
+  assert.strictEqual(written[0], M.MALFORMED_WARNING + 'code prompt extra-note\n');
 });
 t('conflictsWith is DIRECTED: the reverse ordering is a different question', () => {
   // (engaged, incoming). code degrades prompts; prompt does not degrade code.
