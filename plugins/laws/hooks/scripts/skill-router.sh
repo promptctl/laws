@@ -379,6 +379,15 @@ case "$HOOK_TYPE" in
               # and unwritable-lock branches above. [LAW:no-silent-failure]
               echo "laws skill-router guard: could not record the pending craft switch in $LAWS_SWITCH_DIR; denying without a switch offer" >&2
             fi
+          else
+            # A withheld offer has two very different causes that look identical from outside: the
+            # launcher legitimately not offering one (subagent, nested claude, unpinned session),
+            # and THIS - a transcript_path that did not survive extraction, which the header's own
+            # example of a path truncated at an embedded quote produces. Falling through silently
+            # collapses a parsing failure onto the shape of a deliberate decision, so the reader
+            # cannot tell a broken hook from a working one. Say which it was, matching the
+            # write-failure branch above. [LAW:no-silent-failure]
+            echo "laws skill-router guard: transcript_path did not resolve to a readable file (got '$transcript'); denying without a switch offer" >&2
           fi
         fi
         deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft on top of it would corrupt your laws:$craft work - the damage runs THIS WAY ONLY, so it is this ordering that is refused, not the pairing (design-docs/working-with-skills.md). To do laws:$craft work now, dispatch a fresh subagent seeded with only that skill, and keep only its answer. Not a fork, and not any subagent that inherits this conversation: it starts with the engaged craft already in its context, so it reproduces exactly this corruption - and the guard cannot catch that, because the craft lock is per-agent and records loads, not inherited context. If this session's whole job has become laws:$craft, run /clear, then load it clean.$switch_offer"

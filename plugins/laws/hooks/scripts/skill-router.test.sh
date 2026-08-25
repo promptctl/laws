@@ -366,6 +366,32 @@ case "$err" in
 esac
 chmod 700 "$swdir5"; rm -rf "$swdir5"
 
+# 11e. A transcript_path that does not resolve. 11c reaches this same branch through a quoted path,
+#      but it accepts either outcome because the grammar decides which - so nothing there pins the
+#      REPORT. Here the path is simply absent, which is deterministic, and the assertion is that a
+#      resolution failure is distinguishable from the launcher legitimately withholding the offer
+#      (subagent, nested claude, unpinned session). Both look like "deny, no switch" to the reader;
+#      only the stderr line tells them whether the hook is broken.
+swdir6=$(mktemp -d)
+run guard "$(skill_payload SW6 laws:code)" >/dev/null
+gone="$TMPDIR/definitely-not-here.$$.jsonl"; rm -f "$gone"
+out=$(printf '%s' "$(switch_payload SW6 laws:prompt "$gone")" | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=SW6 "$ROUTER" guard 2>/dev/null)
+err=$(printf '%s' "$(switch_payload SW6 laws:prompt "$gone")" | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=SW6 "$ROUTER" guard 2>&1 >/dev/null)
+case "$out" in
+  *"laws-switch"*) bad "an unresolvable transcript still advertised the switch";;
+  *) ok "an unresolvable transcript offers no switch";;
+esac
+case "$err" in
+  *"transcript_path did not resolve"*) ok "  ... and says so on stderr rather than falling through silently";;
+  *) bad "  ... and warned nothing, so a broken hook reads as a deliberate withhold (got: $err)";;
+esac
+if [ -f "$swdir6/pending.json" ]; then
+  bad "an unresolvable transcript still recorded a pending decision"
+else
+  ok "  ... and records no pending decision to be found later"
+fi
+rm -rf "$swdir6"
+
 # 12. A NESTED claude is the case an "am I a subagent" test cannot see: its own session_id, no
 #     agent_id, and it inherits LAWS_SWITCH_DIR and BUN_INSPECT from the launcher's environment.
 #     Were it offered the switch it would overwrite the owning session's pending decision and
