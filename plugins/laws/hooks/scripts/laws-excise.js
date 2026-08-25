@@ -216,11 +216,19 @@ function newest(hitList) {
 // not tombstone size. The rewind options move the leaf back, so they reprocess far less — 'discard'
 // is cheapest because nothing after the pre-craft point is new.
 //
-// ALL FOUR are executed by CUSTOM INJECTED TOOLS (same class as the injected /compact, /clear
-// tools). Options 3 & 4 drive the NATIVE rewind mechanism INTERNALLY (it already does the correct
-// parentUuid/leaf repointing) but AUTO-TARGET the switched-away craft's load line — decide() returns
-// the anchor uuids — so the user never types /rewind, opens its picker, or hunts for the message.
-// Rewind is conversation-only and NEVER reverts code, so on-disk file deliverables survive EVERY
+// ALL FOUR ARE ON-DISK TRANSCRIPT SURGERY, applied by the LAUNCHER after the session has already
+// exited — no injected tool runs, and claude's native rewind is never driven. This paragraph used
+// to describe custom injected tools driving that native mechanism internally through a
+// `rewindAnchorUuid` anchor; that is Path A, and hooks/injector/SEAMS.md marks its seam SUPERSEDED
+// (2026-08-16, "do not build against it") because rewindTo() reaches the same end state through the
+// transcript alone. What ships is Path B (SEAMS.md, DONE 2026-08-23): the in-session gate records
+// the choice, the session ends, bin/claude-laws rewrites the file, and claude is relaunched with
+// --resume. The user still never types /rewind or hunts for the message, but that is because the
+// file was already rewritten before the session came back — not because anything drove a picker on
+// their behalf. A reader who believed the old text would go looking for an injected-tool component
+// that does not exist to maintain. [LAW:one-source-of-truth] SEAMS.md owns which path shipped.
+//
+// The edit is conversation-only and NEVER reverts code, so on-disk file deliverables survive EVERY
 // option, 'discard' included. The frontier is over conversation context + cache cost, not on-disk work.
 //
 // WHAT PROTECTS #3 (rewind_summarize), stated honestly. The risk is that the summary folds the
