@@ -276,10 +276,6 @@ case "$out" in
   *"session id"*) ok "  ... and says why the switch is unavailable on stderr";;
   *) bad "  ... and said nothing about it (stderr: $out)";;
 esac
-case "$out" in
-  *"session id"*) ok "  ... and says why the switch is unavailable on stderr";;
-  *) bad "  ... and said nothing about it (stderr: $out)";;
-esac
 
 # ---- 4. a switch that retires MORE THAN ONE craft releases every one of them -----------------
 # The shipped policy has a single pair, so two conflicting crafts can never both be engaged under
@@ -561,6 +557,86 @@ case "$out" in
   *) bad "  ... but the craft was retired anyway, so laws:prompt now loads (got: $out)";;
 esac
 unset FAKE_APPLY
+
+# ---- 8. a reservation that never reports still releases its holder ----------------------------
+# The degrade path is the one that MUST release, not the one that may skip it: `exec` replaces this
+# shell, so anything left running is never collected by anybody. An earlier version released only
+# where the reservation had succeeded, and the launcher's own comment claimed an orphan was a state
+# the code could not reach - which was true of every path except this one.
+#
+# `node` is shadowed for this section only, and only for the listener call: the fake records its own
+# pid and then sleeps without ever writing the port, so the launcher's bounded read times out and
+# takes the degrade branch with a holder that is genuinely still alive. Every other node call in the
+# launcher delegates to the real binary, so nothing else about the run changes.
+#
+# The assertion is the holder's liveness AFTER the launcher returns, not how long the run took: a
+# leak is a process that outlived the shell, and that is a fact about the process table rather than
+# about timing. Output goes to files rather than through `$( )` on purpose - a leaked holder holds
+# this shell's stdout open, so command substitution would hang here instead of failing, and a test
+# that hangs reports nothing.
+reset_stub
+fakebin="$TMPDIR/fakebin"; mkdir -p "$fakebin"
+REAL_NODE=$(command -v node)
+cat > "$fakebin/node" <<EOS
+#!/bin/bash
+case "\$*" in
+  *createServer*writeFileSync*) printf '%s' "\$\$" > "$STUB_STATE/holder.pid"; exec sleep 60;;
+  *) exec "$REAL_NODE" "\$@";;
+esac
+EOS
+chmod +x "$fakebin/node"
+rm -f "$STUB_STATE/holder.pid"
+PATH="$fakebin:$PATH" "$LAUNCHER" --model opus >"$TMPDIR/s8.out" 2>"$TMPDIR/s8.err"
+err=$(cat "$TMPDIR/s8.err")
+
+case "$err" in
+  *"could not reserve an inspector port"*) ok "a reservation that never reports degrades loudly";;
+  *) bad "the degrade was silent or never happened (stderr: $err)";;
+esac
+case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
+  *"--model opus"*) ok "  ... and still launches claude, carrying the user's own arguments";;
+  *) bad "  ... but claude was not launched with the user's arguments (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
+esac
+case "$(cat "$STUB_STATE/env.1" 2>/dev/null)" in
+  "||") ok "  ... with no switch machinery, since there is no inspector to switch through";;
+  *) bad "  ... but the launch still carried switch machinery (env: $(cat "$STUB_STATE/env.1" 2>/dev/null))";;
+esac
+
+holder=$(cat "$STUB_STATE/holder.pid" 2>/dev/null)
+if [ -z "$holder" ]; then
+  bad "  ... the fake listener never ran, so this section proved nothing"
+elif kill -0 "$holder" 2>/dev/null; then
+  bad "  ... but the port holder outlived the launcher (pid $holder still alive)"
+  kill -9 "$holder" 2>/dev/null
+else
+  ok "  ... and the port holder does not outlive the launcher that started it"
+fi
+rm -rf "$fakebin"
+
+# The other way the reservation never happens: no fifo at all, so no listener is ever started and
+# there is nothing to release. This is the path where the release function is handed an EMPTY set
+# rather than one pid, and it is worth its own case because the empty set is the state a guard would
+# have been written for - the launcher must degrade the same way it does above, not die on the way.
+reset_stub
+fakebin="$TMPDIR/fakebin2"; mkdir -p "$fakebin"
+printf '#!/bin/bash\nexit 1\n' > "$fakebin/mkfifo"; chmod +x "$fakebin/mkfifo"
+PATH="$fakebin:$PATH" "$LAUNCHER" --model opus >"$TMPDIR/s8b.out" 2>"$TMPDIR/s8b.err"
+rc=$?
+err=$(cat "$TMPDIR/s8b.err")
+
+case "$err" in
+  *"could not reserve an inspector port"*) ok "a reservation with no fifo at all degrades the same way";;
+  *) bad "no fifo produced a different failure (rc=$rc, stderr: $err)";;
+esac
+case "$err" in
+  *"unbound variable"*) bad "  ... but releasing an empty set of holders killed the launcher (stderr: $err)";;
+  *) ok "  ... and releasing an empty set of holders is a no-op, not an error";;
+esac
+case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
+  *"--model opus"*) ok "  ... and claude still launches with the user's own arguments";;
+  *) bad "  ... but claude never launched (rc=$rc, argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
+esac
+rm -rf "$fakebin"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
