@@ -155,6 +155,25 @@ _process_identity() {
   printf '%s' "$raw"
 }
 
+# THE ONLY QUESTION THE RETIREMENT SEQUENCE ASKS ABOUT THE OLD PROCESS: is this pid still
+# holding the process captured at launch? `kill -0` cannot answer it. It answers "some
+# process is alive at this pid", and a pid the OS has reissued answers yes to that while
+# being a stranger — which is the whole reason _process_identity exists.
+#
+# Asking it once, before TERM, is not enough, and the reason is the sequence's own doing:
+# the point of TERM is that the process EXITS, which frees its pid to be reissued during
+# the poll that immediately follows. So the one moment this file creates a reuse window is
+# the one moment it used to stop checking. Every check in the sequence — the gate, the
+# poll, and the escalation to KILL — goes through here, so a stranger cannot inherit the
+# signal at any of them. [LAW:single-enforcer] [LAW:parse-dont-validate]
+#
+# The reading is left in IDENT_NOW so a caller reports the value its own check saw, rather
+# than re-reading a moment later and describing a different instant than the one it acted on.
+_still_captured_process() { # <pid> <identity captured at launch>
+  IDENT_NOW=$(_process_identity "$1") || IDENT_NOW=""
+  [[ "$IDENT_NOW" == "$2" ]]
+}
+
 # The tmux pane this process is running inside, discovered from process ancestry
 # instead of from $TMUX_PANE.
 #
@@ -847,11 +866,16 @@ OSA2
     # holding nothing reads as empty, which matches no captured identity — the
     # gone case and the reused case take the same arm because they license the same
     # action, which is none.
-    IDENT_NOW=$(_process_identity "$OLD_CLAUDE_PID") || IDENT_NOW=""
-    if [[ "$IDENT_NOW" == "$OLD_CLAUDE_IDENT" ]]; then
+    if _still_captured_process "$OLD_CLAUDE_PID" "$OLD_CLAUDE_IDENT"; then
       kill -TERM "$OLD_CLAUDE_PID" 2>/dev/null || true
-      for _ in $(seq 1 20); do kill -0 "$OLD_CLAUDE_PID" 2>/dev/null || break; sleep 0.5; done
-      if kill -0 "$OLD_CLAUDE_PID" 2>/dev/null; then
+      # The poll stops for BOTH endings, because they license the same action: the captured
+      # process exited, or the pid now holds someone else. Waiting on bare liveness instead
+      # would keep spinning against a stranger and then escalate to it.
+      for _ in $(seq 1 20); do
+        _still_captured_process "$OLD_CLAUDE_PID" "$OLD_CLAUDE_IDENT" || break
+        sleep 0.5
+      done
+      if _still_captured_process "$OLD_CLAUDE_PID" "$OLD_CLAUDE_IDENT"; then
         log "old claude $OLD_CLAUDE_PID survived TERM; sending KILL"
         kill -KILL "$OLD_CLAUDE_PID" 2>/dev/null || true
       fi

@@ -714,7 +714,26 @@ check("a message that never mentions compaction infers clear",
 # dead when it finishes, never by a log line claiming one or the other.
 
 
-def worker_case(identity, goal="", fail_on=None, pane_text=None):
+# A victim that refuses SIGTERM, so retirement has to escalate. The default `sleep 600`
+# dies on the first signal and therefore never reaches the KILL branch at all, which is
+# how that branch went uncovered.
+#
+# ITS `ps` COMMAND STRING MUST BE STABLE FROM BIRTH, which is the whole reason this is not
+# a python victim. `sys.executable` was tried and is flaky by nature, not by timing: the
+# interpreter REWRITES its own command string during startup, so a reading taken at launch
+# (".../bin/python3.14 -c ...") stops matching the reading taken seconds later
+# (".../Python.app/Contents/MacOS/Python -c ..."). The retirement code then correctly
+# refuses to signal what looks like a different process, and the case fails - about one run
+# in three. A fixture whose identity mutates cannot be used to test a mechanism whose whole
+# job is proving identity has NOT changed.
+#
+# The trailing `sleep 1` loop keeps the shell blocked without a long-lived child: when KILL
+# lands on the shell, the one sleep in flight is orphaned for at most a second and reaps
+# itself, so the case leaves nothing behind.
+IGNORES_TERM = ["/bin/bash", "-c", 'trap "" TERM; while :; do sleep 1; done']
+
+
+def worker_case(identity, goal="", fail_on=None, pane_text=None, victim=("sleep", "600")):
     """Run one detached worker over a real process standing in for the old claude.
 
     Returns (retired, done): whether the victim was actually signalled, and the
@@ -726,14 +745,21 @@ def worker_case(identity, goal="", fail_on=None, pane_text=None):
     it to a stranger. `pane_text` is what the new session's pane shows, so a
     session that never finishes booting is expressed as a value, not a mode.
     """
-    proc = subprocess.Popen(["sleep", "600"],
+    proc = subprocess.Popen(list(victim),
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     read = subprocess.run(["ps", "-o", "lstart=,command=", "-p", str(proc.pid)],
                           text=True, capture_output=True)
     # `$(...)` strips trailing newlines and nothing else; matching that exactly
     # matters, because the whole check is a string comparison against it.
     real = read.stdout.rstrip("\n")
-    ident = real if identity == "match" else real.replace("sleep 600", "vi Makefile")
+    if identity == "match":
+        ident = real
+    else:
+        ident = real.replace(" ".join(victim), "vi Makefile")
+        # A substitution that matched nothing would hand the worker the REAL identity
+        # under the name "reused", and the case would assert that a matching process is
+        # left alone - passing while testing the opposite of its name.
+        assert ident != real, f"reused-identity fixture altered nothing: {real!r}"
     workdir = tempfile.mkdtemp(prefix="finalize-worker.")
     msgfile = os.path.join(workdir, "msg")
     goalfile = os.path.join(workdir, "goal")
@@ -773,7 +799,7 @@ def worker_case(identity, goal="", fail_on=None, pane_text=None):
 # Each worker sleeps out the full HANDOFF_DELAY_SECONDS, so the cases run
 # alongside each other rather than one after another. They share nothing: each
 # owns its victim process and its own workdir.
-with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
     same_pid = pool.submit(worker_case, "match")
     reused_pid = pool.submit(worker_case, "reused")
     # The goal delivery is staged to fail at its first tmux call, which under the
@@ -790,6 +816,10 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
     # longest case in the suite.
     never_ready = pool.submit(worker_case, "match", goal="ship the thing",
                               pane_text="waiting for the shell to start")
+    # A victim that ignores TERM, which is the only way to reach the KILL escalation.
+    # Every other case here dies on the first signal, so that branch - and the identity
+    # re-check guarding it - ran in no test at all until this one.
+    survives_term = pool.submit(worker_case, "match", victim=IGNORES_TERM)
 
 retired, done = same_pid.result()
 check("the worker retires the old process it was given",
@@ -845,6 +875,17 @@ check("and the timeout is reported as a failure, with the undelivered goal named
       done.returncode == 1 and "did not become ready" in done.stdout
       and "carried goal NOT delivered" in done.stdout,
       f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+
+# Retirement escalates when TERM is refused. Worth its own case because the branch
+# decides to send SIGKILL, and until now nothing in the suite reached it - every other
+# victim dies on the first signal, so the escalation and the identity check standing in
+# front of it were both unexecuted code.
+retired, done = survives_term.result()
+check("a process that refuses TERM is still retired, by escalation to KILL",
+      retired, f"rc={done.returncode} out={done.stdout!r} err={done.stderr!r}")
+check("and the escalation says so, rather than the pid quietly disappearing",
+      "survived TERM; sending KILL" in done.stdout,
+      f"rc={done.returncode} out={done.stdout!r}")
 
 STRANGER.terminate()
 STRANGER.wait()
