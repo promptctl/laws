@@ -16,12 +16,19 @@
 //     slash commands (/context, /compact, /clear, ...) run exactly as if typed. This is how
 //     the gate reloads the session after transcript surgery, using Claude's own mechanisms.
 //
-// FRONTIER (why the four-choice reload is not finished here): the live conversation/message
-// store is NOT reachable from global scope — `require`/`module` are undefined in the eval
-// context and no session global exists; the store is closure-local. Reaching it (to reload an
-// edited transcript in place, no relaunch) needs an in-CLOSURE pause — a Debugger breakpoint at
-// the skill-load funnel (SEAM 1) or the resume path (SEAM 2), then evaluateOnCallFrame. That
-// step, and the choice between it and restart-in-place (`claude --resume`), is the open work.
+// WHY THE RELOAD IS NOT DONE HERE, AND WHERE IT WENT INSTEAD. The live conversation/message store
+// is NOT reachable from global scope — `require`/`module` are undefined in the eval context and no
+// session global exists; the store is closure-local. Reloading an edited transcript IN PLACE would
+// therefore need an in-CLOSURE pause: a Debugger breakpoint at the skill-load funnel (SEAM 1) or
+// the resume path (SEAM 2), then evaluateOnCallFrame.
+//
+// That is Path A, and it was NOT the road taken — this comment used to call the choice "the open
+// work", which stopped being true on 2026-08-23. The reload ships as Path B, restart-in-place, in
+// ../../bin/claude-laws: the transcript is rewritten on disk after the session exits and claude is
+// relaunched with --resume. SEAMS.md's status ledger records the decision and owns it; this file is
+// the leaf module with no local requires, so a reader who only opens this one has no other way to
+// learn the question was already settled. What survives from Path A is this file's real job below —
+// injectStdin driving the session's own input path — which the gate still uses.
 //
 // [LAW:effects-at-boundaries] all I/O (the socket) lives here at the edge; callers get a small
 //   promise-returning API. [LAW:no-silent-failure] a protocol exception surfaces in the result
