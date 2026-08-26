@@ -65,13 +65,36 @@ trap 'rm -rf "$LAWS_SWITCH_DIR"' EXIT
 # The fifo is opened READ-WRITE so this shell is its own reader and opening it cannot block, and the
 # read is time-bounded so a listener that never comes up degrades instead of hanging forever.
 #
-# THE HOLDER MUST NOT OUTLIVE THIS SHELL, and the release below is what guarantees it. A background
+# THE HOLDER MUST NOT OUTLIVE THIS SHELL, and release_port_hold is what guarantees it. A background
 # child inherits this launcher's stdout and stderr, so an orphaned holder does not merely waste a
 # port - it holds those descriptors open and wedges anything capturing claude-laws' output until it
 # dies. Observed, not theorised: with the release removed, the test suite hangs at the first
-# `out=$(claude-laws ...)` rather than merely failing. The answer is the single unconditional
-# release, not redirections that would make an orphan survivable - an orphan is not a state this
-# code can reach, and hardening against unreachable states is how a second way to be wrong appears.
+# `out=$(claude-laws ...)` rather than merely failing. The answer is one release reached from every
+# path that leaves, not redirections that would make an orphan survivable.
+#
+# EVERY path that leaves, which is the part an earlier version got wrong: it released only where the
+# reservation had SUCCEEDED, and let the degrade path - where the read timed out but the listener
+# was already running - exec away with the holder still alive and fd 9 still open. That path is the
+# worse one to leak on, because `exec` replaces this shell and nothing it left behind is ever
+# collected. One function, called from both. [LAW:single-enforcer]
+#
+# PORT_HOLDER IS THE SET OF HOLDERS TO RELEASE - empty or one - never a pid that might be absent.
+# mkfifo can fail before any listener starts, and the shape that question wants is an empty set, not
+# a missing value: the loop then runs zero times on its own and every path executes the same two
+# operations in the same order. Guarding the kill with `[ -n "$PORT_HOLDER" ]` instead would put the
+# variance in whether code runs rather than in what flows through it, and a skip-shaped `if` is
+# invisible to every reader who has to decide whether this function is safe to call.
+# [LAW:dataflow-not-control-flow] [LAW:no-defensive-null-guards]
+#
+# `exec 9>&-` needs no guard of its own either: closing a descriptor that was never opened is a
+# no-op that returns 0 (measured under this file's own `set -uo pipefail`), so it is already the
+# identity operation when there is no fifo.
+PORT_HOLDER=""
+release_port_hold() {
+  for pid in $PORT_HOLDER; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
+  exec 9>&-
+}
+
 PORT_FIFO="$LAWS_SWITCH_DIR/port"
 PORT=""
 if mkfifo "$PORT_FIFO"; then
@@ -84,6 +107,7 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
   # `exec` replaces this shell, so the EXIT trap above will never run - the directory has to be
   # taken along by hand or it outlives the process it belonged to.
   log "could not reserve an inspector port; launching plain claude (craft switching disabled)"
+  release_port_hold
   rm -rf "$LAWS_SWITCH_DIR"
   exec "$CLAUDE_BIN" "$@"
 fi
@@ -212,9 +236,7 @@ recover() { # <what failed>
 # [LAW:no-silent-failure] exception: a holder that has already died reports a failure that is
 # indistinguishable from success here, because the only thing this cares about is that the port is
 # free, and it is free either way.
-kill "$PORT_HOLDER" 2>/dev/null
-wait "$PORT_HOLDER" 2>/dev/null
-exec 9>&-
+release_port_hold
 
 while :; do
   # bash 3.2 under `set -u` treats "${empty[@]}" as unbound, so expand through the +alternate form.
