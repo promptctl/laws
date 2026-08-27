@@ -1,0 +1,198 @@
+#!/usr/bin/env node
+// inspect-eval.js — the injector's foundation: attach to a running Claude Code process over
+// Bun's inspector and evaluate JavaScript inside it. Part B of the craft-compatibility gate
+// (Part A = laws-excise.js, the transcript surgery) is built ON this channel.
+//
+// Claude Code ships as a Bun-compiled standalone (Mach-O). Set BUN_INSPECT to a ws URL and the
+// process opens a WebKit/JSC inspector on that socket — no code patch, just an env var, so it
+// survives every weekly minified release. This module speaks the minimum of that protocol:
+// enable Runtime, evaluate an expression in the process's GLOBAL scope, read the value back.
+//
+// VERIFIED on the shipped 2.1.226 binary (see SEAMS.md for the full record):
+//   - BUN_INSPECT="ws://127.0.0.1:<port>/dbg?wait=1" opens the listener and blocks at entry.
+//   - Runtime.evaluate returns live values from the running process (pid, argv, globalThis).
+//   - Works against a LIVE INTERACTIVE TUI session, not only a fast-exiting `--help`.
+//   - injectStdin() drives the session's own input path (process.stdin.push), so built-in
+//     slash commands (/context, /compact, /clear, ...) run exactly as if typed. This is how
+//     the gate reloads the session after transcript surgery, using Claude's own mechanisms.
+//
+// WHY THE RELOAD IS NOT DONE HERE, AND WHERE IT WENT INSTEAD. The live conversation/message store
+// is NOT reachable from global scope — `require`/`module` are undefined in the eval context and no
+// session global exists; the store is closure-local. Reloading an edited transcript IN PLACE would
+// therefore need an in-CLOSURE pause: a Debugger breakpoint at the skill-load funnel (SEAM 1) or
+// the resume path (SEAM 2), then evaluateOnCallFrame.
+//
+// That is Path A, and it was NOT the road taken — this comment used to call the choice "the open
+// work", which stopped being true on 2026-08-23. The reload ships as Path B, restart-in-place, in
+// ../../bin/claude-laws: the transcript is rewritten on disk after the session exits and claude is
+// relaunched with --resume. SEAMS.md's status ledger records the decision and owns it; this file is
+// the leaf module with no local requires, so a reader who only opens this one has no other way to
+// learn the question was already settled. What survives from Path A is this file's real job below —
+// injectStdin driving the session's own input path — which the gate still uses.
+//
+// [LAW:effects-at-boundaries] all I/O (the socket) lives here at the edge; callers get a small
+//   promise-returning API. [LAW:no-silent-failure] a protocol exception surfaces in the result
+//   rather than being swallowed; the CLI exits non-zero on error or timeout.
+
+'use strict';
+
+// Open the inspector socket and return { evaluate, injectStdin, close }. `wsurl` is the exact
+// ws URL set in BUN_INSPECT (e.g. ws://127.0.0.1:9933/dbg) — for the compiled binary there is no
+// http://host/json/list discovery endpoint; the ws URL you set IS the endpoint.
+function connect(wsurl, { timeoutMs = 15000, callTimeoutMs = 15000 } = {}) {
+  const J = JSON.stringify;
+  const ws = new WebSocket(wsurl);
+  let id = 0;
+  const pending = new Map();
+  // A SILENT TARGET IS THE FOURTH ARM, and it is the one no socket event covers. `onmessage`
+  // settles a call that gets a reply and `failPending` settles one whose socket dies, but a
+  // process that is deadlocked — event loop blocked, WebSocket still technically open — fires
+  // neither: no reply ever arrives and no close/error ever does either, so the call hangs with
+  // no diagnostic and walks straight past laws-switch's try/catch exactly as the dropped-socket
+  // bug did. The connect-time timer cannot cover this; it is cleared the moment `ready` settles,
+  // which is long before these calls are made. So every call carries its own clock and every
+  // call ends in an outcome. [LAW:no-silent-failure] [LAW:dataflow-not-control-flow]
+  //
+  // The timer is CLEARED on settle rather than unref-ed, for the reason spelled out on the
+  // connect timer below: an unref-ed timer stops being a dependable timeout, and a pending one
+  // would hold the event loop open for callTimeoutMs after the work is done.
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const i = ++id;
+    const timer = setTimeout(() => {
+      pending.delete(i);
+      reject(new Error('inspector call timeout after ' + callTimeoutMs + 'ms: ' + method +
+                       ' got no reply on an open socket'));
+    }, callTimeoutMs);
+    const settle = (fn) => (v) => { clearTimeout(timer); fn(v); };
+    pending.set(i, { resolve: settle(resolve), reject: settle(reject) });
+    ws.send(J({ id: i, method, params }));
+  });
+  // A CDP reply carries EITHER `result` OR `error` — they are the two arms of one response, so
+  // the arm is what decides resolve vs reject. Resolving both alike would hand `evaluate` an
+  // object with no `result`, which it cannot tell from a call that legitimately returned
+  // undefined: a refusal by the inspector would read as a successful evaluation returning
+  // nothing. [LAW:no-silent-failure] [LAW:parse-dont-validate] the caller receives a value only
+  // on the arm that actually carries one.
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (!m.id || !pending.has(m.id)) return;
+    const { resolve, reject } = pending.get(m.id);
+    pending.delete(m.id);
+    if (m.error) {
+      const err = m.error;
+      reject(new Error('inspector error ' + (err.code !== undefined ? err.code + ': ' : '') +
+                       (err.message || J(err))));
+      return;
+    }
+    resolve(m);
+  };
+  // A DEAD SOCKET IS THE THIRD ARM. A reply and an error frame both settle their entry in
+  // `pending`; a socket that closes or errors mid-call settles nothing, so every in-flight
+  // call is left holding a promise nobody will ever touch again. That hang is worse than a
+  // failure: laws-switch drives `/exit` inside a try/catch whose catch tells the user to exit
+  // manually, and a hang produces neither success nor rejection, so the recovery path that
+  // exists for exactly this never runs and the user gets no diagnostic at all. Draining
+  // `pending` into rejections turns a dropped connection back into something a caller can
+  // catch. [LAW:no-silent-failure] [LAW:dataflow-not-control-flow] every entry ends the same
+  // way — with an outcome — whichever arm the socket ends on.
+  const failPending = (why) => {
+    const entries = [...pending.values()];
+    pending.clear();
+    for (const p of entries) p.reject(new Error('inspector connection lost: ' + why));
+  };
+  ws.onclose = () => failPending('socket closed');
+  // The connect timeout is CLEARED once `ready` settles, because a pending Node timer keeps the
+  // event loop alive: left running, every user of this module sat for the full timeoutMs after
+  // its work was done (measured: work complete at 6ms, process exit at 15007ms). That tail is
+  // not cosmetic here — `laws-switch` runs as a Bash tool call INSIDE the session it just told
+  // to exit, so the session cannot finish the call and act on the queued /exit until the timer
+  // fires, and the user watches an already-successful switch do nothing for fifteen seconds.
+  //
+  // Cleared on settle rather than `.unref()`-ed: an unref-ed timer stops holding the loop open
+  // but also stops being a dependable timeout, and a connect that genuinely hangs must still
+  // fail loudly. This removes the tail without weakening the guarantee. [LAW:no-silent-failure]
+  let readyTimer;
+  const ready = new Promise((resolve, reject) => {
+    ws.onopen = async () => { try { await send('Runtime.enable'); resolve(); } catch (err) { reject(err); } };
+    // Both arms, always: before `ready` settles the error IS the connect failure, and after it
+    // has settled `reject` is a no-op and the in-flight calls are the only thing left to tell.
+    ws.onerror = (e) => {
+      const detail = String(e && e.message || e);
+      reject(new Error('inspector ws error: ' + detail));
+      failPending('socket error: ' + detail);
+    };
+    readyTimer = setTimeout(() => reject(new Error('inspector connect timeout after ' + timeoutMs + 'ms')), timeoutMs);
+  });
+  const clearReadyTimer = () => clearTimeout(readyTimer);
+  ready.then(clearReadyTimer, clearReadyTimer);   // both arms; the derived promise is discarded
+
+  // Evaluate an expression in the process's global context. Rejects (never silently) on either
+  // way this can fail: an uncaught exception INSIDE the process (exceptionDetails, handled here)
+  // and a refusal BY the inspector (a CDP error reply, handled in onmessage above). Both arms
+  // matter — only the first was covered once, and a refused evaluate then returned undefined,
+  // indistinguishable from an expression that legitimately evaluated to nothing.
+  // [LAW:no-silent-failure]
+  async function evaluate(expression, { awaitPromise = true, returnByValue = true } = {}) {
+    const r = await send('Runtime.evaluate', { expression, awaitPromise, returnByValue });
+    const res = r.result || {};
+    if (res.exceptionDetails) {
+      const ex = res.exceptionDetails;
+      throw new Error('eval exception: ' + (ex.exception && ex.exception.description || ex.text || J(ex)));
+    }
+    return res.result ? res.result.value : undefined;
+  }
+
+  // Drive the session's own stdin as if the bytes were typed. The TUI reads stdin in pull mode
+  // (paused ReadStream, a 'readable' listener, no 'data' listener), so the correct primitive is
+  // process.stdin.push(Buffer) — it fills the read queue and fires 'readable'. A trailing '\r'
+  // submits. This runs built-in commands through the real dispatch path, single source of truth.
+  // The injected expression catches its own throw and hands back "ERR:<message>" — a value that
+  // crosses the socket as an ordinary successful result. Returning that to the caller would be an
+  // answer-shaped void: it has the shape of a real return while meaning "I could not do my job",
+  // and the one caller that matters (laws-switch, driving /exit to complete a craft switch) does
+  // not inspect the return value, so the push failing and the push succeeding look identical.
+  // "pushed" is the ONLY value that means the bytes landed; everything else is a failure and is
+  // raised as one, which routes it into laws-switch's existing catch — the recovery path that
+  // tells the user to exit manually already exists, nothing was reaching it.
+  // [LAW:no-silent-failure] [LAW:parse-dont-validate] the check yields "the bytes landed", not a
+  // string the caller must re-interpret.
+  async function injectStdin(text) {
+    const expr = '(function(){try{process.stdin.push(Buffer.from(' + J(text) + '));return "pushed"}'
+      + 'catch(e){return "ERR:"+(e&&e.message||String(e))}})()';
+    const r = await evaluate(expr, { returnByValue: true });
+    if (r !== 'pushed') throw new Error('stdin injection failed: ' + (r === undefined ? 'no value returned' : String(r)));
+    return r;
+  }
+
+  function close() { try { ws.close(); } catch (_e) {} }
+  return { ready, evaluate, injectStdin, close };
+}
+
+// A one-call reproducible check that the primitives still hold on the current binary — run this
+// first thing after a Claude Code update to catch inspector/protocol drift in seconds.
+async function probe(wsurl) {
+  const c = connect(wsurl);
+  await c.ready;
+  const v = await c.evaluate('({ pid:(typeof process!=="undefined"?process.pid:null),'
+    + ' hasGlobalThis:typeof globalThis, hasFetch:typeof (globalThis.fetch),'
+    + ' argv:(typeof process!=="undefined"&&process.argv)?process.argv.slice(0,3):null })');
+  c.close();
+  return v;
+}
+
+module.exports = { connect, probe };
+
+if (require.main === module) {
+  const [wsurl, mode, arg] = process.argv.slice(2);
+  if (!wsurl) { process.stderr.write('usage: inspect-eval.js <wsurl> [--probe | --eval <expr> | --inject <text>]\n'); process.exit(2); }
+  (async () => {
+    try {
+      if (!mode || mode === '--probe') { process.stdout.write(JSON.stringify(await probe(wsurl)) + '\n'); return; }
+      const c = connect(wsurl); await c.ready;
+      if (mode === '--eval') process.stdout.write(JSON.stringify(await c.evaluate(arg)) + '\n');
+      else if (mode === '--inject') process.stdout.write(JSON.stringify(await c.injectStdin(arg)) + '\n');
+      else { process.stderr.write('unknown mode: ' + mode + '\n'); process.exit(2); }
+      c.close();
+    } catch (err) { process.stderr.write('inspect-eval: ' + (err && err.message || String(err)) + '\n'); process.exit(1); }
+  })();
+}

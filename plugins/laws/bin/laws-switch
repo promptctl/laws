@@ -1,0 +1,97 @@
+#!/usr/bin/env node
+// laws-switch — the in-session half of the craft-compatibility switch.
+//
+// When the guard denies an incompatible craft load it leaves a pending decision behind. The agent
+// (or the user) picks one of the four options and runs this. It does TWO things and deliberately
+// no more: record the choice, then end the session through Claude's own /exit.
+//
+// It does NOT touch the transcript. A running Claude Code appends records as it works, so surgery
+// against a live file races the writer; the launcher performs it after the process is gone.
+// [LAW:no-ambient-temporal-coupling] the launcher owns the ordering, and this command's only job
+// is to hand it a decision and get out of the way.
+//
+// usage: laws-switch <reject|tombstone|rewind_summarize|rewind_discard> [--summary <text>]
+
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const M = require(path.join(__dirname, '..', 'hooks', 'scripts', 'laws-excise.js'));
+const { connect } = require(path.join(__dirname, '..', 'hooks', 'injector', 'inspect-eval.js'));
+
+const CHOICES = Object.keys(M.SWITCH_ACTIONS);
+
+function die(msg, code = 1) { process.stderr.write('laws-switch: ' + msg + '\n'); process.exit(code); }
+
+const args = process.argv.slice(2);
+// The choice is POSITIONAL AND FIRST, never searched for. Scanning for "the first token that is
+// not a flag" would have to know which flags take values — `--summary "some text"` puts a bare
+// word in argv that is not a choice — and a scanner that must track that is the same argv-parsing
+// hazard claude-laws refuses to take on for claude's own flags, plus a new maintenance debt every
+// time a flag is added. A fixed position cannot mistake a value for a positional.
+const choice = args[0];
+const sumAt = args.indexOf('--summary');
+const summary = sumAt >= 0 ? args[sumAt + 1] : undefined;
+
+if (!choice) die('usage: laws-switch <' + CHOICES.join('|') + '> [--summary <text>]', 2);
+// A leading flag is its own error, never "unknown choice <flag>": the caller who wrote
+// `--summary "some text" rewind_summarize` needs to hear that the ORDER is wrong, not that their
+// summary is an unrecognised choice - which is the misdiagnosis the scan used to produce.
+if (choice.startsWith('--')) die('the choice comes first: laws-switch <' + CHOICES.join('|') + '> [--summary <text>] — flags follow it, and a flag\'s value is never read as the choice.', 2);
+if (!CHOICES.includes(choice)) die('unknown choice ' + JSON.stringify(choice) + '; expected one of ' + CHOICES.join(', '), 2);
+
+// The launcher owns this directory; its absence means the session was not started via claude-laws,
+// so there is no relaunch to hand the decision to. Say that plainly rather than writing a request
+// nothing will ever read. [LAW:no-silent-failure]
+const dir = process.env.LAWS_SWITCH_DIR;
+if (!dir) die('LAWS_SWITCH_DIR is unset — this session was not launched by claude-laws, so a switch cannot be completed. Start the session with claude-laws to use the switch, or pick "reject" and stay in the current craft.');
+
+const pendingPath = path.join(dir, 'pending.json');
+if (!fs.existsSync(pendingPath)) die('no pending craft switch — the guard has not denied an incompatible load in this session.');
+const pending = JSON.parse(fs.readFileSync(pendingPath, 'utf8'));
+
+// `current` is the whole conflicting SET, comma-joined by the guard - a switch can retire more
+// than one engaged craft, so this renders a list rather than assuming a single name.
+const currentPretty = String(pending.current || '').split(',').filter(Boolean).map((c) => 'laws:' + c).join(', ');
+
+// Reject changes nothing and needs no relaunch: the load was already denied, so the session is
+// already in the state this option describes.
+if (choice === 'reject') {
+  fs.unlinkSync(pendingPath);
+  process.stdout.write('Staying in ' + currentPretty + '. The laws:' + pending.incomingMedium + ' load was dropped; nothing else changed.\n');
+  process.exit(0);
+}
+
+// The summary is the one place the excised craft can climb back into the conversation: it is
+// composed while that craft is still fully loaded, and nothing can strip it from a running
+// session's context first. This instruction is the only thing standing in the way, so it says so
+// outright rather than assuming the point is obvious. [LAW:no-silent-failure]
+if (choice === 'rewind_summarize' && !summary) {
+  die('rewind_summarize needs --summary "<what you did since the craft loaded>". You are the only one who can write it: the summary is composed from your live context, and after the rewind that context is gone. Summarize YOUR WORK ONLY — what you did, decided, and left unfinished. Do NOT restate, paraphrase, or carry over any of the retiring craft\'s guidance, rules, or vocabulary: that guidance is being excised on purpose, and a summary that smuggles it back in defeats the switch you asked for.', 2);
+}
+
+fs.writeFileSync(path.join(dir, 'request.json'), JSON.stringify({
+  sessionId: pending.sessionId,
+  transcript: pending.transcript,
+  incomingMedium: pending.incomingMedium,
+  choice,
+  summary,
+}, null, 2) + '\n');
+fs.unlinkSync(pendingPath);
+
+// End the session through its OWN dispatch path. An agent cannot type a slash command into its own
+// session, so the exit has to arrive from outside the tool loop — which is what the inspector
+// channel is for. The trailing CARRIAGE RETURN is what submits: a newline types the text and
+// leaves it sitting at the prompt (measured).
+const wsurl = process.env.BUN_INSPECT;
+if (!wsurl) die('BUN_INSPECT is unset — cannot end the session to complete the switch. The choice is recorded; exit the session manually and it will be applied on relaunch.');
+
+(async () => {
+  try {
+    const c = connect(wsurl);
+    await c.ready;
+    await c.injectStdin('/exit\r');
+    c.close();
+  } catch (err) {
+    die('recorded the switch but could not end the session (' + (err && err.message) + '). Exit manually and it will be applied on relaunch.');
+  }
+})();
