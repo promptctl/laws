@@ -1,0 +1,37 @@
+# Craft conflict edges — the authoritative compatibility policy for the laws plugin.
+#
+# One DIRECTED edge per line, bare craft names (no "laws:" prefix), read left to right:
+#
+#     <engaged>  <refused>
+#
+# means "while <engaged> is loaded, refuse an incoming <refused>". The reverse order is a
+# DIFFERENT statement and is not implied — an edge here says nothing about loading these
+# two the other way round. EVERY ordering absent from this list may coexist.
+#
+# THE ORDER IS THE WHOLE POINT, and it was wrong once. This policy used to be a set of
+# symmetric pairs, which refused the reverse direction too. That is a false refusal, and an
+# expensive one: the guard would deny a legitimate load and offer a tombstone-or-rewind
+# switch to escape a conflict that does not exist, spending real conversation to solve a
+# non-problem. Symmetry also hid a live defect — the two enforcers passed their arguments
+# in opposite orders and nothing could tell, because the predicate could not distinguish
+# them. Keep the direction; it is load-bearing, not bookkeeping.
+#
+# This is a SHORT list by design — not a full NxN matrix, and not an "exclusive" craft —
+# naming only an ORDERING shown to break real work. Add an edge only with the same kind of
+# evidence, and only in the direction the evidence supports.
+#
+# Read by BOTH enforcers, so the rule has exactly one home ([LAW:one-source-of-truth]):
+#   - skill-router.sh  — the PreToolUse guard that refuses the conflicting 2nd load
+#   - laws-excise.js   — the runtime gate that offers the four-choice switch instead
+# Changing the policy is editing THIS file; neither enforcer hard-codes a craft name.
+#
+# Blank lines and lines beginning with '#' are ignored; a trailing '# comment' is stripped.
+
+# code degrades prompts, and the damage runs ONE WAY. Loading laws:code first trains the
+# session on standards that are actively wrong for prompt-as-a-medium, and a prompt written
+# afterwards comes out corrupted — so this ordering is refused. The reverse is fine and is
+# deliberately NOT listed: writing a prompt and then turning to code works, because the
+# prompt craft does not degrade code the way code degrades prompts. (chat, prose, ticket,
+# and application-spec appear in no edge at all, so they mix freely in either order with
+# each other and with both of these.)
+code prompt

@@ -5,24 +5,64 @@ persuasive guidance, each written to the standard of one medium and built to kee
 firing deep in a session against competing defaults. An agent that reads one and then
 does other work carries that standard into the other work: reading one skill puts its
 whole standard on duty and biases what you do next. Most standards sit together fine -
-code, its ticket, and its docs are complementary work - but some *contradict*, and
-reading two that contradict stacks standards that corrupt each other. That stacking is
-the failure that has already ruined a session here.
+code, its ticket, and its docs are complementary work. But one standard actively damages
+another: read laws:code and the prompts you write afterwards come out corrupted by it.
+That is the failure that has already ruined a session here, and it runs one way - the
+damage is code's effect on prompts, not a quarrel between equals.
 
 So there is one rule, and a way to work under it.
 
 ## The rule
 
-Compatible crafts coexist; incompatible ones do not. Most media are complementary, so a
-session that produces code and its ticket and its docs may hold those crafts together -
-their standards do not fight, and the guard lets them share a session. What must never
-stack is an *incompatible* pair: two standards that contradict each other, the failure
-that has ruined a session here. The known incompatible pair is laws:code and laws:prompt
-- code is nothing like prompt-for-an-LLM, so each craft's rules are actively wrong for
-the other's work, and the guard refuses the second of that pair. When you need a craft
-that conflicts with one already engaged, you don't load it here: consult it through a
-disposable subagent, or - if the session's whole job has become that craft - /clear and
-load it clean.
+Crafts coexist; certain *orderings* do not. Most media are complementary, so a session that
+produces code and its ticket and its docs may hold those crafts together - their
+standards do not fight, and the guard lets them share a session.
+
+The rule is directed, and the direction is the whole of it: **an ordering listed in
+`hooks/scripts/incompatible-crafts.txt` is refused; every ordering absent from it may
+coexist.** That file is the authority - both enforcers read it, neither hard-codes a craft
+name, and adding an edge there changes the rule everywhere at once. Do not restate its
+contents as a fixed pair anywhere else. A second copy is a second thing to go stale, and
+the copy is what a reader will believe.
+
+Today it holds one edge, and it is the one that paid for this document: **once laws:code is
+engaged, laws:prompt may not be loaded.** Code's standard degrades prompts written under it,
+and that is the failure that has ruined a session here. The reverse is not a failure at all -
+write a prompt first, turn to code afterwards, and both come out fine, so that ordering is
+deliberately absent from the file. It is not a mutually incompatible pair; it is a one-way
+edge.
+
+## Don't stack crafts even where the guard allows it
+
+The guard enforces correctness, and correctness is not the only cost. A craft body is
+large, and two of them in one context window is a real price paid out of the budget the
+actual work needs. So the ordering rule is the floor, not the goal: **prefer doing the
+second craft's work in a subagent, whatever the order.** The legal ordering is a
+fallback for when that is impractical, not the thing to aim for.
+
+That means the answer to "this task needs a prompt and some code" is not "sequence them
+carefully in one session." It is: do one of them here, and dispatch the other.
+
+### The subagent must be a fresh one
+
+This is the part that is easy to get wrong, because the obvious convenience is exactly
+the thing that breaks it.
+
+A **fresh** subagent starts with an empty context, loads only the craft it needs, and
+returns its answer. That is sound. A **fork** - any subagent that inherits the parent's
+conversation - is not: it carries the parent's already-loaded craft body along with it,
+so it does the work under precisely the standard we were trying to keep away from it.
+
+The guard cannot save you here. The craft lock is keyed by session *and agent*, so a
+forked agent gets a fresh, empty lock slot and the guard will happily allow the load -
+the lock records what was *loaded*, not what was *inherited*, and a fork is the case
+where those two diverge. Nothing will refuse it and nothing will warn you.
+
+The cost of a fresh agent is that you must write the task context into its prompt
+instead of getting it for free. That is the correct price.
+
+If the session's whole job has become that craft, the other option is /clear and load it
+clean.
 
 ## What to read instead
 

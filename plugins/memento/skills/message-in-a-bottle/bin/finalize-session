@@ -3,20 +3,33 @@
 # self-handoff into the current session. The launcher returns immediately; a
 # detached worker delivers the handoff after a fixed delay.
 #
-# Two transports, most reliable first:
-#   tmux    — in-place reset (/clear or /compact) verified by reading the pane
-#             back, then paste the message. Deterministic; no focus concerns.
-#   iTerm2  — kill the running claude and relaunch it fresh with the message as
-#             its initial prompt, via `write text` to the exact session (no focus
-#             steal, no readback needed — a new process is guaranteed fresh).
-# Neither available is a hard failure. There is no third arm: delivery into a live
-# session is what this script does, and a session it cannot reach is one it cannot
-# close out.
+# Three transports, most reliable first:
+#   tmux      — in-place reset (/clear or /compact) verified by reading the pane
+#               back, then paste the message. Deterministic; no focus concerns.
+#   iTerm2    — kill the running claude and relaunch it fresh with the message as
+#               its initial prompt, via `write text` to the exact session (no
+#               focus steal, no readback needed — a new process is guaranteed
+#               fresh).
+#   detached  — neither of the above reaches this process (no pane owns it, no
+#               iTerm2 session names it — the ordinary shape of a session hosted
+#               by `claude daemon run`). Spawn a brand-new detached tmux window,
+#               launch claude in it with the message as its initial prompt
+#               (the same `claude "$(cat msgfile)"` trick as the iTerm2 relaunch),
+#               and once it is confirmed ready, retire the old process. A window
+#               nobody was already using cannot collide with anybody's live work.
+#
+# [LAW:no-mode-explosion] every session must end up equally capable of continuing
+# an autonomy chain — foreground and background alike, no subclass excluded, per
+# owner decision 2026-08-23. tmux/iTerm2 already give a pane- or window-owning
+# session that capability; detached is what gives it to a session that owns
+# neither. Only a machine with no tmux binary at all has genuinely nothing to
+# hand off into — that is the sole remaining hard failure.
 #
 # Modes:
-#   launcher:       finalize-session [message...]
-#   tmux worker:    finalize-session --worker <target> <reset> <msgfile> <goalfile>
-#   iTerm2 worker:  finalize-session --iterm-worker <uuid> <claude_pid> <msgfile> <goalfile> <flags>
+#   launcher:         finalize-session [message...]
+#   tmux worker:      finalize-session --worker <target> <reset> <msgfile> <goalfile>
+#   iTerm2 worker:    finalize-session --iterm-worker <uuid> <claude_pid> <msgfile> <goalfile> <flags>
+#   detached worker:  finalize-session --detached-worker <session> <cwd> <msgfile> <goalfile> <flags> <old_claude_pid> <claude_bin> <old_claude_ident>
 
 set -euo pipefail
 
@@ -118,6 +131,49 @@ _find_claude_pid() {
   return 1
 }
 
+# What a pid is holding, as a value that survives the pid being reissued: the
+# process's start time and its command line. Empty output — the pid holds nothing
+# — is a failure to identify, never an identity of its own.
+#
+# [FRAMING:representation] a pid is a map, not the territory. The kernel is free to
+# reissue it the instant its holder exits, so "pid 4711 is alive" and "pid 4711 is
+# still the claude I captured" are different facts, and only the second one licenses
+# a signal. Start time is what tells them apart: two processes cannot hold one pid at
+# one instant, so a pid whose start time still matches is the same process.
+#
+# This is the same bar `_discover_tmux_pane` holds itself to. That walk goes to real
+# lengths to PROVE descent rather than narrow it — pane_dead, non-decreasing age
+# while climbing — precisely because a recycled pid forges a match. The detached
+# worker signals a pid up to ~41s after capturing it (10s delay + up to 30s of
+# readiness polling), which is far more room for reuse than the walk ever has, so it
+# cannot hold a lower bar than the walk does.
+_process_identity() {
+  local pid="${1:-}" raw
+  [ -n "$pid" ] || return 1
+  raw=$(ps -o lstart=,command= -p "$pid" 2>/dev/null) || return 1
+  [ -n "$raw" ] || return 1
+  printf '%s' "$raw"
+}
+
+# THE ONLY QUESTION THE RETIREMENT SEQUENCE ASKS ABOUT THE OLD PROCESS: is this pid still
+# holding the process captured at launch? `kill -0` cannot answer it. It answers "some
+# process is alive at this pid", and a pid the OS has reissued answers yes to that while
+# being a stranger — which is the whole reason _process_identity exists.
+#
+# Asking it once, before TERM, is not enough, and the reason is the sequence's own doing:
+# the point of TERM is that the process EXITS, which frees its pid to be reissued during
+# the poll that immediately follows. So the one moment this file creates a reuse window is
+# the one moment it used to stop checking. Every check in the sequence — the gate, the
+# poll, and the escalation to KILL — goes through here, so a stranger cannot inherit the
+# signal at any of them. [LAW:single-enforcer] [LAW:parse-dont-validate]
+#
+# The reading is left in IDENT_NOW so a caller reports the value its own check saw, rather
+# than re-reading a moment later and describing a different instant than the one it acted on.
+_still_captured_process() { # <pid> <identity captured at launch>
+  IDENT_NOW=$(_process_identity "$1") || IDENT_NOW=""
+  [[ "$IDENT_NOW" == "$2" ]]
+}
+
 # The tmux pane this process is running inside, discovered from process ancestry
 # instead of from $TMUX_PANE.
 #
@@ -135,24 +191,139 @@ _find_claude_pid() {
 # "an ancestor of mine is some pane's process." Ask the territory, not the map
 # that went missing.
 #
-# [LAW:no-silent-failure] the match is pid identity and nothing else — never the
+# [LAW:no-silent-failure] the match is descent and nothing else — never the
 # working directory, never "the only pane that looks plausible." A process with
 # no pane ancestor gets no pane: this returns 1 and the caller falls through to
 # the next transport, rather than pasting a handoff into an unrelated window.
+#
+# WHY DESCENT NEEDS MORE THAN A PID. Pids are recycled, so "an ancestor's pid
+# equals a pane's pid" is not by itself proof that the pane's process is that
+# ancestor. Two forgeries are available to a recycled pid, and each is closed by
+# making the snapshot carry a fact the recycled pid cannot supply:
+#
+#   A pane outliving its process. With remain-on-exit set, a pane whose process
+#   has exited stays listed and keeps advertising that dead pid (observed: kill a
+#   pane's process and list-panes still reports its pid, with pane_dead=1). Once
+#   that pid is reissued to something in this chain, the pid match is a
+#   coincidence and the handoff lands in a window showing a corpse. #{pane_dead}
+#   is what tells them apart, so it rides along in the snapshot and dead rows
+#   never enter the match set.
+#
+#   An ancestor exiting mid-walk. Age tells this one apart: a parent is never
+#   younger than its child, so elapsed time must not decrease as the walk climbs.
+#   A pid reissued after its holder died is younger than the descendant that
+#   claimed it, and the walk stops rather than wandering into a stranger's tree.
+#
+# Together they are a proof to the resolution of the clock. Non-decreasing age
+# from hop zero means every matched ancestor is at least as old as this process,
+# so it has held its pid continuously since before this process existed — which
+# is before the pane list was read. Two processes cannot hold one pid at one
+# instant, so the live pane recorded at that pid is that ancestor.
+#
+# That clock ticks once a second, and no portable shell carries a faster one:
+# etime is [[dd-]hh:]mm:ss, `ps -o lstart=` is whole seconds as well, and the one
+# genuinely finer source — /proc/<pid>/stat's start time — does not exist on
+# macOS, where this transport mostly runs. Both were measured before being ruled
+# out. So one case stays open: a pid reissued within the same second this process
+# started reads as the same age and passes. Reaching it also needs `ps -e` to
+# read the ppid row and the row for the pid it names on opposite sides of that
+# reuse. A second later, the age check refuses it.
+#
+# [LAW:effects-at-boundaries] both snapshots are taken here, at the edge, and the
+# resolution below is arithmetic over those two values. One whole-table ps rather
+# than a query per hop is what makes that true: pid and age are read at a single
+# instant, so nothing shifts underneath the walk.
 _discover_tmux_pane() {
-  local panes pid i pane_id pane_pid
+  local panes proctable
   command -v tmux >/dev/null 2>&1 || return 1
-  panes=$(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null) || return 1
+  panes=$(tmux list-panes -a -F 'pane #{pane_id} #{pane_pid} #{pane_dead}' 2>/dev/null) || return 1
   [ -n "$panes" ] || return 1
-  pid=$$
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
-    [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
-    while read -r pane_id pane_pid; do
-      if [ "$pane_pid" = "$pid" ]; then printf '%s' "$pane_id"; return 0; fi
-    done <<< "$panes"
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
-  done
-  return 1
+  proctable=$(ps -eo pid=,ppid=,etime=) || return 1
+  # The literal 'pane' lead-in is tmux labelling its own rows, so one pass can
+  # tell the two snapshots apart without a separator line to get out of step.
+  printf '%s\n%s\n' "$panes" "$proctable" | awk -v self=$$ -v maxhops=16 '
+    # ps renders elapsed time as [[dd-]hh:]mm:ss; fold it left into seconds so
+    # any of the three widths compares against any other.
+    function ageof(raw,   days, parts, fields, i, seconds) {
+      days = 0
+      if (raw ~ /-/) {
+        days = substr(raw, 1, index(raw, "-") - 1) + 0
+        raw = substr(raw, index(raw, "-") + 1)
+      }
+      fields = split(raw, parts, ":")
+      seconds = 0
+      for (i = 1; i <= fields; i++) seconds = seconds * 60 + parts[i] + 0
+      return days * 86400 + seconds
+    }
+    # [LAW:parse-dont-validate] a whitelist, not a blacklist of the dead value:
+    # only a row that positively asserts liveness joins the match set. tmux
+    # expands a format field it does not know to the empty string (verified on
+    # 3.6a: `#{no_such_field}` renders as nothing, it does not survive as a
+    # literal), so on a tmux predating #{pane_dead} the row arrives with three
+    # fields and an uninitialised $4 — and `$4 != 1` would read that as alive,
+    # silently reverting discovery to the bare pid match this guard exists to
+    # close. The price of strictness is that such a tmux matches no pane at all
+    # and the caller declines; that is the safe direction, and the one the
+    # elapsed-time check below already takes for the same reason.
+    $1 == "pane" { if (NF == 4 && $4 == "0") pane[$3] = $2; next }
+    NF == 3      { parent[$1] = $2; elapsed[$1] = $3 }
+    END {
+      pid = self
+      descendant_age = -1
+      for (hop = 0; hop < maxhops; hop++) {
+        if (!(pid in parent)) exit 1
+        # [LAW:parse-dont-validate] an elapsed time this cannot read is not an
+        # age of zero, which would quietly reduce the walk to bare pid matching.
+        # It is a failure to establish descent, and it refuses the pane.
+        if (elapsed[pid] !~ /^([0-9]+-)?([0-9]+:)?[0-9]+:[0-9][0-9]$/) exit 1
+        age = ageof(elapsed[pid])
+        if (age < descendant_age) exit 1
+        if (pid in pane) { print pane[pid]; exit 0 }
+        descendant_age = age
+        pid = parent[pid]
+        if (pid + 0 <= 1) exit 1
+      }
+      exit 1
+    }'
+}
+
+# A pane id resolved to the tmux target that addresses it, or 1 if tmux does not
+# own that pane.
+#
+# [LAW:parse-dont-validate] display-message cannot be asked this question
+# directly, because it answers the same way whether or not the pane exists: given
+# a pane id no server owns it exits 0 with every field empty, so the target format
+# renders as the literal ":." — an answer-shaped void, non-empty and therefore
+# indistinguishable from a real target to any caller that only checks emptiness.
+# Worse, tmux then reads ":." as a live address meaning current-session:current-
+# window.current-pane, so a stale pane id does not fail loudly; it silently
+# retargets the handoff at whatever the user happens to be looking at when the
+# worker fires. (Verified on tmux 3.6a: `display-message -t %4242` exits 0 and
+# renders ":.", while `list-panes -t %4242` exits 1.)
+#
+# Asking for #{pane_id} alongside the target makes the reply carry its own proof:
+# a target is this pane's target only if the id tmux echoes back is the id we
+# asked about. That refuses the stale id and the degenerate ":." alike.
+#
+# The id alone is not enough, for the same reason the walk above carries
+# #{pane_dead}: owning a pane and displaying a live process are different facts,
+# and remain-on-exit separates them. A dead pane answers exactly like a live one
+# — verified on 3.6a by killing a pane's process on a scratch server, after which
+# `display-message` still exits 0 and still echoes `%0 1 t:1.1`. Admitted on the
+# id alone it would satisfy this, short-circuit the discovery that would have
+# refused it, and leave the worker sending keys into a corpse. So liveness is
+# demanded here in the same words the walk demands it: a positive "0", never the
+# absence of a "1". A tmux too old to know #{pane_dead} renders it empty and is
+# refused by both, which is the point of saying it the same way twice.
+_pane_target() {
+  local pane="${1:-}" reply rest
+  [ -n "$pane" ] || return 1
+  reply=$(tmux display-message -p -t "$pane" \
+            '#{pane_id} #{pane_dead} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) || return 1
+  [ "${reply%% *}" = "$pane" ] || return 1
+  rest="${reply#* }"
+  [ "${rest%% *}" = "0" ] || return 1
+  printf '%s' "${rest#* }"
 }
 
 # The flags claude was launched with, reduced to a safe whitelist: permission
@@ -229,9 +400,10 @@ OSA
 # [LAW:types-are-the-program] one discriminator at the entry; everything
 # downstream operates on validated, typed inputs for exactly one mode.
 case "${1:-}" in
-  --worker)       MODE=tmux-worker; shift ;;
-  --iterm-worker) MODE=iterm-worker; shift ;;
-  *)              MODE=launcher ;;
+  --worker)          MODE=tmux-worker; shift ;;
+  --iterm-worker)    MODE=iterm-worker; shift ;;
+  --detached-worker) MODE=detached-worker; shift ;;
+  *)                 MODE=launcher ;;
 esac
 
 case "$MODE" in
@@ -310,12 +482,15 @@ case "$MODE" in
     # process is a child of the pane's shell, discovered from ancestry when a
     # daemon broke that chain — and they collapse to a single value here so no
     # code below has to know which spelling answered. [LAW:one-source-of-truth]
-    PANE="${TMUX_PANE:-}"
-    [[ -n "$PANE" ]] || PANE=$(_discover_tmux_pane) || PANE=""
-    if [[ -n "$PANE" ]] \
-       && TARGET=$(tmux display-message -p -t "$PANE" \
-            '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) \
-       && [[ -n "$TARGET" ]]; then
+    # Each spelling is accepted only once tmux confirms it still names that pane,
+    # and a spelling that fails to resolve hands the question on rather than
+    # consuming the attempt. The inherited copy going stale is the same "the map
+    # went missing" failure discovery exists for, so it must not be able to lose
+    # the handoff on discovery's behalf. [FRAMING:representation]
+    TARGET=$(_pane_target "${TMUX_PANE:-}") \
+      || TARGET=$(_pane_target "$(_discover_tmux_pane || true)") \
+      || TARGET=""
+    if [[ -n "$TARGET" ]]; then
       if [[ -n "${FINALIZE_DRY_RUN:-}" ]]; then
         echo "[dry-run] transport=tmux target=$TARGET reset=/$RESET msgfile=$MSGFILE"
         echo "[dry-run] carried goal: ${GOAL:-(none)}"
@@ -345,6 +520,54 @@ case "$MODE" in
       trap - EXIT
       echo "handoff scheduled → iTerm2 (kill+relaunch, fresh) in ${HANDOFF_DELAY_SECONDS}s (log: $LOGFILE)"
 
+    elif command -v tmux >/dev/null 2>&1; then
+      # Neither an owned pane nor a reachable iTerm2 session — the shape of a
+      # session hosted by `claude daemon run`, which inherits neither. tmux
+      # itself needs no server already running: `new-session -d` starts one.
+      # [LAW:one-source-of-truth] the process to relaunch as, and the flags it
+      # carries, are found the same way the iTerm2 transport finds them — one
+      # function, reused, not a second copy of the same lookup.
+      CLAUDE_PID=$(_find_claude_pid) \
+        || { echo "detached transport: cannot locate the claude process to relaunch" >&2; exit 2; }
+      FLAGS=$(_claude_flags "$(ps -o command= -p "$CLAUDE_PID" 2>/dev/null)")
+      # [LAW:one-source-of-truth] the identity is captured HERE, at the same instant
+      # the pid is, and travels with it as data. The worker re-reads it and compares
+      # rather than re-deriving what "the old claude" means at kill time — by then
+      # the pid may name a stranger, and a second derivation would simply describe
+      # the stranger. [LAW:no-silent-failure] a pid we cannot identify is not a pid
+      # we may later signal, so this is a hard stop, not a degraded mode.
+      CLAUDE_IDENT=$(_process_identity "$CLAUDE_PID") \
+        || { echo "detached transport: cannot read the identity of claude process $CLAUDE_PID" >&2; exit 2; }
+      # A fresh detached window's default shell is a login shell that resources
+      # dotfiles before running anything handed to it, so it can rebuild PATH
+      # out from under whatever this process currently has — unlike the iTerm2
+      # transport, which types into an already-running, already-initialized
+      # shell. Resolving the absolute path HERE, once, and handing it down as
+      # data removes the dependency instead of hoping the two PATHs agree.
+      # [LAW:no-silent-failure] "claude" resolving to nothing is the genuine
+      # no-transport case, not a reason to fall back to a bare command name
+      # that may resolve to something else, or nothing, once the login shell
+      # finishes its own startup.
+      CLAUDE_BIN=$(command -v claude) \
+        || { echo "detached transport: 'claude' is not resolvable on PATH; cannot name what to relaunch" >&2; exit 2; }
+      CWD=$(pwd -P)
+      # tmux session names may not contain ':' or '.'; $$ and epoch seconds are
+      # digits only, and collide only if two handoffs from the same pid fire in
+      # the same second — near-impossible given HANDOFF_DELAY_SECONDS.
+      SESSION="finalize-$$-$(date +%s)"
+      if [[ -n "${FINALIZE_DRY_RUN:-}" ]]; then
+        echo "[dry-run] transport=detached session=$SESSION cwd=$CWD claude_pid=$CLAUDE_PID claude_bin=$CLAUDE_BIN flags=[$FLAGS]"
+        echo "[dry-run] would launch: $CLAUDE_BIN ${FLAGS:+$FLAGS }\"\$(cat '$MSGFILE')\" in a fresh detached tmux window"
+        echo "[dry-run] old-process identity: $CLAUDE_IDENT"
+        echo "[dry-run] carried goal: ${GOAL:-(none)}"
+        exit 0
+      fi
+      LOGFILE=$(mktemp -t finalize-log.XXXXXX)
+      nohup "$SELF" --detached-worker "$SESSION" "$CWD" "$MSGFILE" "$GOALFILE" "$FLAGS" "$CLAUDE_PID" "$CLAUDE_BIN" "$CLAUDE_IDENT" \
+        </dev/null >>"$LOGFILE" 2>&1 &
+      trap - EXIT
+      echo "handoff scheduled → fresh detached tmux window '$SESSION' in ${HANDOFF_DELAY_SECONDS}s (log: $LOGFILE)"
+
     else
       # [LAW:parse-dont-validate] the failure arm of the parse above. Exiting
       # nonzero is the whole of it: the close-out did not happen, and the caller
@@ -353,11 +576,11 @@ case "$MODE" in
       # answer-shaped void — exit 0 with the shape of delivery and none of the
       # substance, since nothing reads that file. A message parked on disk is a
       # message lost, and lost loudly beats lost while claiming success.
-      echo "finalize-session: no tmux or iTerm2 transport; nothing to deliver into." >&2
-      echo "Claude must be running in a tmux pane or an iTerm2 session to close out." >&2
-      echo "No pane owns this process: neither \$TMUX_PANE nor any ancestor pid" >&2
-      echo "matches a live tmux pane, so there is no window that is showing this" >&2
-      echo "session to hand off into." >&2
+      # This is now the sole genuine no-transport case: no owned pane, no
+      # reachable iTerm2 session, and no tmux binary to spawn a fresh window
+      # with either — there is truly nothing on this machine to deliver into.
+      echo "finalize-session: no tmux, iTerm2, or tmux binary to spawn a fresh window with." >&2
+      echo "Nothing on this machine to deliver the close-out into." >&2
       exit 2
       # MSGFILE and GOALFILE cleaned by the EXIT trap.
     fi
@@ -542,5 +765,132 @@ OSA2
 
     # Give the shell time to read the message file before the trap removes it.
     sleep 3
+    ;;
+
+  detached-worker)
+    if [[ $# -ne 8 ]]; then
+      echo "internal error: detached-worker expects exactly 8 args" >&2
+      exit 2
+    fi
+    SESSION="$1"
+    CWD="$2"
+    MSGFILE="$3"
+    GOALFILE="$4"
+    FLAGS="$5"
+    OLD_CLAUDE_PID="$6"
+    CLAUDE_BIN="$7"
+    OLD_CLAUDE_IDENT="$8"
+
+    GOALBUF="finalize-goal-$$"
+    trap 'rm -f "$MSGFILE" "$GOALFILE"' EXIT
+    log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
+
+    log "waking; detached session=$SESSION cwd=$CWD old_claude_pid=$OLD_CLAUDE_PID claude_bin=$CLAUDE_BIN flags=[$FLAGS]"
+    sleep "$HANDOFF_DELAY_SECONDS"
+
+    # Same trick as the iTerm2 relaunch: the shell in the new window evaluates
+    # $(cat msgfile) itself, so the message never touches argv or tmux quoting —
+    # [LAW:effects-at-boundaries] the only escaping done here is the single
+    # embedded path, not the message content. CLAUDE_BIN is the absolute path
+    # resolved in the launcher, not the bare "claude" the login shell about to
+    # spawn might or might not still have on its PATH.
+    RELAUNCH="'${CLAUDE_BIN}' ${FLAGS:+$FLAGS }\"\$(cat '${MSGFILE}')\""
+    if ! tmux new-session -d -s "$SESSION" -c "$CWD" "$RELAUNCH" 2>>/dev/stderr; then
+      log "ERROR: could not create detached tmux session $SESSION; nothing delivered"
+      exit 1
+    fi
+    log "detached session $SESSION created; waiting for claude to become ready"
+
+    # [LAW:no-silent-failure] poll for the fresh boot's banner rather than a
+    # blind sleep — the same readiness contract the iTerm2 worker uses, so the
+    # goal is never queued into a window whose input box isn't up yet.
+    READY=""
+    DEADLINE=$(( $(date +%s) + CLAUDE_READY_TIMEOUT_SECONDS ))
+    while [[ $(date +%s) -le $DEADLINE ]]; do
+      if tmux has-session -t "$SESSION" 2>/dev/null \
+         && tmux capture-pane -t "$SESSION" -p 2>/dev/null | grep -qE 'Claude Code v[0-9]'; then
+        READY=1
+        break
+      fi
+      sleep "$CLAUDE_READY_POLL_SECONDS"
+    done
+
+    if [[ -z "$READY" ]]; then
+      log "ERROR: detached session $SESSION did not become ready within ${CLAUDE_READY_TIMEOUT_SECONDS}s"
+      if [[ -s "$GOALFILE" ]]; then
+        log "carried goal NOT delivered: /goal $(cat "$GOALFILE")"
+      fi
+      # Tear the new session down before giving up. A readiness timeout does NOT
+      # mean nothing happened on the new side: the handoff message rides in the
+      # `tmux new-session` argv, so the successor is already carrying it and a boot
+      # that lands one second past the deadline would leave TWO live agents — the
+      # old one never retired, the new one working the handoff — which is the exact
+      # invariant this transport exists to provide. Collapsing back to "the old
+      # process is the only one" is the only outcome that keeps it, and it also
+      # stops a hung session lingering as an orphan nobody discovers.
+      # [LAW:no-silent-failure] the `|| true` is the narrow legitimate case: a
+      # session that never existed, or already died, is the state this line is
+      # trying to reach, so its failure is genuinely irrelevant to everything
+      # downstream — and the timeout itself is already reported, loudly, above.
+      # SESSION is only ever torn down here; retiring the OLD process instead
+      # would be the wrong direction, per the note below.
+      tmux kill-session -t "$SESSION" 2>/dev/null || true
+      log "detached session $SESSION torn down; the old process remains the only live agent"
+      # Leave the old process alone: a spawn that never came up is not grounds
+      # to kill the one process that was actually still running.
+      exit 1
+    fi
+
+    log "claude ready in $SESSION"
+
+    # The successor is confirmed up and has the message; retire the old
+    # process so this handoff leaves exactly one live agent, the same
+    # guarantee the tmux (in-place reset) and iTerm2 (kill+relaunch)
+    # transports already give. TERM first, escalate to KILL if it lingers —
+    # identical escalation to the iTerm2 worker's.
+    #
+    # [LAW:no-ambient-temporal-coupling] this runs BEFORE the optional goal
+    # delivery below, and the ordering is the whole enforcement. Readiness is
+    # retirement's only precondition and it is already established above; goal
+    # delivery is optional and fallible, and under the script's `set -e` a single
+    # failing tmux command down there would abort the worker with the old process
+    # still live — an optional step silently suppressing the mandatory one. Ordered
+    # this way that cannot happen, and it cannot come back the next time a fallible
+    # command is added below, which is what guarding each command in turn would
+    # depend on. The iTerm2 worker already retires before it delivers.
+    #
+    # [LAW:parse-dont-validate] `kill -0` answers "is some process alive at this
+    # pid," which is not the question. The identity captured with the pid in the
+    # launcher is re-read here and compared: a pid the OS reissued during the delay
+    # and readiness wait reads as a different process and is left alone. A pid
+    # holding nothing reads as empty, which matches no captured identity — the
+    # gone case and the reused case take the same arm because they license the same
+    # action, which is none.
+    if _still_captured_process "$OLD_CLAUDE_PID" "$OLD_CLAUDE_IDENT"; then
+      kill -TERM "$OLD_CLAUDE_PID" 2>/dev/null || true
+      # The poll stops for BOTH endings, because they license the same action: the captured
+      # process exited, or the pid now holds someone else. Waiting on bare liveness instead
+      # would keep spinning against a stranger and then escalate to it.
+      for _ in $(seq 1 20); do
+        _still_captured_process "$OLD_CLAUDE_PID" "$OLD_CLAUDE_IDENT" || break
+        sleep 0.5
+      done
+      if _still_captured_process "$OLD_CLAUDE_PID" "$OLD_CLAUDE_IDENT"; then
+        log "old claude $OLD_CLAUDE_PID survived TERM; sending KILL"
+        kill -KILL "$OLD_CLAUDE_PID" 2>/dev/null || true
+      fi
+      log "old claude $OLD_CLAUDE_PID terminated"
+    else
+      log "old claude $OLD_CLAUDE_PID is gone: pid now holds [${IDENT_NOW:-nothing}], not the process captured at launch [$OLD_CLAUDE_IDENT]. Nothing to retire."
+    fi
+
+    if [[ -s "$GOALFILE" ]]; then
+      sleep 1
+      log "re-establishing carried goal"
+      { printf '/goal '; cat "$GOALFILE"; } | tmux load-buffer -b "$GOALBUF" -
+      tmux paste-buffer -d -b "$GOALBUF" -t "$SESSION" -p
+      sleep 0.5
+      tmux send-keys -t "$SESSION" Enter
+    fi
     ;;
 esac
