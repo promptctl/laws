@@ -613,5 +613,46 @@ case "$out" in
   *) bad "  ... but the error does not name the cause (stderr: $out)";;
 esac
 
+# Third failure shape: LAWS_LAUNCHER_PID names a pid that is LIVE but not on this process's
+# ancestry — the orphaned-session case (the launcher died, the session was reparented, and the
+# stale env survives in it). Distinct from "unset" above: the walk RUNS here and must fail loudly
+# at its could-not-find branch, with the recorded choice still surviving for a manual exit.
+# A background sleep is the bystander: alive for the whole case, and a CHILD can never be on its
+# parent's ancestry, so the walk deterministically finds no node whose parent it is.
+sig_dir3="$TMPDIR/sigtest3"; mkdir -p "$sig_dir3"
+printf '{"sessionId":"SIG3","transcript":"%s","incomingMedium":"prompt","current":"code"}\n' \
+  "$TMPDIR/sig3.jsonl" > "$sig_dir3/pending.json"
+sleep 30 & bystander=$!
+out=$(LAWS_LAUNCHER_PID=$bystander LAWS_SWITCH_DIR="$sig_dir3" "$SWITCH" tombstone 2>&1 >/dev/null)
+status=$?
+kill "$bystander"
+[ "$status" -ne 0 ] \
+  && ok "a launcher pid that is live but on no ancestor fails the walk loudly" \
+  || bad "laws-switch exited 0 with a launcher nowhere on its ancestry"
+case "$out" in
+  *"could not find the claude session under launcher"*) ok "  ... naming the branch: no session found under that launcher";;
+  *) bad "  ... but the error does not name the walk failure (stderr: $out)";;
+esac
+[ -f "$sig_dir3/request.json" ] \
+  && ok "  ... and the choice was still recorded for a manual exit" \
+  || bad "  ... but the choice was dropped rather than recorded"
+
+# ps missing entirely is an ENVIRONMENT failure, not a tree fact: it must name itself, never
+# masquerade as the walk's "could not find the session". A PATH holding only node makes ps
+# unspawnable while laws-switch itself (env-shebang) still runs. [LAW:no-silent-failure]
+sig_dir4="$TMPDIR/sigtest4"; mkdir -p "$sig_dir4/bin"
+ln -s "$(command -v node)" "$sig_dir4/bin/node"
+printf '{"sessionId":"SIG4","transcript":"%s","incomingMedium":"prompt","current":"code"}\n' \
+  "$TMPDIR/sig4.jsonl" > "$sig_dir4/pending.json"
+out=$(PATH="$sig_dir4/bin" LAWS_LAUNCHER_PID=$$ LAWS_SWITCH_DIR="$sig_dir4" "$SWITCH" tombstone 2>&1 >/dev/null)
+status=$?
+[ "$status" -ne 0 ] \
+  && ok "with ps unspawnable, the walk refuses to conclude anything about the tree" \
+  || bad "laws-switch exited 0 without being able to read the process tree at all"
+case "$out" in
+  *"ps failed to run"*) ok "  ... naming the environment failure, not a phantom walk result";;
+  *) bad "  ... but the error blames something other than ps (stderr: $out)";;
+esac
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
