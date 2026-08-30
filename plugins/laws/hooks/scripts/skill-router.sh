@@ -341,16 +341,16 @@ case "$HOOK_TYPE" in
         # identity, not inference. The launcher pins its session id up front (claude --session-id)
         # and exports it, so this compares ids rather than guessing from context.
         #
-        # Everything else that reaches this code inherits LAWS_SWITCH_DIR and BUN_INSPECT from the
-        # launcher's environment and would otherwise look eligible:
+        # Everything else that reaches this code inherits LAWS_SWITCH_DIR and LAWS_LAUNCHER_PID from
+        # the launcher's environment and would otherwise look eligible:
         #   - a dispatched SUBAGENT shares the owning session_id and is told apart only by
         #     agent_id, which is why the id check alone is not enough;
         #   - a NESTED `claude` started from a Bash call is its own top-level session - own
         #     session_id, no agent_id at all - so an "am I not a subagent" test lets it straight
         #     through.
         # Either one writing pending.json would hand the launcher a decision naming a conversation
-        # it does not own, and either one running laws-switch would drive /exit down the launcher's
-        # inspector and kill the session that started it. The subagent escape hatch this very deny
+        # it does not own, and either one running laws-switch would signal the launcher's session to
+        # exit and kill the session that started it. The subagent escape hatch this very deny
         # recommends would destroy its own caller.
         # [LAW:composability] the dependence on being the launcher's own session is checked, never
         # assumed from the ambient environment.

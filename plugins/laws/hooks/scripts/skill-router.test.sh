@@ -303,8 +303,8 @@ sub_payload() { # <session_id> <agent_id> <skill> <transcript_path>
   printf '{"session_id":"%s","agent_id":"%s","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$1" "$2" "$4" "$3"
 }
 
-# 11a. A SUBAGENT must never be offered it. laws-switch would end the session through the
-#      launcher's inspector - killing the PARENT - and operate on the parent's transcript.
+# 11a. A SUBAGENT must never be offered it. laws-switch would signal the launcher's session to
+#      exit - killing the PARENT - and operate on the parent's transcript.
 #      The subagent escape hatch the deny recommends would destroy its own caller.
 swdir2=$(mktemp -d); sw2=$(mktemp "$TMPDIR/sw2.XXXXXX.jsonl")
 printf '%s' "$(sub_payload SUB1 AGENT7 laws:code "$sw2")"   | LAWS_SWITCH_DIR="$swdir2" LAWS_SWITCH_SESSION=SUB1 "$ROUTER" guard >/dev/null 2>&1
@@ -393,9 +393,9 @@ fi
 rm -rf "$swdir6"
 
 # 12. A NESTED claude is the case an "am I a subagent" test cannot see: its own session_id, no
-#     agent_id, and it inherits LAWS_SWITCH_DIR and BUN_INSPECT from the launcher's environment.
+#     agent_id, and it inherits LAWS_SWITCH_DIR and LAWS_LAUNCHER_PID from the launcher's environment.
 #     Were it offered the switch it would overwrite the owning session's pending decision and
-#     drive /exit down the launcher's inspector, killing the session that started it.
+#     signal the launcher's session to exit, killing the session that started it.
 swdir6=$(mktemp -d); sw6=$(mktemp "$TMPDIR/sw6.XXXXXX.jsonl")
 printf '%s' "$(switch_payload NESTED laws:code "$sw6")"   | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=OWNER "$ROUTER" guard >/dev/null 2>&1
 out=$(printf '%s' "$(switch_payload NESTED laws:prompt "$sw6")" | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=OWNER "$ROUTER" guard 2>/dev/null)

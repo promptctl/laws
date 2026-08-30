@@ -3,7 +3,7 @@
 //
 // When the guard denies an incompatible craft load it leaves a pending decision behind. The agent
 // (or the user) picks one of the four options and runs this. It does TWO things and deliberately
-// no more: record the choice, then end the session through Claude's own /exit.
+// no more: record the choice, then end the session by signalling it.
 //
 // It does NOT touch the transcript. A running Claude Code appends records as it works, so surgery
 // against a live file races the writer; the launcher performs it after the process is gone.
@@ -15,8 +15,8 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const cp = require('child_process');
 const M = require(path.join(__dirname, '..', 'hooks', 'scripts', 'laws-excise.js'));
-const { connect } = require(path.join(__dirname, '..', 'hooks', 'injector', 'inspect-eval.js'));
 
 const CHOICES = Object.keys(M.SWITCH_ACTIONS);
 
@@ -78,20 +78,65 @@ fs.writeFileSync(path.join(dir, 'request.json'), JSON.stringify({
 }, null, 2) + '\n');
 fs.unlinkSync(pendingPath);
 
-// End the session through its OWN dispatch path. An agent cannot type a slash command into its own
-// session, so the exit has to arrive from outside the tool loop — which is what the inspector
-// channel is for. The trailing CARRIAGE RETURN is what submits: a newline types the text and
-// leaves it sitting at the prompt (measured).
-const wsurl = process.env.BUN_INSPECT;
-if (!wsurl) die('BUN_INSPECT is unset — cannot end the session to complete the switch. The choice is recorded; exit the session manually and it will be applied on relaunch.');
+// End the session so the launcher can apply the choice. An agent cannot end its own session from
+// inside its tool loop, so the exit has to arrive from outside it. SIGTERM is that outside push:
+// measured on 2.1.226 to exit Claude cleanly with the transcript intact and resumable, mid-turn
+// included. After the session exits, bin/claude-laws rewrites the transcript (a live file cannot be
+// edited under its writer) and relaunches with --resume. No inspector, no BUN_INSPECT: an ended
+// session needs no open eval channel, so an inherited environment hands a nested process nothing.
+//
+// WHICH PROCESS TO SIGNAL. This command runs as a descendant of the very session it must end. The
+// launcher exports its own pid as LAWS_LAUNCHER_PID, and the session is the launcher's direct child
+// — the one node on this process's ancestry whose parent is the launcher. Resolving it by that
+// relationship needs no match against the compiled binary's name (which drifts every release) and no
+// pid the launcher had to capture while it held claude in the foreground. [LAW:one-source-of-truth]
+// the launcher owns which pid is the session; this reads that relationship back rather than guessing.
+//
+// The recorded decision is already on disk before we get here, so every failure below still leaves
+// the switch pending: exit the session by any means and the launcher applies it on relaunch.
+// [LAW:no-silent-failure] each failure says so rather than reporting a completed switch.
+const recorded = 'The switch is recorded; exit the session any way you like and it is applied on the relaunch.';
+const launcherPid = Number(process.env.LAWS_LAUNCHER_PID);
+if (!Number.isInteger(launcherPid) || launcherPid <= 1) {
+  die('LAWS_LAUNCHER_PID names no launcher — this session was not started by claude-laws, so it cannot be ended from here. ' + recorded);
+}
 
-(async () => {
+// [LAW:effects-at-boundaries] the `ps` read and the signal are the only effects, gathered here at
+// the edge. `ppidOf` returns 0 for a pid that has no parent to read (gone, or unreadable), which
+// the walk treats as the top of the chain.
+function ppidOf(pid) {
   try {
-    const c = connect(wsurl);
-    await c.ready;
-    await c.injectStdin('/exit\r');
-    c.close();
-  } catch (err) {
-    die('recorded the switch but could not end the session (' + (err && err.message) + '). Exit manually and it will be applied on relaunch.');
+    const out = cp.execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+    return out ? Number(out) : 0;
+  } catch (_e) { return 0; }
+}
+
+// Walk up from this process to the node whose parent IS the launcher. The bound is a guard against a
+// cycle in a corrupted process table, never an expected depth. [LAW:no-silent-failure] a walk that
+// reaches the top without finding the launcher returns 0 and the caller reports it.
+function sessionPidUnder(launcher) {
+  let cur = process.pid;
+  for (let hop = 0; hop < 256; hop++) {
+    const parent = ppidOf(cur);
+    if (parent === launcher) return cur;
+    if (parent <= 1) return 0;
+    cur = parent;
   }
-})();
+  return 0;
+}
+
+const target = sessionPidUnder(launcherPid);
+if (!target) {
+  die('could not find the claude session under launcher ' + launcherPid + ' on this process’s ancestry. ' + recorded);
+}
+
+// Say it BEFORE the signal: SIGTERM ends the session, which tears down this command’s own process
+// tree, so a line printed afterwards may never flush.
+process.stdout.write('Switching to laws:' + pending.incomingMedium + ' via ' + choice
+  + '. Ending the session so the launcher can apply it; it resumes automatically.\n');
+try {
+  process.kill(target, 'SIGTERM');
+} catch (err) {
+  die('recorded the switch but could not signal the session (pid ' + target + ') to end: '
+    + (err && err.message) + '. ' + recorded);
+}

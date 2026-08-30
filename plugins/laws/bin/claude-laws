@@ -3,16 +3,18 @@
 #
 # Stock `claude` is untouched; you opt in by running this instead. It adds exactly two things:
 #
-#   1. BUN_INSPECT on an ephemeral loopback port, so the in-session `laws-switch` command can end
-#      the session through Claude's own /exit. An agent cannot type a slash command into its own
-#      session, so that exit has to arrive from outside its tool loop.
+#   1. LAWS_LAUNCHER_PID, this launcher's own pid, exported so the in-session `laws-switch` command
+#      can find the session process (its ancestor whose parent is this launcher) and end it with a
+#      signal. An agent cannot end its own session from inside its tool loop, so that push has to
+#      arrive from outside it — and a signal opens nothing an inherited environment could hand a
+#      nested process, unlike an inspector socket.
 #   2. A relaunch loop. When a switch is chosen, the transcript surgery runs HERE — after Claude
 #      has exited and nobody is appending to the file any more — and the session comes back with
 #      `--resume`, reading the corrected transcript.
 #
-# Nothing here reads or patches Claude's bundle: no extraction, no minified anchors, no per-version
-# cache. Both of the seams that would have required it were retired (see hooks/injector/SEAMS.md),
-# so this launcher is version-robust by construction rather than by anchor-resolution machinery.
+# Nothing here reads, patches, or attaches to Claude's process: no bundle extraction, no minified
+# anchors, no inspector, no per-version cache. The launcher drives only the public CLI, so it is
+# version-robust by construction rather than by anchor-resolution machinery.
 #
 # [LAW:no-silent-failure] every setup step that can fail is checked, and a failure degrades to a
 #   plain, working `claude` with a reason on stderr — never to a broken session and never silently.
@@ -47,78 +49,18 @@ LAWS_SWITCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/laws-switch.XXXXXX")" || {
 }
 trap 'rm -rf "$LAWS_SWITCH_DIR"' EXIT
 
-# HOLDING THE PORT UNTIL THE LAUNCH. A port that is picked and then released is a suggestion, not a
-# reservation: between the release and bun's own bind, anything on the machine that asks the OS for
-# an ephemeral port can take this one - a second claude-laws most of all, since two of them race
-# through this same line. So the port is held by a LIVE listener and released immediately before
-# claude starts, which narrows the window to bun's own bind instead of spanning the whole setup.
-# It does not close it, and nothing here can: bun opens its own listener afterwards, and no process
-# can hold a port on another process's behalf.
-#
-# WHAT LOSING THE RACE COSTS, measured against the real binary with the port already occupied:
-# claude exits 1 with `error: Failed to start server. Is port <n> in use?` and opens no session at
-# all. So the unhandled case is a launch that fails in the user's face, never a session that
-# silently cannot switch. A retry is deliberately NOT built on top of that: recognising the failure
-# means matching bun's internal error text, and reading claude's internals is the one thing this
-# launcher refuses to do (see the header). Narrow the window; leave the rare loss loud.
-#
-# The fifo is opened READ-WRITE so this shell is its own reader and opening it cannot block, and the
-# read is time-bounded so a listener that never comes up degrades instead of hanging forever.
-#
-# THE HOLDER MUST NOT OUTLIVE THIS SHELL, and release_port_hold is what guarantees it. A background
-# child inherits this launcher's stdout and stderr, so an orphaned holder does not merely waste a
-# port - it holds those descriptors open and wedges anything capturing claude-laws' output until it
-# dies. Observed, not theorised: with the release removed, the test suite hangs at the first
-# `out=$(claude-laws ...)` rather than merely failing. The answer is one release reached from every
-# path that leaves, not redirections that would make an orphan survivable.
-#
-# EVERY path that leaves, which is the part an earlier version got wrong: it released only where the
-# reservation had SUCCEEDED, and let the degrade path - where the read timed out but the listener
-# was already running - exec away with the holder still alive and fd 9 still open. That path is the
-# worse one to leak on, because `exec` replaces this shell and nothing it left behind is ever
-# collected. One function, called from both. [LAW:single-enforcer]
-#
-# PORT_HOLDER IS THE SET OF HOLDERS TO RELEASE - empty or one - never a pid that might be absent.
-# mkfifo can fail before any listener starts, and the shape that question wants is an empty set, not
-# a missing value: the loop then runs zero times on its own and every path executes the same two
-# operations in the same order. Guarding the kill with `[ -n "$PORT_HOLDER" ]` instead would put the
-# variance in whether code runs rather than in what flows through it, and a skip-shaped `if` is
-# invisible to every reader who has to decide whether this function is safe to call.
-# [LAW:dataflow-not-control-flow] [LAW:no-defensive-null-guards]
-#
-# `exec 9>&-` needs no guard of its own either: closing a descriptor that was never opened is a
-# no-op that returns 0 (measured under this file's own `set -uo pipefail`), so it is already the
-# identity operation when there is no fifo.
-PORT_HOLDER=""
-release_port_hold() {
-  for pid in $PORT_HOLDER; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
-  exec 9>&-
-}
-
-PORT_FIFO="$LAWS_SWITCH_DIR/port"
-PORT=""
-if mkfifo "$PORT_FIFO"; then
-  exec 9<>"$PORT_FIFO"
-  node -e 'const fs=require("fs"),s=require("net").createServer();s.listen(0,"127.0.0.1",()=>fs.writeFileSync(process.argv[1],s.address().port+"\n"))' "$PORT_FIFO" &
-  PORT_HOLDER=$!
-  IFS= read -r -t 10 PORT <&9
-fi
-if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
-  # `exec` replaces this shell, so the EXIT trap above will never run - the directory has to be
-  # taken along by hand or it outlives the process it belonged to.
-  log "could not reserve an inspector port; launching plain claude (craft switching disabled)"
-  release_port_hold
-  rm -rf "$LAWS_SWITCH_DIR"
-  exec "$CLAUDE_BIN" "$@"
-fi
-
 export LAWS_SWITCH_DIR
-export BUN_INSPECT="ws://127.0.0.1:$PORT/dbg"
+# THE SESSION IS ENDED BY A SIGNAL, NOT AN INSPECTOR. laws-switch finds the session (its ancestor
+# whose parent is this launcher) and sends it SIGTERM; the launcher's own pid is how it recognises
+# that ancestor. `$$` is the launcher even when read inside a subshell, so it names this loop, not a
+# transient child. There is no ephemeral port to reserve and no BUN_INSPECT to export — the reason a
+# nested `claude` inheriting this environment can no longer be handed an eval channel into the parent.
+export LAWS_LAUNCHER_PID=$$
 
-# WHO OWNS THIS SWITCH. Both variables above land in the environment of every process the agent
-# spawns, so a nested `claude` from a Bash call inherits the whole handshake and looks exactly
-# like the session that started it. Pinning the session id up front turns "is this my session"
-# into an equality test the guard can run, instead of something it has to infer.
+# WHO OWNS THIS SWITCH. The variables above land in the environment of every process the agent
+# spawns, so a nested `claude` from a Bash call inherits them and looks exactly like the session
+# that started it. Pinning the session id up front turns "is this my session" into an equality test
+# the guard can run, instead of something it has to infer.
 #
 # WHY THE SWITCH MAY BE UNAVAILABLE, carried as a value rather than a branch: one scan over the
 # user's argv yields the reason it cannot be offered, or empty when it can. The guard offers
@@ -213,9 +155,9 @@ reopen_selector() { SESSION_ARGS=(${SESSION_ARGS[@]+--resume "${SESSION_ARGS[1]}
 # SESSION_ARGS names the session the user was just in, so recovery reopens THAT session and then
 # reports the failure through the exit status.
 #
-# THE RECOVERED SESSION IS OFFERED NO SWITCH. LAWS_SWITCH_SESSION, LAWS_SWITCH_DIR and BUN_INSPECT
-# were exported once, near the top, and outlive this function - so a recovered session would offer
-# the switch, write request.json and end itself through the inspector, looking entirely functional,
+# THE RECOVERED SESSION IS OFFERED NO SWITCH. LAWS_SWITCH_SESSION, LAWS_SWITCH_DIR and
+# LAWS_LAUNCHER_PID were exported once, near the top, and outlive this function - so a recovered
+# session would offer the switch, write request.json and end itself, looking entirely functional,
 # and then land back HERE, where nothing reads the request and the EXIT trap deletes it. The user's
 # decision would be consumed and discarded without a word. Withdrawing the three variables makes the
 # switch genuinely unavailable rather than apparently working: the guard offers nothing, so nothing
@@ -225,18 +167,10 @@ recover() { # <what failed>
   log "$1"
   log "the switch was not completed; reopening the session as it was"
   reopen_selector
-  env -u LAWS_SWITCH_SESSION -u LAWS_SWITCH_DIR -u BUN_INSPECT \
+  env -u LAWS_SWITCH_SESSION -u LAWS_SWITCH_DIR -u LAWS_LAUNCHER_PID \
     "$CLAUDE_BIN" ${USER_ARGS[@]+"${USER_ARGS[@]}"} ${SESSION_ARGS[@]+"${SESSION_ARGS[@]}"}
   exit 1
 }
-
-# The reservation has done its whole job the moment claude is about to start: bun binds this port
-# itself, so it must be free by now or the launch dies on EADDRINUSE. Released here and nowhere
-# earlier - every line between the reservation and this one is a line the port cannot be stolen in.
-# [LAW:no-silent-failure] exception: a holder that has already died reports a failure that is
-# indistinguishable from success here, because the only thing this cares about is that the port is
-# free, and it is free either way.
-release_port_hold
 
 while :; do
   # bash 3.2 under `set -u` treats "${empty[@]}" as unbound, so expand through the +alternate form.

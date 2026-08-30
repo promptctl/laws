@@ -217,16 +217,12 @@ function newest(hitList) {
 // is cheapest because nothing after the pre-craft point is new.
 //
 // ALL FOUR ARE ON-DISK TRANSCRIPT SURGERY, applied by the LAUNCHER after the session has already
-// exited — no injected tool runs, and claude's native rewind is never driven. This paragraph used
-// to describe custom injected tools driving that native mechanism internally through a
-// `rewindAnchorUuid` anchor; that is Path A, and hooks/injector/SEAMS.md marks its seam SUPERSEDED
-// (2026-08-16, "do not build against it") because rewindTo() reaches the same end state through the
-// transcript alone. What ships is Path B (SEAMS.md, DONE 2026-08-23): the in-session gate records
-// the choice, the session ends, bin/claude-laws rewrites the file, and claude is relaunched with
-// --resume. The user still never types /rewind or hunts for the message, but that is because the
-// file was already rewritten before the session came back — not because anything drove a picker on
-// their behalf. A reader who believed the old text would go looking for an injected-tool component
-// that does not exist to maintain. [LAW:one-source-of-truth] SEAMS.md owns which path shipped.
+// exited — no injected tool runs, nothing attaches to claude's process, and claude's native rewind
+// is never driven. The flow is entirely public-CLI: the in-session gate records the choice,
+// laws-switch signals the session to exit, bin/claude-laws rewrites the file while nobody holds it,
+// and claude is relaunched with --resume. The user never types /rewind or hunts for the message,
+// but that is because the file was already rewritten before the session came back — not because
+// anything drove a picker on their behalf.
 //
 // The edit is conversation-only and NEVER reverts code, so on-disk file deliverables survive EVERY
 // option, 'discard' included. The frontier is over conversation context + cache cost, not on-disk work.
@@ -236,8 +232,8 @@ function newest(hitList) {
 // claimed to prevent this by tombstoning BEFORE the summary was composed — that ordering is NOT
 // achievable here and the claim has been removed rather than left to reassure a reader. The
 // summary can only be written from the live session's own context, and that context necessarily
-// still holds the craft: the live message store is closure-local, so nothing can excise the craft
-// from a running session's context before asking it to summarize (see hooks/injector/SEAMS.md).
+// still holds the craft: nothing edits a running session's in-memory conversation, so the craft
+// cannot be excised from its context before it is asked to summarize.
 // The excise does run before the summary is APPENDED TO THE FILE, but that is file ordering and
 // buys nothing against a summary already composed under the craft's influence.
 // So the protection that actually acts is the INSTRUCTION the agent composes against — carried in
@@ -311,7 +307,7 @@ function decide(rawLines, opts = {}) {
     trigger: true,
     current, incoming, deep,
     tombstoneTokens,                                       // the cost that varies with depth (option 'tombstone')
-    conflictIndices: ordered.map((h) => h.i),              // every line the injector tombstones (option 'tombstone')
+    conflictIndices: ordered.map((h) => h.i),              // every line the 'tombstone' option empties
     // Auto-targets for the rewind options, so the user never hunts for the craft message:
     //   summarizeTo = the OLDEST conflicting load line  (#3: rewind-to-craft, then tombstone + summarize)
     //   discardTo   = the message before it             (#4: rewind-to-pre-craft, then discard)
@@ -361,8 +357,8 @@ function exciseAt(rawLines, indices, activeMedium) {
 // Shipping the sever on its own would be a unit that looks like it works and silently doesn't —
 // so the rewind is ONE operation. [LAW:composability] one complete job, no setup ritual.
 //
-// This needs no bundle internals — no rewindAnchorUuid seam, no minified anchor — which is what
-// lets the gate survive weekly releases untouched.
+// This needs no bundle internals — no minified anchor, nothing read out of claude's process — which
+// is what lets the gate survive weekly releases untouched.
 //
 // Non-destructive by construction: every record stays in the file, byte-for-byte except the one
 // link field per severed branch. The discarded conversation remains on disk as an orphan branch,

@@ -51,23 +51,17 @@ write_transcript() { # <path> <session-id>
 # The stub stands in for `claude`. It records argv, and on the passes named in STUB_SWITCH_ON it
 # writes a switch request exactly as laws-switch would.
 #
-# It also records the two things about a launch that are NOT argv and that the real claude would
-# react to where a stub cannot: the switch machinery it inherited in its environment, and whether
-# the inspector port it was handed is actually free to bind. Real bun binds that port on startup and
-# dies with EADDRINUSE if it cannot (measured), so "was the reservation released before the launch"
-# is a real launch outcome, not test bookkeeping.
+# It also records the one thing about a launch that is NOT argv and that the real claude would react
+# to where a stub cannot: the switch machinery it inherited in its environment — the session pin, the
+# switch dir, and the launcher pid laws-switch signals through. A recovered launch must inherit none
+# of it (section 6), and an ordinary one must inherit all of it (section 1's baseline).
 STUB="$TMPDIR/claude-stub"
 cat > "$STUB" <<'EOS'
 #!/bin/bash
 n=$(( $(cat "$STUB_STATE/count" 2>/dev/null || echo 0) + 1 ))
 printf '%s' "$n" > "$STUB_STATE/count"
 printf '%s\n' "$*" > "$STUB_STATE/argv.$n"
-printf '%s|%s|%s\n' "${LAWS_SWITCH_SESSION-}" "${LAWS_SWITCH_DIR-}" "${BUN_INSPECT-}" > "$STUB_STATE/env.$n"
-if [ -n "${BUN_INSPECT-}" ]; then
-  bi_port=${BUN_INSPECT##*:}; bi_port=${bi_port%%/*}
-  node -e 'const s=require("net").createServer();s.on("error",()=>{process.stdout.write("BUSY");process.exit(0)});s.listen(Number(process.argv[1]),"127.0.0.1",()=>{process.stdout.write("FREE");s.close()})' \
-    "$bi_port" > "$STUB_STATE/port.$n"
-fi
+printf '%s|%s|%s\n' "${LAWS_SWITCH_SESSION-}" "${LAWS_SWITCH_DIR-}" "${LAWS_LAUNCHER_PID-}" > "$STUB_STATE/env.$n"
 case " $STUB_SWITCH_ON " in
   *" $n "*)
     # The transcript starts with laws:code engaged, so the first switch moves to prompt. Every
@@ -96,11 +90,11 @@ export LAWS_CLAUDE_BIN="$STUB"
 
 count_resume() { grep -o -- '--resume' "$1" | wc -l | tr -d ' '; }
 
-# Every per-launch record the stub keeps is cleared together. Clearing argv but leaving env or port
-# behind would let a previous section's launch answer this section's question. Extra arguments are
+# Every per-launch record the stub keeps is cleared together. Clearing argv but leaving env behind
+# would let a previous section's launch answer this section's question. Extra arguments are
 # additional paths to clear alongside them.
 reset_stub() { # [extra paths...]
-  rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.* "$STUB_STATE"/env.* "$STUB_STATE"/port.* "$@"
+  rm -f "$STUB_STATE"/count "$STUB_STATE"/argv.* "$STUB_STATE"/env.* "$@"
 }
 
 # ---- 1. one switch: the loop applies the surgery, releases the craft, and resumes -------------
@@ -140,20 +134,14 @@ grep -q '\[TOMBSTONE\]' "$STUB_TRANSCRIPT" \
   && ok "the switch was applied to the transcript" \
   || bad "the transcript was not modified"
 
-# The inspector port is RESERVED by a live listener while the launcher sets up, and that reservation
-# has to be gone by the time claude runs - bun binds the port itself and dies with EADDRINUSE if it
-# cannot (measured against the real binary). A launcher that never releases its own reservation
-# hands every session a port it has already taken.
-[ "$(cat "$STUB_STATE/port.1" 2>/dev/null)" = FREE ] \
-  && ok "the port reservation is released before claude launches, so bun can bind it" \
-  || bad "claude was launched against a port still held (probe: $(cat "$STUB_STATE/port.1" 2>/dev/null))"
-
 # The baseline the recovery-session assertions in section 6 are measured against: an ORDINARY launch
 # carries the whole handshake. Without this, "the recovered session inherits nothing" would pass
-# just as well on a launcher that never exported anything at all.
+# just as well on a launcher that never exported anything at all. The third field is the launcher
+# pid laws-switch signals through, and it must be a real pid, not merely non-empty.
 case "$(cat "$STUB_STATE/env.1" 2>/dev/null)" in
   ''|'||') bad "an ordinary launch inherited no switch machinery at all (env: $(cat "$STUB_STATE/env.1" 2>/dev/null))";;
-  *) ok "an ordinary launch inherits the session pin, the switch dir and the inspector";;
+  *'|'*'|'[0-9]*) ok "an ordinary launch inherits the session pin, the switch dir and the launcher pid";;
+  *) bad "an ordinary launch is missing part of the switch machinery (env: $(cat "$STUB_STATE/env.1" 2>/dev/null))";;
 esac
 
 # The half that used to be missing: the resumed session must be able to load the craft it
@@ -184,8 +172,8 @@ else
 fi
 
 # ---- 3. the session the switch belongs to is pinned, and one-shot mode gets no switch --------
-# The launcher exports LAWS_SWITCH_DIR and BUN_INSPECT into every process the agent spawns, so a
-# nested claude inherits the whole handshake. Pinning the session id is what lets the guard tell
+# The launcher exports LAWS_SWITCH_DIR and LAWS_LAUNCHER_PID into every process the agent spawns, so
+# a nested claude inherits the whole handshake. Pinning the session id is what lets the guard tell
 # the owning session from anything else by identity rather than inference.
 export STUB_SID="LAUNCH3"
 export STUB_TRANSCRIPT="$TMPDIR/launch3.jsonl"
@@ -344,7 +332,7 @@ write_pending() { # <dir>
 }
 
 write_pending "$sw_dir"
-out=$(env -u BUN_INSPECT LAWS_SWITCH_DIR="$sw_dir" "$SWITCH" --summary "some text" rewind_summarize 2>&1 >/dev/null)
+out=$(env -u LAWS_LAUNCHER_PID LAWS_SWITCH_DIR="$sw_dir" "$SWITCH" --summary "some text" rewind_summarize 2>&1 >/dev/null)
 status=$?
 case "$out" in
   *"some text"*) bad "the summary value was taken for the choice (stderr: $out)";;
@@ -360,10 +348,10 @@ case "$out" in
 esac
 
 # The positive half: the documented order still resolves, all the way to a written request. The
-# session cannot be ended here (no inspector), which is a later, separate failure - the request
-# on disk is the evidence the choice parsed.
+# session cannot be ended here (no launcher to signal), which is a later, separate failure - the
+# request on disk is the evidence the choice parsed.
 rm -f "$sw_dir/request.json"
-env -u BUN_INSPECT LAWS_SWITCH_DIR="$sw_dir" "$SWITCH" rewind_summarize --summary "what I did" >/dev/null 2>&1
+env -u LAWS_LAUNCHER_PID LAWS_SWITCH_DIR="$sw_dir" "$SWITCH" rewind_summarize --summary "what I did" >/dev/null 2>&1
 if [ -f "$sw_dir/request.json" ]; then
   got=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.choice+"|"+r.summary)' "$sw_dir/request.json")
   [ "$got" = "rewind_summarize|what I did" ] \
@@ -558,85 +546,72 @@ case "$out" in
 esac
 unset FAKE_APPLY
 
-# ---- 8. a reservation that never reports still releases its holder ----------------------------
-# The degrade path is the one that MUST release, not the one that may skip it: `exec` replaces this
-# shell, so anything left running is never collected by anybody. An earlier version released only
-# where the reservation had succeeded, and the launcher's own comment claimed an orphan was a state
-# the code could not reach - which was true of every path except this one.
+# ---- 8. laws-switch ends the session by SIGNALLING the launcher's own child --------------------
+# The switch is completed by SIGTERM, not an inspector. laws-switch finds the session — its ancestor
+# whose parent is LAWS_LAUNCHER_PID — and signals it. This is the one behaviour that replaced the
+# whole inspector channel, so it gets a real process tree rather than a stub: launcher → session →
+# tool-shell → laws-switch, mirroring how the in-session command actually runs (a Bash-tool
+# descendant of the very session it must end).
 #
-# `node` is shadowed for this section only, and only for the listener call: the fake records its own
-# pid and then sleeps without ever writing the port, so the launcher's bounded read times out and
-# takes the degrade branch with a holder that is genuinely still alive. Every other node call in the
-# launcher delegates to the real binary, so nothing else about the run changes.
-#
-# The assertion is the holder's liveness AFTER the launcher returns, not how long the run took: a
-# leak is a process that outlived the shell, and that is a fact about the process table rather than
-# about timing. Output goes to files rather than through `$( )` on purpose - a leaked holder holds
-# this shell's stdout open, so command substitution would hang here instead of failing, and a test
-# that hangs reports nothing.
-reset_stub
-fakebin="$TMPDIR/fakebin"; mkdir -p "$fakebin"
-REAL_NODE=$(command -v node)
-cat > "$fakebin/node" <<EOS
+# The SESSION traps SIGTERM and writes a marker, and NOTHING ELSE in the tree does. So the marker is
+# a precise pin: it appears only if the pid laws-switch signalled is the session — not the launcher
+# (that would kill this test's own subprocess, not the session), not the tool-shell it had to climb
+# past, not laws-switch itself. A walk that resolves the wrong node leaves the marker absent and the
+# case fails. The `; true` in the tool-shell stops bash from exec-collapsing it, so the walk really
+# does have a non-session frame to climb over. Every wait here is bounded, so a broken walk that
+# signals nothing fails by timeout rather than hanging the suite.
+sig_dir="$TMPDIR/sigtest"; mkdir -p "$sig_dir"
+sig_marker="$sig_dir/session-was-signalled"
+printf '{"sessionId":"SIG","transcript":"%s","incomingMedium":"prompt","current":"code"}\n' \
+  "$TMPDIR/sig.jsonl" > "$sig_dir/pending.json"
+
+cat > "$sig_dir/launcher.sh" <<'EOL'
 #!/bin/bash
-case "\$*" in
-  *createServer*writeFileSync*) printf '%s' "\$\$" > "$STUB_STATE/holder.pid"; exec sleep 60;;
-  *) exec "$REAL_NODE" "\$@";;
-esac
-EOS
-chmod +x "$fakebin/node"
-rm -f "$STUB_STATE/holder.pid"
-PATH="$fakebin:$PATH" "$LAUNCHER" --model opus >"$TMPDIR/s8.out" 2>"$TMPDIR/s8.err"
-err=$(cat "$TMPDIR/s8.err")
+# I am the launcher; my pid is what the session's parent must equal. I run the session as a direct
+# child, exactly as claude-laws runs claude.
+export LAWS_LAUNCHER_PID=$$
+export LAWS_SWITCH_DIR="$1"
+bash "$2" "$3" "$4"   # session.sh <marker> <switch-bin>
+EOL
+cat > "$sig_dir/session.sh" <<'EOS8'
+#!/bin/bash
+marker="$1"; switch="$2"
+trap 'echo hit > "$marker"; exit 0' TERM
+# tool-shell → laws-switch, a frame deeper than the session, so the ancestry walk must climb past it.
+bash -c '"$0" tombstone; true' "$switch" >/dev/null 2>&1 &
+for _ in $(seq 1 100); do [ -f "$marker" ] && break; sleep 0.1; done
+EOS8
 
-case "$err" in
-  *"could not reserve an inspector port"*) ok "a reservation that never reports degrades loudly";;
-  *) bad "the degrade was silent or never happened (stderr: $err)";;
-esac
-case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
-  *"--model opus"*) ok "  ... and still launches claude, carrying the user's own arguments";;
-  *) bad "  ... but claude was not launched with the user's arguments (argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
-esac
-case "$(cat "$STUB_STATE/env.1" 2>/dev/null)" in
-  "||") ok "  ... with no switch machinery, since there is no inspector to switch through";;
-  *) bad "  ... but the launch still carried switch machinery (env: $(cat "$STUB_STATE/env.1" 2>/dev/null))";;
-esac
+rm -f "$sig_marker" "$sig_dir/request.json"
+bash "$sig_dir/launcher.sh" "$sig_dir" "$sig_dir/session.sh" "$sig_marker" "$SWITCH"
 
-holder=$(cat "$STUB_STATE/holder.pid" 2>/dev/null)
-if [ -z "$holder" ]; then
-  bad "  ... the fake listener never ran, so this section proved nothing"
-elif kill -0 "$holder" 2>/dev/null; then
-  bad "  ... but the port holder outlived the launcher (pid $holder still alive)"
-  kill -9 "$holder" 2>/dev/null
-else
-  ok "  ... and the port holder does not outlive the launcher that started it"
-fi
-rm -rf "$fakebin"
+[ -f "$sig_marker" ] \
+  && ok "laws-switch signals the session — the launcher's own child, not the launcher or the tool-shell" \
+  || bad "the session was not signalled (marker absent; laws-switch resolved the wrong pid or none)"
+[ -f "$sig_dir/request.json" ] \
+  && ok "  ... and records the choice before ending the session, so the launcher can apply it" \
+  || bad "  ... but wrote no request.json, so the launcher would have nothing to apply"
+[ ! -f "$sig_dir/pending.json" ] \
+  && ok "  ... and consumes the pending decision it acted on" \
+  || bad "  ... but left pending.json behind, so the guard would re-offer a switch already taken"
 
-# The other way the reservation never happens: no fifo at all, so no listener is ever started and
-# there is nothing to release. This is the path where the release function is handed an EMPTY set
-# rather than one pid, and it is worth its own case because the empty set is the state a guard would
-# have been written for - the launcher must degrade the same way it does above, not die on the way.
-reset_stub
-fakebin="$TMPDIR/fakebin2"; mkdir -p "$fakebin"
-printf '#!/bin/bash\nexit 1\n' > "$fakebin/mkfifo"; chmod +x "$fakebin/mkfifo"
-PATH="$fakebin:$PATH" "$LAUNCHER" --model opus >"$TMPDIR/s8b.out" 2>"$TMPDIR/s8b.err"
-rc=$?
-err=$(cat "$TMPDIR/s8b.err")
-
-case "$err" in
-  *"could not reserve an inspector port"*) ok "a reservation with no fifo at all degrades the same way";;
-  *) bad "no fifo produced a different failure (rc=$rc, stderr: $err)";;
+# Standalone: run with NO launcher in the ancestry (LAWS_LAUNCHER_PID unset). The choice must still
+# be recorded — the request survives to be applied on any manual exit — and the failure to signal
+# must be loud, never a silently dropped switch. [LAW:no-silent-failure]
+sig_dir2="$TMPDIR/sigtest2"; mkdir -p "$sig_dir2"
+printf '{"sessionId":"SIG2","transcript":"%s","incomingMedium":"prompt","current":"code"}\n' \
+  "$TMPDIR/sig2.jsonl" > "$sig_dir2/pending.json"
+out=$(env -u LAWS_LAUNCHER_PID LAWS_SWITCH_DIR="$sig_dir2" "$SWITCH" tombstone 2>&1 >/dev/null)
+status=$?
+[ -f "$sig_dir2/request.json" ] \
+  && ok "with no launcher to signal, the choice is still recorded for a manual exit" \
+  || bad "with no launcher, the choice was dropped rather than recorded"
+[ "$status" -ne 0 ] && ok "  ... and the inability to end the session is reported, not swallowed" \
+                    || bad "  ... but laws-switch exited 0 as though it had ended the session"
+case "$out" in
+  *"not started by claude-laws"*) ok "  ... naming why: no launcher pid to find the session under";;
+  *) bad "  ... but the error does not name the cause (stderr: $out)";;
 esac
-case "$err" in
-  *"unbound variable"*) bad "  ... but releasing an empty set of holders killed the launcher (stderr: $err)";;
-  *) ok "  ... and releasing an empty set of holders is a no-op, not an error";;
-esac
-case "$(cat "$STUB_STATE/argv.1" 2>/dev/null)" in
-  *"--model opus"*) ok "  ... and claude still launches with the user's own arguments";;
-  *) bad "  ... but claude never launched (rc=$rc, argv: $(cat "$STUB_STATE/argv.1" 2>/dev/null))";;
-esac
-rm -rf "$fakebin"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
