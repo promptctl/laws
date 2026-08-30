@@ -102,19 +102,23 @@ if (!Number.isInteger(launcherPid) || launcherPid <= 1) {
 }
 
 // [LAW:effects-at-boundaries] the `ps` read and the signal are the only effects, gathered here at
-// the edge. A pid ps runs against but cannot report (gone, or unreadable) exits ps nonzero — a
-// numeric `status` on the throw — and reads as 0, which the walk treats as the top of the chain.
-// A ps that could not run at all (missing, unspawnable) is an environment failure, not a fact
-// about the tree; letting it read as "top of chain" would surface as the walk's misleading
-// "could not find the claude session", so it dies here naming the real cause instead.
-// [LAW:no-silent-failure]
+// the edge. The one legitimate "no answer" — ps ran against a pid that is gone or unreadable —
+// exits nonzero saying NOTHING (measured: status 1, empty stderr, on macOS ps and procps alike),
+// and reads as 0, the top of the chain. Every other failure is a fact about the ENVIRONMENT, not
+// the tree: ps missing or unspawnable (no numeric status), hung past the timeout (ETIMEDOUT —
+// also no status, so the same arm catches it), or rejecting this POSIX invocation outright (a
+// BusyBox-style build: nonzero WITH a usage message on stderr). Folding any of those into "top
+// of chain" would surface as the walk's misleading "could not find the claude session", so they
+// die here naming the real cause, stderr included. [LAW:no-silent-failure]
 function ppidOf(pid) {
   try {
-    const out = cp.execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+    const out = cp.execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8', timeout: 3000 }).trim();
     return out ? Number(out) : 0;
   } catch (err) {
-    if (typeof err.status === 'number') return 0;
-    die('cannot read the process tree (ps failed to run: ' + (err && err.message) + '). ' + recorded);
+    const stderr = String((err && err.stderr) || '').trim();
+    if (typeof err.status === 'number' && !stderr) return 0;
+    die('cannot read the process tree (ps failed: ' + (err && err.message)
+      + (stderr ? '; stderr: ' + stderr : '') + '). ' + recorded);
   }
 }
 

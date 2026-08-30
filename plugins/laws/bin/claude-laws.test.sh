@@ -650,8 +650,49 @@ status=$?
   && ok "with ps unspawnable, the walk refuses to conclude anything about the tree" \
   || bad "laws-switch exited 0 without being able to read the process tree at all"
 case "$out" in
-  *"ps failed to run"*) ok "  ... naming the environment failure, not a phantom walk result";;
+  *"ps failed"*) ok "  ... naming the environment failure, not a phantom walk result";;
   *) bad "  ... but the error blames something other than ps (stderr: $out)";;
+esac
+
+# A ps that RUNS but rejects this POSIX invocation (BusyBox-style) answers nonzero WITH a usage
+# message on stderr — where a genuinely gone pid answers nonzero saying nothing. The complaint
+# must surface as ps's own words, never read as "top of chain". [LAW:no-silent-failure]
+sig_dir5="$TMPDIR/sigtest5"; mkdir -p "$sig_dir5/bin"
+ln -s "$(command -v node)" "$sig_dir5/bin/node"
+printf '#!/bin/bash\necho "ps: unrecognized option: o" >&2\nexit 1\n' > "$sig_dir5/bin/ps"
+chmod +x "$sig_dir5/bin/ps"
+printf '{"sessionId":"SIG5","transcript":"%s","incomingMedium":"prompt","current":"code"}\n' \
+  "$TMPDIR/sig5.jsonl" > "$sig_dir5/pending.json"
+out=$(PATH="$sig_dir5/bin:/bin" LAWS_LAUNCHER_PID=$$ LAWS_SWITCH_DIR="$sig_dir5" "$SWITCH" tombstone 2>&1 >/dev/null)
+status=$?
+[ "$status" -ne 0 ] \
+  && ok "a ps that rejects the invocation is an environment failure, not a tree fact" \
+  || bad "laws-switch exited 0 though ps never answered a single ppid query"
+# The complaint must be quoted INSIDE the die message — execFileSync forwards the child's stderr
+# to this process's stderr regardless, so matching the complaint alone would pass even when the
+# catch silently folds the failure into "top of chain" and dies blaming the walk.
+case "$out" in
+  *"cannot read the process tree"*"unrecognized option"*) ok "  ... quoting ps's own complaint rather than a phantom walk result";;
+  *) bad "  ... but ps's complaint was folded into a walk result (stderr: $out)";;
+esac
+
+# A ps that HANGS must fail loudly by timeout, never hang the whole command: the choice is already
+# recorded, and a silent hang here is the very failure shape the deleted inspector guarded against
+# with per-call timeouts. The fake ps sleeps far past the 3s per-call timeout. [LAW:no-silent-failure]
+sig_dir6="$TMPDIR/sigtest6"; mkdir -p "$sig_dir6/bin"
+ln -s "$(command -v node)" "$sig_dir6/bin/node"
+printf '#!/bin/bash\nsleep 30\n' > "$sig_dir6/bin/ps"
+chmod +x "$sig_dir6/bin/ps"
+printf '{"sessionId":"SIG6","transcript":"%s","incomingMedium":"prompt","current":"code"}\n' \
+  "$TMPDIR/sig6.jsonl" > "$sig_dir6/pending.json"
+out=$(PATH="$sig_dir6/bin:/bin" LAWS_LAUNCHER_PID=$$ LAWS_SWITCH_DIR="$sig_dir6" "$SWITCH" tombstone 2>&1 >/dev/null)
+status=$?
+[ "$status" -ne 0 ] \
+  && ok "a hung ps dies loudly by timeout instead of hanging the command" \
+  || bad "laws-switch exited 0 though ps never answered"
+case "$out" in
+  *ETIMEDOUT*) ok "  ... naming the timeout as the cause";;
+  *) bad "  ... but the error does not name the timeout (stderr: $out)";;
 esac
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
