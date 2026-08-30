@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // laws-excise.js — the runtime gate for craft compatibility. When a session tries to engage
 // a craft skill INCOMPATIBLE with one already loaded, this offers a four-choice switch and
-// enacts it by editing the ON-DISK session transcript. Part A of the mechanism (Part B = an
-// injected self-resume that makes the running session re-read the edited file; this module is
-// the pure transcript surgery + decision logic it depends on).
+// enacts it by editing the ON-DISK session transcript. Part A of the mechanism (Part B = the
+// launcher flow: bin/laws-switch signals the session to exit, bin/claude-laws rewrites the
+// transcript once no writer holds it and relaunches with --resume; this module is the pure
+// transcript surgery + decision logic that flow depends on).
 //
 // A craft skill, when loaded via the Skill tool, lands as ONE transcript line:
 //   type:"user", isMeta:true, sourceToolUseID:<Skill tool_use id>,
