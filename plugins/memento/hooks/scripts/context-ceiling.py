@@ -210,14 +210,15 @@ def permitted(statement):
     return is_launcher(statement)
 
 def reaching_for_launcher(command):
-    """Whether an unparseable command was trying to leave. shlex's tolerance is right here and
-    wrong in `statements`: permission is already decided, and when the quoting is what broke,
-    whitespace is what is left to split on."""
+    """Whether an unparseable command was trying to leave - the launcher, not one of its worker
+    modes, so this shares is_launcher's check rather than re-deriving a looser one. shlex's
+    tolerance is right here and wrong in `statements`: permission is already decided, and when
+    the quoting is what broke, whitespace is what is left to split on."""
     try:
         words = shlex.split(command)
     except ValueError:
         words = command.split()
-    return bool(words) and same_file(words[0], LAUNCHER)
+    return bool(words) and is_launcher(words)
 
 def classify(tool_name, tool_input):
     """What this call is above the ceiling. Default-deny, so a tool nobody thought about here

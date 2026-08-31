@@ -154,6 +154,14 @@ code, out, _ = run([user, assistant(OVER),
 check("a close-out statements() cannot parse is still credited if it ran",
       code == 0 and out and "decision" not in out
       and "the close-out ran" in out.get("systemMessage", ""), str(out))
+# The ValueError fallback must refuse a worker mode exactly like the parseable path does -
+# crediting this would hide that the dangerous internal path ran, not a real close-out.
+code, out, _ = run([user, assistant(OVER),
+                    tool_use("Bash", {"command":
+                        f'{LAUNCHER} --detached-worker "$(true)" . /tmp/m /tmp/g f 1 /bin/sh id'}),
+                    tool_result()])
+check("an unparseable worker-mode call is not credited as the close-out",
+      out and out.get("decision") == "block", str(out))
 code, out, _ = run([user, assistant(OVER),
                     tool_use("Bash", {"command": f"{LAUNCHER} 'bye'"}, call_id="a"),
                     tool_result("a"),
@@ -428,6 +436,10 @@ done = subprocess.run([sys.executable, HOOK], input="{}", text=True, capture_out
                       env=isolated)
 check("a payload with no event fails loudly",
       done.returncode == 1 and "hook_event_name" in done.stderr, str(done)[:200])
+done = subprocess.run([sys.executable, HOOK], input='{"hook_event_name": "Stop"}', text=True,
+                      capture_output=True, env=isolated)
+check("a payload with no transcript_path fails loudly",
+      done.returncode == 1 and "transcript_path" in done.stderr, str(done)[:200])
 
 # A plugin root can contain a space (~/Library/Application Support/...), and unquoted the
 # only exit from the block fails to execute.
