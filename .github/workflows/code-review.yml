@@ -23,6 +23,12 @@ name: AI Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    # A PR whose changed files are ALL markdown has no code for the reviewer to
+    # review; paths-ignore skips the run only when EVERY changed file matches.
+    # '**.md', not '**/*.md': the latter requires a literal '/' and so misses
+    # root-level files like README.md.
+    paths-ignore:
+      - "**.md"
 
 permissions:
   contents: read
