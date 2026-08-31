@@ -8,6 +8,10 @@ catch. [LAW:no-ambient-temporal-coupling] so it is also enforced on PreToolUse, 
 loop cannot avoid it. Denial withholds tools, never the exit, so it cannot wedge a
 session - which is why PreToolUse needs no spent-attempt valve and keeps no state.
 
+This bounds a session that would talk itself into continuing, not one trying to escape:
+git is permitted by name, so an executable the agent planted under that name is out of
+scope, as is a git reconfigured to run something else.
+
 Anything unexpected raises: the traceback with exit 1 is Claude Code's non-blocking
 error, so the session continues and the breakage is visible.
 """
@@ -17,6 +21,7 @@ import json
 import math
 import os
 import shlex
+import shutil
 import string
 import sys
 from datetime import datetime
@@ -36,10 +41,14 @@ EVERY_PROMPT_COMPONENT = ("input_tokens", "cache_creation_input_tokens",
                           "cache_read_input_tokens", "output_tokens")
 TAIL_CHUNK = 256 * 1024
 
-# `reset --hard`, `clean -xdf`, `checkout -- .` and `branch -D` destroy the uncommitted
-# work a handoff exists to carry across a reset.
-NONDESTRUCTIVE_GIT = frozenset(("status", "diff", "log", "show", "rev-parse",
-                                "add", "commit", "push"))
+# `reset --hard`, `clean -xdf`, `checkout -- .` and `branch -D` destroy the uncommitted work
+# a handoff exists to carry across a reset; `push --force` and `commit --amend` destroy it
+# once it is committed. Reading cannot destroy anything, so those subcommands take any
+# flags; the writing ones take only the flags a close-out needs.
+READING_GIT = frozenset(("status", "diff", "log", "show", "rev-parse"))
+WRITING_GIT = {"add": frozenset(("-A", "--all")),
+               "commit": frozenset(("-m", "--message", "-a", "--all")),
+               "push": frozenset(("-u", "--set-upstream"))}
 LEFT_ALONE_BY_THE_SHELL = frozenset(string.ascii_letters + string.digits + "_@%+=:,./-")
 ENDS_WORD = frozenset(" \t")
 ENDS_STATEMENT = frozenset("&|;\n")
@@ -62,7 +71,10 @@ REFUSALS = {NEW_WORK: DENIAL, MISQUOTED_CLOSEOUT: MISQUOTED}
 
 
 def same_file(one, other):
-    return os.path.realpath(one) == os.path.realpath(other)
+    """A bare name is resolved the way the shell resolves it; the identity check still runs
+    afterwards, so an impostor found on PATH is still not the launcher."""
+    found = shutil.which(one) if os.path.basename(one) == one else one
+    return bool(found) and os.path.realpath(found) == os.path.realpath(other)
 
 
 def statements(command):
@@ -160,8 +172,11 @@ def context_tokens(transcript_path):
     return 0
 
 
-def last_tool_call(transcript_path):
-    """The most recent tool this session invoked, as (name, input, ran)."""
+def closed_out(transcript_path):
+    """Whether this session has already run the launcher successfully.
+
+    [FRAMING:representation] a denied call is written into the transcript exactly like one
+    that ran, so the result - not the command text - is what says it happened."""
     errored = set()
     for record in records_newest_first(transcript_path):
         content = record.get("message", {}).get("content")
@@ -170,19 +185,28 @@ def last_tool_call(transcript_path):
                 continue
             if block.get("is_error"):
                 errored.add(block.get("tool_use_id"))
-            if block.get("type") == "tool_use":
-                return (block.get("name"), block.get("input") or {},
-                        block.get("id") not in errored)
-    return None, {}, False
+            if (block.get("type") == "tool_use" and block.get("id") not in errored
+                    and launched(block.get("name"), block.get("input") or {})):
+                return True
+    return False
 
 
 def permitted(statement):
     """git is matched by role, because it is many files; the launcher by identity, because
     it is one, and anything else wearing that name is not the close-out."""
-    program = statement[0]
+    program, *arguments = statement
     if os.path.basename(program) == "git":
-        return len(statement) > 1 and statement[1] in NONDESTRUCTIVE_GIT
+        return bool(arguments) and permitted_git(arguments)
     return same_file(program, LAUNCHER)
+
+
+def permitted_git(arguments):
+    subcommand, *rest = arguments
+    if subcommand in READING_GIT:
+        return True
+    flags = WRITING_GIT.get(subcommand)
+    return flags is not None and all(word in flags
+                                     for word in rest if word.startswith("-"))
 
 
 def reaching_for_launcher(command):
@@ -211,10 +235,8 @@ def classify(tool_name, tool_input):
     return CLOSEOUT if parts and all(permitted(part) for part in parts) else NEW_WORK
 
 
-def launched(tool_name, tool_input, ran):
-    """[FRAMING:representation] a denied call is written into the transcript exactly like
-    one that ran, so without `ran` the gate's success and its total defeat spell alike."""
-    if not ran or tool_name != "Bash":
+def launched(tool_name, tool_input):
+    if tool_name != "Bash":
         return False
     try:
         parts = statements(tool_input.get("command") or "")
@@ -249,7 +271,7 @@ def stop(hook, tokens):
     """Blocked once, never twice: a second block would spend more context on the problem
     that IS too much context. The give-up message leaves whether the close-out ran
     conditional, because the compliant path is exactly when stop_hook_active is true."""
-    if launched(*last_tool_call(hook["transcript_path"])):
+    if closed_out(hook["transcript_path"]):
         return "closed-out", {"systemMessage": f"memento: the close-out ran at ~{tokens:,} "
                                                f"tokens, past the {CEILING:,} ceiling, so "
                                                f"the stop proceeds."}
@@ -275,7 +297,7 @@ def pretool(hook, tokens):
 
 def reason(template, tokens):
     return template.format(tokens=tokens, ceiling=CEILING,
-                           git="/".join(sorted(NONDESTRUCTIVE_GIT)),
+                           git="/".join(sorted(READING_GIT | set(WRITING_GIT))),
                            launcher=shlex.quote(LAUNCHER))
 
 

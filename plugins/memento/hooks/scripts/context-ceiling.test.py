@@ -55,7 +55,7 @@ user = {"type": "user", "isSidechain": False, "message": {"content": "hi"}}
 
 
 def run(records, event="Stop", tool_name=None, tool_input=None, stop_hook_active=False,
-        ceiling=TEST_CEILING, hook=HOOK, ceiling_file=None, log_seed=""):
+        ceiling=TEST_CEILING, hook=HOOK, ceiling_file=None, log_seed="", extra_env=None):
     """Invoke the hook as Claude Code does. Returns (exit code, parsed stdout, stderr).
 
     ceiling=None leaves MEMENTO_CONTEXT_CEILING unset, which is how a case reaches the file
@@ -72,6 +72,7 @@ def run(records, event="Stop", tool_name=None, tool_input=None, stop_hook_active
     env["MEMENTO_CEILING_FILE"] = ceiling_file or os.path.join(tempfile.mkdtemp(), "absent")
     if ceiling is not None:
         env["MEMENTO_CONTEXT_CEILING"] = str(ceiling)
+    env.update(extra_env or {})
     payload = {"session_id": "s-1", "hook_event_name": event,
                "transcript_path": handle.name, "stop_hook_active": stop_hook_active}
     if tool_name is not None:
@@ -133,6 +134,14 @@ code, out, _ = run([user, assistant(OVER),
                     tool_use("Bash", {"command": "git status"}), tool_result()])
 check("a permitted call that is not the launcher does not count as the close-out",
       out and out.get("decision") == "block", str(out))
+code, out, _ = run([user, assistant(OVER),
+                    tool_use("Bash", {"command": f"{LAUNCHER} 'bye'"}, call_id="a"),
+                    tool_result("a"),
+                    tool_use("Bash", {"command": "git push"}, call_id="b"),
+                    tool_result("b")])
+check("a confirming git call after the close-out does not undo it",
+      code == 0 and out and "decision" not in out
+      and "the close-out ran" in out.get("systemMessage", ""), str(out))
 
 # --- PreToolUse: what the close-out is allowed to do -------------------------------------
 
@@ -151,6 +160,18 @@ check("a fully-qualified git is permitted", out is None, str(out))
 
 _, out, _ = bash("git reset --hard")
 check("the destructive half of git is denied", denied(out), str(out))
+_, out, _ = bash("git push --force")
+check("git push --force is denied", denied(out), str(out))
+_, out, _ = bash("git push --force-with-lease origin main")
+check("git push --force-with-lease is denied", denied(out), str(out))
+_, out, _ = bash("git push origin --delete topic")
+check("git push --delete is denied", denied(out), str(out))
+_, out, _ = bash("git commit --amend -m rewritten")
+check("git commit --amend is denied", denied(out), str(out))
+_, out, _ = bash("git push -u origin topic")
+check("git push -u is permitted, because a close-out needs it", out is None, str(out))
+_, out, _ = bash("git status --porcelain -uall")
+check("a reading subcommand takes any flags", out is None, str(out))
 _, out, _ = bash("git branch -D topic")
 check("git branch is denied", denied(out), str(out))
 _, out, _ = bash("cat notes.md")
@@ -201,6 +222,29 @@ _, out, _ = run([user, assistant(OVER), tool_use("Bash", {"command": f"{decoy} '
                  tool_result()])
 check("an impostor close-out does not satisfy the stop either",
       out and out.get("decision") == "block", str(out))
+# On the record: git is matched by name because many real files are git, so a planted one
+# passes. This gate bounds a session that would talk itself into continuing, not one
+# trying to escape - and planting the file needs a tool call, itself denied up here.
+planted_git = os.path.join(tempfile.mkdtemp(), "git")
+open(planted_git, "w").close()
+os.chmod(planted_git, 0o755)
+_, out, _ = bash(f"{planted_git} status")
+check("an executable named git is permitted, by name and by decision", out is None, str(out))
+
+# F5: the shell would find a bare name on PATH, so the gate resolves it the same way before
+# checking identity.
+launcher_dir = os.path.dirname(LAUNCHER)
+_, out, _ = bash("finalize-session 'bye'", extra_env={"PATH": launcher_dir + os.pathsep
+                                                      + os.environ.get("PATH", "")})
+check("the launcher invoked by bare name on PATH is permitted", out is None, str(out))
+code, out, _ = run([user, assistant(OVER),
+                    tool_use("Bash", {"command": "finalize-session 'bye'"}), tool_result()],
+                   extra_env={"PATH": launcher_dir + os.pathsep + os.environ.get("PATH", "")})
+check("a bare-name close-out is credited at the stop",
+      code == 0 and out and "decision" not in out
+      and "the close-out ran" in out.get("systemMessage", ""), str(out))
+_, out, _ = bash("finalize-session 'bye'", extra_env={"PATH": os.path.dirname(decoy)})
+check("a bare name resolving to an impostor is still not the launcher", denied(out), str(out))
 
 _, out, _ = bash(f"{LAUNCHER} \"$(cat <<'EOF'\nbye\nEOF\n)\"")
 reason = (out or {}).get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
@@ -311,7 +355,11 @@ check("the log is truncated once it passes its cap",
 
 # --- wiring --------------------------------------------------------------------------------
 
-done = subprocess.run([sys.executable, HOOK], input="{}", text=True, capture_output=True)
+isolated = {k: v for k, v in os.environ.items() if k != "MEMENTO_CONTEXT_CEILING"}
+isolated["MEMENTO_CEILING_FILE"] = os.path.join(tempfile.mkdtemp(), "absent")
+isolated["MEMENTO_CEILING_LOG"] = os.path.join(tempfile.mkdtemp(), "log")
+done = subprocess.run([sys.executable, HOOK], input="{}", text=True, capture_output=True,
+                      env=isolated)
 check("a payload with no event fails loudly",
       done.returncode == 1 and "hook_event_name" in done.stderr, str(done)[:200])
 
