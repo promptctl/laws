@@ -146,7 +146,14 @@ jobs:
           # monorepo leaks every `packages/*/dist/**` bundle into the review, which is
           # exactly the ~700K-token no-signal read described above. Do not "simplify"
           # this to `**/dist/**`; that is the regression, not the cleanup.
-          EXCLUDE_PATTERNS: "dist/**,**/dist/**,build/**,**/build/**,*.lock,package-lock.json,yarn.lock,pnpm-lock.yaml"
+          #
+          # This workflow file excludes ITSELF: it is a derived copy of the template
+          # in install.sh, so findings against it would target the copy, not the
+          # source — any fix would be silently reverted on the next install run.
+          # The exclusion lives here, not in a trigger-level paths-ignore: skipping
+          # the whole run would leave a head SHA with no review, which downstream
+          # tooling reads as a broken reviewer. [LAW:one-source-of-truth]
+          EXCLUDE_PATTERNS: ".github/workflows/code-review.yml,dist/**,**/dist/**,build/**,**/build/**,*.lock,package-lock.json,yarn.lock,pnpm-lock.yaml"
 
       # The transcript is the only artifact that can explain a review that failed,
       # hung, or misbehaved — the exact prompt, the raw engine output including
