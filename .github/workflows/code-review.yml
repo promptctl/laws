@@ -120,40 +120,12 @@ jobs:
           # it — there is no barer default, and stripping it silently degrades every
           # go.mod dependency-bump review.
           DEPENDENCY_DIFF: "true"
-          # Generated, committed build output is reviewed by NO repo. A bundle is
-          # mechanically derived from sources the reviewer is already reading, so a
-          # finding against it is either a restatement of one already made upstream or
-          # a comment on machine output nobody edits — and the repo's own CI proves
-          # the bundle matches a fresh build far more exactly than a reader can.
-          # Measured here: a review that read a 1.5 MB ncc bundle spent an entire
-          # scope concluding it was a "faithful, byte-consistent rebuild", at ~700K
-          # input tokens for that zero-signal confirmation.
-          #
-          # EXCLUDE_PATTERNS REPLACES action.yml's default rather than appending to
-          # it, so the lock-file patterns are carried explicitly here. Dropping one
-          # from this line silently un-excludes it. [LAW:one-source-of-truth]
-          #
-          # The directory patterns are DOUBLED on purpose — `dist/**` and `**/dist/**`
-          # are two different patterns, not one written twice. src/diff.js compiles
-          # each pattern to an anchored regex and tests it against the full path AND
-          # the basename. That basename fallback rescues every FILE pattern for free
-          # (`*.lock` catches `packages/app/src-tauri/Cargo.lock` with no `**/`), and
-          # can never rescue a DIRECTORY pattern, because a directory pattern's match
-          # spans separators the basename has already discarded. So the two anchorings
-          # cover disjoint sets: `dist/**` -> `dist/.*` matches only at the root, and
-          # `**/dist/**` -> `.*/dist/.*` requires a leading segment and matches only
-          # below it. Carrying one alone silently un-excludes the other half — a
-          # monorepo leaks every `packages/*/dist/**` bundle into the review, which is
-          # exactly the ~700K-token no-signal read described above. Do not "simplify"
-          # this to `**/dist/**`; that is the regression, not the cleanup.
-          #
-          # This workflow file excludes ITSELF: it is a derived copy of the template
-          # in install.sh, so findings against it would target the copy, not the
-          # source — any fix would be silently reverted on the next install run.
-          # The exclusion lives here, not in a trigger-level paths-ignore: skipping
-          # the whole run would leave a head SHA with no review, which downstream
-          # tooling reads as a broken reviewer. [LAW:one-source-of-truth]
-          EXCLUDE_PATTERNS: ".github/workflows/code-review.yml,dist/**,**/dist/**,build/**,**/build/**,*.lock,package-lock.json,yarn.lock,pnpm-lock.yaml"
+          # RENDERED, not literal. The value is the universal baseline joined with
+          # whatever this repo declared in .github/code-review.conf, composed in one
+          # place — see BASELINE_EXCLUDES at the top of install.sh, where the rationale
+          # for each baseline pattern lives beside the patterns themselves, and
+          # read_repo_config, which parses the per-repo half. [LAW:one-source-of-truth]
+          EXCLUDE_PATTERNS: ".github/workflows/code-review.yml,dist/**,**/dist/**,build/**,**/build/**,*.lock,package-lock.json,yarn.lock,pnpm-lock.yaml,*.md"
 
       # The transcript is the only artifact that can explain a review that failed,
       # hung, or misbehaved — the exact prompt, the raw engine output including
