@@ -43,6 +43,8 @@ TAIL_CHUNK = 256 * 1024
 # `push --force` is knowingly permitted: git's argument surface is unbounded, and a gate that
 # blocks the commit is worse than one that permits a force-push.
 PERMITTED_GIT = frozenset(("status", "diff", "log", "show", "rev-parse", "add", "commit", "push"))
+# These three inherit git's --output=<path>: an arbitrary file write disguised as a read.
+WRITES_ON_REQUEST = frozenset(("diff", "log", "show"))
 # `-c` is excluded: `git -c alias.x='!sh -c ...' x` defines an alias that runs anything.
 GLOBAL_GIT_OPERANDS = {"-C": 1, "--no-pager": 0}
 # Recognised by the launcher only as its first argument; a pid to kill and a binary to run.
@@ -190,11 +192,17 @@ def is_launcher(statement):
 
 def is_permitted_git(statement):
     """git is matched by role, because it is many files. Which subcommand runs is found past any
-    global options; what it is then asked to do is not read."""
+    global options; what it is then asked to do is not read, with one exception: diff/log/show
+    inherit git's --output=<path>, an arbitrary-file-write hiding inside a subcommand classified
+    as read-only."""
     index = 1
     while index < len(statement) and statement[index] in GLOBAL_GIT_OPERANDS:
         index += 1 + GLOBAL_GIT_OPERANDS[statement[index]]
-    return index < len(statement) and statement[index] in PERMITTED_GIT
+    if index >= len(statement) or statement[index] not in PERMITTED_GIT:
+        return False
+    if statement[index] in WRITES_ON_REQUEST:
+        return not any(arg.startswith(("-o", "--output")) for arg in statement[index + 1:])
+    return True
 
 def permitted(statement):
     if os.path.basename(statement[0]) == "git":
@@ -226,12 +234,17 @@ def classify(tool_name, tool_input):
     return CLOSEOUT if parts and all(permitted(part) for part in parts) else NEW_WORK
 
 def launched(tool_name, tool_input):
+    """A quoting statements() rejects is not evidence nothing ran: finalize-session's own
+    contract allows quotes, backticks and $ outside the ceiling's own single-quote-only
+    instruction, so a real success there falls back to the same lenient check reaching_for_
+    launcher uses, rather than reading unparseable as unrun."""
     if tool_name != "Bash":
         return False
+    command = tool_input.get("command") or ""
     try:
-        return any(map(is_launcher, statements(tool_input.get("command") or "")))
+        return any(map(is_launcher, statements(command)))
     except ValueError:
-        return False
+        return reaching_for_launcher(command)
 
 def log(hook, tokens, verdict):
     """[LAW:no-silent-failure] a hook that allows emits nothing, and so does one that never ran;

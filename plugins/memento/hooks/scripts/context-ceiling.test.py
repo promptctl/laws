@@ -8,12 +8,24 @@ driven the way the harness drives it, so a rewrite of the internals cannot break
 Run: python3 context-ceiling.test.py
 """
 
+import atexit
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+
+# One scratch root for every mkdtemp() below, removed on exit - each call still gets its own
+# subdirectory, but the suite no longer abandons one per case in the system temp dir.
+SCRATCH = tempfile.mkdtemp(prefix="context-ceiling-test-")
+atexit.register(shutil.rmtree, SCRATCH, ignore_errors=True)
+
+
+def scratch_dir():
+    return tempfile.mkdtemp(dir=SCRATCH)
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "context-ceiling.py")
@@ -69,7 +81,7 @@ def run(records, event="Stop", tool_name=None, tool_input=None, stop_hook_active
     env = {k: v for k, v in os.environ.items() if k != "MEMENTO_CONTEXT_CEILING"}
     env["MEMENTO_CEILING_LOG"] = log.name
     # Never the real ~/.claude file: a developer's own ceiling must not decide a test.
-    env["MEMENTO_CEILING_FILE"] = ceiling_file or os.path.join(tempfile.mkdtemp(), "absent")
+    env["MEMENTO_CEILING_FILE"] = ceiling_file or os.path.join(scratch_dir(), "absent")
     if ceiling is not None:
         env["MEMENTO_CONTEXT_CEILING"] = str(ceiling)
     env.update(extra_env or {})
@@ -134,6 +146,14 @@ code, out, _ = run([user, assistant(OVER),
                     tool_use("Bash", {"command": "git status"}), tool_result()])
 check("a permitted call that is not the launcher does not count as the close-out",
       out and out.get("decision") == "block", str(out))
+# finalize-session's own contract allows backticks/$ outside the ceiling's single-quote-only
+# rule; a real, successful close-out invoked that way must still be credited at Stop.
+code, out, _ = run([user, assistant(OVER),
+                    tool_use("Bash", {"command": f'{LAUNCHER} "See `git rev-parse HEAD`"'}),
+                    tool_result()])
+check("a close-out statements() cannot parse is still credited if it ran",
+      code == 0 and out and "decision" not in out
+      and "the close-out ran" in out.get("systemMessage", ""), str(out))
 code, out, _ = run([user, assistant(OVER),
                     tool_use("Bash", {"command": f"{LAUNCHER} 'bye'"}, call_id="a"),
                     tool_result("a"),
@@ -174,6 +194,12 @@ for destructive in ("git push --force", "git push origin +main:main",
                     "git push origin :topic", "git commit --amend -m rewritten"):
     _, out, _ = bash(destructive)
     check(f"{destructive!r} is permitted, by decision", out is None, str(out))
+for write in ("git diff --output=/tmp/pwned", "git diff -o/tmp/pwned",
+             "git log --output=/tmp/pwned", "git show --output=/tmp/pwned"):
+    _, out, _ = bash(write)
+    check(f"{write!r} is denied: --output writes outside the repo", denied(out), str(out))
+_, out, _ = bash("git diff --output-indicator-new=X")
+check("an unrelated --output-* flag is denied too - over-refusal here is free", denied(out), str(out))
 _, out, _ = bash("git commit -am 'staged and messaged'")
 check("bundled short flags are permitted", out is None, str(out))
 _, out, _ = bash("git commit -m '-1 experiment'")
@@ -229,7 +255,7 @@ _, out, _ = bash(f"echo hi; {LAUNCHER} 'bye'")
 check("a permitted segment does not launder an unpermitted one", denied(out), str(out))
 _, out, _ = bash(f"cat {LAUNCHER}")
 check("merely mentioning the launcher is not running it", denied(out), str(out))
-decoy = os.path.join(tempfile.mkdtemp(), "finalize-session")
+decoy = os.path.join(scratch_dir(), "finalize-session")
 open(decoy, "w").close()
 os.chmod(decoy, 0o755)
 _, out, _ = bash(f"{decoy} 'bye'")
@@ -241,7 +267,7 @@ check("an impostor close-out does not satisfy the stop either",
 # On the record: git is matched by name because many real files are git, so a planted one
 # passes. This gate bounds a session that would talk itself into continuing, not one
 # trying to escape - and planting the file needs a tool call, itself denied up here.
-planted_git = os.path.join(tempfile.mkdtemp(), "git")
+planted_git = os.path.join(scratch_dir(), "git")
 open(planted_git, "w").close()
 os.chmod(planted_git, 0o755)
 _, out, _ = bash(f"{planted_git} status")
@@ -259,6 +285,13 @@ _, out, _ = run([user, assistant(OVER),
                  tool_result()])
 check("an internal worker call is not credited as the close-out",
       out and out.get("decision") == "block", str(out))
+# [LAW:one-source-of-truth] every worker flag the launcher itself dispatches on, read from
+# its own `case "${1:-}"` block rather than re-asserted here - a future 4th entry point is
+# denied by this loop with no line of this file to update, instead of silently reachable.
+dispatch = open(LAUNCHER).read().split('case "${1:-}"', 1)[1].split("esac", 1)[0]
+for flag in re.findall(r'^\s*(--[\w-]+)\)', dispatch, re.MULTILINE):
+    _, out, _ = bash(f"{LAUNCHER} {flag}")
+    check(f"the launcher's {flag} entry point is denied", denied(out), str(out))
 _, out, _ = bash(f"{LAUNCHER} --goal 'keep going' /next")
 check("the documented --goal shape is permitted", out is None, str(out))
 _, out, _ = bash(f"{LAUNCHER} --reset clear 'a handoff'")
@@ -389,8 +422,8 @@ check("the log is truncated once it passes its cap",
 # --- wiring --------------------------------------------------------------------------------
 
 isolated = {k: v for k, v in os.environ.items() if k != "MEMENTO_CONTEXT_CEILING"}
-isolated["MEMENTO_CEILING_FILE"] = os.path.join(tempfile.mkdtemp(), "absent")
-isolated["MEMENTO_CEILING_LOG"] = os.path.join(tempfile.mkdtemp(), "log")
+isolated["MEMENTO_CEILING_FILE"] = os.path.join(scratch_dir(), "absent")
+isolated["MEMENTO_CEILING_LOG"] = os.path.join(scratch_dir(), "log")
 done = subprocess.run([sys.executable, HOOK], input="{}", text=True, capture_output=True,
                       env=isolated)
 check("a payload with no event fails loudly",
@@ -398,7 +431,7 @@ check("a payload with no event fails loudly",
 
 # A plugin root can contain a space (~/Library/Application Support/...), and unquoted the
 # only exit from the block fails to execute.
-spaced_root = os.path.join(tempfile.mkdtemp(), "ceiling test")
+spaced_root = os.path.join(scratch_dir(), "ceiling test")
 spaced_hook = os.path.join(spaced_root, "hooks", "scripts", os.path.basename(HOOK))
 os.makedirs(os.path.dirname(spaced_hook))
 shutil.copy(HOOK, spaced_hook)
