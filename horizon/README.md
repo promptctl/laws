@@ -42,10 +42,12 @@ manifest is a real config drift, not noise.
 horizon/verify-instrument.sh
 ```
 
-Runs `pin-instrument.sh` twice and checks the manifests are byte-identical, then
-checks the isolated config dir has exactly memento installed and enabled, carries no
-`CLAUDE.md`, exposes the standard memento skills, and that the `lit` on `PATH`
-matches what the manifest recorded.
+Resolves the reviewer's pinned commit once (so a moving tag can't turn into test
+flakiness) and runs `pin-instrument.sh` twice with it, checks the manifests are
+byte-identical, then checks the isolated config dir has exactly memento installed
+and enabled, carries no `CLAUDE.md` and no `projects/` (where session memory would
+live), exposes the standard memento skills at its actual installed location, and
+that the `lit` on `PATH` matches what the manifest recorded.
 
 ## What this does not do
 

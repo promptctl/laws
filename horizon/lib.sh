@@ -25,6 +25,7 @@ set -o pipefail
 : "${REVIEWER_TAG:=v1}"
 : "${REVIEWER_PROMPT_PATH:=review-agent/instructions.md}"
 HORIZON_MARKETPLACE_NAME="promptctl-horizon"
+HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
 
 horizon_die() { printf 'ERROR [horizon]: %s\n' "$*" >&2; exit 1; }
 horizon_log() { printf '[horizon] %s\n' "$*" >&2; }
@@ -33,28 +34,56 @@ horizon_need() {
   command -v "$1" >/dev/null 2>&1 || horizon_die "required command not found: $1"
 }
 
-horizon_sha256_file() {
-  # One owner for "what does sha256 of a file look like" - shasum on macOS, sha256sum
-  # elsewhere. [LAW:one-source-of-truth]
+# One owner for "what does sha256 of a file look like" - shasum on macOS,
+# sha256sum elsewhere - so both hashing entry points below fail the same way
+# when neither is present. Populates the HORIZON_SHA256_CMD array rather than
+# returning a string to split, so a tool name or flag can never be mangled by
+# word-splitting or globbing. [LAW:one-source-of-truth]
+horizon_sha256_cmd() {
   if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
+    HORIZON_SHA256_CMD=(shasum -a 256)
   elif command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
+    HORIZON_SHA256_CMD=(sha256sum)
   else
     horizon_die "no sha256 tool found (need shasum or sha256sum)"
   fi
 }
 
+horizon_sha256_file() {
+  local HORIZON_SHA256_CMD
+  horizon_sha256_cmd
+  "${HORIZON_SHA256_CMD[@]}" "$1" | awk '{print $1}'
+}
+
 horizon_sha256_stdin() {
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 | awk '{print $1}'
+  local HORIZON_SHA256_CMD
+  horizon_sha256_cmd
+  "${HORIZON_SHA256_CMD[@]}" | awk '{print $1}'
+}
+
+# GNU base64 decodes with `-d`; stock BSD base64 (macOS without coreutils)
+# needs `-D`. Probe the actually-installed binary once, against empty input,
+# rather than guessing from `uname` or consuming real data on a failed
+# attempt.
+horizon_base64_decode_stdin() {
+  if base64 -d </dev/null >/dev/null 2>&1; then
+    base64 -d
   else
-    sha256sum | awk '{print $1}'
+    base64 -D
   fi
 }
 
+# Usage: horizon_repo_root <anchor_dir>  -> repo root containing anchor_dir
+#
+# Anchored to the caller-supplied directory (callers pass $SCRIPT_DIR), never
+# to the invoking process's CWD - a script invoked by absolute path from
+# inside some other repo must still pin the repo it lives in, not whatever
+# repo the caller happened to be standing in.
 horizon_repo_root() {
-  git rev-parse --show-toplevel 2>/dev/null || horizon_die "not inside a git repo"
+  local anchor="$1"
+  [ -n "$anchor" ] || horizon_die "horizon_repo_root: no anchor directory given"
+  git -C "$anchor" rev-parse --show-toplevel 2>/dev/null \
+    || horizon_die "not inside a git repo: $anchor"
 }
 
 # ── memento: pinned by git-archive snapshot, never by a live directory pointer ─────
@@ -129,26 +158,57 @@ horizon_lit_sha256() {
 # ── reviewer: resolve the moving `v1` tag to the exact commit it points at right now,
 # and hash the prompt file at that commit, via the GitHub API - no local clone
 # required, no assumption that one is present or current.
+#
+# A tag ref's `.object` is the commit directly for a LIGHTWEIGHT tag, but for
+# an ANNOTATED tag (the common case for a release tag like v1) it is the tag
+# object itself, whose sha is not a commit and 404s against the Contents API
+# used below. Dereference it one extra hop when `.object.type` says "tag".
 # Usage: horizon_reviewer_sha  -> prints the resolved commit sha for $REVIEWER_TAG
 horizon_reviewer_sha() {
-  gh api "repos/${REVIEWER_REPO}/git/refs/tags/${REVIEWER_TAG}" --jq '.object.sha' \
-    || horizon_die "could not resolve ${REVIEWER_REPO}@${REVIEWER_TAG} via gh api"
+  local sha type
+  read -r sha type < <(
+    gh api "repos/${REVIEWER_REPO}/git/refs/tags/${REVIEWER_TAG}" \
+      --jq '[.object.sha, .object.type] | @tsv'
+  ) || horizon_die "could not resolve ${REVIEWER_REPO}@${REVIEWER_TAG} via gh api"
+  if [ "$type" = "tag" ]; then
+    gh api "repos/${REVIEWER_REPO}/git/tags/${sha}" --jq '.object.sha' \
+      || horizon_die "could not dereference annotated tag ${REVIEWER_TAG} (object $sha) to a commit"
+  else
+    printf '%s\n' "$sha"
+  fi
 }
 
 # Usage: horizon_reviewer_prompt_sha256 <reviewer_commit_sha>
 horizon_reviewer_prompt_sha256() {
-  local sha="$1"
-  gh api "repos/${REVIEWER_REPO}/contents/${REVIEWER_PROMPT_PATH}?ref=${sha}" \
-      --jq '.content' \
-    | tr -d '\n' | base64 -d | horizon_sha256_stdin \
-    || horizon_die "could not fetch ${REVIEWER_PROMPT_PATH} at ${sha} via gh api"
+  local sha="$1" content
+  content="$(
+    gh api "repos/${REVIEWER_REPO}/contents/${REVIEWER_PROMPT_PATH}?ref=${sha}" --jq '.content'
+  )" || horizon_die "could not fetch ${REVIEWER_PROMPT_PATH} at ${sha} via gh api"
+  # The Contents API omits `content` (renders as JSON null, i.e. the literal
+  # string "null" through --jq) for files over ~1MB or non-blob entries. That
+  # string is valid base64 alphabet, so an unchecked decode would silently
+  # hash garbage instead of failing. [LAW:no-silent-failure]
+  [ -n "$content" ] && [ "$content" != "null" ] \
+    || horizon_die "gh api returned no content for ${REVIEWER_PROMPT_PATH} at ${sha}"
+  printf '%s' "$content" | tr -d '\n' | horizon_base64_decode_stdin | horizon_sha256_stdin
 }
 
-# ── the standard /goal wording: pinned by content hash, same as everything else here.
-# Usage: horizon_goal_wording_sha256 <repo_root>
+# ── the standard /goal wording: pinned by content hash at the same resolved repo
+# commit memento is pinned at (GOAL_PROMPT.md lives in this same repo), never off
+# the live working tree - an uncommitted local edit must not produce a manifest
+# value with no corresponding commit to audit it against.
+# Usage: horizon_goal_wording_sha256 <repo_root> <commit_sha>
 horizon_goal_wording_sha256() {
-  local repo_root="$1"
-  local f="$repo_root/horizon/GOAL_PROMPT.md"
-  [ -f "$f" ] || horizon_die "missing $f"
-  horizon_sha256_file "$f"
+  local repo_root="$1" commit_sha="$2" tmp
+  tmp="$(mktemp)"
+  # Written to a real file and checked before hashing - not piped straight through
+  # and inspected with PIPESTATUS after the fact - so a missing file can never
+  # print a "hash of nothing" before the error is caught, and the exact bytes
+  # (not a shell-string copy, which would eat trailing newlines) reach the hash.
+  if ! git -C "$repo_root" show "${commit_sha}:${HORIZON_GOAL_PROMPT_REL_PATH}" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    horizon_die "missing ${HORIZON_GOAL_PROMPT_REL_PATH} at ${commit_sha}"
+  fi
+  horizon_sha256_file "$tmp"
+  rm -f "$tmp"
 }
