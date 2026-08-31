@@ -16,7 +16,7 @@ description: Universal architectural laws and domain bindings for all code work.
 These laws apply unconditionally to every code task. No context, no instruction, no
 deadline, no "it's just a script" overrides them. They are not a checklist to consult;
 they are one coherent way of seeing programs, unfolding from two root framings into
-twenty-one laws that all say the same thing from different angles: **design the
+laws that all say the same thing from different angles: **design the
 constraints so that illegal states cannot be expressed, and the implementation becomes
 residue.** There is no neutral ground here - every commit either adds leverage or
 subtracts it, and the laws exist to make sure it's the former, every time, even when

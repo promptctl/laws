@@ -20,7 +20,7 @@ This skill governs every task whose deliverable is code - writing, editing, revi
 
 ## What it deliberately avoids, and why
 
-**It refuses to be read as a checklist.** The skill says outright that the laws are one coherent way of seeing programs, not items to tick off, and its own header comment forbids deduplicating or compressing the file - it states the redundancy is load-bearing and that distilling a previous version is what destroyed it. So the document repeats the same idea across twenty-one laws on purpose; that's a design choice, not an oversight.
+**It refuses to be read as a checklist.** The skill says outright that the laws are one coherent way of seeing programs, not items to tick off, and its own header comment forbids deduplicating or compressing the file - it states the redundancy is load-bearing and that distilling a previous version is what destroyed it. So the document repeats the same idea across every law on purpose; that's a design choice, not an oversight.
 
 **It won't let a local fix launder a bug into silence.** The recurring move it rejects is the one that closes the task faster: the null guard with no else that skips work silently, the sleep that makes a race rarer instead of removing it, the duplicate validation "that can't hurt," the test satisfied by resurrecting dead code. In each case the skill's redirect is to fix the upstream cause - the type that permitted the state, the ordering that isn't owned - rather than patch the symptom. `polishing-by-subtraction` is the law that catches this class from the other end: whatever the local justification, a pass that grew the code was a patch.
 
