@@ -81,12 +81,12 @@ with `feature × accumulated-roughness`. Same multiplier as the smooth case, opp
 sign, and the sign is determined by whether you smoothed the piece before moving on.
 
 This framing has four faces, and the laws divide among them:
-- **How you cut** - where the part boundaries fall (`decomposition` and its boundary
+- **How you cut** - where the part boundaries fall (`[LAW:decomposition]` and its boundary
   corollaries).
 - **What the seams are made of** - the types at the boundaries
-  (`types-are-the-program` and its dataflow corollaries).
-- **When things happen** - ordering and lifecycle (`no-ambient-temporal-coupling`).
-- **Where the world intrudes** - effects and I/O (`effects-at-boundaries`).
+  (`[LAW:types-are-the-program]` and its dataflow corollaries).
+- **When things happen** - ordering and lifecycle (`[LAW:no-ambient-temporal-coupling]`).
+- **Where the world intrudes** - effects and I/O (`[LAW:effects-at-boundaries]`).
 
 The first two faces are deeply developed below; the last two are acknowledged and
 real but intentionally less elaborated for now - they are slated for expansion, not
@@ -138,8 +138,8 @@ Diagnostic: *can you say what this unit is for in one plain sentence with no
 conjunction?*
 
 Primary law of `[FRAMING:parts-and-seams]` - the "how you cut" face. Everything in
-the boundary corollaries (`locality-or-seam`, `one-way-deps`,
-`no-shared-mutable-globals`) is this law meeting a specific situation.
+the boundary corollaries (`[LAW:locality-or-seam]`, `[LAW:one-way-deps]`,
+`[LAW:no-shared-mutable-globals]`) is this law meeting a specific situation.
 
 ## [LAW:types-are-the-program] - the types are the program
 
@@ -273,7 +273,7 @@ growing another beside it (compounding the trap). Smooth blocks leave the corner
 
 Diagnostic: *could a stranger use this unit correctly without reading its caller?*
 
-Consequence of `decomposition` + `types-are-the-program`: cut at the joints, make
+Consequence of `[LAW:decomposition]` + `[LAW:types-are-the-program]`: cut at the joints, make
 the seams exact, and composability is what falls out.
 
 ## [LAW:carrying-cost] - the price is what it costs to keep, not to build
@@ -321,7 +321,7 @@ variants is easy - each variant inherits the shape. Going from many divergent
 implementations back to one abstraction is hard - every caller has adapted to the
 specific implementation it sees, and unification must undo all of it. When an
 abstraction does start to hurt, that is mode-explosion in disguise
-(`no-mode-explosion`): it wasn't caused by abstracting, it was caused by *stretching*
+(`[LAW:no-mode-explosion]`): it wasn't caused by abstracting, it was caused by *stretching*
 one abstraction over shapes it wasn't designed for. The fix is to fork - give the new
 shape its own home - not to swear off abstraction.
 
@@ -332,7 +332,7 @@ stop digging.
 
 Diagnostic: *what does this decision cost every future task - not this one?*
 
-Consequence of `composability`: the economics of smooth blocks, stated as law so the
+Consequence of `[LAW:composability]`: the economics of smooth blocks, stated as law so the
 short-term filter can't quietly reassert itself.
 
 ## [LAW:polishing-by-subtraction] - a pass that grew the code was a patch
@@ -388,8 +388,8 @@ to blame, and the codebase only ever grows.
 Diagnostic: *did this pass leave less code than it found - and if not, what constraint
 did I fail to lift?*
 
-Instance of `types-are-the-program` - the discipline that follows once constraints do
-the work - and the enforcement arm of `carrying-cost`, which is why growth is never
+Instance of `[LAW:types-are-the-program]` - the discipline that follows once constraints do
+the work - and the enforcement arm of `[LAW:carrying-cost]`, which is why growth is never
 free.
 
 ---
@@ -423,7 +423,7 @@ awaits.
 Diagnostic: *if every operation ran twice as fast - or twice as slow - would this
 still be correct?*
 
-The "when" face of `[FRAMING:parts-and-seams]`; instance of `types-are-the-program`
+The "when" face of `[FRAMING:parts-and-seams]`; instance of `[LAW:types-are-the-program]`
 - temporal assumptions are constraints, and if they live in timing folklore instead
 of a typed state, illegal call orders remain representable.
 
@@ -448,7 +448,7 @@ where all the danger is gathered in one auditable place.
 Diagnostic: *could you unit-test this function with no mocks at all?*
 
 The "where the world intrudes" face of `[FRAMING:parts-and-seams]`; instance of
-`types-are-the-program` - a hidden effect is an input or output the signature lies
+`[LAW:types-are-the-program]` - a hidden effect is an input or output the signature lies
 about.
 
 ---
@@ -488,7 +488,7 @@ Diagnostic: *if these two disagree, which one is lying? If that question has no
 answer, the architecture is broken.*
 
 Instance of `[FRAMING:representation]` at full strength, and of
-`types-are-the-program`: two divergable representations are an under-constrained
+`[LAW:types-are-the-program]`: two divergable representations are an under-constrained
 type - the constraint that they agree is encoded nowhere.
 
 ## [LAW:single-enforcer] - one checkpoint per rule
@@ -505,14 +505,14 @@ about what holding up pants means.
 
 The temptation arrives as: *"one more validation here can't hurt."* It can, and it
 will: the duplicate is a second source of truth for the invariant
-(`one-source-of-truth` for enforcement logic), it will drift from the canonical
+(`[LAW:one-source-of-truth]` for enforcement logic), it will drift from the canonical
 check, and the day they disagree, callers will trust whichever one they happen to
 pass through. Refuse it. The redirect: find where the invariant canonically lives; if
 this isn't it, delete the local check and route through the boundary that is.
 
 Diagnostic: *where is THE place this invariant is enforced - and is this it?*
 
-Instance of `one-source-of-truth`, applied to enforcement; the single enforcer is
+Instance of `[LAW:one-source-of-truth]`, applied to enforcement; the single enforcer is
 where the type-level invariant lives when the type system can't carry it.
 
 ## [LAW:comments-carry-meaning] - the code is the mechanism; the comment is the meaning
@@ -542,14 +542,14 @@ it"*: check the altitude first - a teaching gloss or a simplification does work 
 cannot see *because* you can already read the code. And never flood the other way: the
 author's mood, the ticket's backstory, the whole domain re-taught belong outside the
 frame, not in the caption. When a caption has drifted from its frame, repair is
-subtraction (`polishing-by-subtraction`): the true version is shorter than the lie,
+subtraction (`[LAW:polishing-by-subtraction]`): the true version is shorter than the lie,
 often empty. Growing a stale line to cover its gap is how one wrong comment becomes a
 paragraph nobody trusts.
 
 Diagnostic: *does this comment stand at an altitude the code does not - a
 simplification, an intent, a relationship - while staying scoped to this code?*
 
-Instance of `one-source-of-truth` at the code's own altitude only: a same-altitude echo
+Instance of `[LAW:one-source-of-truth]` at the code's own altitude only: a same-altitude echo
 is a second copy that will drift; a comment pitched higher is a distinct rendering, not
 a rival source. Under `[FRAMING:representation]`, keep the view the code cannot supply.
 
@@ -619,7 +619,7 @@ discriminated variant handled exhaustively.
 Diagnostic: *does the set of operations executed depend on the input? It shouldn't -
 only the values flowing through them should.*
 
-Instance of `types-are-the-program`: variability in values is variability the type
+Instance of `[LAW:types-are-the-program]`: variability in values is variability the type
 carries and the compiler checks; variability in whether code runs is invisible to
 the type system, forever.
 
@@ -641,8 +641,8 @@ values.
 
 Diagnostic: *what differs besides the name? If only config - one type, N instances.*
 
-Instance of `dataflow-not-control-flow` (config is values crossing one boundary, not
-structure) and thus of `types-are-the-program`.
+Instance of `[LAW:dataflow-not-control-flow]` (config is values crossing one boundary, not
+structure) and thus of `[LAW:types-are-the-program]`.
 
 ## [LAW:no-mode-explosion] - every switch is a debt
 
@@ -663,7 +663,7 @@ date. A flag no one plans to delete is a mode you have adopted forever.
 
 Diagnostic: *who deletes this flag, and when?*
 
-Instance of `one-type-per-behavior` and `dataflow-not-control-flow`: a mode is
+Instance of `[LAW:one-type-per-behavior]` and `[LAW:dataflow-not-control-flow]`: a mode is
 variability that escaped the data and lodged in the structure.
 
 ## [LAW:parse-dont-validate] - parse, don't validate
@@ -672,7 +672,7 @@ variability that escaped the data and lodged in the structure.
 keeps it - in the type. That one-word difference decides whether a question stays
 answered or gets asked again in every function it passes through.**
 
-The image to hold is `single-enforcer`'s border checkpoint, followed inland. Raw
+The image to hold is `[LAW:single-enforcer]`'s border checkpoint, followed inland. Raw
 input is a traveler; the checkpoint is the one place on the map where papers are
 checked. The traveler leaves the checkpoint
 with a stamp - a new type that says, to everyone inland, *already checked*. Inland
@@ -688,13 +688,13 @@ checked input from unchecked. So it checks again. A parser returns a *different*
 than it was given - `parse(input: unknown): Author` - and the output type IS the
 proof. Downstream signatures demand `Author`, so unvalidated data cannot even reach
 them; the check cannot be repeated, because inland there is nothing left to check.
-`single-enforcer` by construction, not by discipline.
+`[LAW:single-enforcer]` by construction, not by discipline.
 
 Three legs make a real boundary - visible in the shape of the code, not asserted about
 it:
 
 1. **A dedicated unit.** Validation is a job, and a job gets its own unit -
-   `decomposition` applied to validation. The crossing is that unit's entire reason to
+   `[LAW:decomposition]` applied to validation. The crossing is that unit's entire reason to
    exist. It is not the first line of a function whose job is something else.
 2. **A proving output type.** The unit returns a type that could not have existed
    before the check. Everything downstream requires that type in its signature, which
@@ -719,10 +719,10 @@ information at the exact moment its job was to establish it.
 **The real price of the one-line guard.** The inline guard bills itself as one line.
 Count what it actually costs: one more exit path through a function already carrying
 its real logic - an undeclared mode threaded through the return value,
-`no-mode-explosion` at function scale; a return value with two meanings (invalid input vs. genuinely
-empty), forever; an obligation on every reader at every call site to trace which
-caller states can reach the guard; and the forfeiture of the type fix that would have
-deleted the question everywhere at once.
+`[LAW:no-mode-explosion]` at function scale; a return value with two meanings (invalid
+input vs. genuinely empty), forever; an obligation on every reader at every call site
+to trace which caller states can reach the guard; and the forfeiture of the type fix
+that would have deleted the question everywhere at once.
 
 You will be deep in a function, the parameter will be optional, and you will hear
 yourself compose: *"This is a real precondition at the trust boundary, not a
@@ -753,7 +753,7 @@ function pairPushbacks(comments, { findingReviewIds = [], authorLogin } = {}) {
 ```
 
 The bag-of-optionals signature admits the illegal call, so the body compensates for
-the under-constrained type (`types-are-the-program`); the comment argues for a
+the under-constrained type (`[LAW:types-are-the-program]`); the comment argues for a
 boundary the shape denies; the `[]` is an answer-shaped void.
 
 RIGHT - the checkpoint upstream, the stamp inland:
@@ -774,9 +774,9 @@ checks papers, because inland there are no papers left to check - only the stamp
 Diagnostic: *does the check return a type that could not have existed before it ran -
 or the same type it was given?*
 
-Instance of `types-are-the-program` - the stamped type is the strongest true theorem
+Instance of `[LAW:types-are-the-program]` - the stamped type is the strongest true theorem
 about input that has crossed the border - and the structural test behind
-`no-defensive-null-guards`' boundary exception: its three legs are what that law
+`[LAW:no-defensive-null-guards]`' boundary exception: its three legs are what that law
 means by a real boundary.
 
 ## [LAW:no-defensive-null-guards] - fix the front door, fire the guards
@@ -820,7 +820,7 @@ RIGHT:
 function render(user: User) {    // the signature states the precondition
   drawHeader(user.name);
 }
-// The caller that "might not have a user" is the checkpoint (`parse-dont-validate`)
+// The caller that "might not have a user" is the checkpoint (`[LAW:parse-dont-validate]`)
 // - IT resolves the optionality once (fetch, redirect, or explicit EmptyState), and
 // everything below breathes typed, guaranteed air.
 ```
@@ -834,8 +834,8 @@ skip-shaped `if`.
 
 Diagnostic: *why can this be null - and should it be able to?*
 
-Instance of `types-are-the-program` (a guard is the body begging for the optionality
-to be lifted into the type) and of `dataflow-not-control-flow` (a guard with no else
+Instance of `[LAW:types-are-the-program]` (a guard is the body begging for the optionality
+to be lifted into the type) and of `[LAW:dataflow-not-control-flow]` (a guard with no else
 is an operation that sometimes doesn't run).
 
 ---
@@ -861,8 +861,8 @@ of this kind is then one edit. The seam *is* the type.
 
 Diagnostic: *why does this change ripple? Name the missing boundary type.*
 
-Instance of `decomposition` (the joint was missed) and `types-are-the-program` (the
-missing seam is a missing type).
+Instance of `[LAW:decomposition]` (the joint was missed) and
+`[LAW:types-are-the-program]` (the missing seam is a missing type).
 
 ## [LAW:one-way-deps] - water flows downhill
 
@@ -882,7 +882,7 @@ the lower layer defines and the upper implements. Downhill either way.
 Diagnostic: *can you draw the module arrows with none pointing up and none forming a
 loop?*
 
-Instance of `decomposition`: a cycle is a mis-cut joint, and the extraction is the
+Instance of `[LAW:decomposition]`: a cycle is a mis-cut joint, and the extraction is the
 re-cut.
 
 ## [LAW:no-shared-mutable-globals] - the commons needs an owner
@@ -904,8 +904,8 @@ documented invariants are its theorem.
 
 Diagnostic: *who owns writes to this - and would their signature reveal it?*
 
-Instance of `types-are-the-program` (the API is the constraint made manifest), on the
-boundary face of `decomposition`.
+Instance of `[LAW:types-are-the-program]` (the API is the constraint made manifest), on the
+boundary face of `[LAW:decomposition]`.
 
 ---
 
@@ -944,7 +944,7 @@ build the feature; run it; report the result *with* the evidence.
 Diagnostic: *what deterministic check separates success from failure here - and have
 you run it?*
 
-Instance of `types-are-the-program` (define the type of done) and
+Instance of `[LAW:types-are-the-program]` (define the type of done) and
 `[FRAMING:representation]` (a claim of success is a map; the check is the territory).
 
 ## [LAW:behavior-not-structure] - taste the dish, not the elbow
@@ -970,7 +970,7 @@ Diagnostic: *could a completely different implementation of the same contract pa
 this test?*
 
 Process instance of `[FRAMING:representation]`: the test is a map of the contract,
-not of the code; and of `types-are-the-program` - structure is the type system's job
+not of the code; and of `[LAW:types-are-the-program]` - structure is the type system's job
 to enforce, so tests are freed to assert meaning.
 
 ## [LAW:no-silent-failure] - never remove the battery from the smoke alarm
@@ -991,7 +991,7 @@ FORBIDDEN patterns - on sight, these are bugs:
   The *only* acceptable use is when the failure is genuinely irrelevant to every
   downstream consumer - and if you're unsure, it's not irrelevant.
 - `|| echo "default"` / silent fallback values - an answer-shaped void
-  (`parse-dont-validate`).
+  (`[LAW:parse-dont-validate]`).
 - **Silent fallback data sources** - the worst of the family. Two queries that look
   similar but differ in filtering, ordering, or semantics (say, "ready work
   respecting dependencies" vs. "all open items") are NOT interchangeable; a fallback
@@ -1020,7 +1020,7 @@ Diagnostic: *if this fails at 3 a.m., does anyone find out - and does the messag
 say where to look?*
 
 Instance of `[FRAMING:representation]` (an error is the truth; suppressing it is
-falsifying the map) and sibling of `verifiable-goals`: loud failure is what makes
+falsifying the map) and sibling of `[LAW:verifiable-goals]`: loud failure is what makes
 verification mean anything.
 
 ---
@@ -1047,7 +1047,7 @@ misread the binding.
 
 **Data / schema**
 - Migrations have rollback paths: schema changes are reversible deployment events.
-- Avoid dual-write - it is `one-source-of-truth` violated on purpose. If genuinely
+- Avoid dual-write - it is `[LAW:one-source-of-truth]` violated on purpose. If genuinely
   unavoidable, define explicit cutover criteria and a deadline, in writing, before
   the first double write.
 
@@ -1073,28 +1073,29 @@ misread the binding.
 
 # THE RECAP - carry this out the door
 
-**Partitioning** - `decomposition` cuts at the joints; `locality-or-seam`,
-`one-way-deps`, and `no-shared-mutable-globals` keep the cuts honest under change,
-under dependency, and under sharing.
+**Partitioning** - `[LAW:decomposition]` cuts at the joints; `[LAW:locality-or-seam]`,
+`[LAW:one-way-deps]`, and `[LAW:no-shared-mutable-globals]` keep the cuts honest
+under change, under dependency, and under sharing.
 
-**Truthfulness** - `types-are-the-program` makes the compiler the mapkeeper;
-`one-source-of-truth`, `single-enforcer`, and `comments-carry-meaning` allow each
-fact, each invariant, and each meaning exactly one authoritative home; and
-`parse-dont-validate` keeps a checked fact checked - the proof lives in the type, so
-nobody inland ever asks again.
+**Truthfulness** - `[LAW:types-are-the-program]` makes the compiler the mapkeeper;
+`[LAW:one-source-of-truth]`, `[LAW:single-enforcer]`, and `[LAW:comments-carry-meaning]`
+allow each fact, each invariant, and each meaning exactly one authoritative home; and
+`[LAW:parse-dont-validate]` keeps a checked fact checked - the proof lives in the type,
+so nobody inland ever asks again.
 
-**Contact with the world** - `no-ambient-temporal-coupling` turns time into owned
-state; `effects-at-boundaries` keeps the fire in the hearth.
+**Contact with the world** - `[LAW:no-ambient-temporal-coupling]` turns time into owned
+state; `[LAW:effects-at-boundaries]` keeps the fire in the hearth.
 
-**The composability payoff** - `dataflow-not-control-flow`, `one-type-per-behavior`,
-and `no-mode-explosion` push variability into values so that `composability` can
-turn N blocks into N² capability - and `carrying-cost` is why the payoff, not the
-build price, is the number that matters. `polishing-by-subtraction` is how you know a
-pass got you there: it left less code than it found.
+**The composability payoff** - `[LAW:dataflow-not-control-flow]`,
+`[LAW:one-type-per-behavior]`, and `[LAW:no-mode-explosion]` push variability into
+values so that `[LAW:composability]` can turn N blocks into N² capability - and
+`[LAW:carrying-cost]` is why the payoff, not the build price, is the number that
+matters. `[LAW:polishing-by-subtraction]` is how you know a pass got you there: it left
+less code than it found.
 
-**Observable correctness** - `verifiable-goals` gives done a shape,
-`behavior-not-structure` tests the contract not the plumbing, and
-`no-silent-failure` guarantees that when reality disagrees, you hear it.
+**Observable correctness** - `[LAW:verifiable-goals]` gives done a shape,
+`[LAW:behavior-not-structure]` tests the contract not the plumbing, and
+`[LAW:no-silent-failure]` guarantees that when reality disagrees, you hear it.
 
 Run your hand over the code before you leave it. Anything that snags - a bespoke
 type, a guard with no else, a papers-check far from any border, a comment doing a
