@@ -152,7 +152,13 @@ horizon_lit_path() {
 }
 
 horizon_lit_sha256() {
-  horizon_sha256_file "$(horizon_lit_path)"
+  # Captured into a checked assignment, not nested straight into the next call's
+  # argument list - a nested `$(horizon_lit_path)` that fails would have its exit()
+  # discarded (it only ends the inner subshell), silently handing
+  # horizon_sha256_file an empty filename instead of surfacing horizon_die's message.
+  local p
+  p="$(horizon_lit_path)"
+  horizon_sha256_file "$p"
 }
 
 # ── reviewer: resolve the moving `v1` tag to the exact commit it points at right now,

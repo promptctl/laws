@@ -47,10 +47,14 @@ main() {
   horizon_need gh
   horizon_need claude
   horizon_need python3
+  horizon_need lit
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
-  [ -z "$memento_ref" ] && memento_ref="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)"
+  # "HEAD" is a ref horizon_resolve_memento_ref already resolves fine - no git call
+  # needed here to pre-resolve it to a branch name. [LAW:single-enforcer] every git
+  # invocation stays inside lib.sh.
+  [ -z "$memento_ref" ] && memento_ref="HEAD"
 
   mkdir -p "$run_dir"
 
