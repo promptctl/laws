@@ -21,7 +21,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
-WORK="$(mktemp -d)"
+# Canonicalized at creation: on macOS mktemp -d hands back /var/... while the real
+# path is /private/var/..., and the isolation check below compares a path derived from
+# this against one the claude CLI may report already resolved. [LAW:one-source-of-truth]
+WORK="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$WORK"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -57,15 +60,20 @@ main() {
 
   local config_dir="$WORK/run1/config"
   local plugin_list
-  plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" claude plugin list --json)"
+  plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" claude plugin list --json)" \
+    || fail "could not read claude plugin list --json from the isolated config dir"
 
+  # sys.exit, never assert: -O / PYTHONOPTIMIZE compiles asserts out, which would turn
+  # this acceptance check into a silent pass on any input. [LAW:no-silent-failure]
   echo "$plugin_list" | python3 -c '
 import json, sys
 expected_id = f"memento@{sys.argv[1]}"
 plugins = json.load(sys.stdin)
 ids = [p["id"] for p in plugins]
-assert ids == [expected_id], f"expected only {expected_id} installed, got {ids}"
-assert plugins[0]["enabled"] is True, "memento is installed but not enabled"
+if ids != [expected_id]:
+    sys.exit(f"expected only {expected_id} installed, got {ids}")
+if plugins[0]["enabled"] is not True:
+    sys.exit("memento is installed but not enabled")
 ' "$HORIZON_MARKETPLACE_NAME" || fail "claude plugin list did not show exactly memento@${HORIZON_MARKETPLACE_NAME} enabled"
   pass "isolated config dir has exactly memento installed and enabled"
 
@@ -89,8 +97,9 @@ assert plugins[0]["enabled"] is True, "memento is installed but not enabled"
   # "user" scope to some shared location outside this run's isolation would still
   # pass by finding the skills wherever they really landed.
   local install_path
-  install_path="$(echo "$plugin_list" | python3 -c 'import json, sys; print(json.load(sys.stdin)[0]["installPath"])')"
-  [ -n "$install_path" ] || fail "could not read installPath from claude plugin list --json"
+  install_path="$(echo "$plugin_list" \
+    | python3 -c 'import json, os, sys; print(os.path.realpath(json.load(sys.stdin)[0]["installPath"]))')" \
+    || fail "could not read installPath from claude plugin list --json"
   case "$install_path" in
     "$config_dir"/*) ;;
     *) fail "installed plugin path ($install_path) is not under the isolated config dir ($config_dir)" ;;
@@ -102,7 +111,8 @@ assert plugins[0]["enabled"] is True, "memento is installed but not enabled"
   pass "installed memento (under the config dir) carries the standard memento commands"
 
   local recorded_lit_sha256 actual_lit_sha256
-  recorded_lit_sha256="$(python3 -c 'import json; print(json.load(open("'"$WORK"'/run1/manifest.json"))["lit"]["sha256"])')"
+  recorded_lit_sha256="$(python3 -c 'import json; print(json.load(open("'"$WORK"'/run1/manifest.json"))["lit"]["sha256"])')" \
+    || fail "could not read lit.sha256 from run1/manifest.json"
   actual_lit_sha256="$(horizon_lit_sha256)"
   [ "$recorded_lit_sha256" = "$actual_lit_sha256" ] \
     || fail "recorded lit sha256 ($recorded_lit_sha256) does not match the lit currently on PATH ($actual_lit_sha256)"

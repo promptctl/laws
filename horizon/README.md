@@ -25,13 +25,13 @@ Builds `<run-dir>` from nothing:
   currently on `PATH`, the commit the reviewer action's `v1` tag resolves to plus the
   sha256 of its prompt file, and the sha256 of `horizon/GOAL_PROMPT.md`.
 
-  Everything except the reviewer is a pure function of `memento-ref`, so two runs at
+  `memento` and `goal_wording` are pure functions of `memento-ref`, so two runs at
   the same `memento-ref` are byte-identical on those fields by construction. The
-  reviewer is the one field resolved live against a moving tag (`v1`); left
-  unpinned, two runs made minutes apart could legitimately disagree if the tag
-  moved. Pass `[reviewer-sha]` explicitly - the same way a campaign already pins
-  `memento-ref` for cross-run consistency - to get a fully byte-identical manifest
-  across runs.
+  other two are resolved outside it: `lit` from whatever binary is on `PATH` (see
+  below), and the reviewer live against a moving tag (`v1`) - left unpinned, two runs
+  made minutes apart could legitimately disagree if the tag moved. Pass
+  `[reviewer-sha]` explicitly - the same way a campaign already pins `memento-ref`
+  for cross-run consistency - to get a fully byte-identical manifest across runs.
 
 A session launched with `CLAUDE_CONFIG_DIR=<run-dir>/config` sees memento's skills
 and nothing of the owner's live laws plugin, `CLAUDE.md`, or memory - controlled
