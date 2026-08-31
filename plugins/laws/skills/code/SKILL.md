@@ -521,37 +521,37 @@ where the type-level invariant lives when the type system can't carry it.
 behind the mechanism, a relationship to code elsewhere, the reason for this way and
 not another - or the mechanism itself lifted into a simplification that meets a reader
 who cannot yet read the dense original. It may restate what the code does; it must not
-restate it at the code's own altitude, a verbatim echo that rots the moment the code
-moves. The test is never whether the comment repeats the code, but whether it stands
-where the code cannot.**
+restate it at the code's own altitude, a verbatim echo that adds no height and rots
+the moment the code moves. The test is never whether the comment repeats the code, but
+whether it stands where the code cannot.**
 
 The code is a photograph; the comment is the caption. Describing the frame is not
-forbidden - it is what captions are for. The dead caption reads the pixels back at
-pixel-resolution - `// returns 2+2` over `return 2+2` - serving no one who could
-already see them. The living caption names the scene from a height the
+forbidden - describing the frame is what captions are for. The dead caption reads the
+pixels back at pixel-resolution - `// returns 2+2` over `return 2+2` - serving no one
+who could already see them. The living caption names the scene from a height the
 pixels don't hand over: "a Gaussian blur across nine neighbor samples," "the last read
 before the retry storm," "the accounts legal requires we purge." Whether a viewer
-needs that height is not the frame's business: a fluent reader skips the caption at no
-cost, and one who cannot read the pixels is handed a scene they could not have resolved
-alone. Obviousness is a fact about the viewer, never the frame.
+needs that height is not the frame's business - a reader fluent in the language reads
+the pixels and skips the caption at no cost, while a reader who cannot (a shader in a
+language they don't speak, a codebase annotated for learning) is handed the scene they
+could not have resolved alone. Obviousness is a fact about the viewer, never the frame.
 
 So a comment dies two deaths. *"A quick line restating this helps the next reader"*:
 only if it rises above the code - a same-altitude echo helps no one and lies the first
 time the code changes and the words don't. *"This just says what the code says, delete
 it"*: check the altitude first - a teaching gloss or a simplification does work you
-cannot see *because* you can already read the code. And never flood the other way: the
+cannot see *because* you can already read the code; never strip comprehension on the
+grounds that the mechanism is transparent to you. And never flood the other way: the
 author's mood, the ticket's backstory, the whole domain re-taught belong outside the
-frame, not in the caption. When a caption has drifted from its frame, repair is
-subtraction (`[LAW:polishing-by-subtraction]`): the true version is shorter than the lie,
-often empty. Growing a stale line to cover its gap is how one wrong comment becomes a
-paragraph nobody trusts.
+frame, not in the caption.
 
 Diagnostic: *does this comment stand at an altitude the code does not - a
 simplification, an intent, a relationship - while staying scoped to this code?*
 
-Instance of `[LAW:one-source-of-truth]` at the code's own altitude only: a same-altitude echo
-is a second copy that will drift; a comment pitched higher is a distinct rendering, not
-a rival source. Under `[FRAMING:representation]`, keep the view the code cannot supply.
+Instance of `[LAW:one-source-of-truth]`, but only at the code's own altitude: a same-altitude
+echo is a divergent second copy that will drift, while a comment pitched higher is a
+distinct rendering for a reader the code doesn't reach, not a rival source. Under
+`[FRAMING:representation]`, keep the view the code cannot supply.
 
 ---
 

@@ -152,7 +152,7 @@ Make the code changes for every finding in the change-needed set. Nothing here f
 
 This loop has its own temptation: the reviewer flags comments that diverge from their code, and you will think *"I'll spell the invariant out here so nothing misreads it again."* That is how the bloat gets in — the comment you write to prove alignment is the next round's divergence finding.
 
-**A wrong comment is fixed by shrinking it** — that law's repair rule, and here it has an edge you can check: **the replacement is shorter than what it replaced**, often nothing at all. If your corrected comment is longer than the wrong one, you didn't fix it, you fed it.
+**A wrong comment is fixed by shrinking it.** [LAW:polishing-by-subtraction] a pass that grows the comment is patching, not fixing. The rule has an edge you can check: **the replacement is shorter than what it replaced**, often nothing at all, because the code beneath it already says the true thing. If your corrected comment is longer than the wrong one, you didn't fix it, you fed it.
 
 - BAD: `# The reviewer noted this could swallow the error. We now re-raise instead of returning None, so callers see the failure — previously the caller's "if result:" check treated failure as empty.`
 - GOOD: no comment; the `raise` says it.
