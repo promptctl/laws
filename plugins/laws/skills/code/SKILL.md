@@ -515,44 +515,6 @@ Diagnostic: *where is THE place this invariant is enforced - and is this it?*
 Instance of `[LAW:one-source-of-truth]`, applied to enforcement; the single enforcer is
 where the type-level invariant lives when the type system can't carry it.
 
-## [LAW:comments-carry-meaning] - the code is the mechanism; the comment is the meaning
-
-**A comment earns its place by standing at an altitude the code does not: the intent
-behind the mechanism, a relationship to code elsewhere, the reason for this way and
-not another - or the mechanism itself lifted into a simplification that meets a reader
-who cannot yet read the dense original. It may restate what the code does; it must not
-restate it at the code's own altitude, a verbatim echo that adds no height and rots
-the moment the code moves. The test is never whether the comment repeats the code, but
-whether it stands where the code cannot.**
-
-The code is a photograph; the comment is the caption. Describing the frame is not
-forbidden - describing the frame is what captions are for. The dead caption reads the
-pixels back at pixel-resolution - `// returns 2+2` over `return 2+2` - serving no one
-who could already see them. The living caption names the scene from a height the
-pixels don't hand over: "a Gaussian blur across nine neighbor samples," "the last read
-before the retry storm," "the accounts legal requires we purge." Whether a viewer
-needs that height is not the frame's business - a reader fluent in the language reads
-the pixels and skips the caption at no cost, while a reader who cannot (a shader in a
-language they don't speak, a codebase annotated for learning) is handed the scene they
-could not have resolved alone. Obviousness is a fact about the viewer, never the frame.
-
-So a comment dies two deaths. *"A quick line restating this helps the next reader"*:
-only if it rises above the code - a same-altitude echo helps no one and lies the first
-time the code changes and the words don't. *"This just says what the code says, delete
-it"*: check the altitude first - a teaching gloss or a simplification does work you
-cannot see *because* you can already read the code; never strip comprehension on the
-grounds that the mechanism is transparent to you. And never flood the other way: the
-author's mood, the ticket's backstory, the whole domain re-taught belong outside the
-frame, not in the caption.
-
-Diagnostic: *does this comment stand at an altitude the code does not - a
-simplification, an intent, a relationship - while staying scoped to this code?*
-
-Instance of `[LAW:one-source-of-truth]`, but only at the code's own altitude: a same-altitude
-echo is a divergent second copy that will drift, while a comment pitched higher is a
-distinct rendering for a reader the code doesn't reach, not a rival source. Under
-`[FRAMING:representation]`, keep the view the code cannot supply.
-
 ---
 
 # DATAFLOW COROLLARIES
@@ -1022,6 +984,64 @@ say where to look?*
 Instance of `[FRAMING:representation]` (an error is the truth; suppressing it is
 falsifying the map) and sibling of `[LAW:verifiable-goals]`: loud failure is what makes
 verification mean anything.
+
+---
+
+# COMMENTS - prose that lives in code
+
+## [LAW:comments-carry-meaning] - the code is the mechanism; the comment is the meaning
+
+**A comment earns its place by standing at an altitude the code does not: the intent
+behind the mechanism, a relationship to code elsewhere, the reason for this way and
+not another - or the mechanism itself lifted into a simplification that meets a reader
+who cannot yet read the dense original. It may restate what the code does; it must not
+restate it at the code's own altitude, a verbatim echo that adds no height and rots
+the moment the code moves. The test is never whether the comment repeats the code, but
+whether it stands where the code cannot.**
+
+The code is a photograph; the comment is the caption. Describing the frame is not
+forbidden - describing the frame is what captions are for. The dead caption reads the
+pixels back at pixel-resolution - `// returns 2+2` over `return 2+2` - serving no one
+who could already see them. The living caption names the scene from a height the
+pixels don't hand over: "a Gaussian blur across nine neighbor samples," "the last read
+before the retry storm," "the accounts legal requires we purge." Whether a viewer
+needs that height is not the frame's business - a reader fluent in the language reads
+the pixels and skips the caption at no cost, while a reader who cannot (a shader in a
+language they don't speak, a codebase annotated for learning) is handed the scene they
+could not have resolved alone. Obviousness is a fact about the viewer, never the frame.
+
+So a comment dies two deaths. *"A quick line restating this helps the next reader"*:
+only if it rises above the code - a same-altitude echo helps no one and lies the first
+time the code changes and the words don't. *"This just says what the code says, delete
+it"*: check the altitude first - a teaching gloss or a simplification does work you
+cannot see *because* you can already read the code; never strip comprehension on the
+grounds that the mechanism is transparent to you. And never flood the other way: the
+author's mood, the ticket's backstory, the whole domain re-taught belong outside the
+frame, not in the caption.
+
+Diagnostic: *does this comment stand at an altitude the code does not - a
+simplification, an intent, a relationship - while staying scoped to this code?*
+
+Instance of `[LAW:one-source-of-truth]`, but only at the code's own altitude: a same-altitude
+echo is a divergent second copy that will drift, while a comment pitched higher is a
+distinct rendering for a reader the code doesn't reach, not a rival source. Under
+`[FRAMING:representation]`, keep the view the code cannot supply.
+
+## Sizing a comment
+
+**A comment is sized by what the code cannot say, not by how much code it sits
+above.** A dense function does not earn a longer caption; a subtle reason does.
+Count the facts the code cannot carry - there is usually one, and one line holds
+it. A second line means a second such fact, not a second run at the first.
+
+When a comment wants paragraphs, its content is not a comment. A rationale that
+long is a design note, a story that long is a ticket, and an invariant that long
+is a type you have not written yet.
+
+Repair is the same measurement, not a separate rule. A comment that no longer
+matches its code is not a request for more comment: re-derive it from what the
+code still cannot say. The result is shorter than what it replaced - often
+nothing, because the code beneath it now says the true thing.
 
 ---
 
