@@ -526,9 +526,9 @@ moves. The test is never whether the comment repeats the code, but whether it st
 where the code cannot.**
 
 The code is a photograph; the comment is the caption. Describing the frame is not
-forbidden - describing the frame is what captions are for. The dead caption reads the
-pixels back at pixel-resolution - `// returns 2+2` over `return 2+2` - serving no one
-who could already see them. The living caption names the scene from a height the
+forbidden - it is what captions are for. The dead caption reads the pixels back at
+pixel-resolution - `// returns 2+2` over `return 2+2` - serving no one who could
+already see them. The living caption names the scene from a height the
 pixels don't hand over: "a Gaussian blur across nine neighbor samples," "the last read
 before the retry storm," "the accounts legal requires we purge." Whether a viewer
 needs that height is not the frame's business: a fluent reader skips the caption at no
@@ -549,10 +549,9 @@ paragraph nobody trusts.
 Diagnostic: *does this comment stand at an altitude the code does not - a
 simplification, an intent, a relationship - while staying scoped to this code?*
 
-Instance of `one-source-of-truth`, but only at the code's own altitude: a same-altitude
-echo is a second copy that will drift, while a comment pitched higher is a distinct
-rendering, not a rival source. Under `[FRAMING:representation]`, keep the view the code
-cannot supply.
+Instance of `one-source-of-truth` at the code's own altitude only: a same-altitude echo
+is a second copy that will drift; a comment pitched higher is a distinct rendering, not
+a rival source. Under `[FRAMING:representation]`, keep the view the code cannot supply.
 
 ---
 
