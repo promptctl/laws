@@ -45,17 +45,18 @@ TAIL_CHUNK = 256 * 1024
 # a handoff exists to carry across a reset; `push --force` and `commit --amend` destroy it
 # once it is committed. Reading cannot destroy anything, so those subcommands take any
 # flags; the writing ones take only the flags a close-out needs.
-READING_GIT = frozenset(("status", "diff", "log", "show", "rev-parse"))
-# A ref name and nothing that reaches git's refspec grammar: `+src:dst` forces and `:dst`
-# deletes, so push's operands are constrained as tightly as its flags. A path and a commit
-# message are not refspecs, so those subcommands leave operands alone.
-PLAIN_REF = frozenset(string.ascii_letters + string.digits + "._/-")
-WRITING_GIT = {"add": (frozenset(("-A", "--all")), None),
-               "commit": (frozenset(("-m", "--message", "-a", "--all")), None),
-               "push": (frozenset(("-u", "--set-upstream")), PLAIN_REF)}
-# The launcher's documented shape. Any other `--` option is one of its internal worker
-# entry points, which take a pid to kill and a binary to run.
-LAUNCHER_OPTIONS = {"--goal": 1, "--reset": 1}
+# Enough to see the tree and get outstanding work committed and pushed. Arguments are not
+# inspected, so `push --force` is permitted up here knowingly: git's argument surface is
+# unbounded, and every rule tried against it refused more real close-out work than it
+# prevented. A gate that blocks the commit is worse than one that permits a force-push.
+PERMITTED_GIT = frozenset(("status", "diff", "log", "show", "rev-parse",
+                           "add", "commit", "push"))
+# The global options that may precede the subcommand, and how many tokens each takes. `-c`
+# is not among them: `git -c alias.x='!sh -c ...' x` defines an alias that runs anything.
+GLOBAL_GIT = {"-C": 1, "--no-pager": 0}
+# Recognised by the launcher only as its first argument (its own `case "${1:-}"`). They take
+# a pid to kill and a binary to run, so they are refused where it reads them.
+WORKER_MODES = frozenset(("--worker", "--iterm-worker", "--detached-worker"))
 LEFT_ALONE_BY_THE_SHELL = frozenset(string.ascii_letters + string.digits + "_@%+=:,./-")
 ENDS_WORD = frozenset(" \t")
 ENDS_STATEMENT = frozenset("&|;\n")
@@ -133,7 +134,7 @@ def written_at(path):
 def resolve_ceiling():
     """The ceiling in force: the environment, else the file, else the default.
     [LAW:no-silent-failure] a typo must not read as the default - a ceiling its author
-    believes they moved and did not is worse than none, because they would trust it."""
+    believes they moved and did not is worse than none."""
     for source, written in (("MEMENTO_CONTEXT_CEILING", os.environ.get("MEMENTO_CONTEXT_CEILING", "")),
                             (CEILING_FILE, written_at(CEILING_FILE))):
         text = written.strip()
@@ -150,7 +151,7 @@ def resolve_ceiling():
 
 def records_newest_first(transcript_path):
     """This session's records, reading only as far back as the caller consumes. Sidechains
-    are a subagent's conversation, not this one's, so they never reach a caller."""
+    are a subagent's conversation, so they never reach a caller."""
     with open(transcript_path, "rb") as handle:
         handle.seek(0, os.SEEK_END)
         end = handle.tell()
@@ -187,12 +188,10 @@ def starts_a_turn(record):
 
 
 def closed_out(transcript_path):
-    """Whether the launcher ran successfully in the turn now ending. Bounded at the turn,
-    because a handoff ends the turn it was scheduled in - crediting an older one would wave
-    through every later breach in a transcript the tmux transport compacts in place.
-
-    [FRAMING:representation] a denied call is written into the transcript exactly like one
-    that ran, so the result - not the command text - is what says it happened."""
+    """Whether the launcher ran successfully in the turn now ending - bounded at the turn,
+    because crediting an older one would wave through every later breach in a transcript the
+    tmux transport compacts in place. [FRAMING:representation] a denied call is written into
+    the transcript exactly like one that ran, so only the result says it happened."""
     errored = set()
     for record in records_newest_first(transcript_path):
         if starts_a_turn(record):
@@ -214,38 +213,23 @@ def permitted(statement):
     it is one, and anything else wearing that name is not the close-out."""
     program, *arguments = statement
     if os.path.basename(program) == "git":
-        return bool(arguments) and permitted_git(arguments)
+        return permitted_git(arguments)
     return same_file(program, LAUNCHER) and permitted_launcher(arguments)
 
 
 def permitted_git(arguments):
-    subcommand, *rest = arguments
-    if subcommand in READING_GIT:
-        return True
-    flags, operand = WRITING_GIT.get(subcommand, (None, None))
-    if flags is None:
-        return False
-    return all(permitted_flag(word, flags) if word.startswith("-")
-               else operand is None or set(word) <= operand
-               for word in rest)
-
-
-def permitted_flag(word, flags):
-    """A bundle is permitted when every letter in it is, so `-am` follows from `-a` and
-    `-m` without being listed, and a bundle hiding an unpermitted letter still is not."""
-    if word in flags:
-        return True
-    bundled = word.startswith("-") and not word.startswith("--")
-    return bundled and all("-" + letter in flags for letter in word[1:])
+    """Which subcommand runs, found past any global options. What it is then asked to do is
+    not read."""
+    index = 0
+    while index < len(arguments) and arguments[index] in GLOBAL_GIT:
+        index += 1 + GLOBAL_GIT[arguments[index]]
+    return index < len(arguments) and arguments[index] in PERMITTED_GIT
 
 
 def permitted_launcher(arguments):
-    """The close-out as SKILL.md documents it. Refusing every other `--` option rather than
-    naming the internal ones means a worker flag added later is refused by default."""
-    index = 0
-    while index < len(arguments) and arguments[index] in LAUNCHER_OPTIONS:
-        index += 1 + LAUNCHER_OPTIONS[arguments[index]]
-    return not any(word.startswith("--") for word in arguments[index:])
+    """Everything past a worker mode is a message the launcher reads verbatim, so only the
+    first argument is worth looking at."""
+    return not arguments or arguments[0] not in WORKER_MODES
 
 
 def reaching_for_launcher(command):
@@ -286,9 +270,9 @@ def launched(tool_name, tool_input):
 
 
 def log(hook, tokens, verdict):
-    """[LAW:no-silent-failure] a hook that allows emits nothing, and nothing is exactly what
-    a hook that never ran emits; the log is the only place that difference exists. Its own
-    failure is reported but not fatal - raising would take the gate down with it."""
+    """[LAW:no-silent-failure] a hook that allows emits nothing, and so does one that never
+    ran; the log is the only place that difference exists. Its own failure is reported but
+    not fatal - raising would take the gate down with the instrumentation."""
     line = (f"{datetime.now().isoformat(timespec='seconds')} "
             f"session={str(hook.get('session_id'))[:8]} event={hook.get('hook_event_name')} "
             f"tokens={tokens} ceiling={CEILING} tool={hook.get('tool_name', '-')} "
@@ -308,9 +292,9 @@ def log(hook, tokens, verdict):
 
 
 def stop(hook, tokens):
-    """Blocked once, never twice: a second block would spend more context on the problem
-    that IS too much context. The give-up message leaves whether the close-out ran
-    conditional, because the compliant path is exactly when stop_hook_active is true."""
+    """Blocked once, never twice: a second block spends more context on the problem that IS
+    too much context. The give-up message leaves whether the close-out ran conditional,
+    because the compliant path is exactly when stop_hook_active is true."""
     if closed_out(hook["transcript_path"]):
         return "closed-out", {"systemMessage": f"memento: the close-out ran at ~{tokens:,} "
                                                f"tokens, past the {CEILING:,} ceiling, so "
@@ -337,7 +321,7 @@ def pretool(hook, tokens):
 
 def reason(template, tokens):
     return template.format(tokens=tokens, ceiling=CEILING,
-                           git="/".join(sorted(READING_GIT | set(WRITING_GIT))),
+                           git="/".join(sorted(PERMITTED_GIT)),
                            launcher=shlex.quote(LAUNCHER))
 
 
