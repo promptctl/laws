@@ -1,7 +1,17 @@
 {
-  "description": "The context ceiling: a Stop hook that refuses to let a session past the hard token maximum end its turn until it has run the message-in-a-bottle close-out.",
+  "description": "The context ceiling, enforced on two events because one of them is not enough. Stop refuses to let a session past the hard token maximum end its turn until it has run the message-in-a-bottle close-out - but an autonomous session never ends a turn, so PreToolUse enforces the same ceiling where a tool loop cannot avoid it, narrowing the permitted set to the close-out itself.",
   "hooks": {
     "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/context-ceiling.py\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
       {
         "hooks": [
           {
