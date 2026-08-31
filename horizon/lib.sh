@@ -171,11 +171,20 @@ horizon_lit_sha256() {
 # used below. Dereference it one extra hop when `.object.type` says "tag".
 # Usage: horizon_reviewer_sha  -> prints the resolved commit sha for $REVIEWER_TAG
 horizon_reviewer_sha() {
-  local sha type
-  read -r sha type < <(
+  local out sha type
+  # Captured into a checked assignment, then read from a here-string: `read` from a
+  # process substitution reports only its OWN status, so a gh failure that had already
+  # emitted a full line would slip past the `||` and the else arm below would print a
+  # non-commit sha as the pin. [LAW:no-silent-failure]
+  out="$(
     gh api "repos/${REVIEWER_REPO}/git/refs/tags/${REVIEWER_TAG}" \
       --jq '[.object.sha, .object.type] | @tsv'
-  ) || horizon_die "could not resolve ${REVIEWER_REPO}@${REVIEWER_TAG} via gh api"
+  )" || horizon_die "could not resolve ${REVIEWER_REPO}@${REVIEWER_TAG} via gh api"
+  read -r sha type <<<"$out"
+  # This is the parse boundary for the API response: a tsv missing either field must
+  # abort, never fall through to the else arm as an untyped "not a tag".
+  [ -n "$sha" ] && [ -n "$type" ] \
+    || horizon_die "gh api returned no sha/type for ${REVIEWER_REPO}@${REVIEWER_TAG}: '$out'"
   if [ "$type" = "tag" ]; then
     gh api "repos/${REVIEWER_REPO}/git/tags/${sha}" --jq '.object.sha' \
       || horizon_die "could not dereference annotated tag ${REVIEWER_TAG} (object $sha) to a commit"
@@ -215,6 +224,9 @@ horizon_goal_wording_sha256() {
     rm -f "$tmp"
     horizon_die "missing ${HORIZON_GOAL_PROMPT_REL_PATH} at ${commit_sha}"
   fi
-  horizon_sha256_file "$tmp"
+  local hash
+  hash="$(horizon_sha256_file "$tmp")" \
+    || { rm -f "$tmp"; horizon_die "could not hash ${HORIZON_GOAL_PROMPT_REL_PATH} at ${commit_sha}"; }
   rm -f "$tmp"
+  printf '%s\n' "$hash"
 }

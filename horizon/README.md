@@ -31,12 +31,21 @@ Builds `<run-dir>` from nothing:
   below), and the reviewer live against a moving tag (`v1`) - left unpinned, two runs
   made minutes apart could legitimately disagree if the tag moved. Pass
   `[reviewer-sha]` explicitly - the same way a campaign already pins `memento-ref`
-  for cross-run consistency - to get a fully byte-identical manifest across runs.
+  for cross-run consistency - and the manifest is byte-identical across runs on every
+  pinned field, provided the `lit` binary on `PATH` did not change between them.
+  `reviewer.resolved_from` records whether this run resolved the tag live (`tag`) or
+  was handed the sha (`override`), so the manifest never implies a check that did not
+  happen.
 
-A session launched with `CLAUDE_CONFIG_DIR=<run-dir>/config` sees memento's skills
-and nothing of the owner's live laws plugin, `CLAUDE.md`, or memory - controlled
-inclusion, not exclusion: isolation comes from the pinned marketplace only ever
-declaring memento, never from filtering the owner's live config out at launch time.
+A session launched with `CLAUDE_CONFIG_DIR=<run-dir>/config` sees memento's skills and
+nothing of the owner's live laws plugin, `CLAUDE.md`, or memory. Two distinct
+mechanisms produce that, and they are worth keeping straight: no *plugin* but memento
+can be installed because the pinned marketplace never declares one - controlled
+inclusion, not a launch-time filter over the owner's live config. `CLAUDE.md` and
+memory are absent for the unrelated reason that `horizon_provision_config_dir` builds
+the config dir from nothing (`rm -rf` then `mkdir`), so anything that later seeds or
+templates that directory reintroduces the leak the marketplace guarantee does not
+cover.
 `lit` itself has no version string to pin (see lib.sh's comment on `horizon_lit_path`
 for what `lit doctor` actually reports), so its identity is recorded as the sha256 of
 whatever binary `command -v lit` resolves to; a later run whose `lit` hash disagrees

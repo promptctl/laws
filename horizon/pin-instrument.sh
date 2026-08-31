@@ -48,6 +48,11 @@ main() {
   horizon_need claude
   horizon_need python3
   horizon_need lit
+  # tar and base64 are reached only from inside lib.sh pipelines (git archive | tar,
+  # the reviewer prompt decode). Absent, pipefail would blame the tool at the head of
+  # the pipe instead of the one that is missing.
+  horizon_need tar
+  horizon_need base64
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
@@ -72,16 +77,25 @@ main() {
 
   horizon_log "recording lit's binary identity"
   local lit_path lit_sha256
+  # Resolved once and hashed at that exact path - binary_path and sha256 in the
+  # manifest must describe the same file, which two independent `command -v lit`
+  # resolutions cannot guarantee. [LAW:one-source-of-truth]
   lit_path="$(horizon_lit_path)"
-  lit_sha256="$(horizon_lit_sha256)"
+  lit_sha256="$(horizon_sha256_file "$lit_path")"
 
-  local reviewer_sha
+  # `tag` alone would imply resolved_sha was obtained by resolving it, which is false
+  # whenever a sha is handed in - the common case, since verify-instrument.sh overrides
+  # on both runs. resolved_from records which actually happened, so no reader infers a
+  # check that never ran. [LAW:verifiable-goals]
+  local reviewer_sha reviewer_resolved_from
   if [ -n "$reviewer_sha_override" ]; then
     horizon_log "reviewer pinned at $reviewer_sha_override (given, not resolved)"
     reviewer_sha="$reviewer_sha_override"
+    reviewer_resolved_from="override"
   else
     horizon_log "resolving reviewer ${REVIEWER_REPO}@${REVIEWER_TAG}"
     reviewer_sha="$(horizon_reviewer_sha)"
+    reviewer_resolved_from="tag"
     horizon_log "reviewer pinned at $reviewer_sha"
   fi
   local reviewer_prompt_sha256
@@ -94,12 +108,14 @@ main() {
   python3 - "$run_dir/manifest.json" \
     "$memento_sha" "$memento_tree_sha" \
     "$lit_path" "$lit_sha256" \
-    "$REVIEWER_REPO" "$REVIEWER_TAG" "$reviewer_sha" "$REVIEWER_PROMPT_PATH" "$reviewer_prompt_sha256" \
-    "$goal_sha256" "$HORIZON_GOAL_PROMPT_REL_PATH" <<'PY'
+    "$REVIEWER_REPO" "$REVIEWER_TAG" "$reviewer_sha" "$reviewer_resolved_from" \
+    "$REVIEWER_PROMPT_PATH" "$reviewer_prompt_sha256" \
+    "$goal_sha256" "$HORIZON_GOAL_PROMPT_REL_PATH" <<'PY' || horizon_die "failed to write manifest.json"
 import json, sys
 
 (out, memento_sha, memento_tree_sha, lit_path, lit_sha256,
- reviewer_repo, reviewer_tag, reviewer_sha, reviewer_prompt_path, reviewer_prompt_sha256,
+ reviewer_repo, reviewer_tag, reviewer_sha, reviewer_resolved_from,
+ reviewer_prompt_path, reviewer_prompt_sha256,
  goal_sha256, goal_wording_path) = sys.argv[1:]
 
 manifest = {
@@ -117,6 +133,7 @@ manifest = {
         "repo": reviewer_repo,
         "tag": reviewer_tag,
         "resolved_sha": reviewer_sha,
+        "resolved_from": reviewer_resolved_from,
         "prompt_path": reviewer_prompt_path,
         "prompt_sha256": reviewer_prompt_sha256,
     },
