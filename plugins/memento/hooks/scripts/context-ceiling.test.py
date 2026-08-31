@@ -114,22 +114,16 @@ check("a stop already blocked once is not blocked again",
       code == 0 and out and "decision" not in out, f"{code} {out}")
 check("giving up is loud rather than silent",
       out and "context ceiling breached" in out.get("systemMessage", ""), str(out))
-# The compliant path - block, finalize, stop again - is exactly when stop_hook_active is
-# true, so this message must not call a successful close-out a failure.
 check("giving up does not claim the close-out failed",
       out and "If the close-out did not run" in out.get("systemMessage", "")
       and "was NOT closed out" not in out.get("systemMessage", ""), str(out))
 
-# A session that just ran the launcher is not told to run it again - that would schedule a
-# second handoff behind the first.
 ran_closeout = [user, assistant(OVER),
                 tool_use("Bash", {"command": f"{LAUNCHER} 'bye'"}), tool_result()]
 code, out, _ = run(ran_closeout)
 check("a stop right after the close-out ran is allowed",
       code == 0 and out and "decision" not in out
       and "the close-out ran" in out.get("systemMessage", ""), str(out))
-# [FRAMING:representation] a denied call is written into the transcript exactly like one
-# that ran, so only the result can tell the gate's success from its total defeat.
 code, out, _ = run([user, assistant(OVER),
                     tool_use("Bash", {"command": f"{LAUNCHER} 'bye'"}),
                     tool_result(is_error=True)])
@@ -183,15 +177,11 @@ check("the denial names the permitted git subcommands from the set that decides 
 
 # --- PreToolUse: the parser refuses what it cannot prove is plain -------------------------
 
-# Three bypasses a tokenize-then-split-on-known-operators approach let through.
 _, out, _ = bash("git status |& rm -rf x")
 check("an operator outside the enumerated set does not smuggle a second command",
       denied(out), str(out))
 _, out, _ = bash("git status\nrm -rf x")
 check("a bare newline does not smuggle a second command", denied(out), str(out))
-# Denial alone cannot tell "split into two segments, one unpermitted" from "refused as
-# unparseable", and only the first is the newline doing its job - so a newline between two
-# permitted commands must still parse, and be allowed.
 _, out, _ = bash("git status\ngit diff")
 check("a bare newline separates statements rather than refusing them", out is None, str(out))
 _, out, _ = bash(f'{LAUNCHER} "$(rm -rf x)"')
@@ -202,8 +192,6 @@ _, out, _ = bash(f"echo hi; {LAUNCHER} 'bye'")
 check("a permitted segment does not launder an unpermitted one", denied(out), str(out))
 _, out, _ = bash(f"cat {LAUNCHER}")
 check("merely mentioning the launcher is not running it", denied(out), str(out))
-# Identity, not spelling: another executable of the same name is not the close-out, or the
-# gate would record a handoff that never happened.
 decoy = os.path.join(tempfile.mkdtemp(), "finalize-session")
 open(decoy, "w").close()
 os.chmod(decoy, 0o755)
@@ -214,8 +202,6 @@ _, out, _ = run([user, assistant(OVER), tool_use("Bash", {"command": f"{decoy} '
 check("an impostor close-out does not satisfy the stop either",
       out and out.get("decision") == "block", str(out))
 
-# A misquoted close-out is told it is misquoted, because an agent that cannot tell "you may
-# not" from "you may, but not spelled that way" retries the same spelling.
 _, out, _ = bash(f"{LAUNCHER} \"$(cat <<'EOF'\nbye\nEOF\n)\"")
 reason = (out or {}).get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
 check("a misquoted close-out gets the rewrite message, not the denial",
@@ -264,14 +250,12 @@ check("with no override, a session past any window is blocked",
 
 # --- measuring the session ----------------------------------------------------------------
 
-# Every prompt component counts, so a cache read alone under the ceiling can still be over.
 _, out, _ = run([user, {"type": "assistant", "isSidechain": False, "message": {"usage": {
     "input_tokens": 1_000, "cache_creation_input_tokens": 20_000,
     "cache_read_input_tokens": 70_000, "output_tokens": 12_000}}}])
 check("the count sums input, cache write, cache read and output",
       out and "103,000" in out["reason"], str(out))
 
-# A subagent writes into the same transcript. Its records are a different conversation.
 _, out, _ = run([user, assistant(OVER), assistant(20_000, sidechain=True)])
 check("a trailing subagent record does not mask the session's count",
       out and out.get("decision") == "block", str(out))
@@ -286,13 +270,11 @@ check("a subagent running the launcher is not this session's close-out",
 code, out, _ = run([user, assistant(OVER), user, assistant(UNDER)])
 check("a compacted session reads as its post-compaction size", code == 0 and out is None, str(out))
 
-# The newest record must be found past a transcript larger than one backward read.
 padding = [user] * 4000
 code, out, _ = run(padding + [assistant(OVER)])
 check("the newest record is found in a transcript spanning several chunks",
       out and out.get("decision") == "block", str(out))
-# A record wider than one backward read begins before the chunk that ends it, so it is only
-# read at all if the partial head is carried into the next chunk rather than discarded.
+# Wider than one backward read, so it is read whole only if the partial head is carried.
 wide = assistant(OVER)
 wide["pad"] = "x" * (400 * 1024)
 code, out, _ = run(padding + [wide])
@@ -323,7 +305,6 @@ check("a denial is logged with the tool that was refused",
 bash(f"{LAUNCHER} \"$(echo hi)\"")
 check("a misquoted close-out is logged apart from a plain denial",
       "-> deny-misquoted" in run.log, run.log)
-# Capped, because PreToolUse writes a line per tool call for the whole of a long run.
 run([user, assistant(UNDER)], log_seed="old\n" * 600_000)
 check("the log is truncated once it passes its cap",
       "[truncated at" in run.log and len(run.log) < 2_000_000, str(len(run.log)))
@@ -334,9 +315,8 @@ done = subprocess.run([sys.executable, HOOK], input="{}", text=True, capture_out
 check("a payload with no event fails loudly",
       done.returncode == 1 and "hook_event_name" in done.stderr, str(done)[:200])
 
-# The agent runs the close-out line verbatim and a plugin root can contain a space
-# (~/Library/Application Support/...), so the hook is run from a spaced path rather than
-# trusted to be quoted - unquoted, the only exit from the block fails to execute.
+# A plugin root can contain a space (~/Library/Application Support/...), and unquoted the
+# only exit from the block fails to execute.
 spaced_root = os.path.join(tempfile.mkdtemp(), "ceiling test")
 spaced_hook = os.path.join(spaced_root, "hooks", "scripts", os.path.basename(HOOK))
 os.makedirs(os.path.dirname(spaced_hook))
@@ -354,7 +334,6 @@ check("the launcher the hook points at exists", os.access(LAUNCHER, os.X_OK), LA
 registered = json.load(open(os.path.join(os.path.dirname(HERE), "hooks.json")))["hooks"]
 check("the hook is registered on both events, and only those",
       sorted(registered) == ["PreToolUse", "Stop"], str(sorted(registered)))
-# Registering the events is half the wiring; pointing them at this script is the other half.
 for event in ("Stop", "PreToolUse"):
     command = registered[event][0]["hooks"][0]["command"]
     check(f"the {event} registration runs this script, from the plugin root",
