@@ -148,6 +148,18 @@ When `provider.CAPABILITIES["resolve"]` is `False`, findings have no resolvable 
 
 Make the code changes for every finding in the change-needed set. Nothing here for a round whose findings were all no-change — the set is empty and this step does nothing.
 
+**Comments stay minimal.** [LAW:comments-carry-meaning] a comment earns its place only by standing where the code cannot — a non-obvious *why*, a constraint from outside the file. Otherwise write none. Not a narration of the fix, not the finding restated, not the reasoning you already posted on the thread; that record lives on the thread, which is why you posted it there.
+
+This loop has its own temptation: the reviewer flags comments that diverge from their code, and you will think *"I'll spell the invariant out here so nothing misreads it again."* That is how the bloat gets in — the comment you write to prove alignment is the next round's divergence finding.
+
+**A wrong comment is fixed by shrinking it.** [LAW:polishing-by-subtraction] a pass that grows the comment is patching, not fixing. The rule has an edge you can check: **the replacement is shorter than what it replaced**, often nothing at all, because the code beneath it already says the true thing. If your corrected comment is longer than the wrong one, you didn't fix it, you fed it.
+
+- BAD: `# The reviewer noted this could swallow the error. We now re-raise instead of returning None, so callers see the failure — previously the caller's "if result:" check treated failure as empty.`
+- GOOD: no comment; the `raise` says it.
+- WRONG comment: `# retries 3 times with backoff` over a loop that now retries 5 times with none.
+- BAD fix: `# Retries up to 5 times. Backoff was removed because upstream rate-limits by token bucket, so exponential backoff made the burst worse — see the thread on PR #41.` (longer than the lie it replaced)
+- GOOD fix: delete it — the loop reads. Or, if the token-bucket reason is genuinely not in the code: `# no backoff: upstream is token-bucket limited`
+
 ### 5. Address failing checks
 
 Check the PR for any failing checks. Address them before continuing.
