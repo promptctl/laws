@@ -28,9 +28,17 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
 main() {
+  horizon_need git
+  horizon_need gh
+  horizon_need claude
+  horizon_need python3
+  horizon_need lit
+
   local repo_root ref reviewer_sha
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
-  ref="$(git -C "$repo_root" rev-parse HEAD)"
+  # Routed through the same lib.sh primitive pin-instrument.sh uses for a bare
+  # "HEAD" - no raw git call out here. [LAW:single-enforcer]
+  ref="$(horizon_resolve_memento_ref "$repo_root" "HEAD")"
 
   horizon_log "resolving reviewer once for both runs: ${REVIEWER_REPO}@${REVIEWER_TAG}"
   reviewer_sha="$(horizon_reviewer_sha)"
@@ -64,20 +72,29 @@ assert plugins[0]["enabled"] is True, "memento is installed but not enabled"
   [ -f "$config_dir/CLAUDE.md" ] && fail "isolated config dir has a CLAUDE.md - owner guidance leaked in"
   pass "isolated config dir carries no CLAUDE.md"
 
-  # Session memory (the memento:next skill's memory files, or the owner's own) lives
-  # under $CLAUDE_CONFIG_DIR/projects/*/memory/ - so a config dir with no projects/
-  # directory at all has structurally never touched that subsystem, the same style
-  # of proof as the CLAUDE.md check above.
-  [ -d "$config_dir/projects" ] && fail "isolated config dir has a projects/ dir - the memory subsystem got populated"
-  pass "isolated config dir carries no memory (no projects/ dir)"
+  # Session memory lives under $CLAUDE_CONFIG_DIR/projects/*/memory/ - checked as
+  # actual memory *content* at that path, not the mere existence of projects/,
+  # which install-time bookkeeping unrelated to memory could in principle also
+  # create and would otherwise make this a false failure.
+  local memory_files
+  memory_files="$(find "$config_dir/projects" -path '*/memory/*' -type f 2>/dev/null || true)"
+  [ -n "$memory_files" ] && fail "isolated config dir has memory content: $memory_files"
+  pass "isolated config dir carries no memory content"
 
   # Checked in the INSTALLED location under the config dir, via installPath from
   # claude plugin list - not the pinned/ snapshot source dir, which only proves the
   # git-archive extraction worked, never that `claude plugin install` wired the
-  # skills up where a launched session would actually see them.
+  # skills up where a launched session would actually see them. And checked as
+  # actually falling under $config_dir - otherwise a plugin CLI that resolved
+  # "user" scope to some shared location outside this run's isolation would still
+  # pass by finding the skills wherever they really landed.
   local install_path
   install_path="$(echo "$plugin_list" | python3 -c 'import json, sys; print(json.load(sys.stdin)[0]["installPath"])')"
   [ -n "$install_path" ] || fail "could not read installPath from claude plugin list --json"
+  case "$install_path" in
+    "$config_dir"/*) ;;
+    *) fail "installed plugin path ($install_path) is not under the isolated config dir ($config_dir)" ;;
+  esac
   local memento_skills="$install_path/skills"
   [ -d "$memento_skills/next" ] || fail "installed memento is missing the 'next' skill"
   [ -d "$memento_skills/message-in-a-bottle" ] || fail "installed memento is missing 'message-in-a-bottle'"
