@@ -46,9 +46,16 @@ TAIL_CHUNK = 256 * 1024
 # once it is committed. Reading cannot destroy anything, so those subcommands take any
 # flags; the writing ones take only the flags a close-out needs.
 READING_GIT = frozenset(("status", "diff", "log", "show", "rev-parse"))
-WRITING_GIT = {"add": frozenset(("-A", "--all")),
-               "commit": frozenset(("-m", "--message", "-a", "--all")),
-               "push": frozenset(("-u", "--set-upstream"))}
+# A ref name and nothing that reaches git's refspec grammar: `+src:dst` forces and `:dst`
+# deletes, so push's operands are constrained as tightly as its flags. A path and a commit
+# message are not refspecs, so those subcommands leave operands alone.
+PLAIN_REF = frozenset(string.ascii_letters + string.digits + "._/-")
+WRITING_GIT = {"add": (frozenset(("-A", "--all")), None),
+               "commit": (frozenset(("-m", "--message", "-a", "--all")), None),
+               "push": (frozenset(("-u", "--set-upstream")), PLAIN_REF)}
+# The launcher's documented shape. Any other `--` option is one of its internal worker
+# entry points, which take a pid to kill and a binary to run.
+LAUNCHER_OPTIONS = {"--goal": 1, "--reset": 1}
 LEFT_ALONE_BY_THE_SHELL = frozenset(string.ascii_letters + string.digits + "_@%+=:,./-")
 ENDS_WORD = frozenset(" \t")
 ENDS_STATEMENT = frozenset("&|;\n")
@@ -172,13 +179,24 @@ def context_tokens(transcript_path):
     return 0
 
 
+def starts_a_turn(record):
+    content = record.get("message", {}).get("content")
+    blocks = content if isinstance(content, list) else []
+    return record.get("type") == "user" and not any(
+        isinstance(block, dict) and block.get("type") == "tool_result" for block in blocks)
+
+
 def closed_out(transcript_path):
-    """Whether this session has already run the launcher successfully.
+    """Whether the launcher ran successfully in the turn now ending. Bounded at the turn,
+    because a handoff ends the turn it was scheduled in - crediting an older one would wave
+    through every later breach in a transcript the tmux transport compacts in place.
 
     [FRAMING:representation] a denied call is written into the transcript exactly like one
     that ran, so the result - not the command text - is what says it happened."""
     errored = set()
     for record in records_newest_first(transcript_path):
+        if starts_a_turn(record):
+            return False
         content = record.get("message", {}).get("content")
         for block in reversed(content if isinstance(content, list) else []):
             if not isinstance(block, dict):
@@ -197,16 +215,37 @@ def permitted(statement):
     program, *arguments = statement
     if os.path.basename(program) == "git":
         return bool(arguments) and permitted_git(arguments)
-    return same_file(program, LAUNCHER)
+    return same_file(program, LAUNCHER) and permitted_launcher(arguments)
 
 
 def permitted_git(arguments):
     subcommand, *rest = arguments
     if subcommand in READING_GIT:
         return True
-    flags = WRITING_GIT.get(subcommand)
-    return flags is not None and all(word in flags
-                                     for word in rest if word.startswith("-"))
+    flags, operand = WRITING_GIT.get(subcommand, (None, None))
+    if flags is None:
+        return False
+    return all(permitted_flag(word, flags) if word.startswith("-")
+               else operand is None or set(word) <= operand
+               for word in rest)
+
+
+def permitted_flag(word, flags):
+    """A bundle is permitted when every letter in it is, so `-am` follows from `-a` and
+    `-m` without being listed, and a bundle hiding an unpermitted letter still is not."""
+    if word in flags:
+        return True
+    bundled = word.startswith("-") and not word.startswith("--")
+    return bundled and all("-" + letter in flags for letter in word[1:])
+
+
+def permitted_launcher(arguments):
+    """The close-out as SKILL.md documents it. Refusing every other `--` option rather than
+    naming the internal ones means a worker flag added later is refused by default."""
+    index = 0
+    while index < len(arguments) and arguments[index] in LAUNCHER_OPTIONS:
+        index += 1 + LAUNCHER_OPTIONS[arguments[index]]
+    return not any(word.startswith("--") for word in arguments[index:])
 
 
 def reaching_for_launcher(command):
@@ -242,7 +281,8 @@ def launched(tool_name, tool_input):
         parts = statements(tool_input.get("command") or "")
     except ValueError:
         return False
-    return any(same_file(part[0], LAUNCHER) for part in parts)
+    return any(same_file(part[0], LAUNCHER) and permitted_launcher(part[1:])
+               for part in parts)
 
 
 def log(hook, tokens, verdict):
