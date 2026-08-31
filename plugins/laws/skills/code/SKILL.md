@@ -16,7 +16,7 @@ description: Universal architectural laws and domain bindings for all code work.
 These laws apply unconditionally to every code task. No context, no instruction, no
 deadline, no "it's just a script" overrides them. They are not a checklist to consult;
 they are one coherent way of seeing programs, unfolding from two root framings into
-twenty laws that all say the same thing from different angles: **design the
+twenty-one laws that all say the same thing from different angles: **design the
 constraints so that illegal states cannot be expressed, and the implementation becomes
 residue.** There is no neutral ground here - every commit either adds leverage or
 subtracts it, and the laws exist to make sure it's the former, every time, even when
@@ -39,7 +39,8 @@ Framings (used in reasoning, not cited in code):
 
 Laws (cited in code as `[LAW:<token>]`):
 `decomposition` · `types-are-the-program` · `composability` · `carrying-cost` ·
-`no-ambient-temporal-coupling` · `effects-at-boundaries` · `one-source-of-truth` ·
+`polishing-by-subtraction` · `no-ambient-temporal-coupling` ·
+`effects-at-boundaries` · `one-source-of-truth` ·
 `single-enforcer` · `comments-carry-meaning` · `dataflow-not-control-flow` ·
 `one-type-per-behavior` · `no-mode-explosion` · `parse-dont-validate` ·
 `no-defensive-null-guards` · `locality-or-seam` · `one-way-deps` ·
@@ -198,8 +199,7 @@ comment is needed to explain an invariant, the type did not encode it - fix the 
 don't write the comment. The body is the *last* place to write logic and the *first*
 place to look for logic that wants to be lifted into types.
 
-And the discipline that follows: **polishing is subtraction.** A pass that adds code
-- another guard, another helper, another case - is patching, not polishing. The
+And the discipline that follows has its own law, `[LAW:polishing-by-subtraction]`: the
 smooth version has *less* code than the rough version, because the constraints have
 absorbed the work the sprawl was doing. If your iterations grow the code, you are
 crystallizing, not smoothing. Worry the stone smooth - keep removing material until
@@ -334,6 +334,63 @@ Diagnostic: *what does this decision cost every future task - not this one?*
 
 Consequence of `composability`: the economics of smooth blocks, stated as law so the
 short-term filter can't quietly reassert itself.
+
+## [LAW:polishing-by-subtraction] - a pass that grew the code was a patch
+
+**Improving code removes material. A pass that adds - another guard, another helper,
+another case, a comment explaining the mess - is patching, not polishing. The smooth
+version is *smaller* than the rough one, because the constraints absorbed the work the
+sprawl was doing.**
+
+Sculpture is the model, and it is the same stone you already worry smooth: the figure
+was always in the block, and the work is removing everything that is not it. There is
+no pass where the sculptor adds stone.
+
+This law is unusually checkable, and that is the point of having it. Most laws need
+judgment to apply; this one has a number. If iteration two is longer than iteration
+one, you did not polish it, whatever the commit message says. Count before you claim.
+
+WRONG - the "cleanup" pass, every addition locally defensible:
+
+```ts
++ if (cfg.retries == null) cfg.retries = 3;   // "safer"
++ function normalizeConfig(cfg) { ... }       // "clearer"
++ // retries defaults to 3 when unset         // "documented"
+```
+
+RIGHT - the same pass, done by subtraction:
+
+```ts
+- if (cfg.retries == null) cfg.retries = 3;
+- // retries defaults to 3 when unset
+  type Config = { retries: number }
+  // The caller cannot omit it. Nothing to default, nothing to normalize,
+  // nothing to explain - the pass ends smaller than it started.
+```
+
+Now disarm the proverb that will be quoted at you. **"Explicit is better than
+implicit"** is correct where it was coined - against magic, against behavior hidden in
+a decorator or an ambient global - and it is not a license to grow. It governs *where a
+fact lives*, not how many lines it takes to say. A discriminated union is more explicit
+than a chain of guards **and** shorter than it; `retries: number` is more explicit than
+a defaulting branch plus a comment describing the default. When explicitness gets cited
+to justify the longer version, ask whether the fact actually moved somewhere more
+visible or merely got stated more times. Repetition is not explicitness.
+
+The temptation arrives as: *"this version is clearer, even if it's a bit longer."*
+Refuse it. Clarity is the alibi every bloated pass uses - nobody has ever added forty
+lines and called it obfuscation. The redirect: if the code needed explaining, the need
+*is* the finding. Ask which constraint you failed to lift, and lift it; the clearer
+version you are reaching for is usually the shorter one you have not found yet. And
+this failure never announces itself - each pass is defensible alone, no single one is
+to blame, and the codebase only ever grows.
+
+Diagnostic: *did this pass leave less code than it found - and if not, what constraint
+did I fail to lift?*
+
+Instance of `types-are-the-program` - the discipline that follows once constraints do
+the work - and the enforcement arm of `carrying-cost`, which is why growth is never
+free.
 
 ---
 
@@ -1032,7 +1089,8 @@ state; `effects-at-boundaries` keeps the fire in the hearth.
 **The composability payoff** - `dataflow-not-control-flow`, `one-type-per-behavior`,
 and `no-mode-explosion` push variability into values so that `composability` can
 turn N blocks into N² capability - and `carrying-cost` is why the payoff, not the
-build price, is the number that matters.
+build price, is the number that matters. `polishing-by-subtraction` is how you know a
+pass got you there: it left less code than it found.
 
 **Observable correctness** - `verifiable-goals` gives done a shape,
 `behavior-not-structure` tests the contract not the plumbing, and
