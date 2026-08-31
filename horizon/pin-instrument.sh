@@ -9,16 +9,22 @@
 # manifest exists and every field in it resolves back to something checkable.
 #
 # Usage:
-#   horizon/pin-instrument.sh <run-dir> [memento-ref]
+#   horizon/pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha]
 #
-# <run-dir>     directory to build the run's environment in (created fresh; an
-#               existing run-dir is refused rather than silently merged into -
-#               [LAW:no-silent-failure], a stale leftover file must never masquerade
-#               as this run's output).
-# [memento-ref] git ref to pin memento at, resolved against this repo. Defaults to
-#               the repo's current HEAD. A campaign that wants one fixed memento ref
-#               across every run in the campaign (promptctl-horizon-7ry.5) passes it
-#               explicitly on every invocation rather than relying on this default.
+# <run-dir>      directory to build the run's environment in (created fresh; an
+#                existing run-dir is refused rather than silently merged into -
+#                [LAW:no-silent-failure], a stale leftover file must never masquerade
+#                as this run's output).
+# [memento-ref]  git ref to pin memento (and the /goal wording, which lives in this
+#                same repo) at, resolved against this repo. Defaults to the repo's
+#                current HEAD. A campaign that wants one fixed ref across every run
+#                in the campaign (promptctl-horizon-7ry.5) passes it explicitly on
+#                every invocation rather than relying on this default.
+# [reviewer-sha] commit sha to pin the reviewer action at, skipping the live
+#                `v1`-tag resolution. A caller that needs two invocations to agree
+#                on the reviewer's identity without racing the moving tag twice -
+#                verify-instrument.sh's reproducibility check is exactly this -
+#                resolves it once and passes it here explicitly.
 #
 # Produces, under <run-dir>:
 #   pinned/                 the memento git-archive snapshot + its marketplace.json
@@ -33,8 +39,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib.sh"
 
 main() {
-  local run_dir="${1:-}" memento_ref="${2:-}"
-  [ -n "$run_dir" ] || horizon_die "usage: pin-instrument.sh <run-dir> [memento-ref]"
+  local run_dir="${1:-}" memento_ref="${2:-}" reviewer_sha_override="${3:-}"
+  [ -n "$run_dir" ] || horizon_die "usage: pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha]"
   [ -e "$run_dir" ] && horizon_die "run-dir already exists, refusing to overwrite: $run_dir"
 
   horizon_need git
@@ -43,7 +49,7 @@ main() {
   horizon_need python3
 
   local repo_root
-  repo_root="$(horizon_repo_root)"
+  repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
   [ -z "$memento_ref" ] && memento_ref="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)"
 
   mkdir -p "$run_dir"
@@ -65,26 +71,32 @@ main() {
   lit_path="$(horizon_lit_path)"
   lit_sha256="$(horizon_lit_sha256)"
 
-  horizon_log "resolving reviewer ${REVIEWER_REPO}@${REVIEWER_TAG}"
-  local reviewer_sha reviewer_prompt_sha256
-  reviewer_sha="$(horizon_reviewer_sha)"
+  local reviewer_sha
+  if [ -n "$reviewer_sha_override" ]; then
+    horizon_log "reviewer pinned at $reviewer_sha_override (given, not resolved)"
+    reviewer_sha="$reviewer_sha_override"
+  else
+    horizon_log "resolving reviewer ${REVIEWER_REPO}@${REVIEWER_TAG}"
+    reviewer_sha="$(horizon_reviewer_sha)"
+    horizon_log "reviewer pinned at $reviewer_sha"
+  fi
+  local reviewer_prompt_sha256
   reviewer_prompt_sha256="$(horizon_reviewer_prompt_sha256 "$reviewer_sha")"
-  horizon_log "reviewer pinned at $reviewer_sha"
 
   horizon_log "recording the standard /goal wording"
   local goal_sha256
-  goal_sha256="$(horizon_goal_wording_sha256 "$repo_root")"
+  goal_sha256="$(horizon_goal_wording_sha256 "$repo_root" "$memento_sha")"
 
   python3 - "$run_dir/manifest.json" \
     "$memento_sha" "$memento_tree_sha" \
     "$lit_path" "$lit_sha256" \
     "$REVIEWER_REPO" "$REVIEWER_TAG" "$reviewer_sha" "$REVIEWER_PROMPT_PATH" "$reviewer_prompt_sha256" \
-    "$goal_sha256" <<'PY'
+    "$goal_sha256" "$HORIZON_GOAL_PROMPT_REL_PATH" <<'PY'
 import json, sys
 
 (out, memento_sha, memento_tree_sha, lit_path, lit_sha256,
  reviewer_repo, reviewer_tag, reviewer_sha, reviewer_prompt_path, reviewer_prompt_sha256,
- goal_sha256) = sys.argv[1:]
+ goal_sha256, goal_wording_path) = sys.argv[1:]
 
 manifest = {
     "schema_version": 1,
@@ -105,7 +117,7 @@ manifest = {
         "prompt_sha256": reviewer_prompt_sha256,
     },
     "goal_wording": {
-        "path": "horizon/GOAL_PROMPT.md",
+        "path": goal_wording_path,
         "sha256": goal_sha256,
     },
 }
