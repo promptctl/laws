@@ -125,7 +125,7 @@ jobs:
           # place — see BASELINE_EXCLUDES at the top of install.sh, where the rationale
           # for each baseline pattern lives beside the patterns themselves, and
           # read_repo_config, which parses the per-repo half. [LAW:one-source-of-truth]
-          EXCLUDE_PATTERNS: ".github/workflows/code-review.yml,dist/**,**/dist/**,build/**,**/build/**,*.lock,package-lock.json,yarn.lock,pnpm-lock.yaml,*.md"
+          EXCLUDE_PATTERNS: ".github/workflows/code-review.yml,dist/**,**/dist/**,build/**,**/build/**,*.lock,package-lock.json,yarn.lock,pnpm-lock.yaml,plugins/laws/skills/**,plugins/laws/design-docs/**,design-docs/**"
 
       # The transcript is the only artifact that can explain a review that failed,
       # hung, or misbehaved — the exact prompt, the raw engine output including
