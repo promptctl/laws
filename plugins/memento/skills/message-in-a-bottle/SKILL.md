@@ -1,6 +1,6 @@
 ---
 name: message-in-a-bottle
-description: Writes a message to a future session's agent.  Send them your fondest memories of what you worked on, what went well, what didn't go well, and any useful tips they might need. You always run this when you finish a unit of work (closed a PR, completed the handed task, etc) or cross 300k–350k tokens of context.  ALWAYS.
+description: Writes a message to a future session's agent.  Send them your fondest memories of what you worked on, what went well, what didn't go well, and any useful tips they might need. You always run this when you finish a unit of work (closed a PR, completed the handed task, etc) or approach the context ceiling.  ALWAYS.
 ---
 
 # finalize-session
@@ -9,7 +9,7 @@ The last operation of a finishing turn: prepares instructions for a future agent
 
 ## This is mandatory — you run it, you do not decide it
 
-When you reach a finalization point — you closed a PR, finished the task you were handed, or crossed 300k–350k tokens of context — running `finalize-session` is the close-out. It is **not** a choice you weigh, a thing you ask the user about, or a step you defer "until later."
+When you reach a finalization point — you closed a PR, finished the task you were handed, or came within reach of the context ceiling — running `finalize-session` is the close-out. It is **not** a choice you weigh, a thing you ask the user about, or a step you defer "until later." The ceiling itself is memento's Stop hook, which names the live count and the limit when it fires; do not wait to be forced.
 
 [LAW:dataflow-not-control-flow] running this is unconditional at a finalization point — the same path every time. The only variability is a *value*: the handoff message you pass. 
 
@@ -17,7 +17,7 @@ When you reach a finalization point — you closed a PR, finished the task you w
 
 ### The only gate, and the rationalizations that are never one
 
-There is exactly **one** legitimate input: **is the handed unit of work complete?** Unit complete (PR merged, ticket closed, task delivered) *or* context at 300k–350k tokens → you run it, now, with no further deliberation. Unit **not** complete → you are not "deciding not to finalize," you are *still doing the work*: finish the unit, then finalize. There is no third state, and "skip finalize because X" is never one of them.
+There is exactly **one** legitimate input: **is the handed unit of work complete?** Unit complete (PR merged, ticket closed, task delivered) *or* context approaching the ceiling → you run it, now, with no further deliberation. Unit **not** complete → you are not "deciding not to finalize," you are *still doing the work*: finish the unit, then finalize. There is no third state, and "skip finalize because X" is never one of them.
 
 ## You can provide a 'hint' for the next stage, if valuable: /compact
 
