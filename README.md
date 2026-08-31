@@ -24,7 +24,7 @@ architectural reasoning is greppable in your repo and legible in review.
 
 **The universal architectural laws** (`laws:code`) - the reason to install this.
 Two root framings (a program is parts joined at seams; every representation is a map
-that must match its territory) unfold into nineteen laws. Each one carries a
+that must match its territory) unfold into the rest. Each law carries a
 statement, a metaphor built to travel to situations nobody foresaw, the exact
 rationalization it has to defeat, a one-line diagnostic, and worked WRONG/RIGHT code.
 Domain bindings sharpen them for UI, APIs, schemas, pipelines, distributed systems,
