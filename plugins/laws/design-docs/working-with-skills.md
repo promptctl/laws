@@ -93,6 +93,12 @@ goals doc first, and when the change is done read the produced file - not a summ
 against the goals doc. Never load a craft that conflicts with this one in the same
 session; that one you dispatch.
 
+## Violations are recorded
+
+The routing this document describes now leaves a record. A hook watches every Write and Edit, infers the written file's medium from the pattern table in `hooks/scripts/medium-map.txt` (first matching pattern wins; unclassifiable files are ignored), and when that medium's craft is not among the session's engaged crafts, appends one JSON line to `${XDG_STATE_HOME:-~/.local/state}/claude-laws/violations.jsonl`. The guard's refusals land in the same file. So there are two kinds of record: `unrouted-medium-write` - a file was written without its craft engaged - and `incompatible-load` - the guard refused a craft ordering. The session also gets a single nudge per medium, pointing at the right craft or a fresh subagent.
+
+**The observer never blocks.** Nothing is refused or reverted on its account; the record exists so a violation can be counted after the fact without anyone having watched it happen. The map file is the policy - edit it to change how files classify.
+
 ## The direction the intent flows
 
 The design-goals doc is the source of intent; the skill is written and audited

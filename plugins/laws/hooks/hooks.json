@@ -1,5 +1,5 @@
 {
-  "description": "Three injection points: SessionStart routes once to the medium-matched skill (laws:code / laws:prompt / laws:prose) and resets the engaged-craft set on a fresh session; UserPromptSubmit re-engages the laws on every user message; PreToolUse on Skill guards craft compatibility, letting compatible crafts coexist but refusing a craft that is incompatible with one already engaged (today: laws:code with laws:prompt).",
+  "description": "Four injection points: SessionStart routes once to the medium-matched skill (laws:code / laws:prompt / laws:prose) and resets the engaged-craft set on a fresh session; UserPromptSubmit re-engages the laws on every user message; PreToolUse on Skill guards craft compatibility, letting compatible crafts coexist but refusing a craft that is incompatible with one already engaged (today: laws:code with laws:prompt); PostToolUse on Write|Edit observes each written file's medium and, when its craft is not engaged, records the violation to the claude-laws state dir and nudges the agent once per medium - signal only, never a block.",
   "hooks": {
     "SessionStart": [
       {
@@ -28,6 +28,17 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/skill-router.sh\" guard"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/skill-router.sh\" observe"
           }
         ]
       }

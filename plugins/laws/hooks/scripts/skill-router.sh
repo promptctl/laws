@@ -6,6 +6,10 @@
 #                    engaged-craft set when the session is genuinely fresh (see guard, below).
 #   engage         - fires on every user message (UserPromptSubmit): re-assert routing
 #                    AND re-activate the laws for that specific request.
+#   observe        - fires after every Write/Edit (PostToolUse): the non-load half of
+#                    violation detection. Infers the written file's medium from
+#                    medium-map.txt and, when that medium's craft is not engaged, records
+#                    the violation and nudges the agent once per medium. Never blocks.
 #   guard          - fires before every Skill load (PreToolUse, matcher Skill): the one
 #                    checkpoint that enforces craft compatibility. Routing only ASKS the
 #                    agent which craft to load; nothing before this observed the actual
@@ -73,31 +77,34 @@ if [ -z "$INCOMPATIBLE" ]; then
   echo "laws skill-router guard: no craft pairs readable from $POLICY_FILE; craft compatibility enforcement disabled this session" >&2
 fi
 
-# THE policy parser for this script - run once, at launch, so every consumer downstream reads
-# the same normalized edge list instead of re-reading the raw file with a parser of its own.
-# Emits one "engaged refused" line per WELL-FORMED edge and drops the rest loudly.
+# THE policy-line parser - both policy files (incompatible-crafts.txt, medium-map.txt) share
+# one line grammar, two whitespace-separated fields, so they share one parser rather than each
+# growing its own [LAW:one-type-per-behavior]. Run once per file, at the point of use, so every
+# consumer downstream reads the same normalized pair list instead of re-reading the raw file
+# with a parser of its own. Emits one "a b" line per WELL-FORMED pair and drops the rest loudly.
 #
-# EXACTLY TWO TOKENS, or the line is not an edge and the operator is told. `read -r from to`
-# alone silently swallows a third word INTO $to ("code prompt extra-note" -> to="prompt
+# EXACTLY TWO TOKENS, or the line is not a pair and the operator is told. `read -r a b`
+# alone silently swallows a third word INTO $b ("code prompt extra-note" -> b="prompt
 # extra-note"), which can never equal an incoming craft name - so the edge quietly became a
 # permanent no-op here while parsePolicy in laws-excise.js truncated the same line to a live
 # code->prompt edge and enforced it. Two enforcers, one file, opposite rules, no symptom. The
 # third field exists solely to catch what a two-field read would otherwise hide.
+# $2 names what the two fields should have been, so the complaint says which policy is broken.
 # [LAW:single-enforcer] [LAW:no-silent-failure]
-parse_edges() {
-  local from to extra
-  while read -r from to extra; do
-    [ -n "$from" ] || continue
-    if [ -z "$to" ] || [ -n "$extra" ]; then
-      echo "laws policy: ignoring malformed line (expected exactly two craft names): $from${to:+ $to}${extra:+ $extra}" >&2
+parse_pairs() { # <raw-policy-text> <expected-fields-description>
+  local raw=$1 complaint=$2 a b extra
+  while read -r a b extra; do
+    [ -n "$a" ] || continue
+    if [ -z "$b" ] || [ -n "$extra" ]; then
+      echo "laws policy: ignoring malformed line ($complaint): $a${b:+ $b}${extra:+ $extra}" >&2
       continue
     fi
-    printf '%s %s\n' "$from" "$to"
+    printf '%s %s\n' "$a" "$b"
   done <<EOF
-$INCOMPATIBLE
+$raw
 EOF
 }
-EDGES="$(parse_edges)"
+EDGES="$(parse_pairs "$INCOMPATIBLE" "expected exactly two craft names")"
 
 # The conflict clause of the routing text, RENDERED FROM THE POLICY rather than written out.
 # The routing text is injected at the moment an agent picks a craft, and an agent will not open
@@ -231,6 +238,33 @@ deny() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$(json_escape "$1")"
 }
 
+# --- the violation record --------------------------------------------------------------
+# THE writer for the durable medium-violation signal - every detected violation, whatever
+# branch detects it, lands here as one JSONL line, so "how are violations recorded" has one
+# answer [LAW:single-enforcer]. The in-band deny/nudge tells the AGENT in the moment; this
+# file is for AFTERWARDS - counting violations nobody was watching happen, which is the gap
+# that let a whole class of routing failures pass unrecorded [LAW:no-silent-failure].
+#
+# It lives under the XDG state dir, not TMPDIR, because its lifetime is different from the
+# lock's: the engaged set is session state and dies with the machine's tmp, but a tally read
+# "after the fact" must survive it.
+#
+# One schema for every kind [LAW:one-type-per-behavior]: ts, kind, session_id, agent_id,
+# engaged (comma-joined craft set), medium (the violating one), file (empty for load
+# violations, which have no file). A failed append never blocks the hook - the same
+# degrade-loudly stance as the lock store - but it is announced, because a telemetry layer
+# that fails silently is the original defect wearing a new coat.
+VIOLATIONS_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-laws"
+record_violation() { # <kind> <session_id> <agent_id> <engaged-csv> <medium> <file>
+  mkdir -p "$VIOLATIONS_DIR" 2>/dev/null
+  if ! printf '{"ts":"%s","kind":"%s","session_id":"%s","agent_id":"%s","engaged":"%s","medium":"%s","file":"%s"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_escape "$1")" "$(json_escape "$2")" "$(json_escape "$3")" \
+      "$(json_escape "$4")" "$(json_escape "$5")" "$(json_escape "$6")" \
+      >> "$VIOLATIONS_DIR/violations.jsonl" 2>/dev/null; then
+    echo "laws skill-router: could not record medium violation ($1 $5) in $VIOLATIONS_DIR/violations.jsonl" >&2
+  fi
+}
+
 case "$HOOK_TYPE" in
   session-start)
     # A fresh session starts with no craft engaged. startup/clear/fork are the sources
@@ -332,6 +366,9 @@ case "$HOOK_TYPE" in
         # Rendered once, for every message below: "laws:code" or "laws:code, laws:prose".
         conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
+        # The deny below is in-band and dies with the conversation; this line is the half that
+        # survives it, so refused orderings can be counted without a human having watched.
+        record_violation "incompatible-load" "$sid" "$aid" "$conflicts" "$craft" ""
         # The switch is an extra ROUTE OUT of the deny, offered only when the session was started
         # by claude-laws (it is the launcher that can relaunch and enact the choice). Built as a
         # VALUE - empty when unavailable - and always appended, so the deny path itself is the
@@ -393,6 +430,114 @@ case "$HOOK_TYPE" in
         deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft on top of it would corrupt your laws:$craft work - the damage runs THIS WAY ONLY, so it is this ordering that is refused, not the pairing (design-docs/working-with-skills.md). To do laws:$craft work now, dispatch a fresh subagent seeded with only that skill, and keep only its answer. Not a fork, and not any subagent that inherits this conversation: it starts with the engaged craft already in its context, so it reproduces exactly this corruption - and the guard cannot catch that, because the craft lock is per-agent and records loads, not inherited context. If this session's whole job has become laws:$craft, run /clear, then load it clean.$switch_offer"
         exit 0
     fi
+    exit 0
+    ;;
+
+  observe)
+    # The non-load half of violation detection. The guard sees only Skill calls, so a medium
+    # violation with NO load - human prose written while only laws:code is engaged - passed
+    # with no signal at all; this is the observation point for it. It watches Write/Edit,
+    # infers the written file's medium from medium-map.txt, and when that medium's craft is
+    # not in the engaged set it records the violation and nudges the agent ONCE per medium.
+    # Signal only, never a block: the write already happened and stands.
+    tool=$(json_field tool_name)
+    case "$tool" in
+      Write|Edit) ;;
+      *) exit 0 ;;
+    esac
+    # file_path is an unconstrained token, like transcript_path (see the header): a quote in
+    # it truncates the extraction. A truncated path can only fail to match a map pattern, so
+    # the worst mangling degrades to non-observation - but an EMPTY extraction means the read
+    # itself broke, and that is announced rather than passed off as an unclassifiable file.
+    path=$(json_field file_path)
+    if [ -z "$path" ]; then
+      echo "laws skill-router observe: could not extract file_path; write not observed" >&2
+      exit 0
+    fi
+
+    # The inference policy is DATA in medium-map.txt, same stance as incompatible-crafts.txt:
+    # this script hard-codes no pattern and no medium, and both files flow through the one
+    # parse_pairs grammar. A lost or pairless map disables observation - loudly, because a
+    # telemetry layer that goes dark silently is the exact defect it exists to fix.
+    # [LAW:one-source-of-truth] [LAW:no-silent-failure]
+    MAP_FILE="$SCRIPT_DIR/medium-map.txt"
+    RAW_MAP=""
+    [ -r "$MAP_FILE" ] && RAW_MAP="$(sed -E 's/#.*$//' "$MAP_FILE" | grep -E '[^[:space:]]')"
+    if [ -z "$RAW_MAP" ]; then
+      echo "laws skill-router observe: no rules readable from $MAP_FILE; medium observation disabled this session" >&2
+      exit 0
+    fi
+    MAP="$(parse_pairs "$RAW_MAP" "expected a path pattern and a medium")"
+
+    # First matching pattern wins - the map's ordering is load-bearing (SKILL.md is prompt
+    # before *.md is prose). A path matching nothing is deliberately unclassified: inference
+    # claims only what a path can prove, and an unprovable medium is a typed absence, not a
+    # failure. [LAW:parse-dont-validate]
+    medium=""
+    while read -r pattern m; do
+      [ -n "$pattern" ] || continue
+      case "$path" in
+        $pattern) medium=$m; break ;;
+      esac
+    done <<EOF
+$MAP
+EOF
+    [ -n "$medium" ] || exit 0
+
+    sid=$(json_field session_id)
+    aid=$(json_field agent_id)
+    if [ -z "$sid" ]; then
+      # No session id means no way to key the engaged set - the same degraded state the
+      # guard announces, announced the same way.
+      echo "laws skill-router observe: empty session_id, write to $path not observed" >&2
+      exit 0
+    fi
+    slot=$(slot_dir_for "$sid" "$aid")
+
+    # The routed case: the written medium's craft is engaged. Nothing to record.
+    [ -f "$slot/$(sanitize "$medium")" ] && exit 0
+
+    engaged=""
+    for other in "$slot"/*; do
+      [ -e "$other" ] || continue
+      engaged="${engaged:+$engaged,}${other##*/}"
+    done
+
+    record_violation "unrouted-medium-write" "$sid" "$aid" "$engaged" "$medium" "$path"
+
+    # The nudge is deduped per (slot, medium) - the record above is per event so the count
+    # stays honest, but repeating the same corrective text on every write would spend the
+    # session's context on noise. The dedupe markers live in a SIBLING of the slot, never
+    # inside it: the guard reads every file in the slot as an engaged craft, and sanitize()
+    # strips dots from slot names, so the ".nudged" suffix can collide with no real slot.
+    # An unwritable store degrades to nudging without dedupe - the signal survives, the
+    # economy doesn't - and says so, mirroring the guard's lock-store degrade.
+    nudged_marker="$slot.nudged/$(sanitize "$medium")"
+    mkdir -p "$slot.nudged" 2>/dev/null
+    if ! ( set -o noclobber; : > "$nudged_marker" ) 2>/dev/null; then
+      [ -f "$nudged_marker" ] && exit 0
+      echo "laws skill-router observe: could not write nudge marker for $medium; nudging without dedupe this session" >&2
+    fi
+
+    # Two nudge variants, discriminated by the policy's own edges: if an engaged craft
+    # conflicts with the written medium, the guard would refuse the load the nudge would
+    # otherwise recommend - so that variant offers only the subagent route. The discriminator
+    # is the domain's enum, and the emit itself is one path. [LAW:dataflow-not-control-flow]
+    conflicts=""
+    for other in ${engaged//,/ }; do
+      if conflicts_with "$other" "$medium"; then
+        conflicts="${conflicts:+$conflicts,}$other"
+      fi
+    done
+    engaged_pretty="none"
+    [ -n "$engaged" ] && engaged_pretty="laws:${engaged//,/, laws:}"
+    if [ -n "$conflicts" ]; then
+      conflicts_pretty="laws:${conflicts//,/, laws:}"
+      nudge="The file just written at $path looks like laws:$medium work, but that craft is not engaged and cannot be loaded here - laws:$medium work written under $conflicts_pretty comes out corrupted, so that load would be refused. Dispatch a fresh subagent seeded with only laws:$medium to do that work - never a fork or context-inheriting subagent, which carries $conflicts_pretty along - and keep only its answer. This event was recorded; nothing was blocked or reverted."
+    else
+      nudge="The file just written at $path looks like laws:$medium work, but that craft is not engaged - engaged this session: $engaged_pretty. If $medium is genuinely part of your deliverable, load Skill(laws:$medium) now; if not, dispatch a fresh subagent seeded with only laws:$medium to do that work, and keep only its answer. This event was recorded; nothing was blocked or reverted."
+    fi
+    emit "PostToolUse" "$nudge"
     exit 0
     ;;
 

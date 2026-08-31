@@ -1,0 +1,69 @@
+# File-medium inference — the authoritative map from written-file paths to media,
+# read by skill-router.sh's observe hook (PostToolUse on Write|Edit).
+#
+# One rule per line, exactly two fields:
+#
+#     <glob pattern>  <medium>
+#
+# The pattern is a bash glob matched against the FULL file path; the medium is a bare
+# craft name (the craft skill is then "laws:<medium>"). FIRST MATCH WINS, so specific
+# patterns must precede general ones — */SKILL.md is prompt even though *.md is prose,
+# and the ordering below is load-bearing, not aesthetic.
+#
+# A path matching NO rule is deliberately unclassified and never observed: inference
+# only claims what a path can actually prove, and most ambiguity (a .txt that could be
+# data or notes) is left unclaimed rather than guessed at. Add a rule only when the
+# pattern reliably names one medium.
+#
+# Blank lines and lines beginning with '#' are ignored; a trailing '# comment' is stripped.
+
+# LLM-consumed text: skill bodies, agent instructions, command definitions. These are
+# .md by format but prompt by medium — which is exactly why they precede the *.md rule.
+*/SKILL.md prompt
+*/CLAUDE.md prompt
+*/AGENTS.md prompt
+*/commands/*.md prompt
+*/agents/*.md prompt
+*/output-styles/*.md prompt
+*/references/craft.md prompt
+
+# Human-audience prose.
+*.md prose
+*.markdown prose
+*.rst prose
+*.adoc prose
+
+# Code, in laws:code's own scope: source, tests, schemas, configuration, scripts.
+*.sh code
+*.bash code
+*.zsh code
+*.js code
+*.mjs code
+*.cjs code
+*.ts code
+*.tsx code
+*.jsx code
+*.py code
+*.go code
+*.rs code
+*.rb code
+*.java code
+*.c code
+*.h code
+*.cpp code
+*.hpp code
+*.cs code
+*.swift code
+*.kt code
+*.lua code
+*.pl code
+*.sql code
+*.css code
+*.scss code
+*.html code
+*.json code
+*.yaml code
+*.yml code
+*.toml code
+*/Dockerfile code
+*/Makefile code

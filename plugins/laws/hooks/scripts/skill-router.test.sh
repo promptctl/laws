@@ -16,6 +16,11 @@ export TMPDIR
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
+# Detected violations are recorded under the XDG state dir; point it into the throwaway
+# TMPDIR so no test run ever appends to the real ~/.local/state log.
+export XDG_STATE_HOME="$TMPDIR/state"
+VLOG="$XDG_STATE_HOME/claude-laws/violations.jsonl"
+
 pass=0
 fail=0
 ok()   { printf 'ok   - %s\n' "$1"; pass=$((pass+1)); }
@@ -540,6 +545,157 @@ excludes "  ... nor rendered as a truncated two-token edge" "$br_text" "laws:pro
 contains "  ... while the well-formed edge beside it still renders" "$br_text" \
   "These orderings are refused: once laws:code is engaged, laws:prompt is refused."
 rm -rf "$badrender"
+
+# 16. THE VIOLATION RECORD. Every detected violation - the guard's refusal and the observe
+#     hook's unrouted write - lands as one JSONL line in the state-dir log, so violations can
+#     be counted after the fact without a human having watched them happen. These cases assert
+#     the record (the durable contract) and the nudge (the in-band one) together, since the
+#     ticket's whole point is that the in-band signal alone dies with the conversation.
+write_payload() { # <session_id> <tool> <file_path> [agent_id]
+  local sid=$1 tool=$2 fp=$3 aid=${4:-}
+  if [ -n "$aid" ]; then
+    printf '{"session_id":"%s","agent_id":"%s","hook_event_name":"PostToolUse","tool_name":"%s","tool_input":{"file_path":"%s"}}' "$sid" "$aid" "$tool" "$fp"
+  else
+    printf '{"session_id":"%s","hook_event_name":"PostToolUse","tool_name":"%s","tool_input":{"file_path":"%s"}}' "$sid" "$tool" "$fp"
+  fi
+}
+count_records() { # <needle> -> how many log lines contain it
+  if [ -f "$VLOG" ]; then grep -c -- "$1" "$VLOG"; else echo 0; fi
+}
+
+# 16a. A guard refusal is recorded, naming the engaged set and the refused medium. The deny
+#      itself is asserted by case 4; this is its surviving half.
+run guard "$(skill_payload V1 laws:code)" >/dev/null
+run guard "$(skill_payload V1 laws:prompt)" >/dev/null
+v1=$(count_records '"session_id":"V1"')
+[ "$v1" = 1 ] && ok "a guard refusal appends one violation record" \
+              || bad "expected 1 record for V1, got $v1"
+contains "  ... of kind incompatible-load" "$(grep '"session_id":"V1"' "$VLOG" 2>/dev/null)" '"kind":"incompatible-load"'
+contains "  ... naming the engaged craft and refused medium" \
+  "$(grep '"session_id":"V1"' "$VLOG" 2>/dev/null)" '"engaged":"code","medium":"prompt"'
+
+# 16b. The non-load violation - THE case the epic documented (prose written while laws:code
+#      was the engaged craft) - is recorded and nudged. prose is loadable beside code, so the
+#      nudge offers the load.
+run guard "$(skill_payload V2 laws:code)" >/dev/null
+out=$(run observe "$(write_payload V2 Write /somewhere/evals/README.md)")
+contains "an unrouted prose write nudges the agent in-band" "$out" "laws:prose"
+contains "  ... offering the load, since prose is loadable beside code" "$out" "Skill(laws:prose)"
+contains "  ... naming the engaged set" "$out" "laws:code"
+v2=$(count_records '"session_id":"V2"')
+[ "$v2" = 1 ] && ok "  ... and appends one violation record" || bad "expected 1 record for V2, got $v2"
+contains "  ... of kind unrouted-medium-write with medium and file" \
+  "$(grep '"session_id":"V2"' "$VLOG" 2>/dev/null)" '"kind":"unrouted-medium-write"'
+contains "  ... classifying README.md as prose" \
+  "$(grep '"session_id":"V2"' "$VLOG" 2>/dev/null)" '"medium":"prose","file":"/somewhere/evals/README.md"'
+
+# 16c. The record is per EVENT, the nudge per MEDIUM: a second unrouted prose write in the
+#      same session is counted again but not re-nudged - repeating the text on every write
+#      would spend the session's context on noise while the count went quietly wrong.
+out=$(run observe "$(write_payload V2 Edit /somewhere/evals/OTHER.md)")
+assert_allow "a second unrouted write of the same medium emits no second nudge" "$out"
+v2=$(count_records '"session_id":"V2"')
+[ "$v2" = 2 ] && ok "  ... but is still recorded, keeping the count honest" \
+              || bad "expected 2 records for V2, got $v2"
+
+# 16d. The routed case is silent: writing the medium whose craft IS engaged is the system
+#      working, and must leave neither nudge nor record.
+run guard "$(skill_payload V3 laws:prose)" >/dev/null
+out=$(run observe "$(write_payload V3 Write /docs/notes.md)")
+assert_allow "a routed write (prose file, laws:prose engaged) emits nothing" "$out"
+v3=$(count_records '"session_id":"V3"')
+[ "$v3" = 0 ] && ok "  ... and records nothing" || bad "expected 0 records for V3, got $v3"
+
+# 16e. When the written medium CONFLICTS with an engaged craft (prompt under laws:code), the
+#      nudge must not recommend a load the guard would refuse - only the fresh-subagent route.
+#      This also pins map ordering: */SKILL.md is prompt even though *.md is prose.
+run guard "$(skill_payload V4 laws:code)" >/dev/null
+out=$(run observe "$(write_payload V4 Write /repo/skills/foo/SKILL.md)")
+contains "a conflicting-medium write nudges toward the subagent route" "$out" "fresh subagent seeded with only laws:prompt"
+excludes "  ... and never offers the load the guard would refuse" "$out" "Skill(laws:prompt)"
+contains "  ... naming the conflicting engaged craft" "$out" "laws:code"
+contains "  ... with SKILL.md classified as prompt, not prose (map order wins)" \
+  "$(grep '"session_id":"V4"' "$VLOG" 2>/dev/null)" '"medium":"prompt"'
+
+# 16f. A write with NO craft engaged at all is the purest routing failure - the routing text
+#      was injected every turn and nothing loaded. Recorded, and nudged toward the load.
+out=$(run observe "$(write_payload V5 Write /app/src/main.py)")
+contains "a write in an unrouted session nudges toward the load" "$out" "Skill(laws:code)"
+contains "  ... and says nothing is engaged" "$out" "none"
+contains "  ... recording an empty engaged set" \
+  "$(grep '"session_id":"V5"' "$VLOG" 2>/dev/null)" '"engaged":"","medium":"code"'
+
+# 16g. A path matching no map pattern is deliberately unclassified: no record, no nudge -
+#      inference claims only what a path can prove.
+out=$(run observe "$(write_payload V6 Write /data/blob.xyz)")
+assert_allow "an unclassifiable file is not observed" "$out"
+v6=$(count_records '"session_id":"V6"')
+[ "$v6" = 0 ] && ok "  ... and not recorded" || bad "expected 0 records for V6, got $v6"
+
+# 16h. A non-Write/Edit tool reaching observe is not its business.
+out=$(run observe "$(write_payload V7 Bash /app/src/main.py)")
+assert_allow "a non-write tool is ignored by observe" "$out"
+
+# 16i. A subagent's slot is its own: the parent's engaged craft does not count for it, and the
+#      parent's nudge dedupe does not silence it. Same isolation the guard keys on.
+out=$(run observe "$(write_payload V2 Write /elsewhere/notes.md agentZ)")
+contains "a subagent write is judged against its own (empty) engaged set" "$out" "laws:prose"
+contains "  ... and nudged despite the parent having been nudged already" "$out" "Skill(laws:prose)"
+
+# 16j. session-start on a fresh source resets the nudge dedupe along with the engaged set - a
+#      /clear starts a new logical session, so its first violation deserves a fresh nudge.
+run observe "$(write_payload V8 Write /docs/a.md)" >/dev/null
+run session-start "$(start_payload V8 clear)" >/dev/null
+out=$(run observe "$(write_payload V8 Write /docs/b.md)")
+contains "after /clear the nudge fires again" "$out" "laws:prose"
+
+# 16k. A missing medium map disables observation loudly, not silently - a dark telemetry layer
+#      is the defect this hook exists to fix. Run a router copy with no map beside it.
+nomap=$(mktemp -d)
+cp "$ROUTER" "$nomap/skill-router.sh"
+cp "$HERE/incompatible-crafts.txt" "$nomap/incompatible-crafts.txt"
+nm_payload=$(write_payload V9 Write /docs/a.md)
+out=$(printf '%s' "$nm_payload" | "$nomap/skill-router.sh" observe 2>/dev/null)
+err=$(printf '%s' "$nm_payload" | "$nomap/skill-router.sh" observe 2>&1 >/dev/null)
+assert_allow "a missing medium map emits no nudge (observation disabled)" "$out"
+case "$err" in
+  *"no rules readable"*) ok "  ... and says so on stderr";;
+  *) bad "  ... but disabled observation silently (stderr: $err)";;
+esac
+v9=$(count_records '"session_id":"V9"')
+[ "$v9" = 0 ] && ok "  ... and records nothing it could not classify" || bad "expected 0 records for V9, got $v9"
+
+# 16l. An unwritable state dir degrades loudly: the record is lost but announced, and the
+#      in-band nudge still goes out - one broken signal must not take the other with it.
+rostate=$(mktemp -d); chmod 500 "$rostate"
+uw_payload=$(write_payload V10 Write /docs/a.md)
+out=$(printf '%s' "$uw_payload" | XDG_STATE_HOME="$rostate" "$ROUTER" observe 2>/dev/null)
+err=$(printf '%s' "$uw_payload" | XDG_STATE_HOME="$rostate" "$ROUTER" observe 2>&1 >/dev/null)
+chmod 700 "$rostate"; rm -rf "$rostate"
+contains "an unwritable state dir still nudges in-band" "$out" "laws:prose"
+case "$err" in
+  *"could not record medium violation"*) ok "  ... and announces the lost record on stderr";;
+  *) bad "  ... but lost the record silently (stderr: $err)";;
+esac
+
+# 16m. A malformed map line (three tokens) is not a rule and is announced, while well-formed
+#      rules beside it still classify - the same one-parser discipline as the craft policy.
+badmap=$(mktemp -d)
+cp "$ROUTER" "$badmap/skill-router.sh"
+cp "$HERE/incompatible-crafts.txt" "$badmap/incompatible-crafts.txt"
+printf '*.md prose extra-note\n*.py code\n' > "$badmap/medium-map.txt"
+bm_payload=$(write_payload V11 Write /app/src/main.py)
+out=$(printf '%s' "$bm_payload" | "$badmap/skill-router.sh" observe 2>"$badmap/err.txt")
+err=$(cat "$badmap/err.txt")
+contains "a well-formed map rule beside a malformed line still classifies" "$out" "Skill(laws:code)"
+case "$err" in
+  *"ignoring malformed line"*) ok "  ... and the malformed line is announced";;
+  *) bad "  ... but the malformed line was dropped silently (stderr: $err)";;
+esac
+bm_md=$(write_payload V12 Write /docs/a.md)
+out=$(printf '%s' "$bm_md" | "$badmap/skill-router.sh" observe 2>/dev/null)
+assert_allow "  ... while the malformed rule itself classifies nothing" "$out"
+rm -rf "$badmap" "$nomap"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
