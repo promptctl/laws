@@ -142,6 +142,13 @@ code, out, _ = run([user, assistant(OVER),
 check("a confirming git call after the close-out does not undo it",
       code == 0 and out and "decision" not in out
       and "the close-out ran" in out.get("systemMessage", ""), str(out))
+# The tmux transport compacts in place, so the transcript keeps growing past a close-out.
+# Crediting that one forever would wave through every later breach in the same file.
+code, out, _ = run([user, assistant(OVER),
+                    tool_use("Bash", {"command": f"{LAUNCHER} 'bye'"}), tool_result(),
+                    user, assistant(OVER)])
+check("a close-out from an earlier turn does not excuse a later breach",
+      out and out.get("decision") == "block", str(out))
 
 # --- PreToolUse: what the close-out is allowed to do -------------------------------------
 
@@ -172,6 +179,22 @@ _, out, _ = bash("git push -u origin topic")
 check("git push -u is permitted, because a close-out needs it", out is None, str(out))
 _, out, _ = bash("git status --porcelain -uall")
 check("a reading subcommand takes any flags", out is None, str(out))
+# git's refspec grammar forces and deletes without ever writing a flag, so push's operands
+# are constrained as tightly as its flags.
+_, out, _ = bash("git push origin +main:main")
+check("a + refspec force-push is denied", denied(out), str(out))
+_, out, _ = bash("git push origin :topic")
+check("a colon refspec branch delete is denied", denied(out), str(out))
+_, out, _ = bash("git push origin main")
+check("a plain ref is permitted", out is None, str(out))
+_, out, _ = bash("git push -u origin feature/x")
+check("a ref with a slash is permitted", out is None, str(out))
+_, out, _ = bash("git commit -am 'staged and messaged'")
+check("bundled short flags follow from their letters", out is None, str(out))
+_, out, _ = bash("git commit -ma 'the other order'")
+check("bundle order does not matter", out is None, str(out))
+_, out, _ = bash("git commit -amz 'smuggled letter'")
+check("a bundle hiding an unpermitted letter is denied", denied(out), str(out))
 _, out, _ = bash("git branch -D topic")
 check("git branch is denied", denied(out), str(out))
 _, out, _ = bash("cat notes.md")
@@ -230,6 +253,23 @@ open(planted_git, "w").close()
 os.chmod(planted_git, 0o755)
 _, out, _ = bash(f"{planted_git} status")
 check("an executable named git is permitted, by name and by decision", out is None, str(out))
+
+# The launcher's internal worker entry points take a pid to kill and a binary to run, and
+# need no setup at all - one Bash call to the real file reaches them.
+for internal in ("--worker tmux clear /tmp/m /tmp/g",
+                 "--iterm-worker uuid 4242 /tmp/m /tmp/g flags",
+                 "--detached-worker s /tmp . /tmp/m /tmp/g f 1 /bin/sh id"):
+    _, out, _ = bash(f"{LAUNCHER} {internal}")
+    check(f"the launcher's {internal.split()[0]} entry point is denied", denied(out), str(out))
+_, out, _ = run([user, assistant(OVER),
+                 tool_use("Bash", {"command": f"{LAUNCHER} --detached-worker s /tmp . /tmp/m /tmp/g f 1 /bin/sh id"}),
+                 tool_result()])
+check("an internal worker call is not credited as the close-out",
+      out and out.get("decision") == "block", str(out))
+_, out, _ = bash(f"{LAUNCHER} --goal 'keep going' /next")
+check("the documented --goal shape is permitted", out is None, str(out))
+_, out, _ = bash(f"{LAUNCHER} --reset clear 'a handoff'")
+check("the documented --reset shape is permitted", out is None, str(out))
 
 # F5: the shell would find a bare name on PATH, so the gate resolves it the same way before
 # checking identity.
