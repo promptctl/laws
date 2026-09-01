@@ -1,6 +1,6 @@
 {
   "name": "memento",
-  "description": "Agent-native workflow tooling: pull the next lit ticket (next), the mandatory session close-out and cross-session handoff that carries a goal across a reset (message-in-a-bottle), and the address-PR-review loop (address-pr-reviews).",
+  "description": "Pointers only. These three skills moved to their own marketplace at https://github.com/promptctl/memento; what remains here tells an agent that reached for one where to install it. Install with: /plugin marketplace add promptctl/memento",
   "author": {
     "name": "Brandon Fryslie"
   },
