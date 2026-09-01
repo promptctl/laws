@@ -49,12 +49,12 @@ main() {
   horizon_need claude
   horizon_need python3
   horizon_need lit
+  horizon_need cat
   # Reached from inside lib.sh pipelines - git archive | tar, and the reviewer prompt
   # decode. Absent, pipefail would blame the tool at the head of the pipe instead of
   # the one that is actually missing.
   horizon_need tar
   horizon_need base64
-  horizon_need cat
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"

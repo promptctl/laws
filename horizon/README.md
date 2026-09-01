@@ -134,9 +134,10 @@ dangling `parent`, a dangling `depends_on`, a repeated `local_id`, and a `repo/`
 carrying its own `.git` (which would otherwise be merge-copied over the project's). The
 first three are the references `verify-seed.sh` follows without checking them itself, on
 the grounds that `lit import` rejects them first — this is where that assumption gets
-tested rather than trusted. It also ships a `post-commit` file inside a seed and requires
-that seeding succeed while the file never runs: content a seed carries is content, never
-something the instrument executes.
+tested rather than trusted, each case required to be refused for its own stated reason
+rather than merely to fail. Finally it seeds under an operator global config whose
+`core.hooksPath` points at a hostile `post-commit`, and requires that seeding succeed
+while the hook never fires: no hook of the operator's runs against a seed commit.
 
 ## What this does not do
 
