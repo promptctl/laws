@@ -1,0 +1,167 @@
+[
+  {
+    "local_id": "foundation",
+    "title": "CLI boundary and observation rig",
+    "type": "epic",
+    "topic": "foundation",
+    "description": "Destination: the program's outer shell conforms to appspec/02-invocation.md (invocation grammar, options, dispatch order, exit codes) and the output-stream/color sections of appspec/07-output-safety-lifecycle.md, and a black-box conformance rig exists that checks behavior at the process boundary (stdout/stderr/exit code under a throwaway home).\n\nWhy: the spec is purely behavioral (appspec/00-overview.md) \u2014 the observable boundary and the means of observing it must exist before anything behind them.\n\nConstraints that hold across all tickets in this arc and every later one:\n- The user-facing surface follows the spec verbatim: command grammar, literal contract tokens, config filenames like ~/.mackup.cfg, the 'Mackup <version>' string. 'macklebox' is the project/package name only; the observable surface is the spec's (spec-derived: conformance to appspec/02 and 07 requires it).\n- Implementation language/runtime is the implementer's choice \u2014 appspec/00-overview.md states any language reproducing the observable behavior is conformant. Do not treat the reference's Python as a requirement.\n\nEpic done-claim: --help, --version, force-flag exclusion, usage errors, and stream/color routing are all demonstrated green by the rig."
+  },
+  {
+    "local_id": "resolvers",
+    "title": "Startup resolvers: config, storage location, application database",
+    "type": "epic",
+    "topic": "resolvers",
+    "description": "Destination: startup-pipeline steps 2-4 of appspec/01-architecture.md \u00a74 conform \u2014 user config file (appspec/03-configuration.md), storage-engine resolution (appspec/04-storage-engines.md), application-database assembly (appspec/05-application-database.md) \u2014 and list/show work end-to-end behind the universal gates, with the built-in catalog shipped.\n\nWhy: every command flows through this one pipeline, and storage resolution is eager \u2014 it blocks even list/show (appspec/01 \u00a71, appspec/02) \u2014 so nothing downstream is buildable honestly until these resolve.\n\nConstraint that holds for the whole arc: the database's rejections (absolute paths, out-of-home XDG) are load-bearing for the sync engine's safety \u2014 appspec/05 'home-relativity guarantee'. They are contract, not input hygiene.\n\nEpic done-claim: list and show conform to appspec/05 Enumeration with the shipped catalog, and every config/storage/database failure row of the error table in appspec/07 that concerns startup behaves as specified."
+  },
+  {
+    "local_id": "copy-sync",
+    "title": "Copy strategy: engine substrate, drift, backup/restore",
+    "type": "epic",
+    "topic": "copy-sync",
+    "description": "Destination: Strategy A of appspec/00-overview.md is complete \u2014 the per-file executor substrate (appspec/06-sync-operations.md 'Shared vocabulary', appspec/01-architecture.md \u00a72), drift detection, and backup/restore as one parameterized copy operation with the partial-failure contract.\n\nWhy: snapshot copy is half the product promise, and it builds the substrate (primitives, predicate, fan-out, confirmation, gates) that the link strategy reuses.\n\nConstraints that hold for the arc: backup and restore are ONE operation \u2014 any divergence beyond {direction, wording, the one link-skip} is a defect (appspec/01 \u00a71). One already-linked predicate backs all four consumers (appspec/01 \u00a72). One confirmation mechanism serves every prompt in the program (appspec/01 \u00a73, appspec/07).\n\nEpic done-claim: promises 3, 4, 5, 6, 7, and 9 of appspec/00-overview.md are observable via backup/restore runs under the rig."
+  },
+  {
+    "local_id": "link-sync",
+    "title": "Link strategy: install, join, uninstall, whole-Mackup mode",
+    "type": "epic",
+    "topic": "link-sync",
+    "description": "Destination: Strategy B of appspec/00-overview.md is complete \u2014 link install, link, link uninstall per appspec/06-sync-operations.md, plus the whole-Mackup ceremonies (full uninstall with self-last ordering; full link with config-first ordering and the mid-run reload, appspec/01 \u00a77).\n\nWhy: live symlinking is the other half of the product; its reversibility (promise 2) and data-safety (promise 10) guarantees are the tool's trust story.\n\nConstraints that hold for the arc: storage is never deleted or emptied by any transition (appspec/01 \u00a72); the two entry doors of Strategy B are distinct contracts \u2014 do not collapse link install and link (appspec/00, the two-strategies section); link commands reuse the same fan-out, gates, primitives, predicate, and confirmation mechanism built in the copy-strategy arc (appspec/01 \u00a71, 'five leaves on one tree'); reference failure behavior for link commands is fail-hard mid-run \u2014 aggregation is a permitted improvement only if successful-run behavior is unchanged (appspec/01 \u00a75).\n\nEpic done-claim: a link install \u2192 link uninstall round-trip lands every home file back as a real file with the caveats of appspec/01 \u00a72 (storage copy remains; permissions normalized), and promises 1, 2, 10 of appspec/00 are observable under the rig."
+  },
+  {
+    "local_id": "conformance",
+    "title": "Conformance pass: error table, streams, cross-cutting uniformity",
+    "type": "task",
+    "topic": "conformance",
+    "description": "Destination: with all five sync commands live, every row of the error-behavior table in appspec/07-output-safety-lifecycle.md holds \u2014 stream, exit code, and shape, including the literal contract tokens appspec/07 names as machine-read ('Unsupported application:' prefix, the force-flag exclusivity line, the exit codes) \u2014 and the cross-cutting rules of appspec/01 \u00a73 hold uniformly across all five commands: dry-run (zero per-file mutation everywhere, folder-gate exception intact), verbose (observationally pure \u2014 no verbose-only file effect anywhere), the force flags reaching every prompt, the root guard on every command including list/show and the --root bypass, and the two do-not-generalize stdout messages verified in place. The deliverable is fixes plus rig cases, not a findings document.\n\nSpec latitude, decided here if not earlier: the unguarded failure cases (appspec/01 \u00a76, the appspec/02 exit-code table) may be surfaced as clean single-line diagnostics instead of tracebacks \u2014 the contract is only 'diagnostic to stderr, nothing on stdout, no filesystem change, nonzero exit'. Either way, each case must land in the rig.\n\nWhy: the unhappy path is API (appspec/07); each earlier ticket proved its own rows locally, and this pass is the one place the whole table and the uniformity claims are checked against the finished system rather than per-feature.\n\nDone-claim: the rig has a case per row of the appspec/07 error table and per cross-cutting rule, all green against the full command surface.",
+    "depends_on": [
+      "link-sync.4"
+    ]
+  },
+  {
+    "local_id": "foundation.1",
+    "title": "Project bootstrap + invocation grammar, dispatch order, exit codes",
+    "type": "task",
+    "topic": "argv",
+    "description": "Destination: the repo builds a runnable command whose argv boundary conforms to appspec/02-invocation.md \u2014 every listed invocation form accepted and non-matching forms rejected as usage errors; the global-options table honored; --help/--version short-circuit to stdout with exit 0 before any config read; --force with --force-no rejected before config load with the literal line appspec/02 specifies, exit 1; the exit-code table holds. Dispatch follows appspec/02 'Command dispatch order' (parse -> config load -> dispatch), with the config-load step stubbed until the resolvers epic lands. The version string resolves per appspec/00-overview.md Provenance: the package's own version when installed, a stable fallback token otherwise, printed as 'Mackup <version>'.\n\nWhy: every other behavior in the spec hangs off this boundary; nothing downstream is observable without it.\n\nIncludes choosing the language/toolchain \u2014 implementer's call; appspec/00 states any language reproducing the observable behavior is conformant.\n\nDone-claim: '--help' prints usage to stdout exit 0; '--version' prints the Mackup version line to stdout exit 0; combining the two force flags emits the exact stderr line and exit 1; an unrecognized subcommand produces the parser warning + usage per appspec/02 'Argument-parser behavior'.",
+    "parent": "foundation"
+  },
+  {
+    "local_id": "foundation.2",
+    "title": "Black-box conformance rig",
+    "type": "task",
+    "topic": "harness",
+    "description": "Destination: a test rig exists that runs the built command under a throwaway home directory and asserts on stdout, stderr, and exit code \u2014 the same observation style appspec/00-overview.md Provenance describes for how the spec was written. The argv-boundary behaviors from the previous ticket are its first green cases.\n\nWhy: the spec defines only observable behavior, so every later ticket's done-claim is checked at the process boundary; without a rig each ticket re-invents ad-hoc verification.\n\nDone-claim: one command runs the suite; it exercises --help/--version/force-flag-exclusion/usage-error cases against the real binary under a scratch HOME and passes.",
+    "parent": "foundation"
+  },
+  {
+    "local_id": "foundation.3",
+    "title": "Stream routing and colored output",
+    "type": "task",
+    "topic": "output",
+    "description": "Destination: every message the program emits lands on the stream and in the color appspec/07-output-safety-lifecycle.md assigns \u2014 per-message stream routing treated as contract, the ANSI level scheme, reset-safe coloring, emitted unconditionally (no TTY detection). The two 'do not generalize warnings->stderr' messages called out in appspec/07 must land on stdout when those messages arrive in later tickets.\n\nWhy: appspec/07 states the stream a message lands on is contract, not cosmetic; retrofitting routing after five commands exist means auditing every print site.\n\nSpec latitude, decided: appspec/07 permits treating exact color bytes as cosmetic for behavioral equivalence \u2014 this project emits 07's specified scheme (it is fully specified and cheap to match), but byte-for-byte parity is not a done-criterion; stream correctness is.\n\nDone-claim: with output piped (not a TTY), --version and a fatal-error path still show SGR sequences, help/version/progress text is on stdout, and fatal 'Error:' diagnostics are on stderr, per appspec/07 'Output streams'.",
+    "parent": "foundation"
+  },
+  {
+    "local_id": "resolvers.1",
+    "title": "User config file and storage-location resolution",
+    "type": "task",
+    "topic": "config",
+    "description": "Destination: appspec/03-configuration.md and appspec/04-storage-engines.md hold in full. Config: the three-candidate discovery precedence, -c/--config-file rules (tilde expansion, home-relative resolution, must-exist), home-directory containment, absent/empty-config semantics, the INI parsing rules including the case-policy half (application-list keys lowercased), the [storage] keys including the forbidden directory values, allowlist/denylist combined precedence, and legacy-section rejection. Storage: the closed set of four engines with the three-clause interface contract of appspec/04 \u2014 including the deliberately NON-uniform postcondition (the file_system engine performs no existence check at resolution; do not 'fix' that \u2014 the check belongs to the environment gate). Resolution is eager: construction yields the fully-resolved five-property value or terminates the process (appspec/03 intro, appspec/01 \u00a71).\n\nWhy: this is startup-pipeline step 2 (appspec/01 \u00a74); every command including list/show dies here if it fails, so its failure behavior is as much contract as its success.\n\nDone-claim: the observed precedence facts in appspec/03 'Discovery and precedence' reproduce; each engine resolves or fails per appspec/04 (dropbox host.db decoding, google_drive DB lookup, icloud fixed path, file_system verbatim path); the guarded vs unguarded failure split for config/storage rows matches the table in appspec/07.",
+    "parent": "resolvers",
+    "depends_on": [
+      "foundation.1"
+    ]
+  },
+  {
+    "local_id": "resolvers.2",
+    "title": "Application database: definition format, discovery, precedence",
+    "type": "task",
+    "topic": "appdb",
+    "description": "Destination: appspec/05-application-database.md holds \u2014 the definition-file format (name key; [configuration_files]; [xdg_configuration_files] with home-relativization), the case-exact path policy (the other half of the case-policy pair in appspec/03), rejection of absolute paths and of an out-of-home XDG_CONFIG_HOME at assembly time, the three-directory discovery precedence decided by filename, and the enumeration lookups (all keys / display name / file set).\n\nWhy: startup-pipeline step 3 (appspec/01 \u00a74), and the rejections are load-bearing for sync safety \u2014 appspec/05 'home-relativity guarantee' states the sync engine relies on them without re-checking.\n\nDone-claim: the observed effects in appspec/05 'Discovery' reproduce \u2014 dropping ~/.mackup/myapp.cfg adds a listable, showable, syncable key; dropping ~/.mackup/vim.cfg fully shadows the built-in; an absolute path in a definition and an out-of-home XDG base each abort every command per the appspec/07 table.",
+    "parent": "resolvers"
+  },
+  {
+    "local_id": "resolvers.3",
+    "title": "list and show behind the universal gates",
+    "type": "task",
+    "topic": "listing",
+    "description": "Destination: 'list' and 'show <app>' produce the stdout formats in appspec/05 Enumeration (sorted keys, count trailer with version; display name + sorted file paths); the universal config-load gate of appspec/02 is wired so a storage-location failure blocks them identically to sync commands; and the usable-environment check runs for every command \u2014 root guard (refuse effective UID 0 without --root, appspec/07) plus storage-root-directory existence (appspec/01 \u00a74 level 1, where the file_system engine's deferred existence check finally fires with the 'Unable to find the storage folder' error).\n\nWhy: first end-to-end commands \u2014 they prove the whole startup pipeline of appspec/01 \u00a74 in one observable path, and they are the user's audit surface (appspec/00, promise 5).\n\nDone-claim: appspec/02's observed facts hold \u2014 with an unlocatable storage folder, list and show fail identically to backup with the same fatal error and exit 1; 'show <unknown>' prints 'Unsupported application: <key>' and exits 1; list output matches the appspec/05 format.",
+    "parent": "resolvers"
+  },
+  {
+    "local_id": "resolvers.4",
+    "title": "Built-in application catalog",
+    "type": "task",
+    "topic": "catalog",
+    "description": "Destination: the build ships built-in definition files such that 'list' prints exactly the 614 keys in appspec/appendix-application-names.md with the matching count trailer, and the catalog includes the 'mackup' self-definition covering .mackup.cfg and the .mackup directory \u2014 required by whole-Mackup mode (appspec/06-sync-operations.md 'Whole-Mackup mode').\n\nWhy: the appendix is data, not contract, but list/show parity and the default sync scope of the reference build need the keys, and the link-strategy epic cannot land without the mackup key existing.\n\nContext that does not survive into the repo: the spec deliberately records only the KEYS \u2014 the display names and file sets of the other 613 applications are not in the spec and cannot be recovered from it. Populate them as project-authored data. This repo is an MIT clean-room reimplementation; run a license review before importing any third-party definition data verbatim (the reference implementation's data files carry its license). A definition with an empty file set is valid per appspec/05 and still lists/shows, so coverage of file sets can grow after this ticket without breaking conformance.\n\nDone-claim: 'list' shows the appendix's 614 keys and count; 'show mackup' lists its file set including .mackup.cfg.",
+    "parent": "resolvers"
+  },
+  {
+    "local_id": "copy-sync.1",
+    "title": "File-operation primitives, permission clamp, LinkState, the one predicate",
+    "type": "task",
+    "topic": "primitives",
+    "description": "Destination: the sync substrate of appspec/06-sync-operations.md 'Shared vocabulary' exists and its postconditions are observable \u2014 copy(src,dst) semantics (parent creation, recursive directory merge), delete(path) semantics, link(target,link_path) semantics, the recursive 0600/0700 permission clamp on every copy and before every symlink, the platform-specific best-effort attribute-cleanup subprocesses (ACL and immutable-flag removal, appspec/06 'Attribute cleanup'), the LinkState branch variable, and the already-linked predicate defined ONCE (appspec/01 \u00a72: one definition backing all four consumers \u2014 backup skip, link-install guard, link guard, link-uninstall safety check; a dangling link or missing storage copy reads as not-linked, never an error).\n\nWhy: every one of the five sync commands is these primitives plus a procedure; getting their postconditions right once is what makes the per-command tickets thin and the skip/guard semantics provably identical.\n\nExplicitly do NOT build: a running-process check \u2014 appspec/06 records that the reference has a pgrep-based check with no live call site; no command consults it.\n\nDone-claim: a copied file lands mode 0600 and a copied directory tree 0700/0600 recursively; a symlink's target is clamped before linking; a dangling home symlink evaluates as not-linked without raising; on a path with an ACL/immutable flag, the platform cleanup commands of appspec/06 are invoked (and silently skipped where the binaries are absent).",
+    "parent": "copy-sync",
+    "depends_on": [
+      "foundation.1"
+    ]
+  },
+  {
+    "local_id": "copy-sync.2",
+    "title": "Drift detection and diff detail",
+    "type": "task",
+    "topic": "drift",
+    "description": "Destination: the source-vs-destination comparison of appspec/06-sync-operations.md 'Drift detection' \u2014 the (identical, detail) result across every comparison class: either-is-symlink, type mismatch, plist-vs-plist, UTF-8 text, byte-for-byte binary, and recursive directory comparison with the sorted changed/only-in-source/only-in-target detail. Detail text goes to stdout with the diff coloring of appspec/07-output-safety-lifecycle.md.\n\nWhy: promise 6 of appspec/00-overview.md (diff-before-replace) hangs entirely on this; identical-means-skip is also the idempotency fixed point of backup/restore.\n\nDone-claim: for each comparison class listed in appspec/06, the rig shows the specified identical/differs outcome and detail shape, on stdout.",
+    "parent": "copy-sync"
+  },
+  {
+    "local_id": "copy-sync.3",
+    "title": "backup and restore: the one copy operation, with the system it rides on",
+    "type": "task",
+    "topic": "backup-restore",
+    "description": "Destination: 'backup' and 'restore' conform to appspec/06-sync-operations.md as ONE procedure parameterized by the direction record (appspec/06 gives the exact table) \u2014 per-file procedure, the backup-only link-skip, drift integration with the stdout stream note, the replace prompts with their exact nouns. Because these are the first commands that sync, this ticket also lands everything appspec/01 defines system-wide that they need, built once for all five commands:\n- the two-level sorted fan-out and single-app scoping \u2014 named app replaces scope and overrides both config lists, validated before the environment gate (appspec/01 \u00a71 \u00a73, appspec/02 'Selecting which applications');\n- the Mackup-folder ensure/require gates with the folder-creation prompt and its decline error (appspec/06 'Environment gate per command', appspec/01 \u00a74 levels 2-3);\n- the ONE confirmation mechanism \u2014 three-valued force/force-no/interactive policy threaded as data to every prompt, y/yes/n/no case-insensitive, re-ask on anything else, EOF at a prompt is a nonzero failure (appspec/07 'The confirmation / safety model', appspec/01 \u00a73);\n- dry-run and verbose semantics per appspec/01 \u00a73, including the one dry-run exception (the folder-creation gate is not a per-file mutation and still runs) and verbose observational purity;\n- the partial-failure contract: per-file copy failures collected as data, stderr 'Error: Unable to copy' lines, end-of-run incomplete summary, exit 1 (appspec/06 'Partial-failure contract', appspec/01 \u00a75).\n\nSpec constraints, verbatim intent: any divergence between backup and restore beyond {direction, user-facing wording, the one link-skip} is a defect (appspec/01 \u00a71). The link commands must reuse this fan-out, gating, and confirmation \u2014 five leaves on one tree (appspec/01 \u00a71).\n\nWhy: this is Strategy A of appspec/00 \u2014 half the product \u2014 and it establishes the shared machinery the link epic plugs into.\n\nDone-claim: a second identical backup run does nothing and prompts for nothing; a run with an uncopyable file prints the per-file stderr error, the end summary, and exits 1; 'backup vim' acts on vim while vim sits in applications_to_ignore; 'backup <unknown>' fails with 'Unsupported application:' before any folder is created or prompt shown; --dry-run mutates no config file on any path.",
+    "parent": "copy-sync",
+    "depends_on": [
+      "resolvers.3"
+    ]
+  },
+  {
+    "local_id": "link-sync.1",
+    "title": "link install: move home files into storage, symlink back",
+    "type": "task",
+    "topic": "link-install",
+    "description": "Destination: 'link install [app]' conforms to appspec/06-sync-operations.md 'link install' \u2014 the per-file procedure with the already-linked guard (the shared predicate), the replace-in-backup prompt, and the copy -> delete-home -> symlink per-file order whose non-atomic window is documented contract (appspec/01 \u00a72, appspec/07 'Interruption / crash residue': an implementation may make the move+link atomic but must not change the observable end state of a successful run). Reuses the shared fan-out, the ensure-folder gate, and the confirmation mechanism from the copy-strategy epic.\n\nWhy: the first-machine entry door of Strategy B (appspec/00) \u2014 the command that inverts where the source of truth lives.\n\nDone-claim: after a run, each acted-on home path is a symlink resolving into the Mackup folder which holds the real content at the same home-relative path with clamped permissions; an immediate re-run skips every file (already-linked); dry-run stops after the progress line with no mutation.",
+    "parent": "link-sync",
+    "depends_on": [
+      "copy-sync.3"
+    ]
+  },
+  {
+    "local_id": "link-sync.2",
+    "title": "link: symlink existing storage files into home",
+    "type": "task",
+    "topic": "link-join",
+    "description": "Destination: 'link [app]' conforms to appspec/06-sync-operations.md 'link' \u2014 acts only when the mackup path exists; moves NOTHING out of home (this is the second-machine door, distinct by contract from link install \u2014 appspec/00, the two entry doors); the replace-home prompt; the platform rule that on Linux a home path under ~/Library/ is skipped (appspec/06 step 1, appspec/00 'Platform assumptions'); the require-folder gate.\n\nWhy: the join-an-existing-sync path; collapsing it into link install is the exact product-destroying move appspec/00 warns against.\n\nDone-claim: with content already in the Mackup folder and nothing at home, a run creates the symlink directly; with a pre-existing home file, the appspec/06 prompt gates replacement; the Mackup copies are unmodified afterward; on Linux, a ~/Library/ path is skipped.",
+    "parent": "link-sync"
+  },
+  {
+    "local_id": "link-sync.3",
+    "title": "link uninstall: revert links to real files, protect foreign files",
+    "type": "task",
+    "topic": "link-uninstall",
+    "description": "Destination: 'link uninstall [app]' conforms to appspec/06-sync-operations.md 'link uninstall' \u2014 acts only when the mackup path exists; a home path that is NOT a symlink to its mackup copy is skipped with the warning printed to STDOUT (the stream note appspec/06 and appspec/07 both flag as easy to get wrong; appspec/00 promise 10); a genuine link is deleted and the mackup content copied back as a real file with clamped permissions; a home-absent file is left storage-only.\n\nWhy: reversibility (appspec/00 promise 2) is the trust story of link mode \u2014 adopting the tool must not be a one-way door, and a user-substituted file must never be clobbered.\n\nDone-claim: a linked file reverts to a real (non-link) home file holding the storage content; a user-substituted real file at the home path is untouched and the warning appears on stdout, not stderr; the storage copy still exists afterward.",
+    "parent": "link-sync"
+  },
+  {
+    "local_id": "link-sync.4",
+    "title": "Whole-Mackup mode: full link and full uninstall ceremonies",
+    "type": "task",
+    "topic": "whole-mackup",
+    "description": "Destination: the no-argument behavior of 'link' and 'link uninstall' conforms to appspec/06-sync-operations.md 'Whole-Mackup mode'. Full uninstall: the global confirmation through the one confirmation policy; the configured set minus the mackup key; mackup uninstalled LAST (self-last ordering \u2014 the config must survive until the end, appspec/00 promise 2); the closing message; the storage folder deliberately NOT deleted (cross-machine safety, appspec/06 step 6, appspec/01 \u00a72 'storage is never emptied'). Full link: the mackup application linked FIRST, then the config AND application database reloaded mid-run so the just-linked shared config governs the rest of the same run (appspec/01 \u00a77 \u2014 the second-machine join flow depends on this), then the reloaded scope minus mackup linked. Naming an application skips this entire ceremony \u2014 for these two commands naming an app changes behavior, not just scope (appspec/01 \u00a73).\n\nWhy: this is where the per-app procedures compose into the two user journeys \u2014 clean exit from the tool, and join-an-existing-sync \u2014 and where the cross-machine safety promises live.\n\nDone-claim: a full link under the rig picks up a scope change carried by the just-linked shared config for the remaining apps of the same run; a full uninstall reverts every configured app, reverts mackup last, prints the closing message, and leaves the storage folder present; 'link uninstall vim' shows no global confirmation and no ceremony.",
+    "parent": "link-sync",
+    "depends_on": [
+      "resolvers.4"
+    ]
+  }
+]
