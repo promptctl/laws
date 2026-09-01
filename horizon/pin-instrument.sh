@@ -43,17 +43,17 @@ main() {
   [ -n "$run_dir" ] || horizon_die "usage: pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha]"
   [ -e "$run_dir" ] && horizon_die "run-dir already exists, refusing to overwrite: $run_dir"
 
+  horizon_need_base
   horizon_need git
   horizon_need gh
   horizon_need claude
   horizon_need python3
   horizon_need lit
-  # Reached only from inside lib.sh pipelines - git archive | tar, the reviewer prompt
-  # decode, and awk trailing every sha256. Absent, pipefail would blame the tool at the
-  # head of the pipe instead of the one that is actually missing.
+  # Reached from inside lib.sh pipelines - git archive | tar, and the reviewer prompt
+  # decode. Absent, pipefail would blame the tool at the head of the pipe instead of
+  # the one that is actually missing.
   horizon_need tar
   horizon_need base64
-  horizon_need awk
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"

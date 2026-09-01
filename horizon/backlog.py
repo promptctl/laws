@@ -68,8 +68,13 @@ def shape(export):
     # would stop matching the queue order this claims to preserve.
     position = {}
 
+    # Title breaks a rank tie, never the id or the export's list order: ids are
+    # generated fresh by each `lit import`, so tiebreaking on one would make this
+    # shape differ between two seedings of a single bundle - the exact divergence
+    # this file exists to rule out. Title is intrinsic to the seed, and verify-seed.sh
+    # rejects a seed that repeats one, so the key is a total order on siblings.
     def assign(children, prefix):
-        for n, issue in enumerate(sorted(children, key=lambda i: i["rank"])):
+        for n, issue in enumerate(sorted(children, key=lambda i: (i["rank"], i["title"]))):
             key = f"{prefix}{n:04d}"
             position[issue["id"]] = key
             assign([c for c in live if parent_of.get(c["id"]) == issue["id"]], f"{key}.")

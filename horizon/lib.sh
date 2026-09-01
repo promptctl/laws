@@ -47,6 +47,18 @@ horizon_need() {
   command -v "$1" >/dev/null 2>&1 || horizon_die "required command not found: $1"
 }
 
+# The coreutils reached from this file on its callers' behalf, declared here because a
+# caller cannot know what lib.sh invokes for it. Each script previously carried its own
+# partial copy of this list - which is how they drifted apart, several of them omitting a
+# tool they reach on every run. [LAW:one-source-of-truth] one list, one owner; a script
+# declares only the tools it invokes itself.
+HORIZON_BASE_TOOLS=(awk basename cp dirname find mkdir mktemp rm tr)
+
+horizon_need_base() {
+  local tool
+  for tool in "${HORIZON_BASE_TOOLS[@]}"; do horizon_need "$tool"; done
+}
+
 # One owner for "what does sha256 of a file look like" - shasum when it is on PATH,
 # sha256sum otherwise, on any platform - so both hashing entry points below fail the
 # same way when neither is. Populates the HORIZON_SHA256_CMD array rather than

@@ -45,13 +45,10 @@ main() {
     || horizon_die "usage: seed-run.sh <run-dir> <seed-dir> [project-name]"
   [ -e "$run_dir" ] && horizon_die "run-dir already exists, refusing to overwrite: $run_dir"
 
+  horizon_need_base
   horizon_need git
   horizon_need lit
   horizon_need python3
-  # Reached only from inside lib.sh - the seed tree copy, and awk trailing every
-  # sha256. Absent, the failure would name the wrong tool.
-  horizon_need cp
-  horizon_need awk
 
   # Resolved before anything is created, so a malformed seed fails with nothing built.
   local backlog seed_digest
@@ -68,7 +65,7 @@ main() {
     */*|.|..) horizon_die "project-name must be a single path segment, not '$project_name'" ;;
   esac
 
-  mkdir -p "$run_dir"
+  mkdir -p "$run_dir" || horizon_die "could not create run dir: $run_dir"
   run_dir="$(cd "$run_dir" && pwd)"
   local project_dir="$run_dir/$project_name"
 

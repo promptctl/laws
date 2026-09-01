@@ -36,16 +36,16 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
 main() {
+  horizon_need_base
   horizon_need git
   horizon_need lit
   horizon_need python3
-  # horizon_seed_digest and horizon_sha256_file hash through a pipeline ending in awk.
-  horizon_need awk
   # Invoked directly by the checks below; named here so a missing one fails with this
   # instrument's own error rather than a bare "command not found".
   horizon_need diff
   horizon_need cmp
   horizon_need sed
+  horizon_need wc
 
   local backlog
   backlog="$(horizon_seed_backlog_path "$SEED_DIR")"
@@ -65,12 +65,29 @@ main() {
     fi
   done
 
+  # Read back from the manifest seed-run.sh wrote, never recomputed from $SEED_DIR:
+  # seed-run.sh resolves the seed to an absolute path before taking its basename, so a
+  # `basename "$SEED_DIR"` here disagrees with it for inputs like `.` or `..` and would
+  # point every check below at a directory that is not the project. The two manifests
+  # were just proven identical, so run1's answer is the answer. [LAW:one-source-of-truth]
+  local project_name run1_project run2_project
+  project_name="$(python3 - "$WORK/run1/seed-manifest.json" <<'PY'
+import json, sys
+name = json.load(open(sys.argv[1]))["project"]["name"]
+if not name or "/" in name or name in (".", ".."):
+    sys.exit(f"manifest records an unusable project name: {name!r}")
+print(name)
+PY
+)" || fail "could not read the project name from seed-manifest.json"
+  run1_project="$WORK/run1/$project_name"
+  run2_project="$WORK/run2/$project_name"
+
   # The manifest's tree_sha is the committed files' identity, so an identical manifest
   # already proves "same files". Stated separately because that is the ticket's wording
   # and a reader should not have to infer which manifest field carried it.
   local tree1 tree2
-  tree1="$(horizon_project_tree "$WORK/run1/$(basename "$SEED_DIR")")"
-  tree2="$(horizon_project_tree "$WORK/run2/$(basename "$SEED_DIR")")"
+  tree1="$(horizon_project_tree "$run1_project")"
+  tree2="$(horizon_project_tree "$run2_project")"
   [ "$tree1" = "$tree2" ] \
     || fail "the two seeded repos committed different trees ($tree1 vs $tree2)"
   pass "both seedings committed the identical git tree ($tree1)"
@@ -79,7 +96,7 @@ main() {
   # on a quoted heredoc and both inputs arrive as file paths, so shell quoting cannot
   # reach inside it - a single quote in a message would otherwise have closed a
   # `python3 -c '...'` argument and silently handed python a different program.
-  horizon_lit_export "$WORK/run1/$(basename "$SEED_DIR")" > "$WORK/run1-export.json" \
+  horizon_lit_export "$run1_project" > "$WORK/run1-export.json" \
     || fail "could not export the seeded backlog"
   # sys.exit, never assert: -O / PYTHONOPTIMIZE compiles asserts out, which would turn
   # this into a silent pass on any input. [LAW:no-silent-failure]
@@ -114,6 +131,10 @@ missing = set(seed_titles) - {i["title"] for i in live}
 if missing:
     sys.exit(f"seed items missing from the seeded backlog: {sorted(missing)}")
 
+# Total without a check of its own: this runs only on a seed `lit import` already
+# accepted (seeding precedes the comparison), and lit rejects a dangling parent, a
+# dangling depends_on, and a duplicate local_id outright. Re-checking here would be a
+# second enforcer of lit's own invariant, free to drift from it. [LAW:single-enforcer]
 title_of_local = {d["local_id"]: d["title"] for d in seed}
 
 expected_parent = {d["title"]: title_of_local[d["parent"]]
@@ -150,15 +171,14 @@ PY
   # Fresh history means the seeded repo's first commit has no parent - it is a new
   # project, not a branch off some existing history that a later reader could trace
   # back into another repo.
-  local project_dir roots remotes
-  project_dir="$WORK/run1/$(basename "$SEED_DIR")"
-  roots="$(horizon_project_git "$project_dir" rev-list --max-parents=0 HEAD)" \
+  local roots remotes
+  roots="$(horizon_project_git "$run1_project" rev-list --max-parents=0 HEAD)" \
     || fail "could not list root commits in the seeded repo"
   [ "$(printf '%s\n' "$roots" | wc -l | tr -d ' ')" = "1" ] \
     || fail "seeded repo does not have exactly one root commit: $roots"
   pass "seeded repo has fresh history (a single root commit)"
 
-  remotes="$(horizon_project_git "$project_dir" remote)" \
+  remotes="$(horizon_project_git "$run1_project" remote)" \
     || fail "could not list remotes in the seeded repo"
   [ -z "$remotes" ] \
     || fail "seeded repo has a git remote ($remotes); lit init would adopt its backlog"
@@ -169,7 +189,7 @@ PY
   # rather than against a count.
   local rel missing=0
   while IFS= read -r rel; do
-    if ! horizon_project_git "$project_dir" show "HEAD:$rel" \
+    if ! horizon_project_git "$run1_project" show "HEAD:$rel" \
          | cmp -s - "$SEED_DIR/$HORIZON_SEED_REPO_SUBDIR/$rel"; then
       printf 'FAIL: seeded repo does not carry %s byte-identically\n' "$rel" >&2
       missing=1
