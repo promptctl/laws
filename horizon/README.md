@@ -115,11 +115,17 @@ the seeded backlog against the **seed bundle** — every ticket, its parent, and
 cannot hide. Reproducibility alone would not be worth much: a seeding that silently
 dropped every dependency edge reproduces that damage perfectly.
 
-It then diffs every file under the seed's `repo/` against what was committed, byte for
-byte — the only check that ties a committed tree back to the seed, since two matching
-manifests would agree just as happily on the wrong bytes. Finally it checks the repo has
-fresh history and no remote — `lit init` adopts a backlog from a git remote when it finds
-one, which is exactly how this seed was recovered in the first place.
+It then checks the repo has fresh history and no remote — `lit init` adopts a backlog
+from a git remote when it finds one, which is exactly how this seed was recovered in the
+first place. After that it diffs every file under the seed's `repo/` against what was
+committed, byte for byte — the only check that ties a committed tree back to the seed,
+since two matching manifests would agree just as happily on the wrong bytes.
+
+Finally it seeds three deliberately broken seeds — a dangling `parent`, a dangling
+`depends_on`, a repeated `local_id` — and requires each to be refused. Those are the
+references `verify-seed.sh` follows without checking them itself, on the grounds that
+`lit import` rejects them first; this is where that assumption gets tested rather than
+assumed.
 
 ## What this does not do
 

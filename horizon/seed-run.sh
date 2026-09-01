@@ -49,6 +49,10 @@ main() {
   horizon_need git
   horizon_need lit
   horizon_need python3
+  # Invoked directly in main(), unlike the SCRIPT_DIR dirname above, which runs before
+  # any check could protect it.
+  horizon_need basename
+  horizon_need dirname
 
   # Resolved before anything is created, so a malformed seed fails with nothing built.
   local backlog seed_digest

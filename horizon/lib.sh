@@ -52,7 +52,11 @@ horizon_need() {
 # partial copy of this list - which is how they drifted apart, several of them omitting a
 # tool they reach on every run. [LAW:one-source-of-truth] one list, one owner; a script
 # declares only the tools it invokes itself.
-HORIZON_BASE_TOOLS=(awk basename cp dirname find mkdir mktemp rm tr)
+#
+# Scoped to what lib.sh invokes OUTSIDE horizon_build_memento_snapshot, whose cat/tar/
+# base64 stay declared by pin-instrument.sh - the only script that reaches them - so no
+# script checks for a tool it can never run.
+HORIZON_BASE_TOOLS=(awk cp find mkdir mktemp rm sort tr)
 
 horizon_need_base() {
   local tool
@@ -302,8 +306,16 @@ horizon_seed_backlog_path() {
   irregular="$(find "$seed_dir" ! -type f ! -type d -print)" \
     || horizon_die "could not scan seed bundle: $seed_dir"
   [ -z "$irregular" ] \
-    || horizon_die "seed bundle contains non-regular files (symlinks/devices are not
-    supported in a seed): $irregular"
+    || horizon_die "seed bundle contains non-regular files (symlinks and devices are not supported in a seed): $irregular"
+  # A newline in a filename is legal on POSIX and would split one path into two lines of
+  # horizon_seed_digest's newline-delimited listing, pairing the wrong hash with the
+  # wrong path and yielding a confidently wrong digest. Refused at the same boundary and
+  # for the same reason as symlinks, so the digest loop can stay line-oriented.
+  local newline_names
+  newline_names="$(find "$seed_dir" -name '*
+*' -print)" || horizon_die "could not scan seed bundle: $seed_dir"
+  [ -z "$newline_names" ] \
+    || horizon_die "seed bundle contains a filename with an embedded newline: $newline_names"
   printf '%s\n' "$seed_dir/$HORIZON_SEED_BACKLOG_FILE"
 }
 
@@ -313,13 +325,24 @@ horizon_seed_backlog_path() {
 # digest is immune to archive metadata (mtimes, uid/gid, ordering) and changes only when
 # a seed file's path or bytes change. This is what lets a manifest state which seed a
 # run actually started from, instead of merely naming a directory. LC_ALL=C fixes the
-# sort under any locale. Regular files are the whole bundle - horizon_seed_backlog_path
-# has already refused anything else.
+# sort under any locale.
+#
+# Scoped to the two parts the seed model defines, never the whole directory: a bundle may
+# also carry documentation (PROVENANCE.md), which no step of seeding reads. Hashing it
+# would make a typo fix in that prose report two runs from an identical time zero as
+# having started from different seeds - the one thing this digest exists to answer.
+#
+# Validates the bundle itself rather than trusting a caller to have done it first: the
+# "regular files only" guarantee this loop relies on is horizon_seed_backlog_path's to
+# make, and an ordering requirement that lives only in caller discipline is one an
+# alternate caller can skip. [LAW:single-enforcer] [LAW:no-ambient-temporal-coupling]
 horizon_seed_digest() {
   local seed_dir="$1" listing rel hash
+  horizon_seed_backlog_path "$seed_dir" >/dev/null
   listing="$(
     cd "$seed_dir" || exit 1
-    find . -type f -print | LC_ALL=C sort | while IFS= read -r rel; do
+    find "$HORIZON_SEED_REPO_SUBDIR" "$HORIZON_SEED_BACKLOG_FILE" -type f -print \
+      | LC_ALL=C sort | while IFS= read -r rel; do
       # Captured into its own checked assignment: a command substitution's exit status
       # is discarded when it sits in an argument list, so `printf ... || exit 1` would
       # only ever report printf's own success and emit a line with an empty hash - a
@@ -338,8 +361,10 @@ horizon_seed_digest() {
 # Every git invocation against a seeded project routes through here, so the determinism
 # settings cannot be applied to some commits and forgotten on others.
 # [LAW:single-enforcer] The `-c` overrides neutralise the operator's global config:
-# commit.gpgsign would make the commit sha depend on a signing key, and
-# init.templateDir would copy arbitrary local hooks into every seeded repo.
+# commit.gpgsign would make the commit sha depend on a signing key, init.templateDir
+# would copy arbitrary local hooks into every seeded repo, and core.hooksPath would let
+# an existing hook of any kind run against seed commits - including post-commit, which
+# --no-verify does not suppress and which could amend or append to HEAD after the fact.
 horizon_project_git() {
   local project_dir="$1"; shift
   git -C "$project_dir" \
@@ -347,6 +372,7 @@ horizon_project_git() {
     -c "user.email=$HORIZON_SEED_COMMIT_EMAIL" \
     -c commit.gpgsign=false \
     -c init.templateDir= \
+    -c core.hooksPath= \
     "$@"
 }
 
@@ -377,22 +403,38 @@ horizon_project_init() {
 # Copies the seed's repo tree in as-is. `cp` of the directory's *contents* - the
 # trailing /. - rather than the directory itself, so the seed's own directory name never
 # becomes a stray level inside the project.
+#
+# Validates the bundle first for the same reason horizon_seed_digest does: "no symlinks"
+# is what keeps this cp from pulling a path outside the seed into the project, and that
+# guarantee belongs to horizon_seed_backlog_path, not to whichever caller remembered to
+# run it. [LAW:no-ambient-temporal-coupling]
 horizon_project_populate() {
   local project_dir="$1" seed_dir="$2"
+  horizon_seed_backlog_path "$seed_dir" >/dev/null
   cp -R "$seed_dir/$HORIZON_SEED_REPO_SUBDIR/." "$project_dir/" \
     || horizon_die "could not copy the seed tree into $project_dir"
 }
 
 # Usage: horizon_project_commit <project_dir> <message>
 #
-# --no-verify because a seeded repo installs lit's pre-push hook, and an operator's
-# global core.hooksPath could attach arbitrary commit hooks; neither may alter what a
-# seed commit contains. The dates are passed as environment rather than config because
-# git reads author/committer timestamps only from there.
+# --no-verify because a seeded repo installs lit's pre-push hook; core.hooksPath is
+# emptied in horizon_project_git for the hooks --no-verify does not reach. Neither may
+# alter what a seed commit contains.
+#
+# All four identity fields and both dates are passed as environment, because git ranks
+# GIT_AUTHOR_NAME and its siblings ABOVE user.name from any config source, `-c`
+# included. Pinning identity only through `-c` left an operator who exports those - CI
+# wrappers and personal dotfiles both do - authoring the seed commit under their own
+# name, which changes the commit sha and so makes time zero machine-dependent. Two
+# seedings on one machine still agree, so verify-seed.sh could not have caught it.
 horizon_project_commit() {
   local project_dir="$1" message="$2"
   horizon_project_git "$project_dir" add -A \
     || horizon_die "git add failed in $project_dir"
+  GIT_AUTHOR_NAME="$HORIZON_SEED_COMMIT_NAME" \
+  GIT_AUTHOR_EMAIL="$HORIZON_SEED_COMMIT_EMAIL" \
+  GIT_COMMITTER_NAME="$HORIZON_SEED_COMMIT_NAME" \
+  GIT_COMMITTER_EMAIL="$HORIZON_SEED_COMMIT_EMAIL" \
   GIT_AUTHOR_DATE="$HORIZON_SEED_COMMIT_DATE" \
   GIT_COMMITTER_DATE="$HORIZON_SEED_COMMIT_DATE" \
   horizon_project_git "$project_dir" commit -q --no-verify -m "$message" \
