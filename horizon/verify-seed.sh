@@ -31,8 +31,8 @@
 #      follows the seed's local_id graph without checking it, because `lit import` will
 #      not accept a seed where those references dangle, and that is asserted here rather
 #      than assumed of a binary this repo does not build.
-#   7. Nothing a seed ships gets to execute: a `post-commit` file in the seed's `repo/`
-#      tree is ordinary content, so seeding must succeed and the hook must never run.
+#   7. No hook of the operator's runs against a seed commit: seeding under a global
+#      core.hooksPath pointing at a post-commit hook must leave that hook unfired.
 #
 # [LAW:verifiable-goals] this script IS the machine-checkable "done" for the ticket;
 # exit 0 means every criterion held on this run, exit nonzero says which one didn't.
@@ -249,51 +249,69 @@ PY
   done
 
   # A seed whose repo/ tree carries its own .git would be merge-copied over the freshly
-  # initialised one, and a commit hook shipped in that tree must never execute. Both are
-  # refusals the seed boundary owes; asserted rather than assumed. [LAW:verifiable-goals]
-  if bundle_is_refused git-dir-in-repo; then
-    pass "a seed whose repo/ tree carries a .git entry is refused"
-  else
-    fail "a seed carrying repo/.git was ACCEPTED; it would overwrite the seeded project's own git dir"
-  fi
+  # initialised one. Seeding fails either way once that git dir is corrupt, so "it
+  # failed" proves nothing here - the diagnostic has to show the SEED BOUNDARY turned it
+  # away, because a downstream "not a git repository" would mean the bundle was already
+  # copied in. [LAW:verifiable-goals]
+  local bad_git refusal
+  bad_git="$WORK/badtree-git-dir"
+  cp -R "$SEED_DIR" "$bad_git" || fail "could not copy the seed for the .git case"
+  mkdir -p "$bad_git/$HORIZON_SEED_REPO_SUBDIR/.git" \
+    || fail "could not build the .git case"
+  printf 'CLOBBERED\n' > "$bad_git/$HORIZON_SEED_REPO_SUBDIR/.git/HEAD" \
+    || fail "could not build the .git case"
+  local refusal_status=0
+  refusal="$(seeding_diagnostic "$bad_git" git-dir)" || refusal_status=$?
+  case "$refusal_status" in
+    0) ;;
+    2) fail "a seed carrying repo/.git was ACCEPTED; it would overwrite the seeded project's own git dir" ;;
+    *) fail "the repo/.git refusal check could not run (exit $refusal_status)" ;;
+  esac
+  case "$refusal" in
+    *".git entry"*)
+      pass "a seed whose repo/ tree carries a .git entry is refused at the seed boundary" ;;
+    *)
+      fail "a seed carrying repo/.git was rejected, but downstream rather than at the seed boundary: $refusal" ;;
+  esac
 
-  local hook_marker="$WORK/seed-hook-fired"
-  if bundle_is_refused vendored-post-commit-hook "$hook_marker"; then
-    fail "seeding a bundle that merely contains a post-commit file failed; the file is ordinary content and must not stop a seeding"
-  fi
+  # Hook neutralisation is only observable against a git that would otherwise run one, and
+  # a file sitting in the seed's tree is never a hook - git looks in .git/hooks or
+  # core.hooksPath, nowhere else. So the operator's global config is made hostile, which
+  # is the actual threat horizon_project_git's `-c core.hooksPath=` exists to answer.
+  local hooks_home hook_marker
+  hooks_home="$WORK/hostile-hooks"
+  hook_marker="$WORK/post-commit-hook-fired"
+  mkdir -p "$hooks_home/hooks" || fail "could not build the hostile hooks dir"
+  printf '#!/bin/sh\ntouch %s\n' "$hook_marker" > "$hooks_home/hooks/post-commit" \
+    || fail "could not write the hostile post-commit hook"
+  chmod +x "$hooks_home/hooks/post-commit" || fail "could not make the hostile hook executable"
+  printf '[core]\n\thooksPath = %s/hooks\n' "$hooks_home" > "$hooks_home/gitconfig" \
+    || fail "could not write the hostile global git config"
+  GIT_CONFIG_GLOBAL="$hooks_home/gitconfig" \
+    "$SCRIPT_DIR/seed-run.sh" "$WORK/hooked" "$SEED_DIR" >/dev/null 2>&1 \
+    || fail "seeding under a global core.hooksPath failed"
   [ ! -e "$hook_marker" ] \
-    || fail "a post-commit file shipped in the seed's repo/ tree executed during seeding"
-  pass "a post-commit file shipped in a seed does not execute"
+    || fail "a post-commit hook from the operator's global core.hooksPath ran against a seed commit"
+  pass "a hook from the operator's global core.hooksPath does not run during seeding"
 
   horizon_log "all checks passed"
 }
 
-# Usage: bundle_is_refused <case> [marker_path]  -> 0 when seeding the bundle fails
+# Usage: seeding_diagnostic <seed_dir> <name>  -> prints seed-run.sh's output
 #
-# Builds a corrupted repo/ tree rather than a corrupted backlog, so it is a sibling of
-# seed_is_refused rather than a mode inside it.
-bundle_is_refused() {
-  local case_name="$1"
-  local marker="${2:-}"
-  local bad="$WORK/badtree-$case_name"
-  cp -R "$SEED_DIR" "$bad" || fail "could not copy the seed for the $case_name case"
-  case "$case_name" in
-    git-dir-in-repo)
-      mkdir -p "$bad/$HORIZON_SEED_REPO_SUBDIR/.git" \
-        || fail "could not build the $case_name case"
-      printf 'CLOBBERED\n' > "$bad/$HORIZON_SEED_REPO_SUBDIR/.git/HEAD" \
-        || fail "could not build the $case_name case"
-      ;;
-    vendored-post-commit-hook)
-      printf '#!/bin/sh\ntouch %s\n' "$marker" \
-        > "$bad/$HORIZON_SEED_REPO_SUBDIR/post-commit" \
-        || fail "could not build the $case_name case"
-      chmod +x "$bad/$HORIZON_SEED_REPO_SUBDIR/post-commit" \
-        || fail "could not build the $case_name case"
-      ;;
-    *) fail "unknown bundle case: $case_name" ;;
-  esac
-  ! "$SCRIPT_DIR/seed-run.sh" "$WORK/refused-$case_name" "$bad" >/dev/null 2>&1
+# Exit 0 = refused, and the diagnostic is on stdout for the caller to read; exit 2 =
+# ACCEPTED. Two codes rather than a boolean because "the seeding succeeded" and "this
+# helper broke" are different facts, and a single nonzero would report the second as the
+# first - which is exactly how an unbound variable in here once read as a seeding that
+# was wrongly accepted. Any other status is the helper's own failure.
+seeding_diagnostic() {
+  local bad="$1"
+  local name="$2"
+  local log="$WORK/refusal-$name.log"
+  if "$SCRIPT_DIR/seed-run.sh" "$WORK/refused-$name" "$bad" >"$log" 2>&1; then
+    return 2
+  fi
+  cat "$log"
 }
 
 # Usage: seed_is_refused <case>  -> 0 when seeding the corrupted seed fails
