@@ -1,6 +1,6 @@
 {
   "name": "promptctl",
-  "description": "Prompt- and guidance-engineering plugins: the universal architectural laws with medium-scoped quality skills, and personal agent-native workflow tooling.",
+  "description": "Prompt- and guidance-engineering plugins: the universal architectural laws with medium-scoped quality skills for code, prose and prompts.",
   "owner": {
     "name": "Brandon Fryslie"
   },
@@ -13,7 +13,7 @@
     {
       "name": "memento",
       "source": "./plugins/memento",
-      "description": "Agent-native workflow tooling: next-ticket pickup, the mandatory session close-out and cross-session handoff (message-in-a-bottle), and the address-PR-review loop."
+      "description": "Pointers only: next, message-in-a-bottle and address-pr-reviews moved to their own marketplace at https://github.com/promptctl/memento. What ships here just tells an agent where to install them."
     }
   ]
 }
