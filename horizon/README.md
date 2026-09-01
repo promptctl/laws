@@ -139,8 +139,77 @@ rather than merely to fail. Finally it seeds under an operator global config who
 `core.hooksPath` points at a hostile `post-commit`, and requires that seeding succeed
 while the hook never fires: no hook of the operator's runs against a seed commit.
 
+## Driving a run unattended
+
+```sh
+horizon/run-loop.sh [seed-dir] [memento-ref]
+```
+
+Builds time zero with the two commands above, issues the pinned `/goal` wording once,
+and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`. Every session
+after the first is produced by memento's own relaunch.
+
+The driver does not repair, and that is the central design point. memento's goal-carry
+and its in-place relaunch are the controlled variables this eval measures. A driver that
+re-issued a lost goal, or restarted a dead session, would be measuring itself: the run
+would look healthiest exactly where the instrument is broken. So a lost carry stops the
+run, loudly.
+
+### One fixed working path, one login
+
+Runs are built at one fixed working path (`~/.horizon/run`, override
+`HORIZON_WORK_DIR`), and the finished run is copied to wherever runs are being kept.
+That is not a convenience. Claude Code keys its stored credential to the config
+directory's path, so wiping that directory keeps the login while building the run
+somewhere new loses it — all of it established empirically.
+
+Which is why the login is its own command, run once:
+
+```sh
+horizon/login.sh
+```
+
+A human with a browser does that once; every run afterwards is unattended. An
+unauthenticated config dir does not fail loudly on its own. It boots to a login prompt
+and waits forever, which in an unattended run is indistinguishable from an agent
+thinking hard, so `run-loop.sh` refuses to launch until login has happened.
+
+### Why the run lives in tmux
+
+The run is launched inside a detached tmux session, and that single fact decides whether
+the run stays isolated. finalize-session chooses its handoff transport by walking process
+ancestry: under a live tmux pane it resets *that* process in place, so
+`CLAUDE_CONFIG_DIR`, `PATH` and flags survive, because nothing is relaunched. Launched
+any other way it spawns a *new* tmux session, which inherits the tmux server's
+environment rather than the caller's — the successor would silently read the operator's
+real config while every log line still reported success. `run-loop.sh` asserts this
+precondition before trusting a run.
+
+The `/goal` wording is issued from the commit `manifest.json` names, never from the
+working tree, so the bytes a run used and the `goal_wording.sha256` it reports cannot
+diverge.
+
+The work dir holds two subdirectories, `instrument/` and `seed/`, because
+`pin-instrument.sh` and `seed-run.sh` each refuse a run-dir that already exists — a guard
+worth keeping, so each gets its own directory rather than being loosened to share.
+
+### What the run leaves behind
+
+The run's record is `loop.json` in the work dir, produced by `sessions.py`. That program
+is pure analysis over inputs it is handed — transcripts as files, commits on stdin — so
+the same verdict can be recomputed from an archived run months later with nothing
+running.
+
+Per session it reports the session id, its time window, whether a `/goal` was issued,
+whether that goal matches the pinned wording rather than merely being some goal, and
+which commits fall in its window. It also reports the longest run of *consecutive*
+sessions that each committed something. Consecutive matters: three committing sessions
+with a dead one between them is a loop that stalled and was restarted.
+
+Tests: `horizon/sessions.test.py`.
+
 ## What this does not do
 
-Driving the unattended multi-session loop and capturing the run bundle are separate
-tickets (`promptctl-horizon-7ry.3/.4`). This directory pins the environment and builds
-the starting state those later pieces run inside.
+Capturing the run bundle is a separate ticket (`promptctl-horizon-7ry.4`). This directory
+pins the environment, builds the starting state, and drives the run that later piece
+records.
