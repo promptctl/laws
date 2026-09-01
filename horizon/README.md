@@ -113,9 +113,13 @@ Seeds twice and checks the manifests and backlog shapes are byte-identical, then
 the seeded backlog against the **seed bundle** — every ticket, its parent, and every
 `blocks` edge, keyed by title rather than by position, so a bug shared with `backlog.py`
 cannot hide. Reproducibility alone would not be worth much: a seeding that silently
-dropped every dependency edge reproduces that damage perfectly. It also checks the repo
-has fresh history and no remote — `lit init` adopts a backlog from a git remote when it
-finds one, which is exactly how this seed was recovered in the first place.
+dropped every dependency edge reproduces that damage perfectly.
+
+It then diffs every file under the seed's `repo/` against what was committed, byte for
+byte — the only check that ties a committed tree back to the seed, since two matching
+manifests would agree just as happily on the wrong bytes. Finally it checks the repo has
+fresh history and no remote — `lit init` adopts a backlog from a git remote when it finds
+one, which is exactly how this seed was recovered in the first place.
 
 ## What this does not do
 

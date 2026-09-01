@@ -45,23 +45,43 @@ def shape(export):
     if not live:
         die("lit export contains no live issues - the backlog was not seeded")
 
+    # Relations are filtered to live endpoints ONCE, here, so every lookup below is
+    # total. A rolled-back import leaves soft-deleted rows behind, and an edge into one
+    # of them would otherwise reach a key that no longer exists - as a KeyError
+    # traceback, in the module whose whole job is turning a malformed export into a
+    # clear message. A child whose parent is gone simply has no parent edge and is
+    # placed as a root. [LAW:parse-dont-validate]
+    live_ids = {i["id"] for i in live}
+    relations = [r for r in relations
+                 if r.get("src_id") in live_ids and r.get("dst_id") in live_ids]
+
     parent_of = {
         r["src_id"]: r["dst_id"] for r in relations if r.get("type") == "parent-child"
     }
 
     # Structural position replaces the generated id. `rank` is lit's fractional index
     # and sorts lexicographically by construction, so rank order IS queue order. The
-    # keys are positional ("0", "0.1") rather than derived from topic or title, so
-    # neither a repeated topic nor a renamed ticket can collide two items into one.
+    # keys are positional ("0000", "0000.0001") rather than derived from topic or title,
+    # so neither a repeated topic nor a renamed ticket can collide two items into one.
+    # The index is zero-padded because these keys are themselves sorted as strings
+    # below: unpadded, a tenth sibling would sort as "10" < "2" and the emitted order
+    # would stop matching the queue order this claims to preserve.
     position = {}
 
     def assign(children, prefix):
         for n, issue in enumerate(sorted(children, key=lambda i: i["rank"])):
-            key = f"{prefix}{n}"
+            key = f"{prefix}{n:04d}"
             position[issue["id"]] = key
             assign([c for c in live if parent_of.get(c["id"]) == issue["id"]], f"{key}.")
 
     assign([i for i in live if i["id"] not in parent_of], "")
+
+    # Dead parents can no longer strand an issue, but a parent cycle would: its members
+    # are never roots and never reached, so they would vanish from the shape - silently
+    # weakening every comparison made against it.
+    unplaced = sorted(i["id"] for i in live if i["id"] not in position)
+    if unplaced:
+        die(f"issues unreachable from any root (parent cycle?): {unplaced}")
 
     projected = sorted(
         (

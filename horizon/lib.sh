@@ -281,6 +281,17 @@ horizon_seed_backlog_path() {
     || horizon_die "seed is missing its '$HORIZON_SEED_REPO_SUBDIR/' tree: $seed_dir"
   [ -f "$seed_dir/$HORIZON_SEED_BACKLOG_FILE" ] \
     || horizon_die "seed is missing $HORIZON_SEED_BACKLOG_FILE: $seed_dir"
+  # A seed bundle is regular files and directories only. Refused here rather than
+  # handled, so horizon_seed_digest's "entire content" is true by construction instead
+  # of by remembering to hash link targets too: a symlink has no content to hash, and
+  # copying one into the project would make time zero depend on a path outside the seed.
+  # [LAW:parse-dont-validate]
+  local irregular
+  irregular="$(find "$seed_dir" ! -type f ! -type d -print)" \
+    || horizon_die "could not scan seed bundle: $seed_dir"
+  [ -z "$irregular" ] \
+    || horizon_die "seed bundle contains non-regular files (symlinks/devices are not
+    supported in a seed): $irregular"
   printf '%s\n' "$seed_dir/$HORIZON_SEED_BACKLOG_FILE"
 }
 
@@ -290,13 +301,20 @@ horizon_seed_backlog_path() {
 # digest is immune to archive metadata (mtimes, uid/gid, ordering) and changes only when
 # a seed file's path or bytes change. This is what lets a manifest state which seed a
 # run actually started from, instead of merely naming a directory. LC_ALL=C fixes the
-# sort under any locale.
+# sort under any locale. Regular files are the whole bundle - horizon_seed_backlog_path
+# has already refused anything else.
 horizon_seed_digest() {
-  local seed_dir="$1" listing
+  local seed_dir="$1" listing rel hash
   listing="$(
     cd "$seed_dir" || exit 1
     find . -type f -print | LC_ALL=C sort | while IFS= read -r rel; do
-      printf '%s  %s\n' "$(horizon_sha256_file "$rel")" "$rel" || exit 1
+      # Captured into its own checked assignment: a command substitution's exit status
+      # is discarded when it sits in an argument list, so `printf ... || exit 1` would
+      # only ever report printf's own success and emit a line with an empty hash - a
+      # confidently wrong seed digest. [LAW:no-silent-failure]
+      hash="$(horizon_sha256_file "$rel")" || exit 1
+      [ -n "$hash" ] || exit 1
+      printf '%s  %s\n' "$hash" "$rel" || exit 1
     done
   )" || horizon_die "could not hash seed bundle: $seed_dir"
   [ -n "$listing" ] || horizon_die "seed bundle contains no files: $seed_dir"
