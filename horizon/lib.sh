@@ -34,9 +34,9 @@ horizon_need() {
   command -v "$1" >/dev/null 2>&1 || horizon_die "required command not found: $1"
 }
 
-# One owner for "what does sha256 of a file look like" - shasum on macOS,
-# sha256sum elsewhere - so both hashing entry points below fail the same way
-# when neither is present. Populates the HORIZON_SHA256_CMD array rather than
+# One owner for "what does sha256 of a file look like" - shasum when it is on PATH,
+# sha256sum otherwise, on any platform - so both hashing entry points below fail the
+# same way when neither is. Populates the HORIZON_SHA256_CMD array rather than
 # returning a string to split, so a tool name or flag can never be mangled by
 # word-splitting or globbing. [LAW:one-source-of-truth]
 horizon_sha256_cmd() {
@@ -158,7 +158,7 @@ horizon_lit_sha256() {
   # horizon_sha256_file an empty filename instead of surfacing horizon_die's message.
   local p
   p="$(horizon_lit_path)"
-  horizon_sha256_file "$p"
+  horizon_sha256_file "$p" || horizon_die "could not hash lit binary at $p"
 }
 
 # ── reviewer: resolve the moving `v1` tag to the exact commit it points at right now,
@@ -170,27 +170,41 @@ horizon_lit_sha256() {
 # object itself, whose sha is not a commit and 404s against the Contents API
 # used below. Dereference it one extra hop when `.object.type` says "tag".
 # Usage: horizon_reviewer_sha  -> prints the resolved commit sha for $REVIEWER_TAG
+# The parse boundary for a git-object reference: fetch one and return "<sha>\t<type>".
+# The tag-ref lookup and every dereference hop below read this same shape, so the
+# response is checked in exactly one place. Captured into an assignment and read from a
+# here-string, never `read < <(gh ...)` - that form reports only `read`'s own status, so
+# a gh failure that had already emitted a line would sail past the check. jq renders a
+# missing field as the literal "null" at exit 0, which is why "null" is rejected
+# explicitly and not merely non-emptiness. [LAW:one-source-of-truth] [LAW:no-silent-failure]
+# Usage: horizon_gh_object <api_endpoint> <what_this_is_doing>  -> prints "<sha>\t<type>"
+horizon_gh_object() {
+  local endpoint="$1" doing="$2" out sha type
+  out="$(gh api "$endpoint" --jq '[.object.sha, .object.type] | @tsv')" \
+    || horizon_die "could not $doing via gh api"
+  read -r sha type <<<"$out"
+  [ -n "$sha" ] && [ -n "$type" ] && [ "$sha" != "null" ] && [ "$type" != "null" ] \
+    || horizon_die "gh api returned no usable sha/type while trying to $doing: '$out'"
+  printf '%s\t%s\n' "$sha" "$type"
+}
+
 horizon_reviewer_sha() {
   local out sha type
-  # Captured into a checked assignment, then read from a here-string: `read` from a
-  # process substitution reports only its OWN status, so a gh failure that had already
-  # emitted a full line would slip past the `||` and the else arm below would print a
-  # non-commit sha as the pin. [LAW:no-silent-failure]
-  out="$(
-    gh api "repos/${REVIEWER_REPO}/git/refs/tags/${REVIEWER_TAG}" \
-      --jq '[.object.sha, .object.type] | @tsv'
-  )" || horizon_die "could not resolve ${REVIEWER_REPO}@${REVIEWER_TAG} via gh api"
+  out="$(horizon_gh_object "repos/${REVIEWER_REPO}/git/refs/tags/${REVIEWER_TAG}" \
+    "resolve ${REVIEWER_REPO}@${REVIEWER_TAG}")" || exit 1
   read -r sha type <<<"$out"
-  # This is the parse boundary for the API response: a tsv missing either field must
-  # abort, never fall through to the else arm as an untyped "not a tag".
-  [ -n "$sha" ] && [ -n "$type" ] \
-    || horizon_die "gh api returned no sha/type for ${REVIEWER_REPO}@${REVIEWER_TAG}: '$out'"
-  if [ "$type" = "tag" ]; then
-    gh api "repos/${REVIEWER_REPO}/git/tags/${sha}" --jq '.object.sha' \
-      || horizon_die "could not dereference annotated tag ${REVIEWER_TAG} (object $sha) to a commit"
-  else
-    printf '%s\n' "$sha"
-  fi
+  # Dereference until a commit is actually in hand: an annotated tag's object is the
+  # tag object, and git permits a tag to point at another tag, so a single hop is not
+  # enough. The loop cannot spin - object shas are content addresses, so no tag can
+  # reference itself or anything that references it.
+  while [ "$type" = "tag" ]; do
+    out="$(horizon_gh_object "repos/${REVIEWER_REPO}/git/tags/${sha}" \
+      "dereference tag object $sha")" || exit 1
+    read -r sha type <<<"$out"
+  done
+  [ "$type" = "commit" ] \
+    || horizon_die "${REVIEWER_REPO}@${REVIEWER_TAG} resolves to a $type, not a commit"
+  printf '%s\n' "$sha"
 }
 
 # Usage: horizon_reviewer_prompt_sha256 <reviewer_commit_sha>
