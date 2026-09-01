@@ -48,11 +48,12 @@ main() {
   horizon_need claude
   horizon_need python3
   horizon_need lit
-  # tar and base64 are reached only from inside lib.sh pipelines (git archive | tar,
-  # the reviewer prompt decode). Absent, pipefail would blame the tool at the head of
-  # the pipe instead of the one that is missing.
+  # Reached only from inside lib.sh pipelines - git archive | tar, the reviewer prompt
+  # decode, and awk trailing every sha256. Absent, pipefail would blame the tool at the
+  # head of the pipe instead of the one that is actually missing.
   horizon_need tar
   horizon_need base64
+  horizon_need awk
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
@@ -81,7 +82,8 @@ main() {
   # manifest must describe the same file, which two independent `command -v lit`
   # resolutions cannot guarantee. [LAW:one-source-of-truth]
   lit_path="$(horizon_lit_path)"
-  lit_sha256="$(horizon_sha256_file "$lit_path")"
+  lit_sha256="$(horizon_sha256_file "$lit_path")" \
+    || horizon_die "could not hash lit binary at $lit_path"
 
   # `tag` alone would imply resolved_sha was obtained by resolving it, which is false
   # whenever a sha is handed in - the common case, since verify-instrument.sh overrides

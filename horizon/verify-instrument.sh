@@ -36,6 +36,8 @@ main() {
   horizon_need claude
   horizon_need python3
   horizon_need lit
+  # horizon_lit_sha256 below hashes through a pipeline ending in awk.
+  horizon_need awk
 
   local repo_root ref reviewer_sha
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
