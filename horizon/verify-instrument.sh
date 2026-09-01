@@ -31,13 +31,13 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
 main() {
+  horizon_need_base
   horizon_need git
   horizon_need gh
   horizon_need claude
   horizon_need python3
   horizon_need lit
-  # horizon_lit_sha256 below hashes through a pipeline ending in awk.
-  horizon_need awk
+  horizon_need diff
 
   local repo_root ref reviewer_sha
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
