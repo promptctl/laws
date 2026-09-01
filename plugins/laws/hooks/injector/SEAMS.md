@@ -46,6 +46,46 @@ Reproduce: `BUN_INSPECT="ws://127.0.0.1:9933/dbg?wait=1" claude --help &` then
 
 `inspect-eval.js` packages primitives 1–4 (`connect`, `evaluate`, `injectStdin`, `probe`).
 
+## The container format: recovering the bundle from the installed binary
+
+Measured on the shipped 2.1.226 Mach-O (279,661,952 bytes) and packaged as `extract-bundle.js`.
+Reproduce: `node extract-bundle.js "$(readlink -f "$(which claude)")"`.
+
+Embedded modules are stored as NUL-delimited records — `\0<path>\0<contents>` — where `<path>` is a
+`/$bunfs/` virtual path. Enumerating them yields 6 JS modules and 5 native `.node` blobs; the
+entrypoint `/$bunfs/root/src/entrypoints/cli.js` sits at contents offset 245,797,944, length
+23,985,682, sha256 `a96b5f06a9feba9ff8f7ce7f938a7bd1cbc74c7c03ea0c94f68c50dd05a14f7c`. Those numbers
+are a dated observation, not an input: nothing in the code reads them, and there is no version→offset
+table anywhere in the tree. Both boundaries resolve from the record delimiter at run time.
+
+**The Beta-product banner is NOT an entrypoint-only anchor.** The original survey proposed
+disambiguating the entrypoint by the banner following its CJS wrapper. Measurement contradicts that:
+the banner heads six embedded modules (`cli.js`, `image-processor.js`, `audio-capture.js`,
+`url-handler.js`, `computer-use-swift.js`, `computer-use-input.js`), so anchoring on it selects
+whichever comes first — not the entrypoint. The record's own `\0<path>\0` delimiter is the honest
+discriminator, and `extract-bundle.test.js` carries the case that fails if anyone reverts to the
+banner.
+
+The extracted slice is exact rather than approximately right: `node --check` accepts it, and rejects
+it at start−1, end−3, end−2000, and end+31. An unresolved anchor returns a typed absence, so the
+launcher falls back to stock `claude` with a named reason instead of hosting a truncated bundle.
+
+**Confirmed against ground truth, not just argued.** `Debugger.getScriptSource` pulled from a LIVE
+running session returns a string byte-identical to what `extract-bundle.js` recovers from the binary
+— same 23,985,682 bytes, same sha256. Reproducing it needs two details that cost an hour to find:
+
+- `?wait=1` is wrong for this. It freezes the process at entry, so nothing has been parsed yet and
+  `Debugger.enable` yields zero `scriptParsed`. Use a plain `BUN_INSPECT=ws://127.0.0.1:<port>/dbg`
+  against a session that is actually running; `Debugger.enable` then replays the existing scripts.
+- `--help` exits before you can ask, and JSC reports **`url: ""` for all 244 scripts**, so the
+  entrypoint cannot be matched by name. Run the real TUI under a PTY (`script -q /dev/null claude`)
+  and identify the script by its source, not its URL.
+
+This also settles a question the extraction design depends on: getScriptSource returns the stored
+record verbatim, `// @bun @bytecode @bun-cjs` marker line included, with no transformation — so
+record-exactness IS byte-identity, and the host in `promptctl-injector-xy0.2` can feed V8 exactly
+what this module returns.
+
 ## The frontier: reloading an edited transcript into a running session
 
 The gate's reload options (tombstone / rewind) edit the ON-DISK transcript, then need the running
@@ -130,6 +170,10 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
 - DONE: compatibility policy has one home; `decide()`/`exciseAt()` fire only on an incompatible
   pair and tombstone only the conflicting craft (`../scripts/laws-excise.js` + tests).
 - DONE: injection channel re-verified on 2.1.226; `inspect-eval.js` packages the primitives.
+- DONE (2026-08-31): the bundle is recoverable in memory from the installed binary —
+  `extract-bundle.js`, anchored on the container's record delimiter, no disk copy and no
+  version→offset table (`promptctl-injector-xy0.1`). Hosting that source under the Bun→node shim
+  is sibling `promptctl-injector-xy0.2`.
 - DONE (2026-08-16): the rewind for options 3/4 is disk surgery — `rewindTo()`, sever + repoint,
   verified live against a real transcript. **SEAM 2a is not needed**, and neither is native
   `/rewind` with its modal arrow-key driving. See the resolved section above.
