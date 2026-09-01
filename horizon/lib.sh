@@ -27,6 +27,19 @@ set -o pipefail
 HORIZON_MARKETPLACE_NAME="promptctl-horizon"
 HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
 
+# ── Seeding: the shape of a seed bundle, and the fixed identity its commits carry ──
+# A seed is a directory of exactly two parts: the tree that becomes the project repo,
+# and the backlog that becomes its lit store. Naming them here rather than at each use
+# keeps "what a seed is" in one place. [LAW:one-source-of-truth]
+HORIZON_SEED_REPO_SUBDIR="repo"
+HORIZON_SEED_BACKLOG_FILE="backlog.json"
+# git derives a commit sha from the author/committer identity and timestamps as well as
+# the tree, so a seeded repo can only have a reproducible HEAD if all four are pinned.
+# They describe the instrument, not a person: the seed commit is machine-made.
+HORIZON_SEED_COMMIT_NAME="horizon seed"
+HORIZON_SEED_COMMIT_EMAIL="horizon@promptctl.invalid"
+HORIZON_SEED_COMMIT_DATE="2026-01-01T00:00:00+00:00"
+
 horizon_die() { printf 'ERROR [horizon]: %s\n' "$*" >&2; exit 1; }
 horizon_log() { printf '[horizon] %s\n' "$*" >&2; }
 
@@ -243,4 +256,154 @@ horizon_goal_wording_sha256() {
     || { rm -f "$tmp"; horizon_die "could not hash ${HORIZON_GOAL_PROMPT_REL_PATH} at ${commit_sha}"; }
   rm -f "$tmp"
   printf '%s\n' "$hash"
+}
+
+# ══ SEEDING: appspec + fresh repo + lit init (promptctl-horizon-7ry.2) ═════════════
+#
+# THE MODEL: a seed bundle is the whole definition of a run's time zero - the tree that
+# becomes the project repo, plus the backlog that becomes its lit store. Seeding is a
+# pure function of that bundle: the same bundle yields the same starting state, every
+# time, with nothing read from the network, the clock, or the operator's environment.
+# [LAW:types-are-the-program] the bundle IS time zero; there is no second description
+# of the starting state to keep in sync with it.
+
+# Usage: horizon_seed_backlog_path <seed_dir>  -> validated path to the seed's backlog
+#
+# The one place a seed bundle's layout is checked, returning the path that could not
+# have been returned had the bundle been malformed - so no caller re-checks, and a
+# typo'd seed directory fails here rather than as a confusing `lit` error three steps
+# later. [LAW:parse-dont-validate]
+horizon_seed_backlog_path() {
+  local seed_dir="$1"
+  [ -n "$seed_dir" ] || horizon_die "horizon_seed_backlog_path: no seed directory given"
+  [ -d "$seed_dir" ] || horizon_die "seed directory does not exist: $seed_dir"
+  [ -d "$seed_dir/$HORIZON_SEED_REPO_SUBDIR" ] \
+    || horizon_die "seed is missing its '$HORIZON_SEED_REPO_SUBDIR/' tree: $seed_dir"
+  [ -f "$seed_dir/$HORIZON_SEED_BACKLOG_FILE" ] \
+    || horizon_die "seed is missing $HORIZON_SEED_BACKLOG_FILE: $seed_dir"
+  printf '%s\n' "$seed_dir/$HORIZON_SEED_BACKLOG_FILE"
+}
+
+# Usage: horizon_seed_digest <seed_dir>  -> sha256 over the bundle's entire content
+#
+# Hashes the sorted "<sha256>  <relative-path>" listing rather than a tarball, so the
+# digest is immune to archive metadata (mtimes, uid/gid, ordering) and changes only when
+# a seed file's path or bytes change. This is what lets a manifest state which seed a
+# run actually started from, instead of merely naming a directory. LC_ALL=C fixes the
+# sort under any locale.
+horizon_seed_digest() {
+  local seed_dir="$1" listing
+  listing="$(
+    cd "$seed_dir" || exit 1
+    find . -type f -print | LC_ALL=C sort | while IFS= read -r rel; do
+      printf '%s  %s\n' "$(horizon_sha256_file "$rel")" "$rel" || exit 1
+    done
+  )" || horizon_die "could not hash seed bundle: $seed_dir"
+  [ -n "$listing" ] || horizon_die "seed bundle contains no files: $seed_dir"
+  printf '%s' "$listing" | horizon_sha256_stdin
+}
+
+# Usage: horizon_project_git <project_dir> <git args...>
+#
+# Every git invocation against a seeded project routes through here, so the determinism
+# settings cannot be applied to some commits and forgotten on others.
+# [LAW:single-enforcer] The `-c` overrides neutralise the operator's global config:
+# commit.gpgsign would make the commit sha depend on a signing key, and
+# init.templateDir would copy arbitrary local hooks into every seeded repo.
+horizon_project_git() {
+  local project_dir="$1"; shift
+  git -C "$project_dir" \
+    -c "user.name=$HORIZON_SEED_COMMIT_NAME" \
+    -c "user.email=$HORIZON_SEED_COMMIT_EMAIL" \
+    -c commit.gpgsign=false \
+    -c init.templateDir= \
+    "$@"
+}
+
+# Usage: horizon_project_init <project_dir>
+#
+# A fresh repo with NO remote, deliberately: `lit init` inspects the git remotes and
+# adopts a backlog it finds there (that is how this instrument recovered the reference
+# run's own backlog). A seeded project that carried a remote would silently start from
+# that remote's backlog instead of the seed's. [LAW:no-silent-failure]
+# HEAD is pointed at master explicitly rather than relying on `init.defaultBranch`,
+# whose value differs between machines and git versions.
+horizon_project_init() {
+  local project_dir="$1"
+  mkdir -p "$project_dir" || horizon_die "could not create project dir: $project_dir"
+  horizon_project_git "$project_dir" init -q \
+    || horizon_die "git init failed in $project_dir"
+  horizon_project_git "$project_dir" symbolic-ref HEAD refs/heads/master \
+    || horizon_die "could not set the initial branch to master in $project_dir"
+  local remotes
+  remotes="$(horizon_project_git "$project_dir" remote)" \
+    || horizon_die "could not list remotes in $project_dir"
+  [ -z "$remotes" ] \
+    || horizon_die "freshly initialised project already has a remote: $remotes"
+}
+
+# Usage: horizon_project_populate <project_dir> <seed_dir>
+#
+# Copies the seed's repo tree in as-is. `cp` of the directory's *contents* - the
+# trailing /. - rather than the directory itself, so the seed's own directory name never
+# becomes a stray level inside the project.
+horizon_project_populate() {
+  local project_dir="$1" seed_dir="$2"
+  cp -R "$seed_dir/$HORIZON_SEED_REPO_SUBDIR/." "$project_dir/" \
+    || horizon_die "could not copy the seed tree into $project_dir"
+}
+
+# Usage: horizon_project_commit <project_dir> <message>
+#
+# --no-verify because a seeded repo installs lit's pre-push hook, and an operator's
+# global core.hooksPath could attach arbitrary commit hooks; neither may alter what a
+# seed commit contains. The dates are passed as environment rather than config because
+# git reads author/committer timestamps only from there.
+horizon_project_commit() {
+  local project_dir="$1" message="$2"
+  horizon_project_git "$project_dir" add -A \
+    || horizon_die "git add failed in $project_dir"
+  GIT_AUTHOR_DATE="$HORIZON_SEED_COMMIT_DATE" \
+  GIT_COMMITTER_DATE="$HORIZON_SEED_COMMIT_DATE" \
+  horizon_project_git "$project_dir" commit -q --no-verify -m "$message" \
+    || horizon_die "git commit failed in $project_dir: $message"
+}
+
+# Usage: horizon_project_head <project_dir>  -> HEAD commit sha
+horizon_project_head() {
+  horizon_project_git "$1" rev-parse HEAD \
+    || horizon_die "could not read HEAD in $1"
+}
+
+# Usage: horizon_project_tree <project_dir>  -> tree sha of HEAD
+#
+# The committed tree's identity, independent of commit metadata - the field that answers
+# "did two seedings produce the same files" on its own terms.
+horizon_project_tree() {
+  horizon_project_git "$1" rev-parse 'HEAD^{tree}' \
+    || horizon_die "could not read HEAD's tree in $1"
+}
+
+# ── lit, always against the project's own store ────────────────────────────────────
+# lit locates its workspace from the current directory's git dir and has no --repo flag,
+# so every call is made from inside the project. The subshell keeps that `cd` from
+# leaking into the caller, which would silently retarget later commands at the wrong
+# store. [LAW:no-ambient-temporal-coupling]
+horizon_lit_init() {
+  local project_dir="$1"
+  ( cd "$project_dir" && lit init ) >/dev/null \
+    || horizon_die "lit init failed in $project_dir"
+}
+
+horizon_lit_export() {
+  local project_dir="$1"
+  ( cd "$project_dir" && lit export ) \
+    || horizon_die "lit export failed in $project_dir"
+}
+
+# Usage: horizon_lit_import <project_dir> <docs_file>
+horizon_lit_import() {
+  local project_dir="$1" docs="$2"
+  ( cd "$project_dir" && lit import --path "$docs" ) >/dev/null \
+    || horizon_die "lit import failed in $project_dir (from $docs)"
 }
