@@ -60,6 +60,13 @@ main() {
   backlog="$(cd "$(dirname "$backlog")" && pwd)/$(basename "$backlog")"
   seed_digest="$(horizon_seed_digest "$seed_dir")"
   [ -z "$project_name" ] && project_name="$(basename "$seed_dir")"
+  # A project name is one path segment, never a path. `lit init` derives the issue
+  # prefix from this directory's name, so a single segment is what it always meant -
+  # and a name containing `/` or `..` would place the project outside <run-dir>, where
+  # the refuse-to-overwrite check above never looked. [LAW:parse-dont-validate]
+  case "$project_name" in
+    */*|.|..) horizon_die "project-name must be a single path segment, not '$project_name'" ;;
+  esac
 
   mkdir -p "$run_dir"
   run_dir="$(cd "$run_dir" && pwd)"

@@ -13,6 +13,10 @@
 #   3. The repo is a genuine fresh-history project with no remote: `lit init` adopts a
 #      backlog from a git remote when it finds one, so a remote here would mean the
 #      starting state could come from somewhere other than the seed.
+#   4. Every file under the seed's `repo/` tree is committed byte-for-byte. This is a
+#      different claim from criterion 1: matching manifests prove the two runs agree
+#      with each other, which would hold just as well if both had committed the wrong
+#      bytes. This is the only check that ties a committed tree back to the seed.
 #
 # [LAW:verifiable-goals] this script IS the machine-checkable "done" for the ticket;
 # exit 0 means every criterion held on this run, exit nonzero says which one didn't.
@@ -37,6 +41,11 @@ main() {
   horizon_need python3
   # horizon_seed_digest and horizon_sha256_file hash through a pipeline ending in awk.
   horizon_need awk
+  # Invoked directly by the checks below; named here so a missing one fails with this
+  # instrument's own error rather than a bare "command not found".
+  horizon_need diff
+  horizon_need cmp
+  horizon_need sed
 
   local backlog
   backlog="$(horizon_seed_backlog_path "$SEED_DIR")"
@@ -83,8 +92,14 @@ export = json.load(open(sys.argv[2]))
 
 live = [i for i in export["issues"] if not i.get("deleted_at")]
 by_id = {i["id"]: i for i in live}
+# Filtered to live endpoints once, so every by_id lookup below is total. An edge into a
+# soft-deleted row would otherwise crash with a traceback that this script's own error
+# handling would then report as "the seeded backlog does not match the seed bundle" -
+# naming a mismatch that was never detected. [LAW:parse-dont-validate]
+relations = [r for r in export["relations"]
+             if r.get("src_id") in by_id and r.get("dst_id") in by_id]
 parent_of = {r["src_id"]: r["dst_id"]
-             for r in export["relations"] if r.get("type") == "parent-child"}
+             for r in relations if r.get("type") == "parent-child"}
 
 # Title is the join column between the seed and the store. A seed that repeated a
 # title would make this comparison lie by matching the wrong pair, so it is rejected
@@ -114,7 +129,7 @@ if expected_parent != actual_parent:
 expected_deps = {(title_of_local[b], d["title"])
                  for d in seed for b in d.get("depends_on", [])}
 actual_deps = {(by_id[r["dst_id"]]["title"], by_id[r["src_id"]]["title"])
-               for r in export["relations"] if r.get("type") == "blocks"}
+               for r in relations if r.get("type") == "blocks"}
 if expected_deps != actual_deps:
     sys.exit(f"dependency edges differ.\n  missing: {sorted(expected_deps - actual_deps)}"
              f"\n  extra:   {sorted(actual_deps - expected_deps)}")
