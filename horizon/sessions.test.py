@@ -41,26 +41,30 @@ def entry(session_id, cwd, stamp, **extra):
     return base
 
 
-def goal_command(text):
-    """A /goal exactly as Claude Code records one: an envelope, not raw text."""
+def slash_command(name, text):
+    """A slash command exactly as Claude Code records one: an envelope, not raw text."""
     return {
         "type": "user",
         "message": {
             "role": "user",
-            "content": "<command-name>/goal</command-name>\n"
-                       "<command-message>goal</command-message>\n"
-                       "<command-args>%s</command-args>" % text,
+            "content": "<command-name>%s</command-name>\n"
+                       "<command-message>cmd</command-message>\n"
+                       "<command-args>%s</command-args>" % (name, text),
         },
     }
 
 
-def write_session(config_dir, slug, session_id, cwd, start, end, goal_text=None):
+def write_session(config_dir, slug, session_id, cwd, start, end,
+                  goal_text=None, commands=()):
     directory = os.path.join(config_dir, "projects", slug)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, "%s.jsonl" % session_id)
     lines = [entry(session_id, cwd, start, type="assistant")]
     if goal_text is not None:
-        lines.append(entry(session_id, cwd, start, **goal_command(goal_text)))
+        lines.append(entry(session_id, cwd, start, **slash_command("/goal", goal_text)))
+    for command_name, command_text in commands:
+        lines.append(entry(session_id, cwd, start,
+                           **slash_command(command_name, command_text)))
     lines.append(entry(session_id, cwd, end, type="assistant"))
     with open(path, "w") as handle:
         for line in lines:
@@ -100,6 +104,12 @@ def build(tmp):
     write_session(config_dir, "proj", "s3", project_dir,
                   "2026-01-01T04:00:00+00:00", "2026-01-01T05:00:00+00:00",
                   goal_text="just do whatever seems good")
+    # A session carrying ONLY a /clear. finalize-session issues one on every single
+    # handoff, so if any command envelope were read as a goal this would be the common
+    # case, and a run whose goal never carried would report itself perfectly healthy.
+    write_session(config_dir, "proj", "s4", project_dir,
+                  "2026-01-01T06:00:00+00:00", "2026-01-01T07:00:00+00:00",
+                  commands=[("/clear", "")])
     # A session of a DIFFERENT project, sharing the same config dir.
     write_session(config_dir, "other", "s9", other_dir,
                   "2026-01-01T00:30:00+00:00", "2026-01-01T00:45:00+00:00")
@@ -121,10 +131,16 @@ def main():
         check("a session belonging to another project is excluded",
               "s9" not in ids, "got %s" % ids)
         check("sessions are ordered by when they ran",
-              ids == ["s1", "s2", "s3"], "got %s" % ids)
+              ids == ["s1", "s2", "s3", "s4"], "got %s" % ids)
         check("commits are attributed to the session that was live",
-              [s["commits"] for s in report["sessions"]] == [["aaa1"], ["bbb2"], []],
+              [s["commits"] for s in report["sessions"]] == [["aaa1"], ["bbb2"], [], []],
               "got %s" % [s["commits"] for s in report["sessions"]])
+        by_id = {s["session_id"]: s for s in report["sessions"]}
+        check("a /clear-only session is NOT read as carrying a goal",
+              by_id["s4"]["goal_issued"] is False
+              and by_id["s4"]["goal_matches_pinned"] is False,
+              "got issued=%s matches=%s" % (by_id["s4"]["goal_issued"],
+                                            by_id["s4"]["goal_matches_pinned"]))
         check("consecutive committing sessions counted, stopping at the idle one",
               report["consecutive_with_commits"] == 2,
               "got %s" % report["consecutive_with_commits"])
@@ -135,8 +151,14 @@ def main():
         check("a paraphrased goal is still recorded as issued",
               report["sessions"][2]["goal_issued"] is True)
         check("only handoffs are counted, not the driver's own first issue",
-              report["goal_carries_expected"] == 2,
+              report["goal_carries_expected"] == len(report["sessions"]) - 1
+              and report["goal_carries_expected"] == 3,
               "got %s" % report["goal_carries_expected"])
+        # Of s2/s3/s4, only s2 carried the pinned wording: s3 paraphrased and s4 carried
+        # nothing at all. A run reporting 3 here would be one whose carry check is blind.
+        check("only the faithfully carried handoff counts as intact",
+              report["goal_carries_intact"] == 1,
+              "got %s" % report["goal_carries_intact"])
 
         # A commit outside every session window must be surfaced, not dropped: silently
         # discarding it would let a broken window calculation read as a clean run.

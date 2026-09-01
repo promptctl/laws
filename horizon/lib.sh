@@ -561,22 +561,44 @@ HORIZON_POLL_SECONDS=2
 # is, not of what is inside it: wiping the directory keeps the login, moving it loses
 # the login. That is why a run is built at a fixed working path - see run-loop.sh.
 horizon_assert_authenticated() {
-  local config_dir="$1" status
+  # Not named `status`: that is a read-only special variable in zsh, so the name would
+  # make this library unsourceable outside bash for no benefit at all.
+  local config_dir="$1" auth_json=""
   [ -n "$config_dir" ] || horizon_die "horizon_assert_authenticated: no config dir given"
-  status="$(CLAUDE_CONFIG_DIR="$config_dir" claude auth status)" \
-    || horizon_die "could not read 'claude auth status' for $config_dir"
+
+  # `claude auth status` EXITS 1 WHEN SIMPLY LOGGED OUT, while still printing a complete
+  # JSON answer. So its exit status does not mean "the command failed" and must not be
+  # branched on: doing so reports a missing login as an unreadable command, sending the
+  # operator to look for a broken CLI instead of running login.sh. The payload is the
+  # answer; whether it arrived at all is checked below, where an empty or unparseable
+  # response is a genuinely different failure with its own message. Not suppressed with
+  # 2>/dev/null either - stderr still reaches the operator.
+  auth_json="$(CLAUDE_CONFIG_DIR="$config_dir" claude auth status)" || true
+
+  [ -n "$auth_json" ] \
+    || horizon_die "'claude auth status' produced no output for $config_dir"
+
   # Parsed rather than grepped: `loggedIn` is a JSON boolean, and a grep for the word
-  # would match the field name just as happily in a false response.
-  printf '%s' "$status" | python3 -c '
+  # would match the field name just as happily in a false response. Each cause exits
+  # with its own code so the caller can tell them apart, rather than one nonzero
+  # standing for two different things.
+  printf '%s' "$auth_json" | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
-except Exception as e:
-    sys.exit("claude auth status did not return JSON: %s" % e)
-if d.get("loggedIn") is not True:
-    sys.exit("config dir is not authenticated (loggedIn=%r, authMethod=%r)"
-             % (d.get("loggedIn"), d.get("authMethod")))
-' || horizon_die "$config_dir cannot authenticate; log in once with CLAUDE_CONFIG_DIR set to it"
+except ValueError:
+    sys.exit(3)
+sys.exit(0 if d.get("loggedIn") is True else 4)
+'
+  case "$?" in
+    0) return 0 ;;
+    3) horizon_die "'claude auth status' did not return JSON for $config_dir:
+$auth_json" ;;
+    4) horizon_die "the run's config dir is not logged in: $config_dir
+Run horizon/login.sh once (it needs a browser); every run after that is unattended.
+Note the credential is bound to this PATH, so logging in somewhere else will not help." ;;
+    *) horizon_die "could not determine whether $config_dir is authenticated" ;;
+  esac
 }
 
 # Usage: horizon_write_boot_state <config_dir> <project_dir>
