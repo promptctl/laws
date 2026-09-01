@@ -54,6 +54,7 @@ main() {
   # the one that is actually missing.
   horizon_need tar
   horizon_need base64
+  horizon_need cat
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"

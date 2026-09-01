@@ -71,10 +71,22 @@ def shape(export):
     # Title breaks a rank tie, never the id or the export's list order: ids are
     # generated fresh by each `lit import`, so tiebreaking on one would make this
     # shape differ between two seedings of a single bundle - the exact divergence
-    # this file exists to rule out. Title is intrinsic to the seed, and verify-seed.sh
-    # rejects a seed that repeats one, so the key is a total order on siblings.
+    # this file exists to rule out. Title is intrinsic to the seed and stable across
+    # seedings.
+    #
+    # A pair tied on BOTH keys has no stable order left to fall back on - Python's sort
+    # would settle it by lit's export order, which nothing here guarantees is the same
+    # twice. Refused rather than ordered arbitrarily, and refused HERE: seed-run.sh
+    # pipes `lit export` straight into this module and never runs verify-seed.sh, so an
+    # invariant this module's output depends on cannot be enforced only there.
+    # [LAW:single-enforcer]
     def assign(children, prefix):
-        for n, issue in enumerate(sorted(children, key=lambda i: (i["rank"], i["title"]))):
+        ordered = sorted(children, key=lambda i: (i["rank"], i["title"]))
+        for earlier, later in zip(ordered, ordered[1:]):
+            if (earlier["rank"], earlier["title"]) == (later["rank"], later["title"]):
+                die("two siblings share a rank and a title, so their order is not "
+                    f"reproducible: {earlier['title']!r} at rank {earlier['rank']!r}")
+        for n, issue in enumerate(ordered):
             key = f"{prefix}{n:04d}"
             position[issue["id"]] = key
             assign([c for c in live if parent_of.get(c["id"]) == issue["id"]], f"{key}.")
@@ -99,7 +111,7 @@ def shape(export):
                 "topic": i["topic"],
                 "priority": i.get("priority", 0),
                 "status": i.get("status", DEFAULT_STATUS),
-                "labels": sorted(i.get("labels") or []),
+                "labels": sorted(i.get("labels", [])),
             }
             for i in live
         ),

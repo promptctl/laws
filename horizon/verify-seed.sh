@@ -199,7 +199,73 @@ PY
   [ "$missing" -eq 0 ] || fail "the seed's repo tree is not fully present in the commit"
   pass "seeded repo carries the seed's tree byte-identically"
 
+  # Seeding twice on one machine cannot show whether the commit identity is actually
+  # pinned: both runs read the same environment and agree with each other whatever it
+  # says. git ranks GIT_AUTHOR_NAME and its siblings above user.name from every config
+  # source, `-c` included, so only a seeding run against an environment that tries to
+  # override the identity proves the pin holds - and an unpinned identity moves the
+  # commit sha, making time zero differ per operator. [LAW:verifiable-goals]
+  local hostile_head expected_head
+  GIT_AUTHOR_NAME="operator" GIT_AUTHOR_EMAIL="operator@elsewhere.invalid" \
+  GIT_COMMITTER_NAME="operator" GIT_COMMITTER_EMAIL="operator@elsewhere.invalid" \
+    "$SCRIPT_DIR/seed-run.sh" "$WORK/hostile" "$SEED_DIR" >/dev/null 2>&1 \
+    || fail "seeding under an overriding git identity environment failed"
+  hostile_head="$(horizon_project_head "$WORK/hostile/$project_name")" \
+    || fail "could not read HEAD of the hostile-environment seeding"
+  expected_head="$(horizon_project_head "$run1_project")" \
+    || fail "could not read HEAD of the seeded repo"
+  [ "$hostile_head" = "$expected_head" ] \
+    || fail "an exported git identity changed the seed commit ($hostile_head vs $expected_head); time zero would differ per operator"
+  pass "an exported git identity does not change the seed commit"
+
+  # The comparison above indexes the seed's own local_id graph directly, which is total
+  # only because `lit import` refuses a seed whose references do not resolve - and that
+  # is a claim about a binary this repo does not build. Asserted here rather than
+  # trusted: if lit ever accepts one of these, this fails by name and says that the
+  # lookups now need a guard of their own. [LAW:verifiable-goals]
+  local case_name
+  for case_name in dangling-parent dangling-depends-on duplicate-local-id; do
+    if seed_is_refused "$case_name"; then
+      pass "a seed with a $case_name reference is refused by the pipeline"
+    else
+      fail "a seed with a $case_name reference was ACCEPTED; verify-seed's local_id
+lookups are no longer total and now need an explicit check"
+    fi
+  done
+
   horizon_log "all checks passed"
+}
+
+# Usage: seed_is_refused <case>  -> 0 when seeding the corrupted seed fails
+#
+# Corrupts one reference in a throwaway copy of the seed and seeds from it. Returns the
+# refusal as a value for the caller to assert on, rather than aborting here, so a seed
+# that is wrongly ACCEPTED is reported as this check's own failure.
+seed_is_refused() {
+  local case_name="$1"
+  local bad="$WORK/bad-$case_name"
+  cp -R "$SEED_DIR" "$bad" || fail "could not copy the seed for the $case_name case"
+  python3 - "$bad/$HORIZON_SEED_BACKLOG_FILE" "$case_name" <<'PY' \
+    || fail "could not build the $case_name case"
+import json, sys
+
+path, case = sys.argv[1], sys.argv[2]
+seed = json.load(open(path))
+
+if case == "dangling-parent":
+    entry = next(d for d in seed if d.get("parent"))
+    entry["parent"] = "no-such-local-id"
+elif case == "dangling-depends-on":
+    entry = next(d for d in seed if d.get("depends_on"))
+    entry["depends_on"] = ["no-such-local-id"]
+elif case == "duplicate-local-id":
+    seed[-1]["local_id"] = seed[0]["local_id"]
+else:
+    sys.exit(f"unknown case: {case}")
+
+json.dump(seed, open(path, "w"), indent=2)
+PY
+  ! "$SCRIPT_DIR/seed-run.sh" "$WORK/refused-$case_name" "$bad" >/dev/null 2>&1
 }
 
 main "$@"
