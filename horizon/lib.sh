@@ -53,9 +53,12 @@ horizon_need() {
 # tool they reach on every run. [LAW:one-source-of-truth] one list, one owner; a script
 # declares only the tools it invokes itself.
 #
-# Scoped to what lib.sh invokes OUTSIDE horizon_build_memento_snapshot, whose cat/tar/
-# base64 stay declared by pin-instrument.sh - the only script that reaches them - so no
-# script checks for a tool it can never run.
+# This is what lib.sh MAY invoke, not what any one caller will: each script enters at a
+# different point, so a caller reaching only part of the surface over-declares a coreutil
+# or two. That is the accepted trade - an exact list per caller needs a tool set per
+# function, and the five drifting per-script copies this replaced are the worse failure.
+# cat/tar/base64 stay with pin-instrument.sh only because they are reached from nothing
+# else at all.
 HORIZON_BASE_TOOLS=(awk cp find mkdir mktemp rm sort tr)
 
 horizon_need_base() {
@@ -316,6 +319,17 @@ horizon_seed_backlog_path() {
 *' -print)" || horizon_die "could not scan seed bundle: $seed_dir"
   [ -z "$newline_names" ] \
     || horizon_die "seed bundle contains a filename with an embedded newline: $newline_names"
+  # horizon_project_populate copies repo/'s contents INTO an already-initialised project,
+  # and cp merges rather than replaces - so a repo/ tree carrying its own .git would
+  # overwrite the fresh HEAD, config and refs in place, with nothing raised and every
+  # later guarantee (fresh history, no remote, the recorded HEAD) then reading a git dir
+  # the seed supplied. Plausible whenever a seed is assembled by copying a real checkout.
+  # -iname because a case-insensitive filesystem would let .GIT reach the same place.
+  local git_dirs
+  git_dirs="$(find "$seed_dir/$HORIZON_SEED_REPO_SUBDIR" -iname '.git' -print)" \
+    || horizon_die "could not scan seed bundle: $seed_dir"
+  [ -z "$git_dirs" ] \
+    || horizon_die "seed's $HORIZON_SEED_REPO_SUBDIR/ tree contains a .git entry, which would overwrite the seeded project's own git dir: $git_dirs"
   printf '%s\n' "$seed_dir/$HORIZON_SEED_BACKLOG_FILE"
 }
 

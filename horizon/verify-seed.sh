@@ -17,6 +17,22 @@
 #      different claim from criterion 1: matching manifests prove the two runs agree
 #      with each other, which would hold just as well if both had committed the wrong
 #      bytes. This is the only check that ties a committed tree back to the seed.
+#   5. Time zero does not depend on the operator. Criterion 1 cannot see this: both of
+#      its seedings read one environment and agree with each other whatever it says. So
+#      the seed is built once more under an environment exporting GIT_AUTHOR_NAME and
+#      its siblings - which git ranks above `user.name` from any config source - and the
+#      commit sha must be unmoved.
+#   6. A malformed seed is refused rather than absorbed. Criteria 1-5 all describe what a
+#      GOOD seed produces, and would pass just as happily on a pipeline that quietly
+#      accepted a broken one. Each of these is built deliberately and required to fail:
+#      a dangling `parent`, a dangling `depends_on`, a repeated `local_id`, and a `repo/`
+#      tree carrying its own `.git` (which would be merge-copied over the project's).
+#      This criterion is also what keeps criterion 2 honest - the comparison there
+#      follows the seed's local_id graph without checking it, because `lit import` will
+#      not accept a seed where those references dangle, and that is asserted here rather
+#      than assumed of a binary this repo does not build.
+#   7. Nothing a seed ships gets to execute: a `post-commit` file in the seed's `repo/`
+#      tree is ordinary content, so seeding must succeed and the hook must never run.
 #
 # [LAW:verifiable-goals] this script IS the machine-checkable "done" for the ticket;
 # exit 0 means every criterion held on this run, exit nonzero says which one didn't.
@@ -228,12 +244,56 @@ PY
     if seed_is_refused "$case_name"; then
       pass "a seed with a $case_name reference is refused by the pipeline"
     else
-      fail "a seed with a $case_name reference was ACCEPTED; verify-seed's local_id
-lookups are no longer total and now need an explicit check"
+      fail "a seed with a $case_name reference was ACCEPTED; verify-seed's local_id lookups are no longer total and now need an explicit check"
     fi
   done
 
+  # A seed whose repo/ tree carries its own .git would be merge-copied over the freshly
+  # initialised one, and a commit hook shipped in that tree must never execute. Both are
+  # refusals the seed boundary owes; asserted rather than assumed. [LAW:verifiable-goals]
+  if bundle_is_refused git-dir-in-repo; then
+    pass "a seed whose repo/ tree carries a .git entry is refused"
+  else
+    fail "a seed carrying repo/.git was ACCEPTED; it would overwrite the seeded project's own git dir"
+  fi
+
+  local hook_marker="$WORK/seed-hook-fired"
+  if bundle_is_refused vendored-post-commit-hook "$hook_marker"; then
+    fail "seeding a bundle that merely contains a post-commit file failed; the file is ordinary content and must not stop a seeding"
+  fi
+  [ ! -e "$hook_marker" ] \
+    || fail "a post-commit file shipped in the seed's repo/ tree executed during seeding"
+  pass "a post-commit file shipped in a seed does not execute"
+
   horizon_log "all checks passed"
+}
+
+# Usage: bundle_is_refused <case> [marker_path]  -> 0 when seeding the bundle fails
+#
+# Builds a corrupted repo/ tree rather than a corrupted backlog, so it is a sibling of
+# seed_is_refused rather than a mode inside it.
+bundle_is_refused() {
+  local case_name="$1"
+  local marker="${2:-}"
+  local bad="$WORK/badtree-$case_name"
+  cp -R "$SEED_DIR" "$bad" || fail "could not copy the seed for the $case_name case"
+  case "$case_name" in
+    git-dir-in-repo)
+      mkdir -p "$bad/$HORIZON_SEED_REPO_SUBDIR/.git" \
+        || fail "could not build the $case_name case"
+      printf 'CLOBBERED\n' > "$bad/$HORIZON_SEED_REPO_SUBDIR/.git/HEAD" \
+        || fail "could not build the $case_name case"
+      ;;
+    vendored-post-commit-hook)
+      printf '#!/bin/sh\ntouch %s\n' "$marker" \
+        > "$bad/$HORIZON_SEED_REPO_SUBDIR/post-commit" \
+        || fail "could not build the $case_name case"
+      chmod +x "$bad/$HORIZON_SEED_REPO_SUBDIR/post-commit" \
+        || fail "could not build the $case_name case"
+      ;;
+    *) fail "unknown bundle case: $case_name" ;;
+  esac
+  ! "$SCRIPT_DIR/seed-run.sh" "$WORK/refused-$case_name" "$bad" >/dev/null 2>&1
 }
 
 # Usage: seed_is_refused <case>  -> 0 when seeding the corrupted seed fails
