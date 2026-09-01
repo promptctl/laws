@@ -24,9 +24,11 @@
 #      commit sha must be unmoved.
 #   6. A malformed seed is refused rather than absorbed. Criteria 1-5 all describe what a
 #      GOOD seed produces, and would pass just as happily on a pipeline that quietly
-#      accepted a broken one. Each of these is built deliberately and required to fail:
-#      a dangling `parent`, a dangling `depends_on`, a repeated `local_id`, and a `repo/`
-#      tree carrying its own `.git` (which would be merge-copied over the project's).
+#      accepted a broken one. Each of these is built deliberately and required to be
+#      refused with the diagnostic that names it - not merely to fail, which one seed
+#      carrying two defects would satisfy without testing either: a dangling `parent`, a
+#      dangling `depends_on`, a repeated `local_id`, and a `repo/` tree carrying its own
+#      `.git` (which would be merge-copied over the project's).
 #      This criterion is also what keeps criterion 2 honest - the comparison there
 #      follows the seed's local_id graph without checking it, because `lit import` will
 #      not accept a seed where those references dangle, and that is asserted here rather
@@ -62,6 +64,8 @@ main() {
   horizon_need cmp
   horizon_need sed
   horizon_need wc
+  horizon_need chmod
+  horizon_need cat
 
   local backlog
   backlog="$(horizon_seed_backlog_path "$SEED_DIR")"
@@ -239,13 +243,31 @@ PY
   # is a claim about a binary this repo does not build. Asserted here rather than
   # trusted: if lit ever accepts one of these, this fails by name and says that the
   # lookups now need a guard of their own. [LAW:verifiable-goals]
-  local case_name
-  for case_name in dangling-parent dangling-depends-on duplicate-local-id; do
-    if seed_is_refused "$case_name"; then
-      pass "a seed with a $case_name reference is refused by the pipeline"
-    else
-      fail "a seed with a $case_name reference was ACCEPTED; verify-seed's local_id lookups are no longer total and now need an explicit check"
-    fi
+  #
+  # Each case carries the diagnostic that proves lit refused it for THAT defect. "It
+  # failed" would not: one corrupt seed can carry two defects, and then the case passes
+  # on the wrong one while its own invariant goes untested.
+  local case_spec case_name want diag diag_status
+  for case_spec in \
+    'dangling-parent|references missing parent' \
+    'dangling-depends-on|references missing depends_on' \
+    'duplicate-local-id|duplicate local_id'
+  do
+    case_name="${case_spec%%|*}"
+    want="${case_spec#*|}"
+    diag_status=0
+    diag="$(malformed_seed_diagnostic "$case_name")" || diag_status=$?
+    case "$diag_status" in
+      0) ;;
+      2) fail "a seed with a $case_name was ACCEPTED; verify-seed's local_id lookups are no longer total and now need an explicit check" ;;
+      *) fail "the $case_name refusal check could not run (exit $diag_status)" ;;
+    esac
+    case "$diag" in
+      *"$want"*)
+        pass "a seed with a $case_name is refused by the pipeline, for that reason" ;;
+      *)
+        fail "a seed with a $case_name was refused, but not for that reason (no \"$want\" in the diagnostic): $diag" ;;
+    esac
   done
 
   # A seed whose repo/ tree carries its own .git would be merge-copied over the freshly
@@ -314,12 +336,13 @@ seeding_diagnostic() {
   cat "$log"
 }
 
-# Usage: seed_is_refused <case>  -> 0 when seeding the corrupted seed fails
+# Usage: malformed_seed_diagnostic <case>  -> prints seed-run.sh's refusal
 #
-# Corrupts one reference in a throwaway copy of the seed and seeds from it. Returns the
-# refusal as a value for the caller to assert on, rather than aborting here, so a seed
-# that is wrongly ACCEPTED is reported as this check's own failure.
-seed_is_refused() {
+# Corrupts one reference in a throwaway copy of the seed, then hands the seeding to
+# seeding_diagnostic - the one helper that knows how to seed from a bad bundle and tell a
+# refusal from an acceptance, whose exit codes this returns unchanged.
+# [LAW:one-source-of-truth]
+malformed_seed_diagnostic() {
   local case_name="$1"
   local bad="$WORK/bad-$case_name"
   cp -R "$SEED_DIR" "$bad" || fail "could not copy the seed for the $case_name case"
@@ -337,13 +360,22 @@ elif case == "dangling-depends-on":
     entry = next(d for d in seed if d.get("depends_on"))
     entry["depends_on"] = ["no-such-local-id"]
 elif case == "duplicate-local-id":
-    seed[-1]["local_id"] = seed[0]["local_id"]
+    # Renaming an entry that something references would dangle that reference too, and
+    # the seed would then be refused for the dangle while the duplicate went untested.
+    # Chosen from the graph, never by position: this read `seed[-1]`, which happened to
+    # be the one entry `conformance` depends on.
+    referenced = {r for d in seed for r in (d.get("parent"), *d.get("depends_on", ())) if r}
+    donor = next((d for d in seed if d["local_id"] not in referenced
+                  and d["local_id"] != seed[0]["local_id"]), None)
+    if donor is None:
+        sys.exit("every local_id is referenced; cannot duplicate one without also dangling a reference")
+    donor["local_id"] = seed[0]["local_id"]
 else:
     sys.exit(f"unknown case: {case}")
 
 json.dump(seed, open(path, "w"), indent=2)
 PY
-  ! "$SCRIPT_DIR/seed-run.sh" "$WORK/refused-$case_name" "$bad" >/dev/null 2>&1
+  seeding_diagnostic "$bad" "$case_name"
 }
 
 main "$@"
