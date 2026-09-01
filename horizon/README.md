@@ -121,11 +121,22 @@ first place. After that it diffs every file under the seed's `repo/` against wha
 committed, byte for byte — the only check that ties a committed tree back to the seed,
 since two matching manifests would agree just as happily on the wrong bytes.
 
-Finally it seeds three deliberately broken seeds — a dangling `parent`, a dangling
-`depends_on`, a repeated `local_id` — and requires each to be refused. Those are the
-references `verify-seed.sh` follows without checking them itself, on the grounds that
-`lit import` rejects them first; this is where that assumption gets tested rather than
-assumed.
+It then seeds once more under an environment that exports `GIT_AUTHOR_NAME`,
+`GIT_COMMITTER_NAME` and their email twins, and requires the commit sha to be unchanged.
+Seeding twice on one machine cannot show this: both runs read the same environment and
+agree with each other whatever it says. But git ranks those variables above `user.name`
+from every config source, `-c` included, so without this check an operator whose shell or
+CI wrapper already sets them would author the seed commit themselves — and time zero
+would quietly differ per operator.
+
+Finally it builds seeds that are deliberately wrong and requires each to be refused: a
+dangling `parent`, a dangling `depends_on`, a repeated `local_id`, and a `repo/` tree
+carrying its own `.git` (which would otherwise be merge-copied over the project's). The
+first three are the references `verify-seed.sh` follows without checking them itself, on
+the grounds that `lit import` rejects them first — this is where that assumption gets
+tested rather than trusted. It also ships a `post-commit` file inside a seed and requires
+that seeding succeed while the file never runs: content a seed carries is content, never
+something the instrument executes.
 
 ## What this does not do
 
