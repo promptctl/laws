@@ -29,13 +29,46 @@ import re
 import sys
 from datetime import datetime
 
-# A slash command is not recorded as the raw text the operator typed: Claude Code
-# rewrites it into this envelope. Matching the raw "/goal ..." string instead would find
-# nothing and silently report every carry as lost - the failure this check exists to
-# detect, indistinguishable from the check being broken. Verified against real
-# transcripts at Claude Code v2.1.226.
+# A goal reaches a session in one of THREE recorded spellings, and a reader that knows
+# only one reports every other as "this session got no goal" - the identical output a
+# genuinely lost carry produces. That confusion is the single thing this check exists to
+# prevent, so all three are parsed here and reduced to one answer. [LAW:parse-dont-validate]
+#
+# Recording the wording, not just its presence: "a goal was issued" is the weaker claim
+# that stays true while the text degrades into something else.
 COMMAND_NAME_RE = re.compile(r"<command-name>\s*(?P<name>[^<]+?)\s*</command-name>")
 COMMAND_ARGS_RE = re.compile(r"<command-args>(?P<args>.*?)</command-args>", re.DOTALL)
+# What a slash command typed into the input box looks like at v2.1.258 - the plain text,
+# no envelope. This is how the DRIVER's own /goal arrives, so missing it makes even
+# session one look ungoaled.
+RAW_GOAL_RE = re.compile(r"\A\s*/goal\s+(?P<goal>.+)\Z", re.DOTALL)
+# How a goal CARRIED by finalize-session announces itself in the relaunched session:
+# /goal installs a session-scoped Stop hook and the successor is told its condition. No
+# /goal message appears in that transcript at all, so this is the ONLY spelling that can
+# evidence a carry - a reader without it can never see one, and reports a healthy carry
+# and a dead one identically.
+STOP_HOOK_GOAL_RE = re.compile(
+    r"Stop hook is now active with condition:\s*\"(?P<goal>.*?)\"", re.DOTALL
+)
+
+
+def goal_text(text):
+    """The goal wording an entry establishes, or None when it establishes none.
+
+    None means "this entry says nothing about the goal" - never "the goal is empty".
+    The two are different findings and the caller must be able to tell them apart.
+    """
+    name = COMMAND_NAME_RE.search(text)
+    if name and name.group("name").strip() == "/goal":
+        args = COMMAND_ARGS_RE.search(text)
+        return args.group("args").strip() if args else ""
+    raw = RAW_GOAL_RE.match(text)
+    if raw:
+        return raw.group("goal").strip()
+    hook = STOP_HOOK_GOAL_RE.search(text)
+    if hook:
+        return hook.group("goal").strip()
+    return None
 
 
 def parse_time(value):
@@ -109,11 +142,9 @@ def read_session(path, project_dir):
             # Sidechain entries are subagent traffic, not the session's own turns.
             if entry.get("type") != "user" or entry.get("isSidechain"):
                 continue
-            text = message_text(entry)
-            name = COMMAND_NAME_RE.search(text)
-            if name and name.group("name").strip() == "/goal":
-                args = COMMAND_ARGS_RE.search(text)
-                goal_args.append(args.group("args").strip() if args else "")
+            found = goal_text(message_text(entry))
+            if found is not None:
+                goal_args.append(found)
 
     if not belongs:
         return None
@@ -185,6 +216,11 @@ def main():
         # pinned. "A /goal was issued" is the weaker claim that would pass while the
         # agent paraphrased the condition into something else entirely.
         session["goal_matches_pinned"] = any(a.strip() == pinned_goal for a in issues)
+        # The wording that actually arrived, kept verbatim. A bare false says a carry
+        # drifted; this says what it drifted INTO, which is the difference between a
+        # human reading the bundle knowing something broke and knowing what broke.
+        # Bounded because a goal is prose and this is a summary, not a second transcript.
+        session["goal_received"] = issues[-1][:400] if issues else None
         session.pop("_start")
         session.pop("_end")
 
