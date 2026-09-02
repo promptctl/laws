@@ -16,10 +16,14 @@
 // a boot-critical API is not a crash: the shim returns undefined, the first render throws a TypeError
 // the app swallows, and the process sits there looking like a hang. This host reports OBSERVATIONS on
 // the boot channel and forms no verdict — `painted` the first time the hosted graph writes to the
-// terminal, a named refusal when the graph cannot be read or the entry throws. Whether those add up
+// terminal, a named refusal when the graph cannot be read or something throws. Whether those add up
 // to a working session is the launcher's call, because the launcher is the one that can act on it,
 // and it is the only party that can see whether the process was still there afterwards.
 // [LAW:no-ambient-temporal-coupling] one owner for the timing, and it is not this file.
+//
+// This file is the WIRING. The two pieces with logic worth testing — the embedded filesystem and the
+// Bun surface — are their own modules with their own suites, because neither should need a vm, a
+// terminal, or a 199MB binary to be checked. [LAW:decomposition]
 //
 // [LAW:no-silent-failure] every degrade leaves on the boot channel, named — including which Bun APIs
 //   the graph asked for that this surface does not have.
@@ -29,10 +33,13 @@ import vm from 'node:vm';
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import childProcess from 'node:child_process';
-import { createRequire } from 'node:module';
+import { Readable } from 'node:stream';
+import { createRequire, isBuiltin } from 'node:module';
 
 const require_ = createRequire(import.meta.filename);
 const { readGraphFromFile } = require_('./bun-graph.js');
+const { createEmbeddedFs } = require_('./embedded-fs.js');
+const { createBunSurface } = require_('./bun-surface.js');
 
 // The boot channel is a file descriptor passed in as a value, so this host is runnable by hand
 // (verdicts on stderr) and under the launcher (verdicts on a private pipe) with one write path.
@@ -42,12 +49,14 @@ const EXIT_NOT_BOOTED = 70;
 const send = (line) => {
   try { fs.writeSync(BOOT_FD, line + '\n'); } catch { /* the launcher closed the channel; the exit code still carries the verdict */ }
 };
+// The one-per-process VERDICT: whether this host ever got the graph as far as the terminal. Later
+// observations still go out through `send` — a graph that painted and then threw has spent its
+// verdict, and the message it died with is the useful part.
 let reported = false;
-function report(observation) {
-  if (reported) return;
-  reported = true;
-  send(observation);
-}
+const report = (verdict) => { if (!reported) { reported = true; send(verdict); } };
+// A thrown value is not always an Error; `e.message` on a thrown string is undefined, and an
+// undefined reason is the silence this whole channel exists to prevent.
+const because = (e) => (e && e.message) || String(e);
 
 const [binaryPath, ...userArgs] = process.argv.slice(2);
 const graph = readGraphFromFile(binaryPath);
@@ -56,20 +65,7 @@ if (!graph.ok) {
   process.exit(EXIT_NOT_BOOTED);
 }
 
-const byName = new Map(graph.modules.map((m) => [m.name, m]));
-const isEmbedded = (p) => typeof p === 'string' && byName.has(p);
-
-// The graph is also a read-only FILESYSTEM — chunks read embedded assets by their virtual path — and
-// the real disk is still there for everything else. Which one answers is decided by the path, so
-// every reader below is one function over both. [LAW:dataflow-not-control-flow]
-const embeddedStat = (p) => ({ size: byName.get(p).length, isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false, mode: 0o444, mtimeMs: 0 });
-const decode = (p, options) => {
-  const enc = typeof options === 'string' ? options : options?.encoding;
-  return enc ? byName.get(p).bytes().toString(enc) : byName.get(p).bytes();
-};
-const readAny = (p, options) => isEmbedded(p) ? decode(p, options) : fs.readFileSync(p, options);
-const existsAny = (p) => isEmbedded(p) || fs.existsSync(p);
-const statAny = (p) => isEmbedded(p) ? embeddedStat(p) : fs.statSync(p);
+const embedded = createEmbeddedFs(graph.modules, { realFs: fs, streamFrom: (bytes) => Readable.from(bytes) });
 
 // ---------------------------------------------------------------------------------------------
 // The Bun global
@@ -81,174 +77,44 @@ const statAny = (p) => isEmbedded(p) ? embeddedStat(p) : fs.statSync(p);
 // the moment it is seen rather than at the end, because the failure worth diagnosing is the one
 // where this process never reaches an end to report from.
 const absentApis = new Set();
-const noteAbsentApi = (name) => {
-  if (absentApis.has(name)) return;
-  absentApis.add(name);
-  send('absent-api ' + name);
-};
-
-const bunSurface = {
-  version: '1.3.14', revision: '0', main: graph.entryName, env: process.env,
-  get argv() { return process.argv; },
-  stdin: process.stdin, stdout: process.stdout, stderr: process.stderr,
-  isStandaloneExecutable: true, enableANSIColors: true, isMainThread: true,
-
-  file: (p) => ({
-    async text() { return String(readAny(p, 'utf8')); },
-    async json() { return JSON.parse(String(readAny(p, 'utf8'))); },
-    async exists() { return existsAny(p); },
-    async bytes() { return new Uint8Array(readAny(p)); },
-    async arrayBuffer() { return new Uint8Array(readAny(p)).buffer; },
-    stream() { return fs.createReadStream(p); },
-    get size() { return existsAny(p) ? statAny(p).size : 0; },
-    name: p, type: '',
-  }),
-  write: async (dst, data) => {
-    const path = typeof dst === 'object' && dst?.name ? dst.name : dst;
-    fs.writeFileSync(path, typeof data === 'string' ? data : Buffer.from(data.buffer ?? data));
-    return 0;
-  },
-
-  zstdDecompressSync: (b) => zlib.zstdDecompressSync(b),
-  zstdDecompress: async (b) => zlib.zstdDecompressSync(b),
-  gzipSync: (b) => zlib.gzipSync(b), gunzipSync: (b) => zlib.gunzipSync(b),
-
-  spawn: (cmd, options) => childProcess.spawn(cmd[0], cmd.slice(1), options || {}),
-  spawnSync: (cmd, options) => childProcess.spawnSync(cmd[0], cmd.slice(1), options || {}),
-  which: (cmd) => {
-    const r = childProcess.spawnSync('command', ['-v', cmd], { shell: true, encoding: 'utf8' });
-    return r.status === 0 ? r.stdout.trim() || null : null;
-  },
-
-  hash: Object.assign((x) => crypto.createHash('sha256').update(typeof x === 'string' ? x : Buffer.from(x)).digest(),
-    { wyhash: () => 0n, crc32: () => 0, adler32: () => 0 }),
-  CryptoHasher: class { constructor(a) { this.h = crypto.createHash(a || 'sha256'); } update(d) { this.h.update(d); return this; } digest(enc) { return enc ? this.h.digest(enc) : new Uint8Array(this.h.digest()); } },
-
-  // Measured boot-critical: the render path strips and wraps ANSI on every frame, and the version
-  // gates run hundreds of times before the first paint. A stub that returns the input unchanged is
-  // enough to render, but a stub that returns undefined is the exact failure the self-check exists
-  // to catch — so these are real implementations, not placeholders.
-  stringWidth: (s) => {
-    let width = 0;
-    for (const ch of String(s ?? '')) {
-      const c = ch.codePointAt(0);
-      const wide = c >= 0x1100 && (c <= 0x115f || c === 0x2329 || c === 0x232a
-        || (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff)
-        || (c >= 0xfe30 && c <= 0xfe4f) || (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6)
-        || (c >= 0x1f300 && c <= 0x1faff));
-      const combining = c >= 0x300 && c <= 0x36f;
-      width += combining ? 0 : (wide ? 2 : 1);
-    }
-    return width;
-  },
-  stripANSI: (s) => String(s ?? '').replace(new RegExp('[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PRZcf-ntqry=><~]))', 'g'), ''),
-  wrapAnsi: (str, columns, options) => {
-    const cols = columns > 0 ? columns : 80;
-    const width = (x) => bunSurface.stringWidth(bunSurface.stripANSI(x));
-    return String(str ?? '').split('\n').map((line) => {
-      const out = [];
-      let current = '', currentWidth = 0;
-      for (const word of line.split(' ')) {
-        const w = width(word);
-        if (currentWidth === 0) { current = word; currentWidth = w; }
-        else if (currentWidth + 1 + w <= cols) { current += ' ' + word; currentWidth += 1 + w; }
-        else { out.push(current); current = word; currentWidth = w; }
-      }
-      out.push(current);
-      if (!options?.hard) return out.join('\n');
-      return out.flatMap((seg) => {
-        if (width(seg) <= cols) return [seg];
-        const parts = []; let acc = '';
-        for (const ch of seg) { if (width(acc + ch) > cols) { parts.push(acc); acc = ch; } else acc += ch; }
-        if (acc) parts.push(acc);
-        return parts;
-      }).join('\n');
-    }).join('\n');
-  },
-  semver: (() => {
-    const parse = (v) => { const m = String(v).trim().replace(/^[v=\s]+/, '').match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/); return m ? { M: +m[1], m: +m[2], p: +m[3], pre: m[4] || '' } : null; };
-    const cmp = (a, b) => {
-      const x = parse(a), y = parse(b);
-      if (!x || !y) return 0;
-      if (x.M !== y.M) return x.M < y.M ? -1 : 1;
-      if (x.m !== y.m) return x.m < y.m ? -1 : 1;
-      if (x.p !== y.p) return x.p < y.p ? -1 : 1;
-      if (x.pre && !y.pre) return -1;
-      if (!x.pre && y.pre) return 1;
-      return x.pre < y.pre ? -1 : x.pre > y.pre ? 1 : 0;
-    };
-    const one = (v, range) => {
-      const r = String(range).trim();
-      if (r === '' || r === '*' || r === 'x') return true;
-      let m;
-      if ((m = r.match(/^\^(\d+)\.(\d+)\.(\d+)/))) {
-        const p = parse(v); if (!p) return false;
-        if (cmp(v, `${m[1]}.${m[2]}.${m[3]}`) < 0) return false;
-        return +m[1] > 0 ? p.M === +m[1] : (+m[2] > 0 ? (p.M === 0 && p.m === +m[2]) : (p.M === 0 && p.m === 0 && p.p === +m[3]));
-      }
-      if ((m = r.match(/^~(\d+)\.(\d+)(?:\.(\d+))?/))) {
-        const p = parse(v); if (!p) return false;
-        return p.M === +m[1] && p.m === +m[2] && cmp(v, `${m[1]}.${m[2]}.${m[3] || 0}`) >= 0;
-      }
-      if ((m = r.match(/^(>=|<=|>|<|=)?\s*(\d+)\.(\d+)\.(\d+)/))) {
-        const op = m[1] || '=', c = cmp(v, `${m[2]}.${m[3]}.${m[4]}`);
-        return op === '>=' ? c >= 0 : op === '<=' ? c <= 0 : op === '>' ? c > 0 : op === '<' ? c < 0 : c === 0;
-      }
-      return false;
-    };
-    return { order: cmp, satisfies: (v, range) => String(range).split('||').some((part) => part.trim().split(/\s+/).every((c) => one(v, c))) };
-  })(),
-
-  deepEquals: (a, b) => { try { return JSON.stringify(a) === JSON.stringify(b); } catch { return a === b; } },
-  escapeHTML: (s) => String(s), color: (c) => String(c),
-  sleep: (ms) => new Promise((r) => setTimeout(r, ms)), sleepSync: () => {},
-  nanoseconds: () => Number(process.hrtime.bigint()),
-  gc() {}, generateHeapSnapshot: () => ({}),
-  pathToFileURL: (p) => require_('node:url').pathToFileURL(p),
-  fileURLToPath: (u) => require_('node:url').fileURLToPath(u),
-  resolveSync: (id, base) => { try { return require_.resolve(id, { paths: [base] }); } catch { return id; } },
-  serve: () => ({ stop() {}, reload() {}, ref() {}, unref() {}, port: 0, url: new URL('http://localhost:0'), hostname: 'localhost' }),
-};
-
-// An unknown key returns the undefined-yielding stub Bun's absence would produce anyway, and is
-// RECORDED. Silently answering and silently forgetting is what turns a new Bun API into a hang with
-// no cause attached. [LAW:no-silent-failure]
-globalThis.Bun = new Proxy(bunSurface, {
-  get(target, key) {
-    if (key in target) return target[key];
-    noteAbsentApi(String(key));
-    return () => undefined;
-  },
+globalThis.Bun = createBunSurface({
+  embedded, realFs: fs, childProcess, crypto, zlib,
+  env: process.env, platform: process.platform, entryName: graph.entryName,
+  onAbsentApi: (name) => { if (!absentApis.has(name)) { absentApis.add(name); send('absent-api ' + name); } },
 });
 
 // ---------------------------------------------------------------------------------------------
 // The module runtime
 // ---------------------------------------------------------------------------------------------
 
-// Node builtins the graph imports, plus the two it expects Bun to provide: `ws`, which Bun ships
-// built in, and `fs`, which must show the embedded filesystem. Substituting only for hosted code
-// means node's own `fs` is never patched.
+// The modules the graph resolves that are not in the graph: node builtins, plus the two Bun provides
+// itself. `fs` must show the embedded filesystem; `ws` Bun ships built in, and it is the only
+// non-builtin bare specifier this graph imports. Substituting only for HOSTED code means node's own
+// fs is never patched.
 const substitute = {
-  fs: (real) => ({ ...real,
-    readFileSync: (p, o) => isEmbedded(p) ? decode(p, o) : real.readFileSync(p, o),
-    existsSync: (p) => isEmbedded(p) || real.existsSync(p),
-    statSync: (p, o) => isEmbedded(p) ? embeddedStat(p) : real.statSync(p, o),
-  }),
-  'fs/promises': (real) => ({ ...real,
-    readFile: async (p, o) => isEmbedded(p) ? decode(p, o) : real.readFile(p, o),
-    stat: async (p, o) => isEmbedded(p) ? embeddedStat(p) : real.stat(p, o),
-  }),
+  fs: (real) => embedded.substituteForFs(real),
+  'fs/promises': (real) => embedded.substituteForFsPromises(real),
 };
 const provided = {
   ws: () => { const W = globalThis.WebSocket; class Server { on() { return this; } close() {} handleUpgrade() {} } return { WebSocket: W, WebSocketServer: Server, Server, default: W }; },
 };
 
 const externals = new Map();
+async function externalExports(specifier) {
+  const id = specifier.replace(/^node:/, '');
+  if (provided[id]) return provided[id]();
+  // Anything neither embedded, provided, nor a node builtin would otherwise be resolved out of THIS
+  // host's node_modules — a different package tree than the one the graph was built against, which
+  // is a wrong answer wearing the shape of a right one.
+  if (!isBuiltin(id)) throw new Error(`the graph imports ${specifier}, which is neither embedded nor a module this host provides`);
+  const real = await import('node:' + id);
+  return substitute[id] ? substitute[id](real) : real;
+}
 async function externalModule(specifier) {
   const id = specifier.replace(/^node:/, '');
   const cached = externals.get(id);
   if (cached) return cached;
-  const exported = provided[id] ? provided[id]() : (substitute[id] ? substitute[id](await import('node:' + id)) : await import('node:' + id));
+  const exported = await externalExports(specifier);
   const names = [...new Set(['default', ...Object.keys(exported)])].filter((k) => /^[A-Za-z_$][\w$]*$/.test(k));
   const mod = new vm.SyntheticModule(names, function () {
     for (const n of names) this.setExport(n, n === 'default' ? (exported.default ?? exported) : exported[n]);
@@ -257,11 +123,31 @@ async function externalModule(specifier) {
   return mod;
 }
 
+// The synchronous form the same specifiers reach through `import.meta.require`. It must answer from
+// the SAME maps as the import paths above, or the embedded filesystem would be visible to a chunk
+// that imports `fs` and invisible to one that requires it. [LAW:one-source-of-truth]
+const syncExternals = new Map();
+function externalExportsSync(specifier) {
+  const id = specifier.replace(/^node:/, '');
+  if (syncExternals.has(id)) return syncExternals.get(id);
+  if (provided[id]) { const e = provided[id](); syncExternals.set(id, e); return e; }
+  if (!isBuiltin(id)) throw new Error(`the graph requires ${specifier}, which is neither embedded nor a module this host provides`);
+  const real = require_('node:' + id);
+  const exported = substitute[id] ? substitute[id](real) : real;
+  syncExternals.set(id, exported);
+  return exported;
+}
+
+const sources = new Map(graph.modules.map((m) => [m.name, m]));
 const compiled = new Map();
 function moduleFor(name) {
   const cached = compiled.get(name);
   if (cached) return cached;
-  const record = byName.get(name);
+  const record = sources.get(name);
+  // A specifier the graph resolves to nothing is version drift, and the message has to say which
+  // one — "cannot read properties of undefined" would name only the symptom.
+  if (!record) throw new Error(`the graph names no module ${name}`);
+  if (record.loader !== 'js') throw new Error(`${name} is a ${record.loader} module and cannot be evaluated as JavaScript`);
   const mod = new vm.SourceTextModule(record.text(), {
     identifier: name,
     // Bun's import.meta, reproduced rather than rewritten into the source.
@@ -269,13 +155,7 @@ function moduleFor(name) {
       meta.url = 'file://' + name;
       meta.filename = name;
       meta.dirname = name.replace(/\/[^/]*$/, '');
-      meta.require = (p) => {
-        const embedded = byName.get(p);
-        if (!embedded) return require_(p);
-        // Requiring an embedded TEXT asset yields its decoded contents, which is what Bun does; a
-        // chunk yields its namespace, live even mid-cycle.
-        return embedded.loader === 'text' ? embedded.text() : namespaceOf(p);
-      };
+      meta.require = requireSync;
     },
     importModuleDynamically: (specifier) => evaluatedModule(specifier),
   });
@@ -283,12 +163,23 @@ function moduleFor(name) {
   return mod;
 }
 
-const link = (specifier) => byName.has(specifier) ? moduleFor(specifier) : externalModule(specifier);
+// Bun's synchronous require. What comes back is decided by the container's own loader field, which
+// is exactly why bun-graph carries it: a `napi` or `file` module fed to the JavaScript parser would
+// either fail cryptically or, decoded as latin1, parse into nonsense.
+function requireSync(specifier) {
+  const loader = embedded.loaderOf(specifier);
+  if (loader === undefined) return externalExportsSync(specifier);
+  if (loader === 'js') return namespaceOf(specifier);
+  if (loader === 'text') return embedded.text(specifier);
+  throw new Error(`${specifier} is a ${loader} module; this host does not serve it to require()`);
+}
+
+const link = (specifier) => embedded.loaderOf(specifier) === 'js' ? moduleFor(specifier) : externalModule(specifier);
 
 // The dynamic-import callback must hand back an EVALUATED module: node takes its namespace as it
 // finds it and will not run the body on our behalf.
 async function evaluatedModule(specifier) {
-  const mod = byName.has(specifier) ? moduleFor(specifier) : await externalModule(specifier);
+  const mod = embedded.loaderOf(specifier) === 'js' ? moduleFor(specifier) : await externalModule(specifier);
   if (mod.status === 'unlinked') await mod.link(link);
   if (mod.status === 'linked') await mod.evaluate();
   return mod;
@@ -298,8 +189,10 @@ function namespaceOf(name) {
   const mod = moduleFor(name);
   // evaluate() settles asynchronously, but V8 runs the body synchronously up to its first await and
   // the namespace object is live from link time — so this is the same object, filled in the same
-  // order, that Bun's require hands back from inside a cycle.
-  if (mod.status === 'linked') mod.evaluate();
+  // order, that Bun's require hands back from inside a cycle. The catch is not a swallow: a body
+  // that throws after its first await lands outside every try/catch in this file, and without this
+  // it would take the process down with no name attached to the cause.
+  if (mod.status === 'linked') mod.evaluate().catch((e) => send(`boot-threw ${name}: ${because(e)}`));
   return mod.namespace;
 }
 
@@ -322,13 +215,16 @@ process.stdout.write = (...args) => { report('painted'); return stdoutWrite(...a
 // linked. Linking every module up front is one unconditional pass over the graph — the alternative,
 // deciding per module whether it might be required later, is a guess this file cannot make.
 // [LAW:dataflow-not-control-flow]
-const chunks = graph.modules.filter((m) => m.loader === 'js');
-for (const record of chunks) moduleFor(record.name);
-for (const record of chunks) await moduleFor(record.name).link(link);
-
+// Linking and evaluating share one arm because they fail the same way and for the same reasons: a
+// specifier this graph resolves and node does not, a module the graph names and does not carry, a
+// Bun API the surface is missing. Every one of them is version drift, and every one has to arrive at
+// the launcher as a named reason rather than as a bare nonzero exit. [LAW:no-silent-failure]
 try {
+  const chunks = graph.modules.filter((m) => m.loader === 'js');
+  for (const record of chunks) moduleFor(record.name);
+  for (const record of chunks) await moduleFor(record.name).link(link);
   await moduleFor(graph.entryName).evaluate();
 } catch (e) {
-  report(`boot-threw ${e && e.message}`);
+  send(`boot-threw ${because(e)}`);
   process.exit(EXIT_NOT_BOOTED);
 }

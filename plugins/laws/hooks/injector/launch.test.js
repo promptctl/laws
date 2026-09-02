@@ -26,19 +26,26 @@ async function runAll() {
   process.exit(fail ? 1 : 0);
 }
 
-// A stand-in child that lets a test say what the host reported and when it exited.
-function fakeSpawn(script) {
+// A stand-in child that lets a test say what the host reported and when it exited. It mirrors the
+// one ordering that matters: a real pipe ends AFTER the process is reaped, and `exitFirst` makes a
+// case deliver its last report only after 'exit' — the race that would otherwise re-run a plan that
+// did paint.
+function fakeSpawn(script, { endAfterExit = 0 } = {}) {
   return () => {
     const child = new EventEmitter();
     const channel = new EventEmitter();
     child.stdio = [null, null, null, channel];
-    child.kill = () => { child.killed = true; child.emit('exit', null, 'SIGKILL'); };
+    let exited = false;
+    const end = () => { if (!channel.ended) { channel.ended = true; channel.emit('end'); } };
+    child.kill = () => { child.killed = true; child.emit('exit', null, 'SIGKILL'); end(); };
     for (const step of script) setTimeout(() => {
       if (step.report !== undefined) channel.emit('data', Buffer.from(step.report + '\n'));
       if (step.raw !== undefined) channel.emit('data', Buffer.from(step.raw));
-      if (step.exit !== undefined) child.emit('exit', step.exit, null);
+      if (step.channelError) channel.emit('error', new Error(step.channelError));
+      if (step.exit !== undefined) { exited = true; child.emit('exit', step.exit, null); if (!endAfterExit) end(); }
       if (step.spawnError) child.emit('error', new Error(step.spawnError));
     }, step.at);
+    if (endAfterExit) setTimeout(end, endAfterExit);
     return child;
   };
 }
@@ -59,6 +66,12 @@ t('a plan that paints and then dies inside the settle window never became a sess
   assert.match(r.reason, /painted, then exited 1/);
 });
 
+t('a throw after painting still reaches the reason, which is the usual real diagnosis', async () => {
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 5, report: 'painted' }, { at: 15, report: 'boot-threw Cannot read properties of undefined' }, { at: 30, exit: 1 }]) });
+  assert.strictEqual(r.booted, false);
+  assert.match(r.reason, /never became a session: boot-threw Cannot read properties of undefined/);
+});
+
 t('...but a CLEAN early exit is a one-shot command finishing, and is never re-run', async () => {
   const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, report: 'painted' }, { at: 40, exit: 0 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 0 });
@@ -75,6 +88,25 @@ t('a plan that never paints is killed at the deadline rather than hung on', asyn
   assert.strictEqual(r.booted, false);
   assert.match(r.reason, /nothing painted within 300ms/);
   assert.ok(Date.now() - started < 3000, 'the deadline, not the child, ended the wait');
+});
+
+t('a report still in flight when the child is reaped is not lost — no re-run of a plan that painted', async () => {
+  // 'exit' lands first and 'painted' only afterwards, which is what a real pipe does when a plan
+  // paints and immediately dies. Judging on 'exit' alone would call this "never painted".
+  const spawn = fakeSpawn([{ at: 5, exit: 1 }, { at: 20, report: 'painted' }], { endAfterExit: 40 });
+  const r = await L.run(hosted, { ...fast, settleMs: 5, spawn });
+  assert.deepStrictEqual(r, { booted: true, code: 1 });
+});
+
+t('an unreadable boot channel becomes part of the reason rather than vanishing', async () => {
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 5, channelError: 'EPIPE' }, { at: 20, exit: 1 }]) });
+  assert.strictEqual(r.booted, false);
+  assert.match(r.reason, /boot channel unreadable: EPIPE/);
+});
+
+t('a silent one-shot that exits 0 without painting is the session, never re-run', async () => {
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, exit: 0 }]) });
+  assert.deepStrictEqual(r, { booted: true, code: 0 });
 });
 
 t('a named refusal from the host is carried out as the reason', async () => {
@@ -95,8 +127,10 @@ t('several reports arriving in one chunk are each read, not just the first', asy
 });
 
 t('a report split across pipe chunks is still read as one line', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 5, raw: 'absent-api one\npain' }, { at: 15, raw: 'ted\n' }, { at: 250, exit: 0 }]) });
-  assert.deepStrictEqual(r, { booted: true, code: 0 });
+  // The exit is nonzero and interactive, so this can only come back booted if the 'painted' split
+  // across the two chunks was actually reassembled.
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 5, raw: 'absent-api one\npain' }, { at: 15, raw: 'ted\n' }, { at: 250, exit: 1 }]) });
+  assert.deepStrictEqual(r, { booted: true, code: 1 });
 });
 
 t('a plan that dies silently before painting still yields a reason', async () => {

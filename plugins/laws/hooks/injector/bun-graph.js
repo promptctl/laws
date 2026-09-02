@@ -23,7 +23,8 @@
 //     delimiter-scanning extractor measured, and the slice `node --check` accepts; they are also
 //     byte-identical to what `Debugger.getScriptSource` returns from a LIVE session.
 //   2.1.258 (199,027,600 bytes) — 1,818 modules, entry id 5 = /$bunfs/root/cli, an ESM graph of
-//     1,642 chunks plus native, compressed and text assets.
+//     1,640 js modules (the entry plus 1,639 code-split chunks) plus native, compressed and
+//     text assets.
 // Those numbers are dated observations, not inputs: nothing below reads them.
 //
 // [LAW:effects-at-boundaries] the whole parser is pure (Buffer in, result out); reading the binary is
@@ -64,7 +65,9 @@ const VIRTUAL_ROOT = '/$bunfs/';
 const ABSENT = {
   unreadable: 'binary-unreadable',
   noTrailer: 'no-bun-module-graph-trailer',
-  blobOutOfRange: 'module-blob-outside-file',
+  trailerTooEarly: 'bun-trailer-has-no-offsets-struct-before-it',
+  blobTooLarge: 'module-blob-larger-than-the-file',
+  duplicateName: 'two-modules-share-one-name',
   tableOutOfRange: 'module-table-outside-blob',
   tableNotWholeRows: 'module-table-is-not-whole-rows',
   empty: 'module-table-empty',
@@ -85,13 +88,23 @@ function readGraph(buf) {
   if (trailerAt === -1) return absent(ABSENT.noTrailer);
 
   const offsets = trailerAt - OFFSETS_BYTES;
-  if (offsets < 0) return absent(ABSENT.noTrailer);
+  // A trailer with no room for its own struct in front of it is a trailer-shaped run of bytes, not
+  // a module graph. Saying so beats reporting that no trailer was found, which would be false.
+  if (offsets < 0) return absent(ABSENT.trailerTooEarly, `trailer at ${trailerAt}`);
   const at = (field) => buf.readUInt32LE(offsets + field);
+
+  // byteCount is the one 64-bit field here. Reading only its low half would work on every binary
+  // measured so far and would silently produce a wrong blob start the first time it did not — a
+  // valid-looking graph built from the wrong bytes, which is the single outcome this file refuses.
+  const byteCount = buf.readBigUInt64LE(offsets + OFFSETS.byteCount);
+  // One check covers both ways this field can be wrong — a value too large for the file, and a value
+  // whose high half was never meant to be discarded — because they are the same statement: the blob
+  // must fit in front of the struct that describes it.
+  if (byteCount > BigInt(offsets)) return absent(ABSENT.blobTooLarge, `${byteCount} bytes claimed before offset ${offsets}`);
 
   // The blob is byteCount bytes ending where the offsets struct begins; every pointer below is
   // relative to its start.
-  const blob = offsets - at(OFFSETS.byteCount);
-  if (blob < 0) return absent(ABSENT.blobOutOfRange, `blob would start at ${blob}`);
+  const blob = offsets - Number(byteCount);
 
   const tableAt = blob + at(OFFSETS.modulesOffset);
   const tableLength = at(OFFSETS.modulesLength);
@@ -102,6 +115,7 @@ function readGraph(buf) {
   if (count === 0) return absent(ABSENT.empty);
 
   const modules = [];
+  const seen = new Set();
   for (let i = 0; i < count; i++) {
     const row = tableAt + i * ROW_BYTES;
     const field = (f) => buf.readUInt32LE(row + f);
@@ -112,6 +126,10 @@ function readGraph(buf) {
 
     const name = buf.toString('latin1', nameAt, nameAt + nameLength);
     if (!name.startsWith(VIRTUAL_ROOT)) return absent(ABSENT.badName, `row ${i}: ${JSON.stringify(name.slice(0, 40))}`);
+    // Callers key these by name, so a duplicate does not collide here — it makes one of the two
+    // modules unreachable somewhere downstream, with nothing to show for it.
+    if (seen.has(name)) return absent(ABSENT.duplicateName, name);
+    seen.add(name);
 
     // An unrecognised code means Bun's format moved under us. Decoding it as a neighbouring value
     // would produce a module that looks fine and is wrong, which is the one outcome worth refusing.

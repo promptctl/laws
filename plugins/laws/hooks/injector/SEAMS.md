@@ -52,8 +52,9 @@ Packaged as `bun-graph.js`. Reproduce: `node bun-graph.js "$(readlink -f "$(whic
 
 **The NUL-delimited record scan is dead — it cannot read what ships today.** 2.1.226 embedded its
 JavaScript as ONE CommonJS module, recoverable by scanning for `\0<path>\0<contents>` records.
-2.1.258 embeds an ESM module graph instead: 1,642 code-split chunks
-(`/$bunfs/root/chunk-<hash>.js`) plus native, compressed and text assets — 1,818 modules, 41.9MB of
+2.1.258 embeds an ESM module graph instead: 1,639 code-split chunks
+(`/$bunfs/root/chunk-<hash>.js`) around one entry — 1,640 js modules in all — plus native,
+compressed and text assets: 1,818 modules, 41.9MB of
 contents. A module's NAME and its CONTENTS are no longer adjacent in the file (names sit near offset
 69.8M, contents near 156M–188M), so the delimiter scan has nothing to key on; run it against 2.1.258
 and it returns `no-contents-record-for-path`. The entry point moved as well: not
@@ -120,7 +121,7 @@ their virtual path through plain `fs` calls and `Bun.file`. It substitutes `fs`/
 hosted code only; node's own fs is never patched. `ws` is provided too — Bun ships it built in and it
 is the only non-builtin bare specifier the graph imports.
 
-Cost: linking all 1,640 JS chunks takes ~800ms, first frame ~700ms after that.
+Cost: linking all 1,640 js modules takes ~800ms, first frame ~700ms after that.
 
 ## The boot self-check: observations in the host, the verdict in the launcher
 
@@ -148,9 +149,10 @@ Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
   config and must be cleaned up afterwards. This is why the automated suite (`launch.test.js`) uses
   stub plans and never the real bundle.
 
-Tests: `bun-graph.test.js` (17 — synthetic containers for every named absence, plus a live read of
-the installed binary) and `launch.test.js` (15, stub plans). 19 deliberate source mutations across
-both modules were each killed by a test.
+Tests: `bun-graph.test.js` (20 — synthetic containers for every named absence, plus a live read of
+the installed binary), `embedded-fs.test.js` (12), `bun-surface.test.js` (16) and `launch.test.js`
+(22, stub plans) — 70 in all. 38 deliberate source mutations across the four modules were each
+killed by a test.
 
 ## The frontier: reloading an edited transcript into a running session
 

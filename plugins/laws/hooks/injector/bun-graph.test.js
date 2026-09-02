@@ -53,7 +53,7 @@ function container(modules, entry = 0, over = {}) {
 
   const blob = Buffer.concat(chunks);
   const offsets = Buffer.alloc(32);
-  offsets.writeUInt32LE(over.byteCount ?? blob.length, 0);
+  offsets.writeBigUInt64LE(BigInt(over.byteCount ?? blob.length), 0);
   offsets.writeUInt32LE(over.modulesOffset ?? tableOffset, 8);
   offsets.writeUInt32LE(over.modulesLength ?? table.length, 12);
   offsets.writeUInt32LE(over.entryPointId ?? entry, 16);
@@ -120,7 +120,7 @@ t('a file with no trailer is a typed absence, not an empty graph', () => {
 
 t('a byte count that runs off the front of the file is refused', () => {
   const r = M.readGraph(container([ENTRY], 0, { byteCount: 0xfffffff }));
-  assert.strictEqual(r.reason, M.ABSENT.blobOutOfRange);
+  assert.strictEqual(r.reason, M.ABSENT.blobTooLarge);
 });
 
 t('a module table outside the blob is refused', () => {
@@ -169,6 +169,24 @@ t('contents pointing outside the blob are refused', () => {
   const row = blob + buf.readUInt32LE(offsets + 8);
   buf.writeUInt32LE(0xffff, row + 12);
   assert.strictEqual(M.readGraph(buf).reason, M.ABSENT.rowOutOfRange);
+});
+
+t('a byte count that does not fit in 32 bits is refused, not silently truncated', () => {
+  // Reading only the low half of the u64 would make this look like a small, plausible blob and
+  // produce a valid-looking graph built from the wrong bytes — the one outcome worth refusing.
+  const r = M.readGraph(container([ENTRY], 0, { byteCount: 0x1_0000_0040 }));
+  assert.strictEqual(r.reason, M.ABSENT.blobTooLarge);
+});
+
+t('a trailer with no room for its own struct is named for what it is, not called missing', () => {
+  const r = M.readGraph(Buffer.from('\n---- Bun! ----\n', 'latin1'));
+  assert.strictEqual(r.reason, M.ABSENT.trailerTooEarly);
+});
+
+t('two modules sharing one name are refused — callers key by name, so one would vanish', () => {
+  const r = M.readGraph(container([CHUNK, CHUNK], 0));
+  assert.strictEqual(r.reason, M.ABSENT.duplicateName);
+  assert.strictEqual(r.detail, CHUNK.name);
 });
 
 t('an unreadable binary is a typed absence carrying the OS reason', () => {

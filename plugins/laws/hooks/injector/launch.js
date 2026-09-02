@@ -39,9 +39,19 @@ const BOOT_SETTLE_MS = 5000;
 const BOOT_FD = 3;
 const HOST = path.join(__dirname, 'bun-host.mjs');
 
-// Enough of a reset that a plan which died mid-render cannot leave the terminal owning raw mode, a
-// hidden cursor, or the alternate screen. Applied before the next plan starts, never after a boot.
+// Sent before the next plan takes the terminal, never after a boot. The escape sequence puts the
+// screen back; raw mode is not a screen state and has to be cleared through the tty itself, which
+// `resetTerminal` below does — the sequence alone would leave the keyboard in the dead plan's mode.
 const TERMINAL_RESET = '\u001b[?1049l\u001b[?25h\u001b[?2004l\u001b[0m';
+
+// Put the terminal back the way a plan that died mid-render did not. Raw mode is the half an escape
+// sequence cannot reach: a dead child's stdin mode outlives it, and the next plan would inherit a
+// keyboard that echoes nothing.
+function resetTerminal() {
+  if (!process.stdout.isTTY) return;
+  process.stdout.write(TERMINAL_RESET);
+  if (process.stdin.isTTY && process.stdin.setRawMode) process.stdin.setRawMode(false);
+}
 
 // The plans, in order. `reports` says whether a plan speaks on the boot channel: the hosted one does,
 // and stock claude is the floor — it is the session by definition and there is nothing after it.
@@ -72,10 +82,10 @@ function plans(binaryPath, userArgs) {
 //
 // A plan became the session when it painted the terminal AND was still there a moment later. Painting
 // alone is not enough — a boot-critical API that returns undefined lets the app print a notice and
-// then die on the TypeError, which reads as output but is not a session. Two things are booted
-// despite an early exit, and neither may ever be re-run: a clean exit, which is what a one-shot
-// command does, and any exit at all when this is not an interactive terminal, where the run may have
-// already done real work.
+// then die on the TypeError, which reads as output but is not a session. Two exits are booted
+// whatever else happened, and neither may ever be re-run: a clean exit, which is what a one-shot
+// command does (silently, if all its output went to stderr), and any exit at all outside an
+// interactive terminal, where the run may already have done real work.
 //
 // The child is given the real terminal on stdio 0-2 — a pipe would make isTTY false and there would
 // be no TUI to check — so its reports travel on a descriptor of their own.
@@ -95,10 +105,35 @@ function run(plan, {
     let refusal = '';
     const absentApis = [];
     let timer = null;
+    // The verdict needs both halves: how the process ended, and everything it reported. 'exit' fires
+    // when the OS reaps the child, which can be BEFORE the last chunk buffered on the boot channel
+    // has been delivered — so a plan that paints and immediately exits would read as never having
+    // painted, and get re-run. [LAW:no-ambient-temporal-coupling] the verdict waits on both facts
+    // rather than on which event happened to land first.
+    let ended = null;
+    let channelDone = !plan.reports;
+    const settle = () => { if (ended && channelDone) { clearTimeout(timer); resolve(verdict(ended)); } };
 
     // Whatever went wrong, say which Bun APIs this shim did not have. On a hang that list is the
     // whole diagnosis, and it is the one thing the killed host can no longer tell anyone itself.
     const because = (reason) => reason + (absentApis.length ? ` (Bun APIs the shim does not have: ${absentApis.join(', ')})` : '');
+
+    // How an ended plan is judged. The floor has no successor, so there is no decision to make: it
+    // IS the session, whatever it did. Every rule after it answers one question — should the next
+    // plan be tried instead? — and the two exits that are never re-tried come FIRST, because they
+    // are the ones where re-trying would repeat work the user already got: a clean exit is a
+    // one-shot command finishing (silently, if all its output went to stderr), and outside an
+    // interactive terminal there is no session to salvage, only a command that already ran.
+    const verdict = ({ code, signal }) => {
+      const exit = code === null ? 128 : code;
+      if (!plan.reports) return { booted: true, code: exit };
+      if (exit === 0 || !interactive) return { booted: true, code: exit };
+      if (!paintedAt) return { booted: false, reason: because(refusal || `exited ${signal || code} before painting anything`) };
+      const lived = Date.now() - paintedAt;
+      if (lived >= settleMs) return { booted: true, code: exit };
+      const died = refusal ? `: ${refusal}` : '';
+      return { booted: false, reason: because(`painted, then exited ${exit} after ${lived}ms — never became a session${died}`) };
+    };
 
     if (plan.reports) {
       timer = setTimeout(() => {
@@ -107,39 +142,34 @@ function run(plan, {
         resolve({ booted: false, reason: because(`nothing painted within ${deadlineMs}ms`) });
         child.kill('SIGKILL');
       }, deadlineMs);
+      const channel = child.stdio[BOOT_FD];
       let pending = '';
-      child.stdio[BOOT_FD].on('data', (chunk) => {
+      channel.on('data', (chunk) => {
         pending += chunk.toString();
         const lines = pending.split('\n');
         pending = lines.pop();
         for (const line of lines) {
           if (line === 'painted') { paintedAt = paintedAt || Date.now(); clearTimeout(timer); }
           else if (line.startsWith('absent-api ')) absentApis.push(line.slice('absent-api '.length));
-          else if (line) refusal = line; // a named refusal; the exit handler carries it out
+          else if (line) refusal = line; // a named refusal; the verdict carries it out
         }
       });
-      child.stdio[BOOT_FD].on('error', () => {});
+      // A boot channel that fails to read is a lost diagnosis, not a non-event: without this the
+      // failure reason would silently be the poorer one. [LAW:no-silent-failure]
+      channel.on('error', (e) => { refusal = refusal || `boot channel unreadable: ${e.message}`; channelDone = true; settle(); });
+      channel.on('end', () => { channelDone = true; settle(); });
+      channel.on('close', () => { channelDone = true; settle(); });
     }
 
     child.on('error', (e) => { clearTimeout(timer); resolve({ booted: false, reason: `could not start ${plan.command}: ${e.message}` }); });
-    child.on('exit', (code, signal) => {
-      clearTimeout(timer);
-      const exit = code === null ? 128 : code;
-      // The floor has no successor, so there is no decision to make: it IS the session, whatever it
-      // did. Every rule below exists only to answer "should the next plan be tried instead?".
-      if (!plan.reports) return resolve({ booted: true, code: exit });
-      if (!paintedAt) return resolve({ booted: false, reason: because(refusal || `exited ${signal || code} before painting anything`) });
-      const lived = Date.now() - paintedAt;
-      if (exit === 0 || !interactive || lived >= settleMs) return resolve({ booted: true, code: exit });
-      resolve({ booted: false, reason: because(`painted, then exited ${exit} after ${lived}ms — never became a session`) });
-    });
+    child.on('exit', (code, signal) => { ended = { code, signal }; settle(); });
   });
 }
 
 // Run the plans in order and return the exit code of the one that booted.
 async function launch(binaryPath, userArgs, io = {}) {
   const log = io.log || ((line) => process.stderr.write(line + '\n'));
-  const reset = io.reset || (() => { if (process.stdout.isTTY) process.stdout.write(TERMINAL_RESET); });
+  const reset = io.reset || resetTerminal;
   const runPlan = io.run || run;
 
   const candidates = io.plans || plans(binaryPath, userArgs);
@@ -157,7 +187,7 @@ async function launch(binaryPath, userArgs, io = {}) {
   return 70;
 }
 
-module.exports = { BOOT_DEADLINE_MS, BOOT_SETTLE_MS, BOOT_FD, TERMINAL_RESET, plans, run, launch };
+module.exports = { BOOT_DEADLINE_MS, BOOT_SETTLE_MS, BOOT_FD, TERMINAL_RESET, resetTerminal, plans, run, launch };
 
 if (require.main === module) (async function main() {
   const [binaryPath, ...userArgs] = process.argv.slice(2);
