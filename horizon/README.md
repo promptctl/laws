@@ -37,7 +37,7 @@ Builds `<run-dir>` from nothing:
   was handed the sha (`override`), so the manifest never implies a check that did not
   happen.
 
-A session launched with `CLAUDE_CONFIG_DIR=<run-dir>/config` sees memento's skills and
+A session launched with `CLAUDE_CONFIG_DIR=$HORIZON_CONFIG_DIR` sees memento's skills and
 nothing of the owner's live laws plugin, `CLAUDE.md`, or memory. Two distinct
 mechanisms produce that, and they are worth keeping straight: no *plugin* but memento
 can be installed because the pinned marketplace never declares one - controlled
@@ -155,13 +155,39 @@ re-issued a lost goal, or restarted a dead session, would be measuring itself: t
 would look healthiest exactly where the instrument is broken. So a lost carry stops the
 run, loudly.
 
-### One fixed working path, one login
+### The run's own GitHub repo
 
-Runs are built at one fixed working path (`~/.horizon/run`, override
-`HORIZON_WORK_DIR`), and the finished run is copied to wherever runs are being kept.
-That is not a convenience. Claude Code keys its stored credential to the config
-directory's path, so wiping that directory keeps the login while building the run
-somewhere new loses it — all of it established empirically.
+Between seeding and launch, the driver creates a public repo for the run —
+`promptctl/horizon-run-<utc-timestamp>` — sets it as the project's `origin`, and pushes
+the seeded history. The goal wording drives the agent to carry every unit of work to a
+merged PR, which needs somewhere to push and a place for the reviewer Action to run.
+Public, not private: Actions minutes are unmetered on public repositories.
+
+One repo per run, never a shared one reset between runs. A run's PRs and review threads
+are part of what the run *is*, so reusing a repo would trade the previous run's record
+for a tidier namespace.
+
+The order is not negotiable. `lit init` adopts a backlog from a git remote when it finds
+one, so the remote is added strictly *after* seeding — a project born with an `origin`
+would start from that remote's backlog instead of the seed's, and nothing would say so.
+
+### Two paths, opposite lifetimes, one login
+
+A run touches two directories, and they are deliberately not nested:
+
+- `~/.horizon/config` (override `HORIZON_CONFIG_DIR`) — the `CLAUDE_CONFIG_DIR` every
+  run launches against. **Permanent, and its exact path is load-bearing.** Claude Code
+  keys its stored credential to that path, so wiping the directory keeps the login while
+  building it somewhere new loses it — established empirically. Each run rebuilds it in
+  place; only a move would break it.
+- `~/.horizon/run` (override `HORIZON_WORK_DIR`) — one run's output. **Must not exist
+  when a run starts**, so the last run's transcripts and commits can never be mistaken
+  for this one's. The finished run is copied to wherever runs are being kept, then
+  removed.
+
+Nesting them is a mistake this code made once: with the config dir living inside the run
+dir, the work dir's freshness guard had to refuse the very directory the credential was
+bound to, and no run could start after a login had happened.
 
 Which is why the login is its own command, run once:
 

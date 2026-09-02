@@ -30,6 +30,29 @@ HORIZON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${REVIEWER_PROMPT_PATH:=review-agent/instructions.md}"
 HORIZON_MARKETPLACE_NAME="promptctl-horizon"
 HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
+# The org a run's project repo is created under. Public, always - the reviewer is a
+# GitHub Action, and Actions minutes are unmetered on public repositories, so a private
+# run repo would bill the reviewer against the owner's quota to buy the eval nothing.
+HORIZON_RUN_REPO_OWNER="promptctl"
+
+# ── Where a run lives on this machine ──────────────────────────────────────────────
+# Two paths, deliberately NOT nested, because they have opposite lifetimes.
+#
+# HORIZON_CONFIG_DIR is PERSISTENT, and its exact path is load-bearing: Claude Code
+# names the OS keychain entry holding the run's credential after a hash of this path, so
+# "is this authenticated" is a question about WHERE the directory is, not what is in it.
+# Wiping it keeps the login; building it somewhere else loses it. login.sh authenticates
+# it once, and every run afterwards rebuilds it in place.
+#
+# HORIZON_WORK_DIR holds ONE RUN'S OUTPUT and must not exist when a run starts, so a
+# previous run's transcripts and commits can never be mistaken for this one's.
+#
+# Nesting the first inside the second is how this went wrong before: the run dir's
+# freshness guard then had to refuse the very directory the credential is bound to, and
+# no run could start after a login had happened. Separate paths make the guard correct
+# by construction rather than by a special case. [LAW:decomposition]
+: "${HORIZON_CONFIG_DIR:=$HOME/.horizon/config}"
+: "${HORIZON_WORK_DIR:=$HOME/.horizon/run}"
 
 # ── Seeding: the shape of a seed bundle, and the fixed identity its commits carry ──
 # A seed is a directory of exactly two parts: the tree that becomes the project repo,
@@ -149,8 +172,19 @@ horizon_build_memento_snapshot() {
   git -C "$repo_root" archive "$commit_sha" -- plugins/memento \
     | tar -x -C "$snapshot_dir" \
     || horizon_die "git archive of plugins/memento at $commit_sha failed"
-  [ -d "$snapshot_dir/plugins/memento" ] \
-    || horizon_die "archive produced no plugins/memento tree"
+  # Checked by the one file the loop cannot run without, NOT by the directory existing.
+  # The directory check this replaces passed happily on a memento that had been reduced
+  # to pointer-stub SKILL.md files when the plugin moved to its own repo - producing an
+  # instrument that boots, works one session, and then never hands off, because the
+  # relaunch binary the session boundary is made of was silently not there. A run does
+  # not notice for hours; it just stops committing and burns its wall-clock ceiling.
+  # [LAW:no-silent-failure]
+  local relaunch="$snapshot_dir/plugins/memento/skills/message-in-a-bottle/bin/finalize-session"
+  [ -x "$relaunch" ] \
+    || horizon_die "the memento snapshot at $commit_sha carries no executable finalize-session.
+The session boundary IS that binary, so this instrument could never cross one.
+memento moved to its own repository, leaving pointer stubs behind at this path: pin at a
+ref from before that move, or teach this library to fetch memento from its own repo."
   mkdir -p "$snapshot_dir/.claude-plugin"
   cat > "$snapshot_dir/.claude-plugin/marketplace.json" <<EOF
 {
@@ -527,6 +561,42 @@ horizon_lit_import() {
   local project_dir="$1" docs="$2"
   ( cd "$project_dir" && lit import --path "$docs" ) >/dev/null \
     || horizon_die "lit import failed in $project_dir (from $docs)"
+}
+
+# Usage: horizon_create_remote <project_dir> <repo_name>
+#
+# Gives the seeded project the GitHub remote its agent needs to open PRs. Called AFTER
+# seeding and never before: `lit init` adopts a backlog from a remote when it finds one,
+# so a project born with an origin attached starts from that remote's backlog instead of
+# the seed's, and the run's time zero is silently not the seeded one. horizon_project_init
+# enforces the "no remote yet" half of that rule; this is the single place the other half
+# is added. [LAW:single-enforcer]
+#
+# ONE REPO PER RUN, never a shared repo reset between runs: a run's PRs and review threads
+# ARE part of the bundle promptctl-horizon-7ry.4 captures, so resetting a shared one would
+# destroy the previous run's record to save a name.
+#
+# The remote's identity is not recorded anywhere by this function - the project's own git
+# config already holds it, and a second copy in the run's output could only ever disagree
+# with it. [LAW:one-source-of-truth]
+horizon_create_remote() {
+  local project_dir="$1" repo_name="$2"
+  [ -d "$project_dir" ] || horizon_die "horizon_create_remote: no project at $project_dir"
+  [ -n "$repo_name" ] || horizon_die "horizon_create_remote: no repo name given"
+
+  gh repo create "$HORIZON_RUN_REPO_OWNER/$repo_name" \
+    --public --source "$project_dir" --remote origin --push \
+    || horizon_die "could not create the run's repo ${HORIZON_RUN_REPO_OWNER}/${repo_name}"
+
+  # `gh repo create` exiting 0 means the REPO exists; the push is a further step inside
+  # it, and a repo that exists with nothing in it would send the run's first session to
+  # an empty origin. So the push is confirmed against git, the only thing that knows.
+  local pushed head
+  pushed="$(horizon_project_git "$project_dir" rev-parse refs/remotes/origin/master)" \
+    || horizon_die "the run's repo was created but origin/master does not exist - nothing was pushed"
+  head="$(horizon_project_head "$project_dir")"
+  [ "$pushed" = "$head" ] \
+    || horizon_die "origin/master ($pushed) is not the seeded HEAD ($head) in $project_dir"
 }
 
 # ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═

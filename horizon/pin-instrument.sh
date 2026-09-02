@@ -28,9 +28,15 @@
 #
 # Produces, under <run-dir>:
 #   pinned/                 the memento git-archive snapshot + its marketplace.json
-#   config/                 the fresh CLAUDE_CONFIG_DIR (memento installed, nothing else)
 #   manifest.json           every pinned identity, canonical JSON, no timestamps -
 #                           so two invocations with unchanged inputs are byte-identical
+#
+# And, at $HORIZON_CONFIG_DIR (outside <run-dir> - see lib.sh for why that separation is
+# load-bearing rather than tidiness), rebuilds the CLAUDE_CONFIG_DIR the run launches
+# against: memento installed, nothing else. The path is NOT recorded in the manifest,
+# because it is a property of the machine rather than of the pinned instrument, and
+# writing it there would make two otherwise-identical pinnings produce different
+# manifests.
 
 set -euo pipefail
 
@@ -74,8 +80,12 @@ main() {
   horizon_log "building pinned memento snapshot"
   horizon_build_memento_snapshot "$repo_root" "$memento_sha" "$run_dir/pinned"
 
-  horizon_log "provisioning isolated CLAUDE_CONFIG_DIR"
-  horizon_provision_config_dir "$run_dir/config" "$run_dir/pinned"
+  # Rebuilt at HORIZON_CONFIG_DIR, which lives OUTSIDE run-dir on purpose: Claude Code
+  # keys the run's stored credential to this path, so a config dir created fresh inside
+  # each run-dir would be a config dir that has never been logged in. Rebuilding in place
+  # is safe - the credential survives the directory being wiped, only a move loses it.
+  horizon_log "provisioning isolated CLAUDE_CONFIG_DIR at $HORIZON_CONFIG_DIR"
+  horizon_provision_config_dir "$HORIZON_CONFIG_DIR" "$run_dir/pinned"
 
   horizon_log "recording lit's binary identity"
   local lit_path lit_sha256
