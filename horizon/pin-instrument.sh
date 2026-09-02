@@ -16,10 +16,11 @@
 #                [LAW:no-silent-failure], a stale leftover file must never masquerade
 #                as this run's output).
 # [memento-ref]  git ref to pin memento (and the /goal wording, which lives in this
-#                same repo) at, resolved against this repo. Defaults to the repo's
-#                current HEAD. A campaign that wants one fixed ref across every run
-#                in the campaign (promptctl-horizon-7ry.5) passes it explicitly on
-#                every invocation rather than relying on this default.
+#                same repo) at, resolved against this repo. Defaults to
+#                HORIZON_MEMENTO_DEFAULT_REF - a fixed commit, not HEAD; lib.sh says
+#                why. A campaign that wants one ref across every run in the campaign
+#                (promptctl-horizon-7ry.5) passes it explicitly on every invocation
+#                rather than relying on this default.
 # [reviewer-sha] commit sha to pin the reviewer action at, skipping the live
 #                `v1`-tag resolution. A caller that needs two invocations to agree
 #                on the reviewer's identity without racing the moving tag twice -
@@ -64,10 +65,10 @@ main() {
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
-  # "HEAD" is a ref horizon_resolve_memento_ref already resolves fine - no git call
-  # needed here to pre-resolve it to a branch name. [LAW:single-enforcer] every git
-  # invocation stays inside lib.sh.
-  [ -z "$memento_ref" ] && memento_ref="HEAD"
+  # The default is a fixed commit rather than HEAD - see HORIZON_MEMENTO_DEFAULT_REF for
+  # why, and for the ticket that removes the need for it. [LAW:single-enforcer] every git
+  # invocation stays inside lib.sh, so nothing is pre-resolved out here.
+  [ -z "$memento_ref" ] && memento_ref="$HORIZON_MEMENTO_DEFAULT_REF"
 
   mkdir -p "$run_dir"
 

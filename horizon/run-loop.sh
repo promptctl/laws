@@ -18,7 +18,8 @@
 # [seed-dir]     the seed bundle to start from. Defaults to horizon/seeds/macklebox,
 #                the reference seed.
 # [memento-ref]  git ref to pin memento and the /goal wording at, passed straight to
-#                pin-instrument.sh. Defaults to this repo's HEAD; a campaign pins it
+#                pin-instrument.sh. Defaults to HORIZON_MEMENTO_DEFAULT_REF, a fixed
+#                commit rather than HEAD - lib.sh says why. A campaign pins it
 #                explicitly on every run.
 #
 # THE CONFIG DIR IS AT A FIXED PATH AND THE WORK DIR IS NOT INSIDE IT. Claude Code keys

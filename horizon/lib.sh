@@ -30,6 +30,18 @@ HORIZON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${REVIEWER_PROMPT_PATH:=review-agent/instructions.md}"
 HORIZON_MARKETPLACE_NAME="promptctl-horizon"
 HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
+
+# The ref memento is pinned at when a caller does not name one. It is a FIXED COMMIT and
+# not `HEAD`, because memento no longer lives in this repo: 4d0e3ba moved it to
+# promptctl/memento and replaced plugins/memento here with pointer stubs, so HEAD's copy
+# can no longer relaunch a session. d4c3f71 is the last commit that carries a working
+# one, and it is exactly the memento every mechanic of this loop was established against.
+#
+# STOPGAP, owned by promptctl-horizon-7ry.8: the instrument should pin memento from its
+# own repository, at which point this constant goes away rather than being bumped. Named
+# once here so that fixing it is one edit, and so no caller invents its own answer.
+# [LAW:one-source-of-truth]
+HORIZON_MEMENTO_DEFAULT_REF="d4c3f719b79f6f0a4e1c391bde2f5e6f05d83774"
 # The org a run's project repo is created under. Public, always - the reviewer is a
 # GitHub Action, and Actions minutes are unmetered on public repositories, so a private
 # run repo would bill the reviewer against the owner's quota to buy the eval nothing.

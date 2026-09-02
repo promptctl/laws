@@ -41,9 +41,10 @@ main() {
 
   local repo_root ref reviewer_sha
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
-  # Routed through the same lib.sh primitive pin-instrument.sh uses for a bare
-  # "HEAD" - no raw git call out here. [LAW:single-enforcer]
-  ref="$(horizon_resolve_memento_ref "$repo_root" "HEAD")"
+  # Resolved from the same constant pin-instrument.sh defaults to, through the same
+  # lib.sh primitive - no raw git call out here, and no second opinion about which
+  # memento this instrument is made of. [LAW:single-enforcer]
+  ref="$(horizon_resolve_memento_ref "$repo_root" "$HORIZON_MEMENTO_DEFAULT_REF")"
 
   horizon_log "resolving reviewer once for both runs: ${REVIEWER_REPO}@${REVIEWER_TAG}"
   reviewer_sha="$(horizon_reviewer_sha)"
