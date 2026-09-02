@@ -1,4 +1,4 @@
-#!/usr/bin/env node --experimental-vm-modules
+#!/usr/bin/env -S node --experimental-vm-modules
 // Tests for bun-runtime.mjs — linking and evaluating Bun's module graph under node's vm.
 //
 // The graph here is SYNTHETIC: a handful of tiny modules written in this file. That is the whole

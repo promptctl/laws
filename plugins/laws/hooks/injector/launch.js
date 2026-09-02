@@ -26,6 +26,8 @@
 
 const childProcess = require('child_process');
 const path = require('path');
+const { StringDecoder } = require('string_decoder');
+const { readReport } = require('./boot-channel.js');
 
 // Measured on 2.1.258: ~800ms to link 1,640 modules and ~700ms more to the first frame. The deadline
 // is an order of magnitude of headroom over that, because the cost of waiting too long is a slow
@@ -103,6 +105,10 @@ function run(plan, {
     });
 
     let paintedAt = 0;
+    // Whether the hosted graph ever handed control to the app. Reported, not inferred: before it,
+    // nothing the user asked for has run and a failure is always safe to replace; after it, the app
+    // owns whatever it did and re-running would repeat it.
+    let started = !plan.reports;
     let refusal = '';
     const absentApis = [];
     let timer = null;
@@ -140,6 +146,10 @@ function run(plan, {
       // so there is no work to preserve and nothing to weigh: fall back, terminal or no terminal.
       // Without this the fail-safe switched itself off outside a tty, where a graph this host cannot
       // read would produce neither a fallback nor a log.
+      // The app never ran, so there is nothing to preserve and nothing to weigh — replace it,
+      // terminal or no terminal. Inferring this from "did stdout see a byte" is what let a host that
+      // crashed before it could report anything be treated as a finished command in a pipe.
+      if (!started) return { booted: false, reason: because(refusal || `exited ${signal || code} before the app started`) };
       if (refusal && !paintedAt) return { booted: false, reason: because(refusal) };
       if (exit === 0 || !interactive) return { booted: true, code: exit };
       if (!paintedAt) return { booted: false, reason: because(`exited ${signal || code} before painting anything`) };
@@ -160,15 +170,21 @@ function run(plan, {
         child.kill('SIGKILL');
       }, deadlineMs);
       const channel = child.stdio[BOOT_FD];
+      // Decoded across chunk boundaries: a multi-byte character split between two reads would
+      // otherwise become two replacement characters.
+      const decoder = new StringDecoder('utf8');
       let pending = '';
       channel.on('data', (chunk) => {
-        pending += chunk.toString();
+        pending += decoder.write(chunk);
         const lines = pending.split('\n');
         pending = lines.pop();
         for (const line of lines) {
-          if (line === 'painted') { paintedAt = paintedAt || Date.now(); clearTimeout(timer); }
-          else if (line.startsWith('absent-api ')) absentApis.push(line.slice('absent-api '.length));
-          else if (line) refusal = refusal || line; // the FIRST refusal: the root cause, not what followed it
+          // What a line MEANS is the protocol's business, not this loop's. [LAW:one-source-of-truth]
+          const report = readReport(line);
+          if (report.kind === 'started') started = true;
+          else if (report.kind === 'painted') { paintedAt = paintedAt || Date.now(); clearTimeout(timer); }
+          else if (report.kind === 'absent-api') absentApis.push(report.name);
+          else if (report.kind === 'refusal') refusal = refusal || report.reason; // the FIRST: the root cause
         }
       });
       // A boot channel that fails to read is a lost diagnosis, not a non-event: without this the

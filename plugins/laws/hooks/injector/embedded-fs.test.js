@@ -87,6 +87,7 @@ t('stat reports the stored length, and answers every predicate a Stats is asked'
   for (const q of ['isDirectory', 'isSymbolicLink', 'isSocket', 'isFIFO', 'isBlockDevice', 'isCharacterDevice']) {
     assert.strictEqual(st[q](), false, q);
   }
+  for (const d of ['mtime', 'atime', 'ctime', 'birthtime']) assert.ok(st[d] instanceof Date, d);
 });
 
 t('the loader is carried through so callers never guess what a module is', () => {
@@ -162,9 +163,49 @@ t('the nested promises object is substituted too, not handed over unwrapped', as
   assert.strictEqual(await sub.promises.readFile('/tmp/real'), 'real');
 });
 
-t('createReadStream passes its options through, all the way to the stream', () => {
-  const e = createEmbeddedFs(MODULES, { realFs, streamFrom: (bytes, options) => ({ len: bytes.length, options }) });
-  assert.deepStrictEqual(e.substituteForFs(realFs).createReadStream('/$bunfs/root/plain.md', { start: 2 }), { len: 7, options: { start: 2 } });
+t("createReadStream honours a byte range, with node's INCLUSIVE end", () => {
+  // '# plain' — start 2 to end 4 inclusive is 'pla'. A slice's end is exclusive, so the arithmetic
+  // is off by one in the direction that silently truncates.
+  const seen = [];
+  const e = createEmbeddedFs(MODULES, { realFs, streamFrom: (bytes) => { seen.push(bytes.toString()); return bytes; } });
+  const sub = e.substituteForFs(realFs);
+  sub.createReadStream('/$bunfs/root/plain.md', { start: 2, end: 4 });
+  sub.createReadStream('/$bunfs/root/plain.md', { start: 2 });
+  sub.createReadStream('/$bunfs/root/plain.md');
+  assert.deepStrictEqual(seen, ['pla', 'plain', '# plain']);
+});
+
+t('a CONSTRUCTOR exported by fs still constructs — for real paths and embedded ones alike', () => {
+  // fs.ReadStream, WriteStream, Stats and Dirent are enumerable constructors on the real module. A
+  // merely-callable wrapper breaks `new` for EVERY path, which has nothing to do with embedding.
+  const e = make();
+  class ReadStream { constructor(p) { this.path = p; } }
+  const sub = e.substituteForFs({ ...realFs, ReadStream });
+  assert.strictEqual(new sub.ReadStream('/tmp/real').path, '/tmp/real');
+  assert.ok(new sub.ReadStream('/tmp/real') instanceof ReadStream, 'the prototype chain has to survive too');
+  // Constructed against an embedded path it is still refused, by name.
+  assert.throws(() => new sub.ReadStream('/$bunfs/root/plain.md'), (err) => err instanceof UnservedEmbeddedCall);
+});
+
+t('a DIRECTORY under the virtual root is refused by name, not passed to the real fs', () => {
+  // The graph's names are flat files, so a directory is never a key. Keying the refusal off the
+  // record rather than the namespace is what made `readdir` — the case this mechanism was written
+  // for — fall through to a real fs that can only answer ENOENT.
+  const e = make();
+  const sub = e.substituteForFs(realFs);
+  realCalls.length = 0;
+  assert.throws(() => sub.readdirSync('/$bunfs/root/skills'), (err) =>
+    err instanceof UnservedEmbeddedCall && /readdirSync/.test(err.message));
+  assert.deepStrictEqual(realCalls, [], 'nothing under the virtual root may reach the real fs');
+});
+
+t('a text read asks for the contents; a byte transform asks for the bytes', () => {
+  const e = make();
+  // utf8 on a utf16le-stored asset means "give me the text", which only the declared encoding gives.
+  assert.strictEqual(e.read('/$bunfs/root/SKILL.md', 'utf8'), '# wide chars: ✓');
+  // base64 is a transformation of the stored bytes, not a way of spelling the text.
+  assert.strictEqual(e.read('/$bunfs/root/plain.md', 'base64'), Buffer.from('# plain').toString('base64'));
+  assert.strictEqual(e.read('/$bunfs/root/plain.md', 'hex'), Buffer.from('# plain').toString('hex'));
 });
 
 t('a wrapped fs function keeps the properties node hangs off it', () => {

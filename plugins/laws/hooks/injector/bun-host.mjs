@@ -20,48 +20,47 @@
 //   the graph asked for that this surface does not have.
 
 import fs from 'node:fs';
-import zlib from 'node:zlib';
-import crypto from 'node:crypto';
-import childProcess from 'node:child_process';
-import http from 'node:http';
-import { Readable } from 'node:stream';
 import { createRequire } from 'node:module';
-
-const require_ = createRequire(import.meta.filename);
-const { readGraphFromFile } = require_('./bun-graph.js');
-const { createEmbeddedFs } = require_('./embedded-fs.js');
-const { createBunSurface } = require_('./bun-surface.js');
-const { createModuleRuntime } = await import('./bun-runtime.mjs');
 
 // The boot channel is a file descriptor passed in as a value, so this host is runnable by hand
 // (verdicts on stderr) and under the launcher (verdicts on a private pipe) with one write path.
 // Writing verdicts to an inherited stderr would corrupt the TUI's own rendering.
 const BOOT_FD = Number(process.env.CLAUDE_LAWS_BOOT_FD || 2);
 const EXIT_NOT_BOOTED = 70;
-const send = (line) => {
-  // Nothing is swallowed here that could be reported anywhere else: this IS the reporting channel,
-  // so a failure to write to it has no second place to go, and the exit code still carries the
-  // verdict either way. The usual cause is the launcher having closed its end.
-  try { fs.writeSync(BOOT_FD, line + '\n'); } catch { /* see above */ }
-};
-// The one-per-process VERDICT: whether this host ever got the graph as far as the terminal. Later
-// observations still go out through `send` — a graph that painted and then threw has spent its
-// verdict, and the message it died with is the useful part.
-let reported = false;
-const report = (verdict) => { if (!reported) { reported = true; send(verdict); } };
+// Nothing is swallowed here that could be reported anywhere else: this IS the reporting channel, so
+// a failure to write to it has no second place to go, and the exit code still carries the verdict.
+// The usual cause is the launcher having closed its end.
+const { createBootChannel, PAINTED } = createRequire(import.meta.url)('./boot-channel.js');
+const channel = createBootChannel({
+  write: (bytes) => { try { fs.writeSync(BOOT_FD, bytes); } catch { /* see above */ } },
+});
+const send = channel.send;
 // A thrown value is not always an Error; `e.message` on a thrown string is undefined, and an
 // undefined reason is the silence this whole channel exists to prevent.
 const because = (e) => (e && e.message) || String(e);
 
-// A boot that dies outside every try/catch — an uncaught throw, a rejection nobody owns — still has
-// to leave a name on the channel before it goes. Without this the header's claim that every degrade
-// is reported would simply be false. [LAW:no-silent-failure]
+// Installed FIRST, above every import that could throw. The window these handlers do not cover is
+// the loading of the modules that make reporting possible, so it has to be as small as this file can
+// make it. [LAW:no-silent-failure]
 for (const [event, label] of [['uncaughtException', 'uncaught'], ['unhandledRejection', 'unhandled-rejection']]) {
   process.on(event, (e) => {
     send(`boot-threw ${label}: ${because(e)}`);
     process.exit(EXIT_NOT_BOOTED);
   });
 }
+
+import zlib from 'node:zlib';
+import crypto from 'node:crypto';
+import childProcess from 'node:child_process';
+import http from 'node:http';
+import { Readable } from 'node:stream';
+const require_ = createRequire(import.meta.filename);
+const { readGraphFromFile } = require_('./bun-graph.js');
+const { createEmbeddedFs } = require_('./embedded-fs.js');
+const { createBunSurface } = require_('./bun-surface.js');
+const { createModuleRuntime } = await import('./bun-runtime.mjs');
+
+const report = channel.report;
 
 const [binaryPath, ...userArgs] = process.argv.slice(2);
 const graph = readGraphFromFile(binaryPath);
@@ -72,9 +71,8 @@ if (!graph.ok) {
 
 const embedded = createEmbeddedFs(graph.modules, {
   realFs: fs,
-  // The options a caller passed to createReadStream reach here; a closure that ignored them would
-  // silently serve the whole asset to a caller that asked for a slice of it.
-  streamFrom: (bytes, options = {}) => Readable.from(bytes.subarray(options.start ?? 0, options.end === undefined ? undefined : options.end + 1)),
+  // The range arithmetic lives in embedded-fs.js, where its tests are; this closure only wraps.
+  streamFrom: (bytes) => Readable.from(bytes),
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -86,11 +84,10 @@ const embedded = createEmbeddedFs(graph.modules, {
 // list is the difference between "it hung" and "Bun grew an API called X". Each new name goes out
 // the moment it is seen rather than at the end, because the failure worth diagnosing is the one
 // where this process never reaches an end to report from.
-const absentApis = new Set();
 globalThis.Bun = createBunSurface({
   embedded, realFs: fs, childProcess, crypto, zlib, http,
   env: process.env, platform: process.platform, entryName: graph.entryName,
-  onAbsentApi: (name) => { if (!absentApis.has(name)) { absentApis.add(name); send('absent-api ' + name); } },
+  onAbsentApi: (name) => channel.absentApi(name),
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -133,7 +130,7 @@ process.argv = [process.argv[0], graph.entryName, ...userArgs];
 // notice counts too, which is exactly why the verdict is not formed here — but a session that never
 // paints at all is the hang this whole check exists to catch.
 const stdoutWrite = process.stdout.write.bind(process.stdout);
-process.stdout.write = (...args) => { report('painted'); return stdoutWrite(...args); };
+process.stdout.write = (...args) => { report(PAINTED); return stdoutWrite(...args); };
 
 // import.meta.require is synchronous, so a module can only be evaluated on demand if it is already
 // linked. Linking every module up front is one unconditional pass over the graph — the alternative,
@@ -145,6 +142,10 @@ process.stdout.write = (...args) => { report('painted'); return stdoutWrite(...a
 // the launcher as a named reason rather than as a bare nonzero exit. [LAW:no-silent-failure]
 try {
   await runtime.linkAll();
+  // The instant control passes to the hosted app. Before this, nothing the user asked for has run,
+  // so a failure is always safe to replace; after it, the app owns whatever it did. The launcher
+  // needs that as a FACT rather than an inference from whether stdout happened to see a byte.
+  channel.started();
   await runtime.evaluateEntry(graph.entryName);
 } catch (e) {
   send(`boot-threw ${because(e)}`);

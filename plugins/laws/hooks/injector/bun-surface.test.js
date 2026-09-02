@@ -36,14 +36,14 @@ const written = [];
 const realFs = {
   constants: { X_OK: 1 },
   readFileSync: () => 'real', existsSync: () => true, statSync: () => ({ size: 1 }),
-  createReadStream: () => 'real-stream',
+  createReadStream: () => require('stream').Readable.from(Buffer.from('real')),
   writeFileSync: (p, data) => written.push([p, data]),
   // Normalising here is what makes the separator case real: without the guard in `which`,
   // path.join('/usr/bin', '../bin/ls') resolves to a file that exists.
   accessSync: (p) => { if (!['/usr/bin/git', '/bin/ls'].includes(require('path').normalize(p))) throw new Error('ENOENT'); },
 };
 function surface(overrides = {}) {
-  const embedded = createEmbeddedFs([record('/$bunfs/root/a.md', 'hello')], { realFs, streamFrom: (b) => ({ stub: b.length }) });
+  const embedded = createEmbeddedFs([record('/$bunfs/root/a.md', 'hello')], { realFs, streamFrom: (b) => require('stream').Readable.from(b) });
   const absent = [];
   const bun = S.createBunSurface({
     embedded, realFs, crypto: require('crypto'), zlib: require('zlib'), http: require('http'),
@@ -72,8 +72,10 @@ t('the members the graph never uses are absent rather than wrong', () => {
   // Surveyed against the shipped graph: nothing reads Bun.stdin/stdout/stderr or calls Bun.color.
   // Keeping a wrong-shaped member for them would answer plausibly; absence is recorded.
   const { bun, absent } = surface();
-  for (const name of ['stdin', 'stdout', 'stderr', 'color', 'spawnSync']) assert.strictEqual(bun[name], undefined, name);
-  assert.deepStrictEqual([...new Set(absent)], ['stdin', 'stdout', 'stderr', 'color', 'spawnSync']);
+  for (const name of ['stdin', 'stdout', 'stderr', 'color', 'spawnSync', 'generateHeapSnapshot']) {
+    assert.strictEqual(bun[name], undefined, name);
+  }
+  assert.deepStrictEqual([...new Set(absent)], ['stdin', 'stdout', 'stderr', 'color', 'spawnSync', 'generateHeapSnapshot']);
 });
 
 t('a member the surface does have is never recorded as absent', () => {
@@ -110,6 +112,10 @@ t('CryptoHasher digests, and refuses an algorithm it cannot serve BY NAME', () =
   assert.throws(() => new bun.CryptoHasher('xxhash3'), /does not serve the algorithm xxhash3/);
   // node has only blake2b512, and a truncation of it is a different function — refused, not faked.
   assert.throws(() => new bun.CryptoHasher('blake2b256'), /does not serve the algorithm blake2b256/);
+  // The hmac key real Bun accepts is honoured, not dropped on the floor.
+  const keyed = new bun.CryptoHasher('sha256', 'secret').update('abc').digest('hex');
+  assert.strictEqual(keyed, require('crypto').createHmac('sha256', 'secret').update('abc').digest('hex'));
+  assert.notStrictEqual(keyed, new bun.CryptoHasher('sha256').update('abc').digest('hex'));
 });
 
 t('a seed changes the hash, rather than being ignored', () => {
@@ -148,6 +154,8 @@ t('deepEquals does not depend on key order', () => {
   const loopA = { name: 'a' }; loopA.self = loopA;
   const loopB = { name: 'a' }; loopB.self = loopB;
   assert.strictEqual(bun.deepEquals(loopA, loopB), true, 'circular data must terminate, not exhaust the stack');
+  assert.strictEqual(bun.deepEquals(new Error('boom'), new Error('boom')), true);
+  assert.strictEqual(bun.deepEquals(new Error('boom'), new Error('other')), false, 'an Error has no enumerable keys to tell apart');
 });
 
 // ---- which: no shell, ever ----------------------------------------------------------------------
@@ -195,6 +203,23 @@ t('a spawned child answers the two things the graph asks of it', async () => {
   const child = bun.spawn({ cmd: [process.execPath, '-e', 'process.stdout.write("hi")'], stdout: 'pipe' });
   assert.strictEqual(await child.stdout.text(), 'hi');
   assert.strictEqual(await child.exited, 0);
+});
+
+t('a BunFile in an explicit stdio array is resolved to a descriptor', () => {
+  // The graph passes `stdio:["ignore","ignore",Bun.file(path)]`. Handing that array to node
+  // unchanged means handing node an object it cannot use.
+  const opened = [];
+  const { bun } = surface({ realFs: { ...realFs, openSync: (p) => { opened.push(p); return 42; } } });
+  const [, , options] = bun.spawn({ cmd: ['x'], stdio: ['ignore', 'ignore', bun.file('/tmp/log')] }).spawned;
+  assert.deepStrictEqual(options.stdio, ['ignore', 'ignore', 42]);
+  assert.deepStrictEqual(opened, ['/tmp/log']);
+});
+
+t('a child killed by a signal is not reported as a clean exit', async () => {
+  const { bun } = surface({ childProcess: require('child_process') });
+  const child = bun.spawn({ cmd: [process.execPath, '-e', 'setTimeout(()=>{},9999)'], stdout: 'ignore' });
+  child.kill('SIGKILL');
+  await assert.rejects(() => child.exited, /killed by SIGKILL/);
 });
 
 t('an unrecognised stdio value is refused by name, not quietly turned into a pipe', () => {
@@ -249,8 +274,11 @@ t('Bun.file reads the embedded graph and the real disk alike, streams included',
   assert.strictEqual(await bun.file('/$bunfs/root/a.md').text(), 'hello');
   assert.strictEqual(bun.file('/$bunfs/root/a.md').size, 5);
   assert.strictEqual(await bun.file('/$bunfs/root/a.md').exists(), true);
-  assert.deepStrictEqual(bun.file('/$bunfs/root/a.md').stream(), { stub: 5 }, 'stream must not skip the embedded routing');
-  assert.strictEqual(bun.file('/tmp/real').stream(), 'real-stream');
+  // Bun hands back a web ReadableStream, and the embedded routing must not be skipped on the way.
+  const stream = bun.file('/$bunfs/root/a.md').stream();
+  assert.strictEqual(typeof stream.getReader, 'function', 'a node Readable is not what Bun promises here');
+  const { value } = await stream.getReader().read();
+  assert.strictEqual(Buffer.from(value).toString(), 'hello');
 });
 
 t('write honours a typed-array VIEW window, and reports what it wrote', async () => {
@@ -275,6 +303,10 @@ t('stringWidth counts wide and combining characters the way a terminal does', ()
   assert.strictEqual(S.stringWidth('abc'), 3);
   assert.strictEqual(S.stringWidth('日本'), 4);
   assert.strictEqual(S.stringWidth('é'), 1, 'a combining accent takes no column');
+  assert.strictEqual(S.stringWidth('a\u200bb'), 2, 'a zero-width space takes no column either');
+  // A base character plus a mark from one of the later combining ranges is still one column.
+  assert.strictEqual(S.stringWidth('\u0e01\u0483'), 1, 'nor do the other combining ranges');
+  assert.strictEqual(S.stringWidth('\ufe0f'), 0, 'nor a variation selector');
 });
 
 t('stripANSI removes escapes and leaves the text', () => {

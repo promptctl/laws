@@ -13,6 +13,8 @@
 
 'use strict';
 
+const { Readable } = require('stream');
+
 const ENOENT_SIZE = 0;
 
 // Bun's own default hash is a fast 64-bit NON-cryptographic hash, not a digest. The exact algorithm
@@ -63,6 +65,7 @@ function deepEquals(a, b, seen = new Map()) {
   if (Array.isArray(a)) return a.length === b.length && a.every((x, i) => deepEquals(x, b[i], seen));
   if (a instanceof Date) return a.getTime() === b.getTime();
   if (a instanceof RegExp) return a.source === b.source && a.flags === b.flags;
+  if (a instanceof Error) return a.name === b.name && a.message === b.message;
   if (a instanceof Map) return a.size === b.size && [...a].every(([k, v]) => b.has(k) && deepEquals(v, b.get(k), seen));
   if (a instanceof Set) return a.size === b.size && [...a].every((v) => b.has(v));
   if (ArrayBuffer.isView(a)) return a.byteLength === b.byteLength && Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength));
@@ -86,7 +89,13 @@ const stringWidth = (s) => {
       || (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff)
       || (c >= 0xfe30 && c <= 0xfe4f) || (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6)
       || (c >= 0x1f300 && c <= 0x1faff));
-    const combining = c >= 0x300 && c <= 0x36f;
+      // Combining marks and zero-width characters take no column. U+0300–U+036F is only the first
+      // of several such ranges, and stopping there overcounts every script that uses the others.
+      const combining = (c >= 0x300 && c <= 0x36f) || (c >= 0x483 && c <= 0x489)
+        || (c >= 0x591 && c <= 0x5bd) || (c >= 0x610 && c <= 0x61a) || (c >= 0x64b && c <= 0x65f)
+        || (c >= 0x1ab0 && c <= 0x1aff) || (c >= 0x1dc0 && c <= 0x1dff) || (c >= 0x20d0 && c <= 0x20f0)
+        || (c >= 0xfe00 && c <= 0xfe0f) || (c >= 0xfe20 && c <= 0xfe2f)
+        || c === 0x200b || c === 0x200c || c === 0x200d || c === 0xfeff;
     width += combining ? 0 : (wide ? 2 : 1);
   }
   return width;
@@ -175,27 +184,33 @@ const whichVia = (realFs, env, platform) => (cmd) => {
 // fills and blocks the child, which is a hang with no reported cause. Measured on the shipped graph,
 // which passes exactly these options and then awaits `child.stdout.text()`.
 const STREAM_SLOTS = ['stdin', 'stdout', 'stderr'];
-const spawnArgs = (first, second) => {
+const spawnArgs = (first, second, openFd) => {
   const { cmd, ...rest } = Array.isArray(first) ? { cmd: first } : (first || {});
   const options = { ...rest, ...(second || {}) };
   const named = STREAM_SLOTS.map((slot) => options[slot]);
   for (const slot of STREAM_SLOTS) delete options[slot];
+  // An explicit array is node's own spelling but not node's own VALUES: the graph passes
+  // `stdio:["ignore","ignore",Bun.file(path)]`, and node cannot take a BunFile. Every element is
+  // translated, whichever spelling it arrived in.
+  if (Array.isArray(options.stdio)) options.stdio = options.stdio.map((v) => toNodeStdio(v, openFd));
   // An explicit `stdio` wins; it is node's own spelling and the graph uses it too. A caller that
   // names none of the three gets NODE's defaults, not Bun's: Bun's per-slot defaults are not
   // documented anywhere this host can read, and inventing them would be a guess wearing the shape of
   // a fix. This is a known limit, stated rather than papered over.
   if (options.stdio === undefined && named.some((v) => v !== undefined)) {
-    options.stdio = named.map((v, i) => (v === undefined ? (i === 0 ? 'inherit' : 'pipe') : toNodeStdio(v)));
+    options.stdio = named.map((v, i) => (v === undefined ? (i === 0 ? 'inherit' : 'pipe') : toNodeStdio(v, openFd)));
   }
   return { command: cmd?.[0], args: cmd?.slice(1) ?? [], options };
 };
 // Bun's per-stream values, in node's vocabulary. A BunFile stands for the descriptor it names. An
 // unrecognised value is refused rather than quietly becoming 'pipe' — a wrong stream is a hang or a
 // lost output with nothing pointing at the cause. [LAW:no-silent-failure]
-const toNodeStdio = (v) => {
-  if (v === 'ignore' || v === 'inherit' || v === 'pipe') return v;
+const toNodeStdio = (v, openFd) => {
+  if (v === 'ignore' || v === 'inherit' || v === 'pipe' || v === null || v === undefined) return v ?? 'pipe';
   if (typeof v === 'number') return v;
   if (v && typeof v === 'object' && typeof v.fd === 'number') return v.fd;
+  // A BunFile names a path rather than carrying a descriptor, so one is opened for it.
+  if (v && typeof v === 'object' && typeof v.name === 'string') return openFd(v.name);
   throw new Error(`spawn: this host does not know the stdio value ${JSON.stringify(v)}`);
 };
 
@@ -221,7 +236,9 @@ const withBunChildShape = (child) => {
     // captured the moment it happens, and only turned into a promise if something asks.
     let outcome, settle;
     const record = (o) => { outcome = o; settle?.(o); };
-    child.on('exit', (code) => record({ code: code ?? 0 }));
+    // A process killed by a signal exits with code null. Reporting 0 for it would call a kill a
+    // clean finish.
+    child.on('exit', (code, signal) => record(code === null ? { error: new Error(`killed by ${signal}`) } : { code }));
     child.on('error', (error) => record({ error }));
     let exited;
     const promise = () => new Promise((resolve, reject) => {
@@ -277,7 +294,8 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
       async exists() { return embedded.existsAny(p); },
       async bytes() { return new Uint8Array(embedded.readAny(p)); },
       async arrayBuffer() { const b = asBuffer(embedded.readAny(p)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); },
-      stream() { return embedded.streamAny(p); },
+      // Bun hands back a web ReadableStream, and callers use its API rather than node's.
+      stream() { return Readable.toWeb(embedded.streamAny(p)); },
       get size() { return embedded.existsAny(p) ? embedded.statAny(p).size : ENOENT_SIZE; },
       name: p, type: '',
     }),
@@ -291,7 +309,10 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
     zstdDecompress: (b) => new Promise((resolve, reject) => zlib.zstdDecompress(b, (e, out) => (e ? reject(e) : resolve(out)))),
     gzipSync: (b) => zlib.gzipSync(b), gunzipSync: (b) => zlib.gunzipSync(b),
 
-    spawn: (first, second) => { const { command, args, options } = spawnArgs(first, second); return withBunChildShape(childProcess.spawn(command, args, options)); },
+    spawn: (first, second) => {
+      const { command, args, options } = spawnArgs(first, second, (path) => realFs.openSync(path, 'a'));
+      return withBunChildShape(childProcess.spawn(command, args, options));
+    },
     which: whichVia(realFs, env, platform),
 
     hash: Object.assign((x, seed) => fnv1a64(x, seed), {
@@ -300,9 +321,9 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
       adler32: (x, seed = 1) => { let a = seed & 0xffff, b = (seed >>> 16) & 0xffff; for (const byte of asBuffer(x)) { a = (a + byte) % 65521; b = (b + a) % 65521; } return ((b << 16) | a) >>> 0; },
     }),
     CryptoHasher: class {
-      constructor(algorithm = 'sha256') {
+      constructor(algorithm = 'sha256', hmacKey) {
         if (!HASH_ALGORITHMS.has(algorithm)) throw new Error(`CryptoHasher: this host does not serve the algorithm ${algorithm}`);
-        this.h = crypto.createHash(algorithm);
+        this.h = hmacKey === undefined ? crypto.createHash(algorithm) : crypto.createHmac(algorithm, hmacKey);
       }
       update(d, encoding) { this.h.update(d, encoding); return this; }
       // Bun's encodingless digest is a Uint8Array, and a node Buffer already is one.
@@ -315,7 +336,10 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
     // Actually blocks. A no-op would return instantly from a call whose entire purpose is not to.
     sleepSync: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(ms) || 0); },
     nanoseconds: () => Number(process.hrtime.bigint()),
-    gc() {}, generateHeapSnapshot: () => ({}),
+    // A garbage-collection hint that does nothing is what an advisory hint IS, and it returns
+    // nothing either way. `generateHeapSnapshot` is not in that position — an empty object is a
+    // wrong answer rather than a declined one — so it is absent and recorded.
+    gc() {},
     pathToFileURL: (p) => require('url').pathToFileURL(p),
     fileURLToPath: (u) => require('url').fileURLToPath(u),
     serve: (options) => serveOver(http, options),

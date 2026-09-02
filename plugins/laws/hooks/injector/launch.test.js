@@ -56,29 +56,29 @@ const fast = { deadlineMs: 300, settleMs: 150, interactive: true };
 // ---- what counts as having become the session --------------------------------------------------
 
 t('a plan that paints and stays is the session', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, report: 'painted' }, { at: 250, exit: 0 }]) });
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 8, report: 'started' }, { at: 10, report: 'painted' }, { at: 250, exit: 0 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 0 });
 });
 
 t('a plan that paints and then dies inside the settle window never became a session', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, report: 'painted' }, { at: 40, exit: 1 }]) });
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 8, report: 'started' }, { at: 10, report: 'painted' }, { at: 40, exit: 1 }]) });
   assert.strictEqual(r.booted, false);
   assert.match(r.reason, /painted, then exited 1/);
 });
 
 t('a throw after painting still reaches the reason, which is the usual real diagnosis', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 5, report: 'painted' }, { at: 15, report: 'boot-threw Cannot read properties of undefined' }, { at: 30, exit: 1 }]) });
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 3, report: 'started' }, { at: 5, report: 'painted' }, { at: 15, report: 'boot-threw Cannot read properties of undefined' }, { at: 30, exit: 1 }]) });
   assert.strictEqual(r.booted, false);
   assert.match(r.reason, /never became a session: boot-threw Cannot read properties of undefined/);
 });
 
 t('...but a CLEAN early exit is a one-shot command finishing, and is never re-run', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, report: 'painted' }, { at: 40, exit: 0 }]) });
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 8, report: 'started' }, { at: 10, report: 'painted' }, { at: 40, exit: 0 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 0 });
 });
 
 t('...and outside an interactive terminal no exit is ever re-run, whatever the code', async () => {
-  const r = await L.run(hosted, { ...fast, interactive: false, spawn: fakeSpawn([{ at: 10, report: 'painted' }, { at: 40, exit: 1 }]) });
+  const r = await L.run(hosted, { ...fast, interactive: false, spawn: fakeSpawn([{ at: 8, report: 'started' }, { at: 10, report: 'painted' }, { at: 40, exit: 1 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 1 });
 });
 
@@ -104,7 +104,7 @@ t('a report still in flight when the child is reaped is not lost', async () => {
   // 'exit' lands first and 'painted' only afterwards, which is what a real pipe does when a plan
   // paints and immediately dies. Judging on 'exit' alone would report "never painted anything",
   // which is a different — and false — account of what happened.
-  const spawn = fakeSpawn([{ at: 5, exit: 1 }, { at: 20, report: 'painted' }], { endAfterExit: 40 });
+  const spawn = fakeSpawn([{ at: 3, report: 'started' }, { at: 5, exit: 1 }, { at: 20, report: 'painted' }], { endAfterExit: 40 });
   const r = await L.run(hosted, { ...fast, settleMs: 5, spawn });
   assert.strictEqual(r.booted, false);
   assert.match(r.reason, /painted, then exited 1 after 0ms/);
@@ -118,8 +118,16 @@ t('an unreadable boot channel becomes part of the reason rather than vanishing',
 });
 
 t('a silent one-shot that exits 0 without painting is the session, never re-run', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, exit: 0 }]) });
+  // It started the app and finished cleanly; that all its output went to stderr is not this
+  // launcher's business, and re-running it would repeat whatever it did.
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 5, report: 'started' }, { at: 10, exit: 0 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 0 });
+});
+
+t('a clean exit that never started the app is still replaced — nothing ran', async () => {
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, exit: 0 }]) });
+  assert.strictEqual(r.booted, false);
+  assert.match(r.reason, /exited 0 before the app started/);
 });
 
 t('a named refusal falls back even outside an interactive terminal', async () => {
@@ -143,37 +151,61 @@ t('a named refusal from the host is carried out as the reason', async () => {
 });
 
 t('every failure names the Bun APIs the shim did not have, which is the whole diagnosis on a hang', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, report: 'absent-api newThing' }, { at: 20, report: 'absent-api other' }]) });
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 8, report: 'started' }, { at: 10, report: 'absent-api newThing' }, { at: 20, report: 'absent-api other' }]) });
   assert.strictEqual(r.booted, false);
   assert.match(r.reason, /nothing painted within 300ms \(Bun APIs the shim does not have: newThing, other\)/);
 });
 
 t('several reports arriving in one chunk are each read, not just the first', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, report: 'absent-api a\nabsent-api b\npainted' }, { at: 250, exit: 0 }]) });
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 8, report: 'started' }, { at: 10, report: 'absent-api a\nabsent-api b\npainted' }, { at: 250, exit: 0 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 0 });
 });
 
 t('a session is measured to its exit, not to whenever the channel finally closed', async () => {
   // The plan painted and died 20ms later, well inside the settle window; a channel that takes its
   // time closing must not make that look like a session that lived.
-  const spawn = fakeSpawn([{ at: 5, report: 'painted' }, { at: 25, exit: 1 }], { endAfterExit: 400 });
+  const spawn = fakeSpawn([{ at: 3, report: 'started' }, { at: 5, report: 'painted' }, { at: 25, exit: 1 }], { endAfterExit: 400 });
   const r = await L.run(hosted, { ...fast, settleMs: 200, deadlineMs: 2000, spawn });
   assert.strictEqual(r.booted, false);
   assert.match(r.reason, /painted, then exited 1 after (1\d|2\d)ms/, 'measured to the exit, not to the channel close 400ms later');
 });
 
+t('a multi-byte character split across chunks is not mangled into replacement characters', async () => {
+  // The refusal carries a character whose UTF-8 bytes straddle two reads. Decoding each chunk
+  // independently turns it into two replacement characters, which is a different reason.
+  const bytes = Buffer.from('boot-threw naïve failure\n', 'utf8');
+  const cut = bytes.indexOf(0xc3) + 1; // between the two bytes of 'ï'
+  const spawn = fakeSpawn([
+    { at: 3, report: 'started' },
+    { at: 5, raw: bytes.subarray(0, cut) }, { at: 12, raw: bytes.subarray(cut) },
+    { at: 20, exit: 70 }]);
+  const r = await L.run(hosted, { ...fast, spawn });
+  assert.strictEqual(r.reason, 'boot-threw naïve failure');
+});
+
 t('a report split across pipe chunks is still read as one line', async () => {
   // The exit is nonzero and interactive, so this can only come back booted if the 'painted' split
   // across the two chunks was actually reassembled.
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 5, raw: 'absent-api one\npain' }, { at: 15, raw: 'ted\n' }, { at: 250, exit: 1 }]) });
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 3, report: 'started' }, { at: 5, raw: 'absent-api one\npain' }, { at: 15, raw: 'ted\n' }, { at: 250, exit: 1 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 1 });
 });
 
-t('a plan that dies silently before painting still yields a reason', async () => {
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, exit: 70 }]) });
+t('a plan that dies silently after starting the app still yields a reason', async () => {
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 5, report: 'started' }, { at: 10, exit: 70 }]) });
   assert.strictEqual(r.booted, false);
   assert.match(r.reason, /exited 70 before painting anything/);
 });
+
+t('a plan that dies before the app ever started is replaced, even outside a terminal', async () => {
+  // Total silence on the channel: no `started`, no refusal. Inferring "it must have done work" from
+  // a nonzero exit is what let a host that crashed before its reporting machinery was up be treated
+  // as a finished command in a pipe.
+  const r = await L.run(hosted, { ...fast, interactive: false, spawn: fakeSpawn([{ at: 10, exit: 1 }]) });
+  assert.strictEqual(r.booted, false);
+  assert.match(r.reason, /exited 1 before the app started/);
+});
+
+
 
 t('a command that cannot be started is a reason, not a crash', async () => {
   const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, spawnError: 'ENOENT' }]) });

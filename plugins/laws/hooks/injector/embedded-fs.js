@@ -49,7 +49,13 @@ function noSuchFile(path) {
 function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
   const byName = new Map(modules.map((m) => [m.name, m]));
 
-  const isEmbedded = (p) => typeof p === 'string' && p.startsWith(VIRTUAL_ROOT) && byName.has(p);
+  // Two different questions, which one predicate had been conflating. A path is in the embedded
+  // NAMESPACE if it lives under the virtual root at all — including a directory, which is never a
+  // key here because the graph's names are flat files. A RECORD exists only for a real module. The
+  // refusals key off the namespace, so `readdir` on `/$bunfs/root/skills` is refused by name instead
+  // of falling through to a real fs that can only say ENOENT; the reads key off the record.
+  const isVirtual = (p) => typeof p === 'string' && p.startsWith(VIRTUAL_ROOT);
+  const isEmbedded = (p) => isVirtual(p) && byName.has(p);
   const recordFor = (p) => { const m = byName.get(p); if (!m) throw noSuchFile(p); return m; };
 
   // A COPY, not the view bun-graph hands back. That view aliases the one buffer holding the whole
@@ -62,13 +68,24 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
   const text = (p) => recordFor(p).text();
   // A whole Stats shape, not the three predicates this host happens to care about: a caller is
   // entitled to ask any of them, and a missing one is a TypeError rather than a `false`.
+  const EPOCH = new Date(0);
   const stat = (p) => ({
-    size: recordFor(p).length, mode: 0o444, mtimeMs: 0, mtime: new Date(0), atimeMs: 0, ctimeMs: 0, birthtimeMs: 0,
+    size: recordFor(p).length, mode: 0o444,
+    mtimeMs: 0, atimeMs: 0, ctimeMs: 0, birthtimeMs: 0,
+    mtime: EPOCH, atime: EPOCH, ctime: EPOCH, birthtime: EPOCH,
     isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false,
     isSocket: () => false, isFIFO: () => false, isBlockDevice: () => false, isCharacterDevice: () => false,
   });
-  // A read with any encoding is a text read; without one it is a byte read.
-  const read = (p, options) => ((typeof options === 'string' ? options : options?.encoding) ? text(p) : bytes(p));
+  // Asking for TEXT and asking for a byte TRANSFORM are different requests. `utf8` (and the
+  // container's own encoding) mean "give me the contents", which only the declared encoding can
+  // produce correctly. `base64` and `hex` are transformations of the stored bytes, and answering
+  // them with decoded text would be a different value entirely.
+  const TEXT_REQUESTS = new Set(['utf8', 'utf-8', 'utf16le', 'utf-16le', 'ucs2', 'ucs-2']);
+  const read = (p, options) => {
+    const requested = typeof options === 'string' ? options : options?.encoding;
+    if (!requested) return bytes(p);
+    return TEXT_REQUESTS.has(requested.toLowerCase()) ? text(p) : bytes(p).toString(requested);
+  };
 
   const served = {
     readFileSync: read,
@@ -76,7 +93,9 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
     statSync: stat,
     lstatSync: stat,
     realpathSync: (p) => p,
-    createReadStream: (p, options) => streamFrom(bytes(p), options),
+    // Node's `end` is INCLUSIVE and a Buffer slice's is not. Doing the arithmetic here rather than
+    // in the host's closure keeps it where the tests can reach it.
+    createReadStream: (p, options = {}) => streamFrom(bytes(p).subarray(options.start ?? 0, options.end === undefined ? undefined : options.end + 1)),
     readFile: async (p, options) => read(p, options),
     stat: async (p) => stat(p),
     lstat: async (p) => stat(p),
@@ -91,17 +110,24 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
     for (const [key, value] of Object.entries(real)) {
       if (typeof value !== 'function') continue;
       const answer = names.includes(key) ? served[key] : null;
-      const wrapper = (...args) => {
-        if (!isEmbedded(args[0])) return value.apply(real, args);
-        if (answer) return answer(...args);
-        const refusal = new UnservedEmbeddedCall(key, args[0]);
-        if (rejects) return Promise.reject(refusal);
-        throw refusal;
-      };
-      // Node hangs things off its fs functions — `realpathSync.native` is the well-known one — and a
-      // bare arrow would drop every one of them.
-      Object.defineProperties(wrapper, Object.getOwnPropertyDescriptors(value));
-      out[key] = wrapper;
+      // A PROXY over the real function, not a fresh one wrapping it. Several of node's fs exports
+      // are constructors — ReadStream, WriteStream, Stats, Dirent — and a wrapper that is merely
+      // callable breaks `new fs.ReadStream(path)` for every path, embedded or not. A proxy keeps
+      // construct, the properties hanging off the function, its name and its length, without any of
+      // them having to be copied.
+      out[key] = new Proxy(value, {
+        apply(target, self, args) {
+          if (!isVirtual(args[0])) return Reflect.apply(target, self, args);
+          if (answer) return answer(...args);
+          const refusal = new UnservedEmbeddedCall(key, args[0]);
+          if (rejects) return Promise.reject(refusal);
+          throw refusal;
+        },
+        construct(target, args, newTarget) {
+          if (!isVirtual(args[0])) return Reflect.construct(target, args, newTarget);
+          throw new UnservedEmbeddedCall(key, args[0]);
+        },
+      });
     }
     return out;
   };
@@ -116,7 +142,7 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
 
   return {
     VIRTUAL_ROOT, UnservedEmbeddedCall,
-    has: isEmbedded,
+    has: isEmbedded, isVirtual,
     names: () => [...byName.keys()],
     loaderOf: (p) => byName.get(p)?.loader,
     bytes, text, stat, read,

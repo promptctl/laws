@@ -134,7 +134,9 @@ export function createModuleRuntime({
     const mod = moduleFor(name);
     // evaluate() settles asynchronously, but V8 runs the body synchronously up to its first await
     // and the namespace object is live from link time — so this is the same object, filled in the
-    // same order, that Bun's require hands back from inside a cycle. The catch is not a swallow: a
+    // same order, that Bun's require hands back from inside a cycle. The status guard is not racy:
+    // measured on node 26.7.0, evaluate() moves the module out of 'linked' synchronously at the
+    // call, before its promise settles, so a second call cannot slip past. The catch is not a swallow: a
     // body that throws after its first await lands outside every try/catch here, and without it the
     // process would die with no name attached to the cause. [LAW:no-silent-failure]
     if (mod.status === 'linked') mod.evaluate().catch((e) => onEvaluationError(name, e));
