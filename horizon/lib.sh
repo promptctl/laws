@@ -701,45 +701,72 @@ Note the credential is bound to this PATH, so logging in somewhere else will not
 
 # Usage: horizon_write_boot_state <config_dir> <project_dir>
 #
-# A freshly provisioned config dir stops at four interactive gates that no unattended
-# run can answer: the workspace trust dialog, first-run onboarding, the custom-API-key
-# prompt, and the bypass-permissions acceptance. Each is recorded as a settled fact
-# here, so the session boots straight to a ready input box.
+# A freshly provisioned config dir stops at interactive gates that no unattended run can
+# answer: the workspace trust dialog, first-run onboarding, the custom-API-key prompt, and
+# the bypass-permissions disclaimer. Each is recorded as a settled fact here, so the
+# session boots straight to a ready input box.
 #
 # These are the CLI's own keys, not a private format: its error text for an untrusted
 # workspace names `projects[<dir>].hasTrustDialogAccepted: true` in this exact file as
 # the supported alternative to clicking the dialog.
 #
+# The gates live in TWO files, because the CLI moved one of them. Up to 2.1.226 the
+# bypass-permissions acceptance was `bypassPermissionsModeAccepted` in .claude.json; by
+# 2.1.252 a migration relocates it to settings.json as `skipDangerousModePermissionPrompt`
+# and DELETES the original key. That migration only fires if the old key is present when
+# it runs - and it runs during horizon_provision_config_dir, before this function writes
+# anything. Writing the old key afterwards therefore lands in a slot whose migration has
+# already gone by: the value sits in the file looking correct, is never migrated, and the
+# startup dialog does not honour it. The run then stops at a disclaimer no unattended
+# session can answer, while the config file reads as fully settled.
+#
+# So the acceptance is written where THIS version reads it, and the superseded key is not
+# written at all - two spellings of one fact are two things that can disagree, and the
+# dead one is the one that looks right. [LAW:one-source-of-truth] Verified on 2.1.252 by
+# removing the legacy key entirely and confirming the session still boots to a live input
+# box; if a future version moves it again, this is the seam that has to move with it.
+#
 # Written AFTER horizon_provision_config_dir, which rm -rf's the directory - order that
 # matters, so it is stated where it can be seen rather than left to the caller to
-# remember. Merges into whatever the CLI already wrote instead of replacing the file:
-# provisioning leaves real state there, and clobbering it would be a second writer of a
-# file the CLI owns. [LAW:one-source-of-truth]
+# remember. Both files are MERGED into rather than replaced: provisioning leaves real
+# state in each (settings.json carries the pinned marketplace and the enabled plugin),
+# and clobbering either would make this a second writer of a file the CLI owns.
 horizon_write_boot_state() {
   local config_dir="$1" project_dir="$2"
   [ -d "$config_dir" ] || horizon_die "horizon_write_boot_state: no config dir at $config_dir"
   [ -d "$project_dir" ] || horizon_die "horizon_write_boot_state: no project dir at $project_dir"
-  python3 - "$config_dir/.claude.json" "$project_dir" <<'PY' \
-    || horizon_die "could not write unattended boot state into $config_dir/.claude.json"
+  python3 - "$config_dir/.claude.json" "$config_dir/settings.json" "$project_dir" <<'PY' \
+    || horizon_die "could not write unattended boot state into $config_dir"
 import json, os, sys
 
-path, project = sys.argv[1:]
-config = {}
-if os.path.exists(path):
-    with open(path) as f:
-        config = json.load(f)
+config_path, settings_path, project = sys.argv[1:]
 
-config["hasCompletedOnboarding"] = True
-config["theme"] = "dark"
-config["bypassPermissionsModeAccepted"] = True
-projects = config.setdefault("projects", {})
-entry = projects.setdefault(project, {})
-entry["hasTrustDialogAccepted"] = True
-entry["hasCompletedProjectOnboarding"] = True
 
-with open(path, "w") as f:
-    json.dump(config, f, indent=2)
-    f.write("\n")
+def merge(path, apply):
+    existing = {}
+    if os.path.exists(path):
+        with open(path) as f:
+            existing = json.load(f)
+    apply(existing)
+    with open(path, "w") as f:
+        json.dump(existing, f, indent=2)
+        f.write("\n")
+
+
+def gates(config):
+    config["hasCompletedOnboarding"] = True
+    config["theme"] = "dark"
+    entry = config.setdefault("projects", {}).setdefault(project, {})
+    entry["hasTrustDialogAccepted"] = True
+    entry["hasCompletedProjectOnboarding"] = True
+
+
+def bypass(settings):
+    settings["skipDangerousModePermissionPrompt"] = True
+
+
+merge(config_path, gates)
+merge(settings_path, bypass)
 PY
 }
 
@@ -781,7 +808,14 @@ horizon_wait_ready() {
     sleep "$HORIZON_POLL_SECONDS"
     waited=$((waited + HORIZON_POLL_SECONDS))
   done
-  horizon_die "session did not reach a ready input box within ${HORIZON_BOOT_TIMEOUT_SECONDS}s"
+  # The pane goes in the message. What stops a boot is almost always something the pane is
+  # displaying and waiting on - an interactive gate the boot state did not settle, a login
+  # prompt, a crash - and a bare "did not become ready" sends the reader to go find that
+  # out by hand, at which point the session may already have been cleaned up. An error
+  # should say where to look; this one can simply say what it saw. [LAW:no-silent-failure]
+  horizon_die "session did not reach a ready input box within ${HORIZON_BOOT_TIMEOUT_SECONDS}s.
+The pane was showing:
+$(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
 }
 
 # Usage: horizon_send <text_file>
@@ -840,19 +874,24 @@ for line in sys.stdin:
         continue
     name[int(pid)] = comm.strip()
 
-# A claude whose ancestry reaches the pane is one finalize-session will find by the
-# same walk. Bounded so a cycle in a mangled ps snapshot cannot spin.
-def under_pane(pid):
+# A claude that REACHES the pane is one finalize-session will find by the same walk -
+# and reaching it includes BEING it. `tmux new-session <cmd>` execs the command as the
+# pane process itself rather than under a shell, so on the ordinary launch the pid of
+# claude IS pane_pid. A test that walked only strict ancestors rejected exactly the
+# arrangement it exists to confirm. (No apostrophes in here: this whole program is a
+# single-quoted shell string, and one would end it.)
+# Bounded so a cycle in a mangled ps snapshot cannot spin.
+def reaches_pane(pid):
     for _ in range(32):
+        if pid == pane_pid:
+            return True
         pid = parent.get(pid)
         if pid is None or pid == 0:
             return False
-        if pid == pane_pid:
-            return True
     return False
 
 claudes = [p for p, n in name.items() if n.rsplit("/", 1)[-1] == "claude"]
-if not any(under_pane(p) for p in claudes):
+if not any(reaches_pane(p) for p in claudes):
     sys.exit("no claude process runs under the run pane (pid %d); finalize-session "
              "would relaunch instead of resetting in place, losing CLAUDE_CONFIG_DIR"
              % pane_pid)
