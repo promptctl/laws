@@ -17,8 +17,10 @@
 # Usage:
 #   horizon/login.sh
 #
-# Honours HORIZON_WORK_DIR the same way run-loop.sh does, so the two cannot disagree
-# about which directory is being authenticated.
+# The directory is HORIZON_CONFIG_DIR, defined once in lib.sh and read from there by
+# this script and by run-loop.sh alike - the credential is bound to a path, so two
+# scripts holding their own idea of that path is the one disagreement that must be
+# impossible. [LAW:one-source-of-truth]
 
 set -euo pipefail
 
@@ -26,17 +28,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
-: "${HORIZON_WORK_DIR:=$HOME/.horizon/run}"
-
 main() {
   horizon_need claude
   horizon_need mkdir
   horizon_need python3
 
-  # The path is constructed exactly as run-loop.sh constructs it. It is created if it
-  # does not exist yet: the credential is bound to this path, so it has to be logged in
-  # BEFORE the first run rather than discovered missing halfway through one.
-  local config_dir="$HORIZON_WORK_DIR/instrument/config"
+  # Created if it does not exist yet: the credential is bound to this path, so it has to
+  # be logged in BEFORE the first run rather than discovered missing halfway through one.
+  local config_dir="$HORIZON_CONFIG_DIR"
   mkdir -p "$config_dir" || horizon_die "could not create $config_dir"
   config_dir="$(cd "$config_dir" && pwd)"
 

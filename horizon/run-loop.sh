@@ -21,14 +21,14 @@
 #                pin-instrument.sh. Defaults to this repo's HEAD; a campaign pins it
 #                explicitly on every run.
 #
-# THE RUN IS BUILT AT A FIXED PATH, and that is load-bearing rather than a convenience.
-# Claude Code keys its stored credential to the config directory's PATH, so a run built
-# somewhere new is a run that cannot log in - and it does not fail loudly, it boots to a
-# login prompt and waits forever. One working path is authenticated once and reused; the
-# finished run is copied to wherever it is being kept. Override with HORIZON_WORK_DIR.
+# THE CONFIG DIR IS AT A FIXED PATH AND THE WORK DIR IS NOT INSIDE IT. Claude Code keys
+# its stored credential to the config directory's PATH, so the config dir has to be the
+# same one login.sh authenticated - while the work dir has to be EMPTY, so this run's
+# record can never be confused with the last one's. Those two lifetimes cannot share a
+# tree; lib.sh defines both paths and explains the split.
 #
 # Produces, under the work dir:
-#   instrument/   pin-instrument.sh's output (pinned/, config/, manifest.json)
+#   instrument/   pin-instrument.sh's output (pinned/, manifest.json)
 #   seed/         seed-run.sh's output (the project, backlog-shape.json, seed-manifest.json)
 #   loop.json     what this run observed: sessions, their commits, and how it ended
 #
@@ -42,7 +42,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
-: "${HORIZON_WORK_DIR:=$HOME/.horizon/run}"
 # How many consecutive sessions of committed work the run is watched for. The ticket's
 # acceptance is three; a campaign that wants the whole backlog raises it.
 : "${HORIZON_TARGET_SESSIONS:=3}"
@@ -65,6 +64,9 @@ main() {
   horizon_need ps
   horizon_need grep
   horizon_need basename
+  # Reached from horizon_create_remote and from the run's own repo naming below.
+  horizon_need gh
+  horizon_need date
 
   [ -d "$seed_dir" ] || horizon_die "no such seed bundle: $seed_dir"
   seed_dir="$(cd "$seed_dir" && pwd)"
@@ -81,7 +83,7 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
 
   local instrument_dir="$HORIZON_WORK_DIR/instrument"
   local seed_out_dir="$HORIZON_WORK_DIR/seed"
-  local config_dir="$instrument_dir/config"
+  local config_dir="$HORIZON_CONFIG_DIR"
 
   horizon_log "pinning the instrument"
   "$SCRIPT_DIR/pin-instrument.sh" "$instrument_dir" ${memento_ref:+"$memento_ref"} \
@@ -94,6 +96,17 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   local project_dir
   project_dir="$seed_out_dir/$(basename "$seed_dir")"
   [ -d "$project_dir" ] || horizon_die "seeding produced no project at $project_dir"
+
+  # The run's own GitHub repo, created only now that seeding is finished - see
+  # horizon_create_remote for why the order is not negotiable. The name carries the run's
+  # start time because it is the one thing that distinguishes two runs of the same seed,
+  # and reading the clock is an effect, so it happens out here at the edge rather than
+  # inside the library. [LAW:effects-at-boundaries]
+  local repo_name
+  repo_name="horizon-run-$(date -u +%Y%m%dT%H%M%SZ)" \
+    || horizon_die "could not read the clock to name the run's repo"
+  horizon_log "creating the run's repo: ${HORIZON_RUN_REPO_OWNER}/${repo_name}"
+  horizon_create_remote "$project_dir" "$repo_name"
 
   # Asserted before the session exists, not after it hangs: an unauthenticated config dir
   # boots to a login prompt, which in an unattended run is indistinguishable from an

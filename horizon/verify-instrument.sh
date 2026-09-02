@@ -78,10 +78,17 @@ main() {
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
   goal_ref="$(horizon_resolve_commit "$repo_root" "HEAD")"
 
+  # Both pinnings are pointed at a THROWAWAY config dir under $WORK. Left at its default
+  # they would rebuild the machine's real, authenticated run config dir - wiping and
+  # reinstalling the directory a live run is about to launch against, as a side effect of
+  # a verification. Passed per invocation rather than exported, so it is visible here
+  # that this is where the two runs are being sent.
+  local config_dir="$WORK/config"
+
   horizon_log "run 1: pinning at $ref"
-  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run1" "$ref" "$reviewer_sha" "$goal_ref"
+  HORIZON_CONFIG_DIR="$config_dir" "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run1" "$ref" "$reviewer_sha" "$goal_ref"
   horizon_log "run 2: pinning at $ref"
-  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run2" "$ref" "$reviewer_sha" "$goal_ref"
+  HORIZON_CONFIG_DIR="$config_dir" "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run2" "$ref" "$reviewer_sha" "$goal_ref"
 
   if diff -u "$WORK/run1/manifest.json" "$WORK/run2/manifest.json" >/dev/null; then
     pass "two invocations produced byte-identical manifest.json"
@@ -90,7 +97,6 @@ main() {
     fail "manifests diverged between two invocations with unchanged inputs"
   fi
 
-  local config_dir="$WORK/run1/config"
   local plugin_list
   plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" claude plugin list --json)" \
     || fail "could not read claude plugin list --json from the isolated config dir"
