@@ -609,6 +609,22 @@ horizon_create_remote() {
   head="$(horizon_project_head "$project_dir")"
   [ "$pushed" = "$head" ] \
     || horizon_die "origin/master ($pushed) is not the seeded HEAD ($head) in $project_dir"
+
+  # GitHub creates the repo with the ACCOUNT's default branch name - `main` here - while
+  # the seeded project is on `master` (horizon_project_init pins that, so the seed's HEAD
+  # sha is reproducible). The repo would then name a default branch that does not exist,
+  # and `gh pr create` resolves a missing --base to exactly that name: the run's agent
+  # would commit its first unit of work and then be unable to open a PR for it. Pointed
+  # at the branch that is actually there, so no caller has to pass --base. Verified
+  # against the API rather than trusted, because this is the one place a silent mismatch
+  # costs a whole run. [LAW:no-silent-failure]
+  local repo="${HORIZON_RUN_REPO_OWNER}/${repo_name}" default_branch
+  gh repo edit "$repo" --default-branch master \
+    || horizon_die "could not point $repo's default branch at master"
+  default_branch="$(gh api "repos/$repo" --jq .default_branch)" \
+    || horizon_die "could not read back $repo's default branch"
+  [ "$default_branch" = "master" ] \
+    || horizon_die "$repo's default branch is '$default_branch', not master - gh pr create would target a branch that does not exist"
 }
 
 # ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═
