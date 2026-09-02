@@ -41,27 +41,47 @@ def entry(session_id, cwd, stamp, **extra):
     return base
 
 
+def user_text(content):
+    return {"type": "user", "message": {"role": "user", "content": content}}
+
+
 def slash_command(name, text):
-    """A slash command exactly as Claude Code records one: an envelope, not raw text."""
-    return {
-        "type": "user",
-        "message": {
-            "role": "user",
-            "content": "<command-name>%s</command-name>\n"
-                       "<command-message>cmd</command-message>\n"
-                       "<command-args>%s</command-args>" % (name, text),
-        },
-    }
+    """A slash command in the ENVELOPE spelling Claude Code used at v2.1.226."""
+    return user_text("<command-name>%s</command-name>\n"
+                     "<command-message>cmd</command-message>\n"
+                     "<command-args>%s</command-args>" % (name, text))
+
+
+# The three spellings a goal actually arrives in are fixtures, not one canonical form.
+# This suite passed 12/12 against a detector that could see only the envelope, because
+# the envelope was the only thing the fixtures ever produced - a green suite proving the
+# fixture agreed with the code, and nothing about the transcripts either would meet.
+def raw_goal(text):
+    """A /goal PASTED into the input box, as v2.1.258 records it: plain text."""
+    return user_text("/goal %s" % text)
+
+
+def carried_goal(text):
+    """How a goal carried by finalize-session announces itself to the successor.
+
+    No /goal message appears in a relaunched session at all - only this. It is therefore
+    the single spelling by which a surviving carry can ever be observed.
+    """
+    return user_text(
+        "A session-scoped Stop hook is now active with condition: \"%s\". Briefly "
+        "acknowledge the goal, then immediately start working toward it." % text
+    )
 
 
 def write_session(config_dir, slug, session_id, cwd, start, end,
-                  goal_text=None, commands=()):
+                  goal_text=None, commands=(), goal_builder=None):
     directory = os.path.join(config_dir, "projects", slug)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, "%s.jsonl" % session_id)
     lines = [entry(session_id, cwd, start, type="assistant")]
     if goal_text is not None:
-        lines.append(entry(session_id, cwd, start, **slash_command("/goal", goal_text)))
+        build = goal_builder or (lambda text: slash_command("/goal", text))
+        lines.append(entry(session_id, cwd, start, **build(goal_text)))
     for command_name, command_text in commands:
         lines.append(entry(session_id, cwd, start,
                            **slash_command(command_name, command_text)))
@@ -185,6 +205,53 @@ def main():
             check("an idle session between two committing ones breaks the streak",
                   gap["consecutive_with_commits"] == 1,
                   "got %s" % gap["consecutive_with_commits"])
+
+    # Every spelling a goal arrives in must be seen, because a spelling this reader
+    # cannot parse produces the identical output to a carry that genuinely died - and
+    # then the run reports its own instrument as broken, or worse, as fine.
+    for label, builder in (("envelope", lambda t: slash_command("/goal", t)),
+                           ("raw pasted text", raw_goal),
+                           ("carried Stop-hook condition", carried_goal)):
+        with tempfile.TemporaryDirectory() as tmp2:
+            cfg = os.path.join(tmp2, "config")
+            proj = os.path.join(tmp2, "project")
+            os.makedirs(proj)
+            gf = os.path.join(tmp2, "g.md")
+            with open(gf, "w") as handle:
+                handle.write(PINNED_GOAL + "\n")
+            write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+                          "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL)
+            write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+                          "2026-01-01T03:00:00+00:00", goal_text=PINNED_GOAL,
+                          goal_builder=builder)
+            seen = run(cfg, proj, gf, [])
+            check("a goal recorded as %s is recognised" % label,
+                  seen["goal_carries_intact"] == 1,
+                  "goal_carries_intact=%s goal_received=%r"
+                  % (seen["goal_carries_intact"], seen["sessions"][1]["goal_received"]))
+
+    # The drift this eval exists to catch: a carry that ARRIVES but has been paraphrased.
+    # "A goal was carried" must not be the claim being tested - the wording is.
+    with tempfile.TemporaryDirectory() as tmp2:
+        cfg = os.path.join(tmp2, "config")
+        proj = os.path.join(tmp2, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp2, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        paraphrase = "Keep the loop going until the backlog is done."
+        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+                      "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL)
+        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+                      "2026-01-01T03:00:00+00:00", goal_text=paraphrase,
+                      goal_builder=carried_goal)
+        drift = run(cfg, proj, gf, [])
+        check("a carried goal that was paraphrased is reported as drift",
+              drift["goal_carries_intact"] == 0,
+              "goal_carries_intact=%s" % drift["goal_carries_intact"])
+        check("the drifted wording is reported, not just the fact of drift",
+              drift["sessions"][1]["goal_received"] == paraphrase,
+              "goal_received=%r" % drift["sessions"][1]["goal_received"])
 
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))

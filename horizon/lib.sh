@@ -1004,6 +1004,27 @@ print(json.load(sys.stdin)["consecutive_with_commits"])
       horizon_log "sessions with committed work, consecutively: $reached/$target"
       last_seen="$reached"
     fi
+
+    # THE CARRY IS CHECKED, NOT JUST COUNTED. sessions.py already computed whether every
+    # boundary handed the successor the pinned wording; reading only the commit count
+    # would let a run report success while the goal degraded across each reset - the
+    # instrument looking healthiest exactly where it is broken, which is the one outcome
+    # this whole design refuses. The driver still does not REPAIR a lost carry: memento's
+    # goal-carry is the controlled variable under measurement, so this stops the run and
+    # reports, and never re-issues. [LAW:no-silent-failure]
+    local drifted
+    drifted="$(printf '%s' "$report" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["goal_carries_expected"] - d["goal_carries_intact"])
+')" || horizon_die "could not read the carry check from the run report"
+    if [ "$drifted" -gt 0 ]; then
+      printf '%s\n' "$report"
+      horizon_die "the pinned goal did not survive $drifted session boundary/boundaries.
+finalize-session takes the goal from whatever the agent passes to --goal, so a paraphrase
+there silently becomes the successor's whole instruction. The wording each session
+actually received is in goal_received above."
+    fi
     if [ "$reached" -ge "$target" ]; then
       printf '%s\n' "$report"
       return 0
