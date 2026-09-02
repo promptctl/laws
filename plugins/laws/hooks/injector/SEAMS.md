@@ -46,45 +46,111 @@ Reproduce: `BUN_INSPECT="ws://127.0.0.1:9933/dbg?wait=1" claude --help &` then
 
 `inspect-eval.js` packages primitives 1–4 (`connect`, `evaluate`, `injectStdin`, `probe`).
 
-## The container format: recovering the bundle from the installed binary
+## The container format: Bun's module table, read from the installed binary
 
-Measured on the shipped 2.1.226 Mach-O (279,661,952 bytes) and packaged as `extract-bundle.js`.
-Reproduce: `node extract-bundle.js "$(readlink -f "$(which claude)")"`.
+Packaged as `bun-graph.js`. Reproduce: `node bun-graph.js "$(readlink -f "$(which claude)")"`.
 
-Embedded modules are stored as NUL-delimited records — `\0<path>\0<contents>` — where `<path>` is a
-`/$bunfs/` virtual path. Enumerating them yields 6 JS modules and 5 native `.node` blobs; the
-entrypoint `/$bunfs/root/src/entrypoints/cli.js` sits at contents offset 245,797,944, length
-23,985,682, sha256 `a96b5f06a9feba9ff8f7ce7f938a7bd1cbc74c7c03ea0c94f68c50dd05a14f7c`. Those numbers
-are a dated observation, not an input: nothing in the code reads them, and there is no version→offset
-table anywhere in the tree. Both boundaries resolve from the record delimiter at run time.
+**The NUL-delimited record scan is dead — it cannot read what ships today.** 2.1.226 embedded its
+JavaScript as ONE CommonJS module, recoverable by scanning for `\0<path>\0<contents>` records.
+2.1.258 embeds an ESM module graph instead: 1,642 code-split chunks
+(`/$bunfs/root/chunk-<hash>.js`) plus native, compressed and text assets — 1,818 modules, 41.9MB of
+contents. A module's NAME and its CONTENTS are no longer adjacent in the file (names sit near offset
+69.8M, contents near 156M–188M), so the delimiter scan has nothing to key on; run it against 2.1.258
+and it returns `no-contents-record-for-path`. The entry point moved as well: not
+`/$bunfs/root/src/entrypoints/cli.js` any more, but `/$bunfs/root/cli`.
 
-**The Beta-product banner is NOT an entrypoint-only anchor.** The original survey proposed
-disambiguating the entrypoint by the banner following its CJS wrapper. Measurement contradicts that:
-the banner heads six embedded modules (`cli.js`, `image-processor.js`, `audio-capture.js`,
-`url-handler.js`, `computer-use-swift.js`, `computer-use-input.js`), so anchoring on it selects
-whichever comes first — not the entrypoint. The record's own `\0<path>\0` delimiter is the honest
-discriminator, and `extract-bundle.test.js` carries the case that fails if anyone reverts to the
-banner.
+Bun writes a MODULE TABLE at the end of the executable and points at it from a 32-byte struct
+sitting immediately before a `\n---- Bun! ----\n` trailer. `bun-graph.js` parses that table. Layout,
+measured: the struct holds byte_count (u64, at +0), the module table's blob-relative offset (u32,
++8) and length (u32, +12), and the entry point ID (u32, +16). Each table row is 52 bytes — name
+pointer (offset u32, length u32) at +0, contents pointer at +8, an encoding byte at +48 (0 binary,
+1 utf8, 2 utf16le) and a loader byte at +49 (1 js, 5 file, 10 napi, 13 text). Every pointer is
+relative to the blob's start. On macOS the code signature is appended after the trailer, so the LAST
+trailer is the real one.
 
-The extracted slice is exact rather than approximately right: `node --check` accepts it, and rejects
-it at start−1, end−3, end−2000, and end+31. An unresolved anchor returns a typed absence, so the
-launcher falls back to stock `claude` with a named reason instead of hosting a truncated bundle.
+Three things the table buys over the scan, worth stating plainly:
 
-**Confirmed against ground truth, not just argued.** `Debugger.getScriptSource` pulled from a LIVE
-running session returns a string byte-identical to what `extract-bundle.js` recovers from the binary
-— same 23,985,682 bytes, same sha256. Reproducing it needs two details that cost an hour to find:
+- The container names its own entry point by index, so nothing has to know or guess what the entry
+  is called — which matters, because that name has already changed once.
+- Each row declares its encoding and loader, so no code sniffs bytes to decide how to decode a
+  module or what it is.
+- It is coupled to BUN's container format, which changes when Bun changes rather than when Claude
+  ships weekly. There is still no version→offset table anywhere in the tree, and no version literal
+  in the parser.
+
+**One code path, both binaries — and that is the evidence the parse is right, not merely
+plausible.** The same parser reads 2.1.226 (14 modules, entry id 0 =
+`/$bunfs/root/src/entrypoints/cli.js`, contents offset 245,797,944, length 23,985,682, sha256
+`a96b5f06a9feba9ff8f7ce7f938a7bd1cbc74c7c03ea0c94f68c50dd05a14f7c`) and 2.1.258 (1,818 modules,
+entry id 5 = `/$bunfs/root/cli`). Those 2.1.226 numbers are exactly what the old delimiter scan
+measured and exactly what `Debugger.getScriptSource` returns from a live session — so the new reader
+reproduces the old ground truth byte for byte while also working on the current version.
+
+**The Beta-product banner is still NOT a usable entrypoint anchor.** It heads many embedded modules,
+not just the entry, so anchoring on it selects whichever comes first.
+
+Two details of the live-session comparison cost an hour to find and are worth keeping:
 
 - `?wait=1` is wrong for this. It freezes the process at entry, so nothing has been parsed yet and
   `Debugger.enable` yields zero `scriptParsed`. Use a plain `BUN_INSPECT=ws://127.0.0.1:<port>/dbg`
   against a session that is actually running; `Debugger.enable` then replays the existing scripts.
-- `--help` exits before you can ask, and JSC reports **`url: ""` for all 244 scripts**, so the
-  entrypoint cannot be matched by name. Run the real TUI under a PTY (`script -q /dev/null claude`)
-  and identify the script by its source, not its URL.
+- `--help` exits before you can ask, and JSC reports **`url: ""` for all 244 scripts**, so the entry
+  cannot be matched by name. Run the real TUI under a PTY (`script -q /dev/null claude`) and
+  identify the script by its source, not its URL.
 
-This also settles a question the extraction design depends on: getScriptSource returns the stored
-record verbatim, `// @bun @bytecode @bun-cjs` marker line included, with no transformation — so
-record-exactness IS byte-identity, and the host in `promptctl-injector-xy0.2` can feed V8 exactly
-what this module returns.
+## Hosting the graph under node: `vm.SourceTextModule`, after two designs that failed
+
+`bun-host.mjs` runs the graph under node; `launch.js` decides whether it worked.
+
+Node's own ES module loader CANNOT host this graph, and the reason is worth recording because two
+plausible designs were tried and measured before the third worked. Bun's chunks call
+`import.meta.require("/$bunfs/root/chunk-*.js")` — a synchronous, LAZY require between ES modules
+that returns a live namespace even when the target is mid-evaluation.
+
+1. Node's `require(esm)` refuses to link a module whose graph touches one currently evaluating:
+   `ERR_REQUIRE_CYCLE_MODULE`.
+2. Rewriting those call sites into static imports fails differently — it creates cycles the real
+   graph never had, which then break on TDZ (`Cannot access 'g3' before initialization`).
+3. What works: `vm.SourceTextModule`, where the host links the graph itself and hands out a
+   namespace on demand exactly as Bun does. It also lets `import.meta` be populated directly, so the
+   recovered sources run VERBATIM — there is no source-rewriting step anywhere.
+
+The host also serves the graph as a read-only filesystem, because chunks read embedded assets by
+their virtual path through plain `fs` calls and `Bun.file`. It substitutes `fs`/`fs/promises` for
+hosted code only; node's own fs is never patched. `ws` is provided too — Bun ships it built in and it
+is the only non-builtin bare specifier the graph imports.
+
+Cost: linking all 1,640 JS chunks takes ~800ms, first frame ~700ms after that.
+
+## The boot self-check: observations in the host, the verdict in the launcher
+
+The host reports observations and forms no verdict: `painted` the first time the hosted graph writes
+to the terminal, or a named refusal if the graph cannot be read or the entry throws. `launch.js`
+forms the verdict and owns the deadline. A plan became the session if it painted AND was still there
+a settle window later (5s); a clean early exit, or any exit outside an interactive terminal, also
+counts, because a one-shot command that already did real work must never be re-run. The launcher
+runs a LIST of plans and keeps the first that boots; the last is stock `claude`, which is the floor.
+
+The settle window exists because of a specific finding: the first byte on stdout is NOT sufficient
+evidence of a session. Deleting `Bun.stripANSI` — simulating a Bun API the shim does not have — let
+the app print a pre-flight renderer notice, THEN die on `Cannot read properties of undefined
+(reading 'replace')`. Byte-watching alone called that booted.
+
+Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
+
+- The launcher boots the extracted graph to an idle, authenticated TUI — input box, statusline,
+  model and context meters.
+- With `Bun.stripANSI` deliberately removed, the hosted session is detected as not-booted and the
+  launcher falls back to stock claude, logging: `claude-laws: hosted session did not start —
+  painted, then exited 1 after 1193ms — never became a session; falling back`. No hang.
+- One caution for whoever runs that break test again: the app persists a `fullscreenAutoDisabled`
+  flag in `~/.claude.json` when its renderer fails to start, so a live break test mutates the user's
+  config and must be cleaned up afterwards. This is why the automated suite (`launch.test.js`) uses
+  stub plans and never the real bundle.
+
+Tests: `bun-graph.test.js` (17 — synthetic containers for every named absence, plus a live read of
+the installed binary) and `launch.test.js` (15, stub plans). 19 deliberate source mutations across
+both modules were each killed by a test.
 
 ## The frontier: reloading an edited transcript into a running session
 
@@ -171,9 +237,16 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
   pair and tombstone only the conflicting craft (`../scripts/laws-excise.js` + tests).
 - DONE: injection channel re-verified on 2.1.226; `inspect-eval.js` packages the primitives.
 - DONE (2026-08-31): the bundle is recoverable in memory from the installed binary —
-  `extract-bundle.js`, anchored on the container's record delimiter, no disk copy and no
-  version→offset table (`promptctl-injector-xy0.1`). Hosting that source under the Bun→node shim
-  is sibling `promptctl-injector-xy0.2`.
+  `bun-graph.js`, which parses Bun's own module table rather than scanning for NUL-delimited
+  records, so it reads both the one-CJS-module 2.1.226 and the 1,818-module ESM graph of 2.1.258
+  from one code path, with no disk copy and no version→offset table
+  (`promptctl-injector-xy0.1`).
+- DONE (2026-09-02): the recovered graph runs under node — `bun-host.mjs` links it with
+  `vm.SourceTextModule` (node's own ESM loader cannot: `ERR_REQUIRE_CYCLE_MODULE`) and serves the
+  embedded assets as a read-only filesystem, and `launch.js` decides whether a plan became a
+  session before keeping it. Verified live on 2.1.258 in a PTY: boots to an idle authenticated
+  TUI, and with `Bun.stripANSI` removed it is detected as not-booted and falls back to stock
+  claude without hanging (`promptctl-injector-xy0.2`).
 - DONE (2026-08-16): the rewind for options 3/4 is disk surgery — `rewindTo()`, sever + repoint,
   verified live against a real transcript. **SEAM 2a is not needed**, and neither is native
   `/rewind` with its modal arrow-key driving. See the resolved section above.
