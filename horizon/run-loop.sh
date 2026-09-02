@@ -65,9 +65,8 @@ main() {
   horizon_need ps
   horizon_need grep
   horizon_need basename
-  # Reached from horizon_create_remote and from the run's own repo naming below.
+  # Reached from horizon_bind_remote.
   horizon_need gh
-  horizon_need date
 
   [ -d "$seed_dir" ] || horizon_die "no such seed bundle: $seed_dir"
   seed_dir="$(cd "$seed_dir" && pwd)"
@@ -98,6 +97,13 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   project_dir="$seed_out_dir/$(basename "$seed_dir")"
   [ -d "$project_dir" ] || horizon_die "seeding produced no project at $project_dir"
 
+  # After seeding, because `lit init` adopts a backlog from any remote it finds - a
+  # project that already had an origin would start from that remote's backlog instead of
+  # the seed's. seed-run.sh attaches no remotes, so that ordering holds by construction
+  # rather than by this line staying where it is.
+  horizon_log "binding the run to $HORIZON_RUN_REPO"
+  horizon_bind_remote "$project_dir"
+
   # Asserted before the session exists, not after it hangs: an unauthenticated config dir
   # boots to a login prompt, which in an unattended run is indistinguishable from an
   # agent thinking hard.
@@ -113,29 +119,6 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # The isolation guarantee, checked rather than assumed - see horizon_assert_transport.
   horizon_assert_transport
   horizon_log "handoff transport verified: in-place reset, config dir preserved"
-
-  # THE RUN'S GITHUB REPO IS CREATED HERE, AND THE POSITION IS THE POINT. A repo is the
-  # one thing this driver makes that outlives the run and that it has no permission to
-  # take back - deleting a repo needs a scope this eval deliberately does not hold, so an
-  # unusable repo is not cleanup work, it is permanent litter in a real org.
-  #
-  # So it is created at the last moment where BOTH facts hold: the session is proven
-  # healthy (booted to a live input box, handing off through the in-place transport), and
-  # it has been given no work yet, so it cannot possibly have tried to push. Earlier, and
-  # every boot failure mints a repo no run ever used - which is exactly how four of them
-  # accumulated. Later, after the goal is issued, and the agent racing to its first push
-  # decides whether origin exists yet. This window is the only place with neither problem.
-  # [LAW:no-ambient-temporal-coupling] the ordering is a fact about the domain, so it is
-  # stated as one rather than left to whoever edits this next.
-  #
-  # The name carries the run start time because that is the one thing distinguishing two
-  # runs of the same seed. Reading a clock is an effect, so it happens out here at the
-  # edge rather than inside the library. [LAW:effects-at-boundaries]
-  local repo_name
-  repo_name="horizon-run-$(date -u +%Y%m%dT%H%M%SZ)" \
-    || horizon_die "could not read the clock to name the run's repo"
-  horizon_log "creating the run's repo: ${HORIZON_RUN_REPO_OWNER}/${repo_name}"
-  horizon_create_remote "$project_dir" "$repo_name"
 
   # The pinned wording is RE-ISSUED FROM THE COMMIT THE MANIFEST NAMES, never retyped
   # here and never read from the working tree. manifest.json records goal_wording.sha256

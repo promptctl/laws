@@ -155,34 +155,42 @@ re-issued a lost goal, or restarted a dead session, would be measuring itself: t
 would look healthiest exactly where the instrument is broken. So a lost carry stops the
 run, loudly.
 
-### The run's own GitHub repo
+### The shared run repository
 
-The driver creates a public repo for the run — `promptctl/horizon-run-<utc-timestamp>` —
-sets it as the project's `origin`, and pushes the seeded history. The goal wording drives
-the agent to carry every unit of work to a merged PR, which needs somewhere to push and a
-place for the reviewer Action to run. Public, not private: Actions minutes are unmetered
-on public repositories.
+Every run drives one repository that already exists: **`promptctl/horizon-eval`**. The
+driver never creates a repository and never deletes one, so nothing in this eval needs a
+credential that could destroy either. At the start of a run it resets that repo to the
+seed — closes every open PR, deletes every branch but `master`, force-pushes the seeded
+history — and points the project's `origin` at it.
 
-One repo per run, never a shared one reset between runs. A run's PRs and review threads
-are part of what the run *is*, so reusing a repo would trade the previous run's record
-for a tidier namespace.
+The goal wording drives the agent to carry every unit of work to a merged PR, so it needs
+somewhere to push and a place for the reviewer Action to run. Public, not private:
+Actions minutes are unmetered on public repositories.
 
-**When it is created is load-bearing, and there are constraints on both sides.**
+**Why shared rather than one repo per run.** A per-run repo has to answer "when is it
+safe to create this?", and every answer is a claim about a moment in the driver's
+execution order rather than a fact about the domain — create it before the session boots
+and each boot failure mints a repo no run ever used; create it after the goal is issued
+and the agent racing to its first push decides whether `origin` exists. A position
+between the two works only until someone reorders the lines, and it leaves the eval
+wanting the power to delete repositories to clean up after itself. A repository that
+always exists has no such moment to get wrong.
 
-It cannot come before seeding: `lit init` adopts a backlog from a git remote when it
-finds one, so a project born with an `origin` starts from that remote's backlog instead
-of the seed's, and nothing says so.
+**Why the reset runs at the start and not at the end.** A run that crashes never reaches
+its own cleanup, so tidying afterwards leaves the next run to begin from wreckage — and
+"usually clean" is not a time zero. Resetting on the way in makes the starting state a
+function of that one call, whatever the previous run did or how it died.
 
-It also must not come before the run is known to work. Deleting a repo needs a scope this
-eval deliberately does not hold — so a repo created for a run that never started is not
-cleanup work, it is permanent litter in a real org. Four accumulated exactly that way
-before this was understood. So the repo is minted at the last point where the session is
-*proven healthy* (booted to a live input box, handing off through the in-place transport)
-and has *still been given no work*, which is the only window where it can neither be
-wasted by a boot failure nor raced by an agent reaching for its first push.
+**What survives a reset**, stated because it is a real divergence rather than an
+oversight: pull requests can be closed but never deleted, so closed PRs accumulate and PR
+numbers keep climbing. Run five does not start at `#1`. Nothing else carries over, and
+`horizon_assert_remote_at_time_zero` checks the rest against GitHub rather than trusting
+the commands that just ran.
 
-The rule this encodes is worth stating plainly: **do not acquire the ability to delete
-repositories — stop creating ones that need deleting.**
+**The repo is scratch space, not a record.** A run's PRs and review threads are captured
+onto disk as part of the run bundle (`promptctl-horizon-7ry.4`). Leaving them to live in
+a GitHub repo would make the bundle depend on that repo surviving untouched forever,
+which is the fragility capture exists to remove.
 
 ### Two paths, opposite lifetimes, one login
 

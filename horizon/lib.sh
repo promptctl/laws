@@ -42,10 +42,16 @@ HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
 # once here so that fixing it is one edit, and so no caller invents its own answer.
 # [LAW:one-source-of-truth]
 HORIZON_MEMENTO_DEFAULT_REF="d4c3f719b79f6f0a4e1c391bde2f5e6f05d83774"
-# The org a run's project repo is created under. Public, always - the reviewer is a
-# GitHub Action, and Actions minutes are unmetered on public repositories, so a private
-# run repo would bill the reviewer against the owner's quota to buy the eval nothing.
-HORIZON_RUN_REPO_OWNER="promptctl"
+# THE ONE REPOSITORY EVERY RUN DRIVES. It already exists, and this eval never creates or
+# deletes a repository - which is why nothing here needs a credential capable of
+# destroying one. Public, because the reviewer is a GitHub Action and Actions minutes are
+# unmetered on public repositories.
+#
+# It is scratch space, not a record. A run's PRs and review threads are captured onto disk
+# as part of the run bundle (promptctl-horizon-7ry.4); leaving them to live in a GitHub
+# repo would make the bundle depend on that repo surviving untouched forever, which is
+# exactly the fragility capture exists to remove.
+HORIZON_RUN_REPO="promptctl/horizon-eval"
 
 # ── Where a run lives on this machine ──────────────────────────────────────────────
 # Two paths, deliberately NOT nested, because they have opposite lifetimes.
@@ -575,61 +581,106 @@ horizon_lit_import() {
     || horizon_die "lit import failed in $project_dir (from $docs)"
 }
 
-# Usage: horizon_create_remote <project_dir> <repo_name>
+# Usage: horizon_bind_remote <project_dir>
 #
-# Gives the seeded project the GitHub remote its agent needs to open PRs. Called AFTER
-# seeding and never before: `lit init` adopts a backlog from a remote when it finds one,
-# so a project born with an origin attached starts from that remote's backlog instead of
-# the seed's, and the run's time zero is silently not the seeded one. horizon_project_init
-# enforces the "no remote yet" half of that rule; this is the single place the other half
-# is added. [LAW:single-enforcer]
+# Makes $HORIZON_RUN_REPO this run's origin, holding exactly the seeded history and
+# nothing else. That is the whole job: the remote's time zero.
 #
-# There is a second, tighter constraint on WHEN, and run-loop.sh is where it is argued:
-# a repo cannot be un-created by anything this eval is allowed to do, so it is minted only
-# once the session it belongs to is proven healthy. Callers that create a repo before the
-# run works produce permanent litter in a real org.
+# WHY A SHARED, PRE-EXISTING REPO. The alternative - one new repo per run - has to answer
+# "when is it safe to create this?", and every answer is a claim about a moment in the
+# driver's execution order rather than a fact about the domain. Create it before the
+# session boots and each boot failure mints a repo no run ever used; create it after the
+# goal is issued and the agent racing to its first push decides whether origin exists.
+# Landing between them works only for as long as nobody reorders the lines, and it leaves
+# the eval wanting a credential that can delete repositories to clean up after itself.
+# A repository that simply always exists has no such moment to get wrong.
+# [LAW:no-ambient-temporal-coupling] correctness stops depending on call position.
 #
-# ONE REPO PER RUN, never a shared repo reset between runs: a run's PRs and review threads
-# ARE part of the bundle promptctl-horizon-7ry.4 captures, so resetting a shared one would
-# destroy the previous run's record to save a name.
+# RESET AT THE START, NOT AT THE END. A run that crashes never reaches its own cleanup, so
+# tidying afterwards leaves the next run to start from wreckage - and "usually clean"
+# is not a time zero. Doing it here makes the state a run begins from a function of this
+# call alone, whatever the last run did or how it died.
+#
+# WHAT SURVIVES A RESET, stated because it is a real divergence rather than an oversight:
+# pull requests can be closed but never deleted, so closed PRs accumulate and PR numbers
+# keep climbing across runs. Run five does not start at #1. Nothing else carries over.
 #
 # The remote's identity is not recorded anywhere by this function - the project's own git
-# config already holds it, and a second copy in the run's output could only ever disagree
-# with it. [LAW:one-source-of-truth]
-horizon_create_remote() {
-  local project_dir="$1" repo_name="$2"
-  [ -d "$project_dir" ] || horizon_die "horizon_create_remote: no project at $project_dir"
-  [ -n "$repo_name" ] || horizon_die "horizon_create_remote: no repo name given"
+# config holds it, and a second copy in the run's output could only ever disagree with it.
+# [LAW:one-source-of-truth]
+horizon_bind_remote() {
+  local project_dir="$1" repo="$HORIZON_RUN_REPO"
+  [ -d "$project_dir" ] || horizon_die "horizon_bind_remote: no project at $project_dir"
 
-  gh repo create "$HORIZON_RUN_REPO_OWNER/$repo_name" \
-    --public --source "$project_dir" --remote origin --push \
-    || horizon_die "could not create the run's repo ${HORIZON_RUN_REPO_OWNER}/${repo_name}"
+  # Closing a PR with --delete-branch retires the pull request and its head branch in one
+  # call, so the two cannot come apart and leave a branch whose PR is gone.
+  local pr
+  for pr in $(gh pr list --repo "$repo" --state open --json number --jq '.[].number'); do
+    horizon_log "closing leftover PR #$pr"
+    gh pr close "$pr" --repo "$repo" --delete-branch \
+      || horizon_die "could not close leftover PR #$pr in $repo"
+  done
 
-  # `gh repo create` exiting 0 means the REPO exists; the push is a further step inside
-  # it, and a repo that exists with nothing in it would send the run's first session to
-  # an empty origin. So the push is confirmed against git, the only thing that knows.
+  # Branches an agent pushed without ever opening a PR are left behind by the loop above.
+  # master is skipped rather than attempted-and-forgiven: GitHub refuses to delete a
+  # default branch, and letting that refusal pass would be indistinguishable from a real
+  # permission failure going unnoticed. [LAW:no-silent-failure]
+  local branch
+  for branch in $(gh api "repos/$repo/branches" --jq '.[].name'); do
+    [ "$branch" = "master" ] && continue
+    horizon_log "deleting leftover branch $branch"
+    gh api -X DELETE "repos/$repo/git/refs/heads/$branch" \
+      || horizon_die "could not delete leftover branch $branch in $repo"
+  done
+
+  horizon_project_git "$project_dir" remote add origin "git@github.com:${repo}.git" \
+    || horizon_die "could not point $project_dir at $repo"
+  # Force, because the seed is a fresh history unrelated to whatever the last run left on
+  # master. This is the line that makes the shared repo equivalent to a new one.
+  horizon_project_git "$project_dir" push --force --quiet origin master \
+    || horizon_die "could not push the seeded history to $repo"
+
+  horizon_assert_remote_at_time_zero "$project_dir" "$repo"
+}
+
+# Usage: horizon_assert_remote_at_time_zero <project_dir> <repo>
+#
+# The four things that must be true of the remote before a run starts, checked against
+# GitHub rather than inferred from the commands that just ran - each of those reported
+# success, and success at the API is not the same fact as the state being right.
+#
+# `default_branch` is in here because it silently decides where pull requests go: the run
+# agent calls `gh pr create` with no --base, which resolves to the default branch, so a
+# repo whose default names something other than the branch the work is on produces a first
+# unit of work that cannot be proposed. [LAW:verifiable-goals] this is the shape of "the
+# remote is ready", written down where it can be run.
+horizon_assert_remote_at_time_zero() {
+  local project_dir="$1" repo="$2"
+
   local pushed head
   pushed="$(horizon_project_git "$project_dir" rev-parse refs/remotes/origin/master)" \
-    || horizon_die "the run's repo was created but origin/master does not exist - nothing was pushed"
+    || horizon_die "origin/master does not exist in $repo - nothing was pushed"
   head="$(horizon_project_head "$project_dir")"
   [ "$pushed" = "$head" ] \
-    || horizon_die "origin/master ($pushed) is not the seeded HEAD ($head) in $project_dir"
+    || horizon_die "origin/master ($pushed) is not the seeded HEAD ($head)"
 
-  # GitHub creates the repo with the ACCOUNT's default branch name - `main` here - while
-  # the seeded project is on `master` (horizon_project_init pins that, so the seed's HEAD
-  # sha is reproducible). The repo would then name a default branch that does not exist,
-  # and `gh pr create` resolves a missing --base to exactly that name: the run's agent
-  # would commit its first unit of work and then be unable to open a PR for it. Pointed
-  # at the branch that is actually there, so no caller has to pass --base. Verified
-  # against the API rather than trusted, because this is the one place a silent mismatch
-  # costs a whole run. [LAW:no-silent-failure]
-  local repo="${HORIZON_RUN_REPO_OWNER}/${repo_name}" default_branch
-  gh repo edit "$repo" --default-branch master \
-    || horizon_die "could not point $repo's default branch at master"
+  local default_branch
   default_branch="$(gh api "repos/$repo" --jq .default_branch)" \
-    || horizon_die "could not read back $repo's default branch"
+    || horizon_die "could not read the default branch of $repo"
   [ "$default_branch" = "master" ] \
-    || horizon_die "$repo's default branch is '$default_branch', not master - gh pr create would target a branch that does not exist"
+    || horizon_die "$repo has default branch '$default_branch', not master - the run agent's PRs would target a branch the work is not on"
+
+  local open_prs
+  open_prs="$(gh pr list --repo "$repo" --state open --json number --jq 'length')" \
+    || horizon_die "could not count open PRs in $repo"
+  [ "$open_prs" = "0" ] \
+    || horizon_die "$repo still has $open_prs open PR(s) - the run would inherit a previous run's work as its own"
+
+  local extra_branches
+  extra_branches="$(gh api "repos/$repo/branches" --jq '[.[].name | select(. != "master")] | join(", ")')" \
+    || horizon_die "could not list branches in $repo"
+  [ -z "$extra_branches" ] \
+    || horizon_die "$repo still carries branches from a previous run: $extra_branches"
 }
 
 # ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═
