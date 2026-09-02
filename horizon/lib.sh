@@ -954,6 +954,28 @@ if not any(reaches_pane(p) for p in claudes):
 ' "$pane_pid" || horizon_die "run session will not hand off through the in-place transport"
 }
 
+# Usage: horizon_capture_transcripts <config_dir> <work_dir>
+#
+# Copies the run's session transcripts into the run's own output directory.
+#
+# WHY THIS IS NOT OPTIONAL. Transcripts are the primary record of a run - the thing a
+# human reads to judge what happened - and Claude Code writes them inside the CONFIG dir,
+# which is a fixed path shared by every run and which horizon_provision_config_dir wipes
+# on the way in. So a finished run's record survives only until the next run starts, and
+# nothing anywhere would report that it had gone. The record is moved to where the rest of
+# the run's output already lives, which is also the directory that gets archived.
+#
+# Called from an exit handler rather than at the end of a successful run: a run that died
+# is the one whose transcripts are most worth reading, and it never reaches its own last
+# line. [LAW:no-silent-failure]
+horizon_capture_transcripts() {
+  local config_dir="$1" work_dir="$2" source="$1/projects" target="$2/transcripts"
+  [ -d "$source" ] || return 0
+  mkdir -p "$target" || horizon_die "could not create $target"
+  cp -R "$source/." "$target/" || horizon_die "could not capture transcripts into $target"
+  horizon_log "transcripts captured: $target"
+}
+
 # Usage: horizon_report <config_dir> <project_dir> <goal_file>  -> the run's JSON report
 #
 # The project's commits are gathered here and handed to sessions.py, which reads the

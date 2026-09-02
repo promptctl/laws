@@ -32,6 +32,8 @@
 #   instrument/   pin-instrument.sh's output (pinned/, manifest.json)
 #   seed/         seed-run.sh's output (the project, backlog-shape.json, seed-manifest.json)
 #   loop.json     what this run observed: sessions, their commits, and how it ended
+#   transcripts/  the session transcripts, copied out of the config dir - which is a fixed
+#                 path the NEXT run wipes, so this is the only copy that outlives the run
 #
 # The two halves get their own subdirectories because pin-instrument.sh and seed-run.sh
 # each refuse a run-dir that already exists - a guard worth keeping, so they are given
@@ -85,6 +87,17 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   local seed_out_dir="$HORIZON_WORK_DIR/seed"
   local config_dir="$HORIZON_CONFIG_DIR"
 
+  # ONE exit handler, installed the moment there is a work dir to write into, because
+  # every later exit path - success, a failed assertion, a dead session, the wall-clock
+  # ceiling - has to leave the same record behind. Registering it here rather than at the
+  # end is the difference between "the run's transcripts are kept" and "the transcripts of
+  # runs that happened to finish are kept". The temp files are retired by the same handler
+  # so there is only ever one EXIT trap to reason about; a second `trap ... EXIT` anywhere
+  # below would silently replace this one rather than adding to it.
+  # shellcheck disable=SC2064
+  trap "horizon_capture_transcripts '$config_dir' '$HORIZON_WORK_DIR'
+        rm -f \"\$HORIZON_GOAL_FILE\" \"\$HORIZON_ISSUE_FILE\"" EXIT
+
   horizon_log "pinning the instrument"
   "$SCRIPT_DIR/pin-instrument.sh" "$instrument_dir" ${memento_ref:+"$memento_ref"} \
     || horizon_die "pin-instrument.sh failed"
@@ -124,22 +137,22 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # here and never read from the working tree. manifest.json records goal_wording.sha256
   # at that commit; taking the bytes from anywhere else would let a run report a
   # controlled variable it did not actually use. [LAW:one-source-of-truth]
-  local repo_root memento_sha goal_file issue_file
+  # Globals, not locals, and no trap of their own: the single EXIT handler installed above
+  # retires them, and a handler cannot read a function-scoped variable at exit time.
+  local repo_root memento_sha
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
   memento_sha="$(horizon_manifest_memento_ref "$instrument_dir/manifest.json")"
-  goal_file="$(mktemp)" || horizon_die "could not create a temp file for the goal wording"
-  issue_file="$(mktemp)" || horizon_die "could not create a temp file for the goal"
-  # shellcheck disable=SC2064
-  trap "rm -f '$goal_file' '$issue_file'" EXIT
-  horizon_goal_wording_file "$repo_root" "$memento_sha" "$goal_file"
-  { printf '/goal '; cat "$goal_file"; } > "$issue_file" \
+  HORIZON_GOAL_FILE="$(mktemp)" || horizon_die "could not create a temp file for the goal wording"
+  HORIZON_ISSUE_FILE="$(mktemp)" || horizon_die "could not create a temp file for the goal"
+  horizon_goal_wording_file "$repo_root" "$memento_sha" "$HORIZON_GOAL_FILE"
+  { printf '/goal '; cat "$HORIZON_GOAL_FILE"; } > "$HORIZON_ISSUE_FILE" \
     || horizon_die "could not assemble the goal to issue"
 
   horizon_log "issuing the pinned /goal wording"
-  horizon_send "$issue_file"
+  horizon_send "$HORIZON_ISSUE_FILE"
 
   horizon_log "run is live; observing until ${HORIZON_TARGET_SESSIONS} sessions of committed work"
-  horizon_observe "$config_dir" "$project_dir" "$goal_file" \
+  horizon_observe "$config_dir" "$project_dir" "$HORIZON_GOAL_FILE" \
     "$HORIZON_TARGET_SESSIONS" "$HORIZON_MAX_MINUTES" \
     > "$HORIZON_WORK_DIR/loop.json"
 
