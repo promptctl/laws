@@ -84,10 +84,20 @@ t('...and outside an interactive terminal no exit is ever re-run, whatever the c
 
 t('a plan that never paints is killed at the deadline rather than hung on', async () => {
   const started = Date.now();
-  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([]) });
+  let child;
+  const spawn = (...a) => (child = fakeSpawn([])(...a));
+  const r = await L.run(hosted, { ...fast, spawn });
   assert.strictEqual(r.booted, false);
   assert.match(r.reason, /nothing painted within 300ms/);
   assert.ok(Date.now() - started < 3000, 'the deadline, not the child, ended the wait');
+  // And the verdict waited for the process to actually die: the next plan must not take a terminal
+  // the old one is still holding.
+  assert.strictEqual(child.killed, true);
+});
+
+t('a plan killed at the deadline still reports the DEADLINE, not the kill it caused', async () => {
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 50, report: 'absent something' }]) });
+  assert.match(r.reason, /nothing painted within 300ms/, 'the exit the deadline caused must not answer for it');
 });
 
 t('a report still in flight when the child is reaped is not lost', async () => {

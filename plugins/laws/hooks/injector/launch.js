@@ -113,7 +113,15 @@ function run(plan, {
     // rather than on which event happened to land first.
     let ended = null;
     let channelDone = !plan.reports;
-    const settle = () => { if (ended && channelDone) { clearTimeout(timer); resolve(verdict(ended)); } };
+    // Set when the deadline fired. The plan is killed then, but the verdict is not delivered until
+    // the process is actually gone: handing the terminal to the next plan while the old one still
+    // holds it is two sessions writing to one screen.
+    let deadlineReason = null;
+    const settle = () => {
+      if (!ended || !channelDone) return;
+      clearTimeout(timer);
+      resolve(deadlineReason ? { booted: false, reason: deadlineReason } : verdict(ended));
+    };
 
     // Whatever went wrong, say which Bun APIs this shim did not have. On a hang that list is the
     // whole diagnosis, and it is the one thing the killed host can no longer tell anyone itself.
@@ -146,9 +154,9 @@ function run(plan, {
 
     if (plan.reports) {
       timer = setTimeout(() => {
-        // Settle the verdict BEFORE killing: the child's exit must not be able to answer for the
-        // deadline just because it arrived first. [LAW:no-ambient-temporal-coupling]
-        resolve({ booted: false, reason: because(`nothing painted within ${deadlineMs}ms`) });
+        // The reason is fixed HERE, before the kill, so the exit it causes cannot answer for the
+        // deadline that caused it. [LAW:no-ambient-temporal-coupling]
+        deadlineReason = because(`nothing painted within ${deadlineMs}ms`);
         child.kill('SIGKILL');
       }, deadlineMs);
       const channel = child.stdio[BOOT_FD];
