@@ -15,9 +15,17 @@ const S = require('./bun-surface.js');
 const { createEmbeddedFs } = require('./embedded-fs.js');
 
 let pass = 0, fail = 0;
-function t(name, fn) {
-  try { fn(); pass++; console.log('ok   - ' + name); }
-  catch (e) { fail++; console.log('FAIL - ' + name + '\n       ' + (e && e.message)); }
+// Every case is queued and awaited. A harness that calls fn() and moves on turns a FAILING async
+// case into a rejected promise nobody reads: the assertion loses, and the suite prints ok.
+const cases = [];
+const t = (name, fn) => cases.push({ name, fn });
+async function runAll() {
+  for (const { name, fn } of cases) {
+    try { await fn(); pass++; console.log('ok   - ' + name); }
+    catch (e) { fail++; console.log('FAIL - ' + name + '\n       ' + (e && e.message)); }
+  }
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
 }
 
 const record = (name, contents, loader = 'text') => {
@@ -38,8 +46,10 @@ function surface(overrides = {}) {
   const embedded = createEmbeddedFs([record('/$bunfs/root/a.md', 'hello')], { realFs, streamFrom: (b) => ({ stub: b.length }) });
   const absent = [];
   const bun = S.createBunSurface({
-    embedded, realFs, crypto: require('crypto'), zlib: require('zlib'),
-    childProcess: { spawn: (...a) => ({ spawned: a }), spawnSync: (...a) => ({ spawnedSync: a }) },
+    embedded, realFs, crypto: require('crypto'), zlib: require('zlib'), http: require('http'),
+    // Shaped like a ChildProcess so the Bun-child affordances can be attached, while still
+    // recording what node was actually asked for.
+    childProcess: { spawn: (...a) => ({ spawned: a, on: () => {} }), spawnSync: (...a) => ({ spawnedSync: a }) },
     env: { PATH: '/usr/bin:/bin' }, platform: 'darwin', entryName: '/$bunfs/root/cli',
     onAbsentApi: (n) => absent.push(n), ...overrides,
   });
@@ -48,10 +58,22 @@ function surface(overrides = {}) {
 
 // ---- the absent-API recording the boot self-check depends on ------------------------------------
 
-t('a member the surface does not have is RECORDED, and answers undefined', () => {
+t('a member the surface does not have is RECORDED, and is undefined — not a truthy stub', () => {
   const { bun, absent } = surface();
-  assert.strictEqual(bun.somethingBunAddedLastWeek(), undefined);
-  assert.deepStrictEqual(absent, ['somethingBunAddedLastWeek']);
+  assert.strictEqual(bun.somethingBunAddedLastWeek, undefined);
+  // The point of undefined over `() => undefined`: feature detection has to be able to answer no.
+  assert.strictEqual(Boolean(bun.somethingBunAddedLastWeek), false);
+  assert.strictEqual(bun.somethingBunAddedLastWeek ?? 'fallback', 'fallback');
+  // Every access is reported; collapsing repeats is the host's job, not the surface's.
+  assert.deepStrictEqual([...new Set(absent)], ['somethingBunAddedLastWeek']);
+});
+
+t('the members the graph never uses are absent rather than wrong', () => {
+  // Surveyed against the shipped graph: nothing reads Bun.stdin/stdout/stderr or calls Bun.color.
+  // Keeping a wrong-shaped member for them would answer plausibly; absence is recorded.
+  const { bun, absent } = surface();
+  for (const name of ['stdin', 'stdout', 'stderr', 'color']) assert.strictEqual(bun[name], undefined, name);
+  assert.deepStrictEqual([...new Set(absent)], ['stdin', 'stdout', 'stderr', 'color']);
 });
 
 t('a member the surface does have is never recorded as absent', () => {
@@ -83,6 +105,22 @@ t('CryptoHasher digests, and refuses an algorithm it cannot serve BY NAME', () =
   assert.strictEqual(new bun.CryptoHasher('sha256').update('abc').digest('hex'),
     'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
   assert.throws(() => new bun.CryptoHasher('xxhash3'), /does not serve the algorithm xxhash3/);
+  // node has only blake2b512, and a truncation of it is a different function — refused, not faked.
+  assert.throws(() => new bun.CryptoHasher('blake2b256'), /does not serve the algorithm blake2b256/);
+});
+
+t('a seed changes the hash, rather than being ignored', () => {
+  const { bun } = surface();
+  assert.notStrictEqual(bun.hash('alpha', 1), bun.hash('alpha', 2));
+  assert.strictEqual(bun.hash('alpha', 7), bun.hash('alpha', 7));
+  assert.notStrictEqual(bun.hash.crc32('alpha', 1), bun.hash.crc32('alpha', 2));
+});
+
+t('a hash reads a typed-array VIEW window, not its whole backing store', () => {
+  const { bun } = surface();
+  const backing = Buffer.from('XXXhelloYYY');
+  const view = new Uint8Array(backing.buffer, backing.byteOffset + 3, 5);
+  assert.strictEqual(bun.hash(view), bun.hash('hello'));
 });
 
 // ---- the members that were identity functions ---------------------------------------------------
@@ -102,6 +140,8 @@ t('deepEquals does not depend on key order', () => {
   assert.strictEqual(bun.deepEquals(new Set([1, 2]), new Set([2, 1])), true);
   assert.strictEqual(bun.deepEquals(new Date(5), new Date(5)), true);
   assert.strictEqual(bun.deepEquals({ a: undefined }, {}), false, 'a present undefined key is not an absent one');
+  assert.strictEqual(bun.deepEquals(/a/g, /a/g), true);
+  assert.strictEqual(bun.deepEquals(/a/g, /b/g), false, 'two RegExps have no enumerable keys to tell apart');
 });
 
 // ---- which: no shell, ever ----------------------------------------------------------------------
@@ -130,6 +170,35 @@ t('spawn takes the array form and the object form alike', () => {
   assert.deepStrictEqual(bun.spawnSync({ cmd: ['ls'] }).spawnedSync, ['ls', [], {}]);
 });
 
+t("Bun's per-stream options become node's stdio, instead of being silently dropped", () => {
+  // The shipped graph passes exactly this shape. Forwarding it unchanged leaves node at its own
+  // defaults, so an `ignore` becomes an unread pipe that fills up and blocks the child.
+  const { bun } = surface();
+  const [, , options] = bun.spawn({ cmd: ['git', '--version'], stdout: 'pipe', stderr: 'ignore' }).spawned;
+  assert.deepStrictEqual(options.stdio, ['inherit', 'pipe', 'ignore']);
+  assert.strictEqual(options.stdout, undefined, "node would not know what to do with Bun's spelling");
+  // A BunFile stands for the descriptor it names, and an explicit stdio still wins.
+  assert.deepStrictEqual(bun.spawn({ cmd: ['x'], stderr: { fd: 7 } }).spawned[2].stdio, ['inherit', 'pipe', 7]);
+  assert.deepStrictEqual(bun.spawn({ cmd: ['x'], stdio: ['ignore', 'ignore', 'ignore'], stdout: 'pipe' }).spawned[2].stdio, ['ignore', 'ignore', 'ignore']);
+});
+
+t('a spawned child answers the two things the graph asks of it', async () => {
+  const { bun } = surface({ childProcess: require('child_process') });
+  const child = bun.spawn({ cmd: [process.execPath, '-e', 'process.stdout.write("hi")'], stdout: 'pipe' });
+  assert.strictEqual(await child.stdout.text(), 'hi');
+  assert.strictEqual(await child.exited, 0);
+});
+
+t('serve actually serves — the handler runs and its response comes back', async () => {
+  const { bun } = surface();
+  const server = bun.serve({ hostname: '127.0.0.1', port: 0, fetch: (req) => new Response('pong ' + new URL(req.url).pathname, { status: 201 }) });
+  await new Promise((r) => setTimeout(r, 40));
+  const res = await fetch(`http://127.0.0.1:${server.port}/ping`);
+  assert.strictEqual(res.status, 201);
+  assert.strictEqual(await res.text(), 'pong /ping');
+  server.stop(true);
+});
+
 // ---- file, and the byte-window bug ---------------------------------------------------------------
 
 t('Bun.file reads the embedded graph and the real disk alike, streams included', async () => {
@@ -141,12 +210,20 @@ t('Bun.file reads the embedded graph and the real disk alike, streams included',
   assert.strictEqual(bun.file('/tmp/real').stream(), 'real-stream');
 });
 
-t('write honours a typed-array VIEW window instead of its whole backing store', () => {
+t('write honours a typed-array VIEW window, and reports what it wrote', async () => {
   const { bun } = surface();
   written.length = 0;
   const backing = Buffer.from('XXXhelloYYY');
-  bun.write('/tmp/out', new Uint8Array(backing.buffer, backing.byteOffset + 3, 5));
+  const n = await bun.write('/tmp/out', new Uint8Array(backing.buffer, backing.byteOffset + 3, 5));
   assert.strictEqual(written[0][1].toString(), 'hello', 'Buffer.from(view.buffer) alone would write the whole 11 bytes');
+  assert.strictEqual(n, 5, 'a constant 0 tells the caller nothing about what happened');
+});
+
+t('sleepSync actually blocks', () => {
+  const { bun } = surface();
+  const started = Date.now();
+  bun.sleepSync(30);
+  assert.ok(Date.now() - started >= 25, 'a no-op returns instantly from a call whose point is not to');
 });
 
 // ---- the render-path helpers ---------------------------------------------------------------------
@@ -174,5 +251,4 @@ t('semver orders and matches ranges', () => {
   assert.strictEqual(S.semver.satisfies('2.1.258', '>=2.0.0'), true);
 });
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+runAll();

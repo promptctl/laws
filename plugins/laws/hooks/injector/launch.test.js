@@ -109,6 +109,20 @@ t('a silent one-shot that exits 0 without painting is the session, never re-run'
   assert.deepStrictEqual(r, { booted: true, code: 0 });
 });
 
+t('a named refusal falls back even outside an interactive terminal', async () => {
+  // The never-re-run rule protects work a run already did; a host that refused before painting did
+  // none. Without this the fail-safe was off entirely in a pipe.
+  const r = await L.run(hosted, { ...fast, interactive: false, spawn: fakeSpawn([{ at: 5, report: 'absent no-bun-module-graph-trailer' }, { at: 20, exit: 70 }]) });
+  assert.strictEqual(r.booted, false);
+  assert.strictEqual(r.reason, 'absent no-bun-module-graph-trailer');
+});
+
+t('the FIRST refusal is the reason — the root cause, not whatever followed it', async () => {
+  const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([
+    { at: 5, report: 'absent module-has-unknown-loader' }, { at: 10, report: 'boot-threw something downstream' }, { at: 20, exit: 70 }]) });
+  assert.strictEqual(r.reason, 'absent module-has-unknown-loader');
+});
+
 t('a named refusal from the host is carried out as the reason', async () => {
   const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, report: 'absent no-bun-module-graph-trailer' }, { at: 20, exit: 70 }]) });
   assert.strictEqual(r.booted, false);

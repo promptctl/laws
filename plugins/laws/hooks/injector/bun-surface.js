@@ -18,10 +18,20 @@ const ENOENT_SIZE = 0;
 // Bun's own default hash is a fast 64-bit NON-cryptographic hash, not a digest. The exact algorithm
 // is not reproducible here, and it does not need to be — callers use it for bucketing, so what has
 // to hold is that it is deterministic, well distributed, and 64 bits wide. FNV-1a is all three.
+// The bytes a caller handed us, as a Buffer that respects a view's window. `Buffer.from(view.buffer)`
+// alone takes the whole backing store, byteOffset and byteLength ignored. One definition, because
+// every place that turns a caller's value into bytes has to make the same mistake or none.
+// [LAW:one-source-of-truth]
+const asBuffer = (data) => (typeof data === 'string' ? Buffer.from(data, 'utf8')
+  : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+    : Buffer.from(data));
+
 const MASK64 = (1n << 64n) - 1n;
-const fnv1a64 = (input) => {
-  const bytes = typeof input === 'string' ? Buffer.from(input, 'utf8') : Buffer.from(input.buffer ?? input);
-  let h = 0xcbf29ce484222325n;
+const fnv1a64 = (input, seed = 0) => {
+  const bytes = asBuffer(input);
+  // Bun's hashes take an optional seed that changes the result; ignoring it would hand every seeded
+  // caller the same value and quietly collapse whatever they were separating.
+  let h = 0xcbf29ce484222325n ^ (BigInt(seed) & MASK64);
   for (const b of bytes) h = ((h ^ BigInt(b)) * 0x100000001b3n) & MASK64;
   return h;
 };
@@ -32,9 +42,9 @@ const crc32 = (() => {
     for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     table[n] = c >>> 0;
   }
-  return (input) => {
-    const bytes = typeof input === 'string' ? Buffer.from(input, 'utf8') : Buffer.from(input.buffer ?? input);
-    let c = 0xffffffff;
+  return (input, seed = 0) => {
+    const bytes = asBuffer(input);
+    let c = (0xffffffff ^ seed) >>> 0;
     for (const b of bytes) c = table[(c ^ b) & 0xff] ^ (c >>> 8);
     return (c ^ 0xffffffff) >>> 0;
   };
@@ -48,6 +58,7 @@ function deepEquals(a, b) {
   if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
   if (Array.isArray(a)) return a.length === b.length && a.every((x, i) => deepEquals(x, b[i]));
   if (a instanceof Date) return a.getTime() === b.getTime();
+  if (a instanceof RegExp) return a.source === b.source && a.flags === b.flags;
   if (a instanceof Map) return a.size === b.size && [...a].every(([k, v]) => b.has(k) && deepEquals(v, b.get(k)));
   if (a instanceof Set) return a.size === b.size && [...a].every((v) => b.has(v));
   if (ArrayBuffer.isView(a)) return a.byteLength === b.byteLength && Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength));
@@ -57,11 +68,11 @@ function deepEquals(a, b) {
 
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
 
-// Bun's CryptoHasher accepts algorithms node's crypto does not. Mapping the ones node can serve and
-// refusing the rest by name beats forwarding an unknown name and letting createHash throw something
-// that names neither the algorithm nor this shim.
-const HASH_ALGORITHMS = new Set(['sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', 'md5', 'blake2b256', 'blake2b512']);
-const NODE_ALGORITHM = { blake2b256: 'blake2b512' };
+// Bun's CryptoHasher accepts algorithms node's crypto does not. Only the ones node serves under the
+// SAME name are listed: blake2b256 is deliberately absent, because node has only blake2b512 and a
+// truncation of it is a different function, not the same digest at a shorter length. Refusing it by
+// name beats answering with somebody else's bytes.
+const HASH_ALGORITHMS = new Set(['sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', 'md5', 'blake2b512']);
 
 const stringWidth = (s) => {
   let width = 0;
@@ -153,24 +164,75 @@ const whichVia = (realFs, env, platform) => (cmd) => {
   return null;
 };
 
-// Bun.spawn accepts both spawn(["cmd","arg"], options) and spawn({cmd: ["cmd","arg"], ...options}).
+// Bun.spawn accepts both spawn(["cmd","arg"], options) and spawn({cmd: ["cmd","arg"], ...options}),
+// and it names the three streams at the TOP level — `stdout: "pipe"`, `stderr: "ignore"` — where
+// node wants one `stdio` array. Node ignores keys it does not know, so forwarding Bun's shape
+// unchanged silently gives every stream node's default: an `ignore` becomes an unread pipe that
+// fills and blocks the child, which is a hang with no reported cause. Measured on the shipped graph,
+// which passes exactly these options and then awaits `child.stdout.text()`.
+const STREAM_SLOTS = ['stdin', 'stdout', 'stderr'];
 const spawnArgs = (first, second) => {
   const { cmd, ...rest } = Array.isArray(first) ? { cmd: first } : (first || {});
-  return { command: cmd?.[0], args: cmd?.slice(1) ?? [], options: { ...rest, ...(second || {}) } };
+  const options = { ...rest, ...(second || {}) };
+  const named = STREAM_SLOTS.map((slot) => options[slot]);
+  for (const slot of STREAM_SLOTS) delete options[slot];
+  // An explicit `stdio` wins; it is node's own spelling and the graph uses it too.
+  if (options.stdio === undefined && named.some((v) => v !== undefined)) {
+    options.stdio = named.map((v, i) => (v === undefined ? (i === 0 ? 'inherit' : 'pipe') : toNodeStdio(v)));
+  }
+  return { command: cmd?.[0], args: cmd?.slice(1) ?? [], options };
+};
+// Bun's per-stream values, in node's vocabulary. A BunFile stands for the descriptor it names.
+const toNodeStdio = (v) => (v === 'ignore' || v === 'inherit' || v === 'pipe' ? v
+  : typeof v === 'number' ? v
+    : v && typeof v === 'object' && typeof v.fd === 'number' ? v.fd : 'pipe');
+
+// The graph reads a finished child's output as `await child.stdout.text()` and waits on
+// `child.exited`. Node's ChildProcess has neither, so the streams it does have are given those two
+// affordances; nothing else about the child is touched.
+const withBunChildShape = (child) => {
+  for (const slot of ['stdout', 'stderr']) {
+    const stream = child[slot];
+    if (!stream || typeof stream.text === 'function') continue;
+    const drain = async () => { const parts = []; for await (const c of stream) parts.push(c); return Buffer.concat(parts); };
+    stream.text = async () => (await drain()).toString('utf8');
+    stream.json = async () => JSON.parse((await drain()).toString('utf8'));
+    stream.bytes = async () => new Uint8Array(await drain());
+  }
+  if (child.exited === undefined) {
+    child.exited = new Promise((resolve, reject) => { child.on('exit', (code) => resolve(code ?? 0)); child.on('error', reject); });
+  }
+  return child;
 };
 
-// The bytes a caller handed us, as a Buffer that respects a view's window. `Buffer.from(view.buffer)`
-// alone takes the whole backing store, byteOffset and byteLength ignored.
-const asBuffer = (data) => (typeof data === 'string' ? Buffer.from(data)
-  : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
-    : Buffer.from(data));
-
 // Build the surface. `onAbsentApi` is called once per name the graph asks for that is not here.
-function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, env, platform, entryName, onAbsentApi }) {
+// A real server, because the graph really uses one — with a `fetch` handler, `.unref()` and
+// `.stop(true)`. The stub this replaces answered every one of those and served nothing, so a caller
+// that started a listener and waited for a callback on it waited forever.
+function serveOver(http, options = {}) {
+  const handler = options.fetch;
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const body = ['GET', 'HEAD'].includes(req.method) ? undefined : req;
+    const request = new Request(url, { method: req.method, headers: req.headers, body, duplex: 'half' });
+    const response = await handler(request, server);
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    res.end(Buffer.from(await response.arrayBuffer()));
+  });
+  server.listen(options.port ?? 0, options.hostname ?? '127.0.0.1');
+  return {
+    stop: (closeActive) => { server.close(); if (closeActive) server.closeAllConnections?.(); },
+    reload: () => {}, ref: () => server.ref(), unref: () => server.unref(),
+    get port() { return server.address()?.port ?? 0; },
+    get hostname() { return options.hostname ?? '127.0.0.1'; },
+    get url() { return new URL(`http://${options.hostname ?? '127.0.0.1'}:${server.address()?.port ?? 0}`); },
+  };
+}
+
+function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, env, platform, entryName, onAbsentApi }) {
   const surface = {
     version: '1.3.14', revision: '0', main: entryName, env,
     get argv() { return process.argv; },
-    stdin: process.stdin, stdout: process.stdout, stderr: process.stderr,
     isStandaloneExecutable: true, enableANSIColors: true, isMainThread: true,
 
     file: (p) => ({
@@ -184,23 +246,28 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, env, p
       name: p, type: '',
     }),
     write: async (dst, data) => {
-      realFs.writeFileSync(typeof dst === 'object' && dst?.name ? dst.name : dst, asBuffer(data));
-      return 0;
+      const bytes = asBuffer(data);
+      realFs.writeFileSync(typeof dst === 'object' && dst?.name ? dst.name : dst, bytes);
+      return bytes.length;
     },
 
     zstdDecompressSync: (b) => zlib.zstdDecompressSync(b),
     zstdDecompress: async (b) => zlib.zstdDecompressSync(b),
     gzipSync: (b) => zlib.gzipSync(b), gunzipSync: (b) => zlib.gunzipSync(b),
 
-    spawn: (first, second) => { const { command, args, options } = spawnArgs(first, second); return childProcess.spawn(command, args, options); },
+    spawn: (first, second) => { const { command, args, options } = spawnArgs(first, second); return withBunChildShape(childProcess.spawn(command, args, options)); },
     spawnSync: (first, second) => { const { command, args, options } = spawnArgs(first, second); return childProcess.spawnSync(command, args, options); },
     which: whichVia(realFs, env, platform),
 
-    hash: Object.assign((x) => fnv1a64(x), { wyhash: (x) => fnv1a64(x), crc32, adler32: (x) => { let a = 1, b = 0; for (const byte of asBuffer(typeof x === 'string' ? x : x)) { a = (a + byte) % 65521; b = (b + a) % 65521; } return ((b << 16) | a) >>> 0; } }),
+    hash: Object.assign((x, seed) => fnv1a64(x, seed), {
+      wyhash: (x, seed) => fnv1a64(x, seed),
+      crc32,
+      adler32: (x, seed = 1) => { let a = seed & 0xffff, b = (seed >>> 16) & 0xffff; for (const byte of asBuffer(x)) { a = (a + byte) % 65521; b = (b + a) % 65521; } return ((b << 16) | a) >>> 0; },
+    }),
     CryptoHasher: class {
       constructor(algorithm = 'sha256') {
         if (!HASH_ALGORITHMS.has(algorithm)) throw new Error(`CryptoHasher: this host does not serve the algorithm ${algorithm}`);
-        this.h = crypto.createHash(NODE_ALGORITHM[algorithm] || algorithm);
+        this.h = crypto.createHash(algorithm);
       }
       update(d) { this.h.update(d); return this; }
       digest(enc) { return enc ? this.h.digest(enc) : new Uint8Array(this.h.digest()); }
@@ -208,13 +275,14 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, env, p
 
     stringWidth, stripANSI, wrapAnsi, semver, deepEquals,
     escapeHTML: (s) => String(s).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]),
-    color: (c) => String(c),
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms)), sleepSync: () => {},
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    // Actually blocks. A no-op would return instantly from a call whose entire purpose is not to.
+    sleepSync: (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(ms) || 0); },
     nanoseconds: () => Number(process.hrtime.bigint()),
     gc() {}, generateHeapSnapshot: () => ({}),
     pathToFileURL: (p) => require('url').pathToFileURL(p),
     fileURLToPath: (u) => require('url').fileURLToPath(u),
-    serve: () => ({ stop() {}, reload() {}, ref() {}, unref() {}, port: 0, url: new URL('http://localhost:0'), hostname: 'localhost' }),
+    serve: (options) => serveOver(http, options),
   };
 
   // An unknown key returns the undefined-yielding stub Bun's absence would produce anyway, and is
@@ -224,9 +292,12 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, env, p
     get(target, key) {
       if (key in target) return target[key];
       onAbsentApi(String(key));
-      return () => undefined;
+      // undefined, not a stub function: `if (Bun.newApi)` has to be able to answer no. A truthy
+      // stub makes feature detection take the branch that then gets nothing back, which is the same
+      // "plausible and wrong" this file exists to refuse — one level up, at the member itself.
+      return undefined;
     },
   });
 }
 
-module.exports = { createBunSurface, deepEquals, stringWidth, stripANSI, wrapAnsi, semver, fnv1a64, crc32, whichVia, spawnArgs, asBuffer, HASH_ALGORITHMS };
+module.exports = { createBunSurface, serveOver, withBunChildShape, deepEquals, stringWidth, stripANSI, wrapAnsi, semver, fnv1a64, crc32, whichVia, spawnArgs, asBuffer, HASH_ALGORITHMS };

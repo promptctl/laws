@@ -16,14 +16,20 @@
 
 'use strict';
 
-// Embedded module paths are rooted at Bun's virtual filesystem. A path outside it belongs to the
-// real disk and every reader below hands it straight back to node.
-const VIRTUAL_ROOT = '/$bunfs/';
+// The container format owns this literal; this module reads it rather than restating it.
+// [LAW:one-source-of-truth]
+const { VIRTUAL_ROOT } = require('./bun-graph.js');
 
 // The fs members this host answers for an embedded path. Everything else is refused by name.
 const SERVED_SYNC = ['readFileSync', 'existsSync', 'statSync', 'lstatSync', 'realpathSync', 'createReadStream'];
 const SERVED_PROMISES = ['readFile', 'stat', 'lstat', 'realpath'];
 
+// How a refusal has to LOOK depends on what the member promised to return, and only on that. A
+// promise-returning member rejects — same loudness, since an unhandled rejection ends the process,
+// but the shape its callers await. Everything else throws where it was called. What a refusal must
+// never become is a callback error: that is a value the app already knows how to catch and turn
+// into "the asset is missing", which is the laundering that made the real fs's bare ENOENT
+// unacceptable to begin with. [LAW:no-silent-failure]
 class UnservedEmbeddedCall extends Error {
   constructor(member, path) {
     super(`fs.${member} was called on the embedded path ${path}, which this host does not serve`);
@@ -46,7 +52,10 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
   const isEmbedded = (p) => typeof p === 'string' && p.startsWith(VIRTUAL_ROOT) && byName.has(p);
   const recordFor = (p) => { const m = byName.get(p); if (!m) throw noSuchFile(p); return m; };
 
-  const bytes = (p) => recordFor(p).bytes();
+  // A COPY, not the view bun-graph hands back. That view aliases the one buffer holding the whole
+  // executable, and real `readFileSync` gives its caller memory the caller owns — hosted code that
+  // writes into what it read would otherwise be editing the graph itself.
+  const bytes = (p) => Buffer.from(recordFor(p).bytes());
   // Text comes back in the encoding the CONTAINER declared, not the one the caller guessed. A
   // utf16le asset read as 'utf8' is mojibake, and the container is the only party that knows which
   // it is — which is the whole reason bun-graph carries the field. [LAW:one-source-of-truth]
@@ -64,7 +73,7 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
     statSync: stat,
     lstatSync: stat,
     realpathSync: (p) => p,
-    createReadStream: (p) => streamFrom(bytes(p)),
+    createReadStream: (p, options) => streamFrom(bytes(p), options),
     readFile: async (p, options) => read(p, options),
     stat: async (p) => stat(p),
     lstat: async (p) => stat(p),
@@ -74,17 +83,27 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
   // Wrap a real fs-shaped module so embedded paths are answered here and everything else is the
   // real thing, unchanged. The set of names wrapped comes from the real module, so nothing this
   // host does not know about can slip past as a silent pass-through.
-  const substituteFor = (real, names) => {
+  const substituteFor = (real, names, rejects) => {
     const out = { ...real };
     for (const [key, value] of Object.entries(real)) {
       if (typeof value !== 'function') continue;
       const answer = names.includes(key) ? served[key] : null;
       out[key] = (...args) => {
         if (!isEmbedded(args[0])) return value.apply(real, args);
-        if (!answer) throw new UnservedEmbeddedCall(key, args[0]);
-        return answer(...args);
+        if (answer) return answer(...args);
+        const refusal = new UnservedEmbeddedCall(key, args[0]);
+        if (rejects) return Promise.reject(refusal);
+        throw refusal;
       };
     }
+    return out;
+  };
+
+  // `require('fs').promises` is an OBJECT on the real module, so the loop above skips it and hosted
+  // code reaching through it would get the real, unwrapped promises API and a bare ENOENT.
+  const substituteForFs = (real) => {
+    const out = substituteFor(real, SERVED_SYNC, false);
+    if (real.promises) out.promises = substituteFor(real.promises, SERVED_PROMISES, true);
     return out;
   };
 
@@ -100,8 +119,8 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
     existsAny: (p) => isEmbedded(p) || realFs.existsSync(p),
     statAny: (p) => isEmbedded(p) ? stat(p) : realFs.statSync(p),
     streamAny: (p) => isEmbedded(p) ? streamFrom(bytes(p)) : realFs.createReadStream(p),
-    substituteForFs: (real) => substituteFor(real, SERVED_SYNC),
-    substituteForFsPromises: (real) => substituteFor(real, SERVED_PROMISES),
+    substituteForFs,
+    substituteForFsPromises: (real) => substituteFor(real, SERVED_PROMISES, true),
   };
 }
 

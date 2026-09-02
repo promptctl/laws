@@ -17,9 +17,17 @@ const fs = require('fs');
 const M = require('./bun-graph.js');
 
 let pass = 0, fail = 0;
-function t(name, fn) {
-  try { fn(); pass++; console.log('ok   - ' + name); }
-  catch (e) { fail++; console.log('FAIL - ' + name + '\n       ' + (e && e.message)); }
+// Every case is queued and awaited. A harness that calls fn() and moves on turns a FAILING async
+// case into a rejected promise nobody reads: the assertion loses, and the suite prints ok.
+const cases = [];
+const t = (name, fn) => cases.push({ name, fn });
+async function runAll() {
+  for (const { name, fn } of cases) {
+    try { await fn(); pass++; console.log('ok   - ' + name); }
+    catch (e) { fail++; console.log('FAIL - ' + name + '\n       ' + (e && e.message)); }
+  }
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
 }
 
 const ENC = { binary: 0, utf8: 1, utf16le: 2 };
@@ -84,12 +92,18 @@ t('contents are exact — no leading or trailing byte of a neighbouring record',
 
 t('decodes by the encoding the container declares, not by sniffing', () => {
   const utf16 = { name: '/$bunfs/root/SKILL.md', contents: '# hello', encoding: 'utf16le', loader: 'text' };
-  const r = M.readGraph(container([utf16], 0));
+  const r = M.readGraph(container([utf16, ENTRY], 1));
   assert.strictEqual(r.modules[0].text(), '# hello');
   assert.strictEqual(r.modules[0].encoding, 'utf16le');
   assert.strictEqual(r.modules[0].loader, 'text');
   // ...and the bytes are the stored bytes, two per character.
   assert.strictEqual(r.modules[0].bytes().length, 14);
+});
+
+t('an entry the host could not evaluate is refused here, not left for the host to discover', () => {
+  const asset = { name: '/$bunfs/root/SKILL.md', contents: '# hello', loader: 'text' };
+  const r = M.readGraph(container([asset, ENTRY], 0));
+  assert.strictEqual(r.reason, M.ABSENT.entryNotJs);
 });
 
 t('carries the loader through, so callers never guess what a module is', () => {
@@ -100,6 +114,7 @@ t('carries the loader through, so callers never guess what a module is', () => {
     { name: '/$bunfs/root/a.zst', contents: 'zzz', loader: 'file', encoding: 'binary' },
   ];
   const r = M.readGraph(container(mods, 0));
+  assert.strictEqual(r.ok, true, 'reason: ' + r.reason);
   assert.deepStrictEqual(r.modules.map((m) => m.loader), ['js', 'napi', 'text', 'file']);
 });
 
@@ -214,5 +229,4 @@ t(installed ? `reads the installed binary (${installed.split('/').pop()})` : 'SK
   assert.ok(r.modules.filter((m) => m.loader === 'js').length >= 1);
 });
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+runAll();

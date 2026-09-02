@@ -76,6 +76,7 @@ const ABSENT = {
   unknownEncoding: 'module-has-unknown-encoding',
   unknownLoader: 'module-has-unknown-loader',
   entryOutOfRange: 'entry-point-id-outside-module-table',
+  entryNotJs: 'entry-point-is-not-a-javascript-module',
 };
 
 const absent = (reason, detail) => (detail === undefined ? { ok: false, reason } : { ok: false, reason, detail });
@@ -149,6 +150,9 @@ function readGraph(buf) {
 
   const entryIndex = at(OFFSETS.entryPointId);
   if (entryIndex >= modules.length) return absent(ABSENT.entryOutOfRange, `${entryIndex} of ${modules.length}`);
+  // An entry the host cannot evaluate is not an entry. Proving it here means no caller has to ask.
+  // [LAW:parse-dont-validate]
+  if (modules[entryIndex].loader !== 'js') return absent(ABSENT.entryNotJs, `${modules[entryIndex].name} is a ${modules[entryIndex].loader} module`);
 
   return { ok: true, modules, entryIndex, entryName: modules[entryIndex].name };
 }
@@ -164,7 +168,7 @@ function readGraphFromFile(binaryPath) {
   return readGraph(buf);
 }
 
-module.exports = { ABSENT, ENCODINGS, LOADERS, ROW_BYTES, readGraph, readGraphFromFile };
+module.exports = { ABSENT, ENCODINGS, LOADERS, ROW_BYTES, VIRTUAL_ROOT, readGraph, readGraphFromFile };
 
 if (require.main === module) (function main() {
   const [binaryPath] = process.argv.slice(2);

@@ -101,7 +101,10 @@ Two details of the live-session comparison cost an hour to find and are worth ke
 
 ## Hosting the graph under node: `vm.SourceTextModule`, after two designs that failed
 
-`bun-host.mjs` runs the graph under node; `launch.js` decides whether it worked.
+Five modules run the graph under node: `bun-graph.js` reads the container's module table,
+`embedded-fs.js` presents the embedded modules as a read-only filesystem, `bun-surface.js` is the
+`Bun` global, `bun-runtime.mjs` links and evaluates the graph under `vm.SourceTextModule`, and
+`bun-host.mjs` is the wiring that connects them. `launch.js` decides whether it worked.
 
 Node's own ES module loader CANNOT host this graph, and the reason is worth recording because two
 plausible designs were tried and measured before the third worked. Bun's chunks call
@@ -112,25 +115,42 @@ that returns a live namespace even when the target is mid-evaluation.
    `ERR_REQUIRE_CYCLE_MODULE`.
 2. Rewriting those call sites into static imports fails differently — it creates cycles the real
    graph never had, which then break on TDZ (`Cannot access 'g3' before initialization`).
-3. What works: `vm.SourceTextModule`, where the host links the graph itself and hands out a
-   namespace on demand exactly as Bun does. It also lets `import.meta` be populated directly, so the
-   recovered sources run VERBATIM — there is no source-rewriting step anywhere.
+3. What works: `vm.SourceTextModule` in `bun-runtime.mjs`, which links the graph itself and hands
+   out a namespace on demand exactly as Bun does. It also lets `import.meta` be populated directly,
+   so the recovered sources run VERBATIM — there is no source-rewriting step anywhere.
 
-The host also serves the graph as a read-only filesystem, because chunks read embedded assets by
+`embedded-fs.js` serves the graph as a read-only filesystem, because chunks read embedded assets by
 their virtual path through plain `fs` calls and `Bun.file`. It substitutes `fs`/`fs/promises` for
 hosted code only; node's own fs is never patched. `ws` is provided too — Bun ships it built in and it
 is the only non-builtin bare specifier the graph imports.
 
 Cost: linking all 1,640 js modules takes ~800ms, first frame ~700ms after that.
 
+### What the code review changed
+
+`bun-runtime.mjs`'s up-front linking loop only worked because Bun happens to emit its module table
+dependencies-first: node refuses a second explicit `link()` on a module something else already
+pulled in, so an entry-first table would have broken boot with a confusing error. The loop now
+checks each module's status instead of relying on that order — found by writing the runtime's first
+test against a synthetic graph, which the real graph could never have shown. The second finding is
+the doctrine this shim runs on, stated plainly: every member of the `Bun` surface is either a real
+implementation or absent. A present-but-wrong stub keeps the process alive while corrupting what it
+touched and is invisible; an absent member is recorded and reaches the launcher by name. Members the
+graph never uses — `Bun.stdin`, `Bun.stdout`, `Bun.stderr`, `Bun.color` — were deleted rather than
+kept as plausible-looking placeholders.
+
 ## The boot self-check: observations in the host, the verdict in the launcher
 
-The host reports observations and forms no verdict: `painted` the first time the hosted graph writes
-to the terminal, or a named refusal if the graph cannot be read or the entry throws. `launch.js`
-forms the verdict and owns the deadline. A plan became the session if it painted AND was still there
-a settle window later (5s); a clean early exit, or any exit outside an interactive terminal, also
-counts, because a one-shot command that already did real work must never be re-run. The launcher
-runs a LIST of plans and keeps the first that boots; the last is stock `claude`, which is the floor.
+The host reports observations and forms no verdict: `painted` once, the first time the hosted graph
+writes to the terminal; a named refusal if the graph cannot be read; and `absent-api <name>` lines as
+they occur. A `boot-threw` message is sent even after painting, because a graph that painted and then
+died still has the useful message. `launch.js` forms the verdict and owns the deadline. A plan became
+the session if it painted AND was still there a settle window later (5s); a clean early exit, or any
+exit outside an interactive terminal, also counts, because a one-shot command that already did real
+work must never be re-run. A named refusal with nothing painted falls back REGARDLESS of whether the
+terminal is interactive: the never-re-run rule protects work a run already did, and a host that
+refused before painting did none. The launcher runs a LIST of plans and keeps the first that boots;
+the last is stock `claude`, which is the floor.
 
 The settle window exists because of a specific finding: the first byte on stdout is NOT sufficient
 evidence of a session. Deleting `Bun.stripANSI` — simulating a Bun API the shim does not have — let
@@ -143,16 +163,21 @@ Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
   model and context meters.
 - With `Bun.stripANSI` deliberately removed, the hosted session is detected as not-booted and the
   launcher falls back to stock claude, logging: `claude-laws: hosted session did not start —
-  painted, then exited 1 after 1193ms — never became a session; falling back`. No hang.
+  painted, then exited 1 after 1008ms — never became a session (Bun APIs the shim does not have:
+  YAML, ant); falling back`. No hang. The parenthetical is on every failure reason: it names the Bun
+  APIs the shim was asked for and does not have, streamed as they are seen rather than collected at
+  the end, because on a hang the killed host never reaches an end to report from. `Bun.YAML` and
+  `Bun.ant` are genuinely absent from the surface and are recorded rather than stubbed; boot does
+  not need them.
 - One caution for whoever runs that break test again: the app persists a `fullscreenAutoDisabled`
   flag in `~/.claude.json` when its renderer fails to start, so a live break test mutates the user's
   config and must be cleaned up afterwards. This is why the automated suite (`launch.test.js`) uses
   stub plans and never the real bundle.
 
-Tests: `bun-graph.test.js` (20 — synthetic containers for every named absence, plus a live read of
-the installed binary), `embedded-fs.test.js` (12), `bun-surface.test.js` (16) and `launch.test.js`
-(22, stub plans) — 70 in all. 38 deliberate source mutations across the four modules were each
-killed by a test.
+Tests: `bun-graph.test.js` (21 — synthetic containers for every named absence, plus a live read of
+the installed binary), `embedded-fs.test.js` (15), `bun-surface.test.js` (23),
+`bun-runtime.test.mjs` (11) and `launch.test.js` (24, stub plans) — 94 in all. 57 deliberate
+source mutations across the five modules were each killed by a test.
 
 ## The frontier: reloading an edited transcript into a running session
 

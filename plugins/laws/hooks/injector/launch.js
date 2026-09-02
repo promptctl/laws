@@ -80,8 +80,9 @@ function plans(binaryPath, userArgs) {
 // Run one plan to a verdict. Resolves { booted: true, code } once the plan became the session and
 // that session has finished, or { booted: false, reason } if it never became one.
 //
-// A plan became the session when it painted the terminal AND was still there a moment later. Painting
-// alone is not enough — a boot-critical API that returns undefined lets the app print a notice and
+// A plan that reports a NAMED refusal without painting never reached the user's command, so it is
+// always replaced. Past that, a plan became the session when it painted the terminal AND was still
+// there a moment later. Painting alone is not enough — a boot-critical API that returns undefined lets the app print a notice and
 // then die on the TypeError, which reads as output but is not a session. Two exits are booted
 // whatever else happened, and neither may ever be re-run: a clean exit, which is what a one-shot
 // command does (silently, if all its output went to stderr), and any exit at all outside an
@@ -127,8 +128,13 @@ function run(plan, {
     const verdict = ({ code, signal }) => {
       const exit = code === null ? 128 : code;
       if (!plan.reports) return { booted: true, code: exit };
+      // A named refusal with nothing painted is a plan that never reached the user's command at all,
+      // so there is no work to preserve and nothing to weigh: fall back, terminal or no terminal.
+      // Without this the fail-safe switched itself off outside a tty, where a graph this host cannot
+      // read would produce neither a fallback nor a log.
+      if (refusal && !paintedAt) return { booted: false, reason: because(refusal) };
       if (exit === 0 || !interactive) return { booted: true, code: exit };
-      if (!paintedAt) return { booted: false, reason: because(refusal || `exited ${signal || code} before painting anything`) };
+      if (!paintedAt) return { booted: false, reason: because(`exited ${signal || code} before painting anything`) };
       const lived = Date.now() - paintedAt;
       if (lived >= settleMs) return { booted: true, code: exit };
       const died = refusal ? `: ${refusal}` : '';
@@ -151,7 +157,7 @@ function run(plan, {
         for (const line of lines) {
           if (line === 'painted') { paintedAt = paintedAt || Date.now(); clearTimeout(timer); }
           else if (line.startsWith('absent-api ')) absentApis.push(line.slice('absent-api '.length));
-          else if (line) refusal = line; // a named refusal; the verdict carries it out
+          else if (line) refusal = refusal || line; // the FIRST refusal: the root cause, not what followed it
         }
       });
       // A boot channel that fails to read is a lost diagnosis, not a non-event: without this the

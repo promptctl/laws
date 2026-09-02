@@ -10,9 +10,17 @@ const assert = require('assert');
 const { createEmbeddedFs, UnservedEmbeddedCall } = require('./embedded-fs.js');
 
 let pass = 0, fail = 0;
-function t(name, fn) {
-  try { fn(); pass++; console.log('ok   - ' + name); }
-  catch (e) { fail++; console.log('FAIL - ' + name + '\n       ' + (e && e.message)); }
+// Every case is queued and awaited. A harness that calls fn() and moves on turns a FAILING async
+// case into a rejected promise nobody reads: the assertion loses, and the suite prints ok.
+const cases = [];
+const t = (name, fn) => cases.push({ name, fn });
+async function runAll() {
+  for (const { name, fn } of cases) {
+    try { await fn(); pass++; console.log('ok   - ' + name); }
+    catch (e) { fail++; console.log('FAIL - ' + name + '\n       ' + (e && e.message)); }
+  }
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
 }
 
 // Records in bun-graph's shape. Note the utf16le one: its text() decodes by the encoding the
@@ -134,9 +142,31 @@ t('the promises substitute serves its own members and refuses the rest', async (
   const sub = e.substituteForFsPromises({ readFile: async () => 'real', stat: async () => ({ size: 1 }), readdir: async () => ['real'] });
   assert.strictEqual(await sub.readFile('/$bunfs/root/plain.md', 'utf8'), '# plain');
   assert.strictEqual((await sub.stat('/$bunfs/root/plain.md')).size, 7);
-  await sub.readdir('/$bunfs/root/plain.md').then(
-    () => { throw new Error('readdir on an embedded path should have been refused'); },
-    (err) => assert.ok(err instanceof UnservedEmbeddedCall));
+  // A promise-returning member REJECTS rather than throwing where it was called: an unhandled
+  // rejection is just as loud, and it is the shape every caller of this API awaits.
+  await assert.rejects(() => sub.readdir('/$bunfs/root/plain.md'), (err) => err instanceof UnservedEmbeddedCall);
+});
+
+t('the nested promises object is substituted too, not handed over unwrapped', async () => {
+  // `require('fs').promises` is an object, so a loop over function properties skips it entirely and
+  // hosted code reaching through it would meet the real fs and a bare ENOENT.
+  const e = make();
+  const sub = e.substituteForFs({ ...realFs, promises: { readFile: async () => 'real', readdir: async () => ['real'] } });
+  assert.strictEqual(await sub.promises.readFile('/$bunfs/root/plain.md', 'utf8'), '# plain');
+  await assert.rejects(() => sub.promises.readdir('/$bunfs/root/plain.md'), (err) => err instanceof UnservedEmbeddedCall);
+  assert.strictEqual(await sub.promises.readFile('/tmp/real'), 'real');
+});
+
+t('createReadStream passes its options through', () => {
+  const e = createEmbeddedFs(MODULES, { realFs, streamFrom: (bytes, options) => ({ len: bytes.length, options }) });
+  assert.deepStrictEqual(e.substituteForFs(realFs).createReadStream('/$bunfs/root/plain.md', { start: 2 }), { len: 7, options: { start: 2 } });
+});
+
+t('a read hands back memory the CALLER owns, not a view into the graph', () => {
+  const e = make();
+  const first = e.read('/$bunfs/root/plain.md');
+  first[0] = 0x21;
+  assert.strictEqual(e.read('/$bunfs/root/plain.md').toString(), '# plain', 'mutating what was read must not edit the graph');
 });
 
 t('non-function properties of the real module survive the substitution', () => {
@@ -145,5 +175,4 @@ t('non-function properties of the real module survive the substitution', () => {
   assert.deepStrictEqual(sub.constants, { X_OK: 1 });
 });
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+runAll();
