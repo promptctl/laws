@@ -26,7 +26,6 @@ import { createRequire } from 'node:module';
 // (verdicts on stderr) and under the launcher (verdicts on a private pipe) with one write path.
 // Writing verdicts to an inherited stderr would corrupt the TUI's own rendering.
 const BOOT_FD = Number(process.env.CLAUDE_LAWS_BOOT_FD || 2);
-const EXIT_NOT_BOOTED = 70;
 // Nothing is swallowed here that could be reported anywhere else: this IS the reporting channel, so
 // a failure to write to it has no second place to go, and the exit code still carries the verdict.
 // The usual cause is the launcher having closed its end.
@@ -35,19 +34,16 @@ const channel = createBootChannel({
   write: (bytes) => { try { fs.writeSync(BOOT_FD, bytes); } catch { /* see above */ } },
 });
 const send = channel.send;
-// A thrown value is not always an Error; `e.message` on a thrown string is undefined, and an
-// undefined reason is the silence this whole channel exists to prevent.
-const because = (e) => (e && e.message) || String(e);
-
 // Installed FIRST, above every import that could throw. The window these handlers do not cover is
 // the loading of the modules that make reporting possible, so it has to be as small as this file can
 // make it. [LAW:no-silent-failure]
-for (const [event, label] of [['uncaughtException', 'uncaught'], ['unhandledRejection', 'unhandled-rejection']]) {
-  process.on(event, (e) => {
-    send(`boot-threw ${label}: ${because(e)}`);
-    process.exit(EXIT_NOT_BOOTED);
-  });
-}
+const { installBootGuard, EXIT_NOT_BOOTED, because } = createRequire(import.meta.url)('./boot-guard.js');
+const { bootIsOver } = installBootGuard({
+  on: (event, fn) => process.on(event, fn),
+  off: (event, fn) => process.off(event, fn),
+  exit: (code) => process.exit(code),
+  send: (line) => send(line),
+});
 
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
@@ -112,7 +108,6 @@ const runtime = createModuleRuntime({
     fs: (real) => embedded.substituteForFs(real),
     'fs/promises': (real) => embedded.substituteForFsPromises(real),
   },
-  importBuiltin: (id) => import('node:' + id),
   requireBuiltin: (id) => require_('node:' + id),
   onEvaluationError: (name, e) => send(`boot-threw ${name}: ${because(e)}`),
 });
@@ -147,6 +142,9 @@ try {
   // needs that as a FACT rather than an inference from whether stdout happened to see a byte.
   channel.started();
   await runtime.evaluateEntry(graph.entryName);
+  // From here the session is the app's; its crashes are its own, and node's default handling is
+  // what it expects.
+  bootIsOver();
 } catch (e) {
   send(`boot-threw ${because(e)}`);
   process.exit(EXIT_NOT_BOOTED);

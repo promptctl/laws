@@ -101,11 +101,12 @@ Two details of the live-session comparison cost an hour to find and are worth ke
 
 ## Hosting the graph under node: `vm.SourceTextModule`, after two designs that failed
 
-Six modules run the graph under node: `bun-graph.js` reads the container's module table,
+Seven modules run the graph under node: `bun-graph.js` reads the container's module table,
 `embedded-fs.js` presents the embedded modules as a read-only filesystem, `bun-surface.js` is the
 `Bun` global, `bun-runtime.mjs` links and evaluates the graph under `vm.SourceTextModule`,
-`boot-channel.js` is the line protocol the host reports on and the launcher reads, and
-`bun-host.mjs` is the wiring that connects them. `launch.js` decides whether it worked.
+`boot-channel.js` is the line protocol the host reports on and the launcher reads, `boot-guard.js`
+names a crash during boot and stops watching once boot is over, and `bun-host.mjs` is the wiring
+that connects them. `launch.js` decides whether it worked.
 
 Node's own ES module loader CANNOT host this graph, and the reason is worth recording because two
 plausible designs were tried and measured before the third worked. Bun's chunks call
@@ -179,9 +180,10 @@ Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
   stub plans and never the real bundle.
 
 Tests: `bun-graph.test.js` (21 — synthetic containers for every named absence, plus a live read of
-the installed binary), `embedded-fs.test.js` (19), `bun-surface.test.js` (29),
-`bun-runtime.test.mjs` (14), `boot-channel.test.js` (7) and `launch.test.js` (29, stub plans) — 119
-in all. 92 deliberate source mutations across the six modules were each killed by a test.
+the installed binary), `embedded-fs.test.js` (22), `bun-surface.test.js` (30),
+`bun-runtime.test.mjs` (15), `boot-channel.test.js` (7), `boot-guard.test.js` (5) and
+`launch.test.js` (32, stub plans) — 132 in all. 111 deliberate source mutations across the seven
+modules were each killed by a test.
 
 Run the mutation sweep against a COPY of this directory, never the working tree. A sweep that edits
 the sources in place leaves a defect on disk that reads as source if it crashes or if two runs

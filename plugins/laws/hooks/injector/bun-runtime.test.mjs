@@ -69,7 +69,6 @@ function build(modules = MODULES) {
     sources: new Map(modules.map((m) => [m.name, m])),
     provided: { ws: { WebSocket: 'stub-ws', default: 'stub-ws' } },
     substitute: { fs: (real) => embedded.substituteForFs(real) },
-    importBuiltin: (id) => import('node:' + id),
     requireBuiltin: (id) => require_('node:' + id),
     onEvaluationError: (name, e) => errors.push([name, e.message]),
   });
@@ -135,6 +134,17 @@ t('the import path and the require path see the SAME substituted builtin', async
   await runtime.evaluatedModule('/$bunfs/root/chunk-embedded-read.js');
   assert.strictEqual(runtime.requireSync('fs'), runtime.requireSync('node:fs'));
   assert.strictEqual(runtime.requireSync('fs').readFileSync('/$bunfs/root/notes.md', 'utf8'), '# embedded notes');
+});
+
+t('the static linker and the dynamic-import callback reach the SAME module', async () => {
+  // One dispatch serves both of node's callbacks; two would be two answers waiting to disagree.
+  const { runtime } = build();
+  await runtime.linkAll();
+  const viaDynamic = await runtime.evaluatedModule('/$bunfs/root/chunk-a.js');
+  assert.strictEqual(viaDynamic, runtime.moduleFor('/$bunfs/root/chunk-a.js'),
+    'the linker and the dynamic-import path must not each compile their own copy');
+  const builtinViaDynamic = await runtime.evaluatedModule('path');
+  assert.strictEqual(builtinViaDynamic, await runtime.evaluatedModule('node:path'));
 });
 
 t('concurrent importers of one builtin share a single module', async () => {

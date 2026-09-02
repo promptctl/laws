@@ -68,11 +68,15 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
   const text = (p) => recordFor(p).text();
   // A whole Stats shape, not the three predicates this host happens to care about: a caller is
   // entitled to ask any of them, and a missing one is a TypeError rather than a `false`.
-  const EPOCH = new Date(0);
+  // node's S_IFREG. Code that masks a mode with S_IFMT to ask "is this a regular file" gets nothing
+  // back from a bare permission triple.
+  const REGULAR_FILE = 0o100000;
   const stat = (p) => ({
-    size: recordFor(p).length, mode: 0o444,
+    size: recordFor(p).length, mode: REGULAR_FILE | 0o444,
     mtimeMs: 0, atimeMs: 0, ctimeMs: 0, birthtimeMs: 0,
-    mtime: EPOCH, atime: EPOCH, ctime: EPOCH, birthtime: EPOCH,
+    // A Date each, not one shared instance: Date is mutable, and one caller setting a field on a
+    // shared object would change every stat this host ever handed out.
+    mtime: new Date(0), atime: new Date(0), ctime: new Date(0), birthtime: new Date(0),
     isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false,
     isSocket: () => false, isFIFO: () => false, isBlockDevice: () => false, isCharacterDevice: () => false,
   });
@@ -87,19 +91,24 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
     return TEXT_REQUESTS.has(requested.toLowerCase()) ? text(p) : bytes(p).toString(requested);
   };
 
+  // Whether a member REFUSES keys off the namespace; what it ANSWERS keys off a record. Widening
+  // one gate to cover both is how `existsSync` came to report true for paths that do not exist.
   const served = {
     readFileSync: read,
-    existsSync: () => true,
+    existsSync: (p) => byName.has(p),
     statSync: stat,
     lstatSync: stat,
-    realpathSync: (p) => p,
+    realpathSync: (p) => { recordFor(p); return p; },
     // Node's `end` is INCLUSIVE and a Buffer slice's is not. Doing the arithmetic here rather than
     // in the host's closure keeps it where the tests can reach it.
-    createReadStream: (p, options = {}) => streamFrom(bytes(p).subarray(options.start ?? 0, options.end === undefined ? undefined : options.end + 1)),
+    createReadStream: (p, options = {}) => {
+      const window = bytes(p).subarray(options.start ?? 0, options.end === undefined ? undefined : options.end + 1);
+      return streamFrom(options.encoding ? Buffer.from(window.toString(options.encoding)) : window);
+    },
     readFile: async (p, options) => read(p, options),
     stat: async (p) => stat(p),
     lstat: async (p) => stat(p),
-    realpath: async (p) => p,
+    realpath: async (p) => { recordFor(p); return p; },
   };
 
   // Wrap a real fs-shaped module so embedded paths are answered here and everything else is the

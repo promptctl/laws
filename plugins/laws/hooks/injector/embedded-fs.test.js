@@ -43,6 +43,7 @@ const realFs = {
   existsSync: (p) => { realCalls.push(['existsSync', p]); return true; },
   statSync: (p) => { realCalls.push(['statSync', p]); return { size: 99 }; },
   createReadStream: (p) => { realCalls.push(['createReadStream', p]); return 'real-stream'; },
+  realpathSync: (p) => { realCalls.push(['realpathSync', p]); return p; },
   readdirSync: (p) => { realCalls.push(['readdirSync', p]); return ['real-entry']; },
   writeFileSync: (p) => { realCalls.push(['writeFileSync', p]); },
 };
@@ -185,6 +186,33 @@ t('a CONSTRUCTOR exported by fs still constructs — for real paths and embedded
   assert.ok(new sub.ReadStream('/tmp/real') instanceof ReadStream, 'the prototype chain has to survive too');
   // Constructed against an embedded path it is still refused, by name.
   assert.throws(() => new sub.ReadStream('/$bunfs/root/plain.md'), (err) => err instanceof UnservedEmbeddedCall);
+});
+
+t('a virtual path with NO record is not claimed to exist', () => {
+  // Refusals key off the namespace and answers key off a record. Widening one gate to cover both is
+  // how `existsSync` came to report true for paths that were never in the graph.
+  const e = make();
+  const sub = e.substituteForFs(realFs);
+  assert.strictEqual(sub.existsSync('/$bunfs/root/cli'), true);
+  assert.strictEqual(sub.existsSync('/$bunfs/root/never-there'), false);
+  assert.throws(() => sub.statSync('/$bunfs/root/never-there'), (err) => err.code === 'ENOENT');
+  assert.throws(() => sub.realpathSync('/$bunfs/root/never-there'), (err) => err.code === 'ENOENT');
+  assert.strictEqual(sub.realpathSync('/$bunfs/root/cli'), '/$bunfs/root/cli');
+});
+
+t('stat hands out its own Dates, and a mode a caller can mask', () => {
+  const e = make();
+  const first = e.stat('/$bunfs/root/plain.md');
+  first.mtime.setFullYear(1999);
+  assert.strictEqual(e.stat('/$bunfs/root/plain.md').mtime.getTime(), 0, 'one shared Date would carry that mutation everywhere');
+  assert.strictEqual(first.mode & 0o170000, 0o100000, 'S_IFMT has to say regular file');
+});
+
+t('createReadStream honours an encoding as well as a range', () => {
+  const seen = [];
+  const e = createEmbeddedFs(MODULES, { realFs, streamFrom: (b) => { seen.push(b.toString()); return b; } });
+  e.substituteForFs(realFs).createReadStream('/$bunfs/root/plain.md', { encoding: 'base64' });
+  assert.deepStrictEqual(seen, [Buffer.from('# plain').toString('base64')]);
 });
 
 t('a DIRECTORY under the virtual root is refused by name, not passed to the real fs', () => {

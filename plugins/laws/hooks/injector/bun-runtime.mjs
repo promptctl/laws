@@ -21,11 +21,12 @@ import { isBuiltin } from 'node:module';
 //   sources     — name -> the graph's module record
 //   provided    — modules Bun supplies that node does not, as ready namespaces (e.g. `ws`)
 //   substitute  — name -> (realExports) => exports, for builtins that must be adapted (e.g. `fs`)
-//   importBuiltin / requireBuiltin — how a node builtin is reached, async and sync
+//   requireBuiltin — how a node builtin is reached. One path, so the import side and the require
+//                    side cannot end up looking at different objects
 //   onEvaluationError — a module body that rejects after this runtime has already returned
 export function createModuleRuntime({
   embedded, sources, provided = {}, substitute = {},
-  importBuiltin, requireBuiltin, onEvaluationError,
+  requireBuiltin, onEvaluationError,
 }) {
   const compiled = new Map();
   const externalModules = new Map();

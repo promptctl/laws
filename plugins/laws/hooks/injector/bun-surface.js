@@ -66,8 +66,18 @@ function deepEquals(a, b, seen = new Map()) {
   if (a instanceof Date) return a.getTime() === b.getTime();
   if (a instanceof RegExp) return a.source === b.source && a.flags === b.flags;
   if (a instanceof Error) return a.name === b.name && a.message === b.message;
-  if (a instanceof Map) return a.size === b.size && [...a].every(([k, v]) => b.has(k) && deepEquals(v, b.get(k), seen));
-  if (a instanceof Set) return a.size === b.size && [...a].every((v) => b.has(v));
+  // Boxed primitives carry their value where no enumerable key can see it, so the generic fallback
+  // called any two of them equal.
+  if (a instanceof Number || a instanceof String || a instanceof Boolean) return a.valueOf() === b.valueOf();
+  // Keys and members compare STRUCTURALLY, like everything else here. `has` is reference equality,
+  // so two Maps keyed by equal-but-distinct objects would have been called different while their
+  // values were being compared deeply — one collection, two notions of equality.
+  const matches = (needle, haystack, ok) => haystack.some((candidate) => deepEquals(needle, candidate, seen) && ok(candidate));
+  if (a instanceof Map) {
+    const entries = [...b];
+    return a.size === b.size && [...a].every(([k, v]) => matches(k, entries.map(([bk]) => bk), (bk) => deepEquals(v, b.get(bk), seen)));
+  }
+  if (a instanceof Set) { const members = [...b]; return a.size === b.size && [...a].every((v) => matches(v, members, () => true)); }
   if (ArrayBuffer.isView(a)) return a.byteLength === b.byteLength && Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength));
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && deepEquals(a[k], b[k], seen));
@@ -128,6 +138,24 @@ const wrapAnsi = (str, columns, options) => {
   }).join('\n');
 };
 
+// Prerelease identifiers compare per dot-separated field: numeric ones numerically, and a numeric
+// identifier always ranks below an alphanumeric one. Plain string comparison gets `1.0.0-2` and
+// `1.0.0-10` backwards, and every ordering built on it with them.
+const comparePrerelease = (a, b) => {
+  if (a === b) return 0;
+  const left = a.split('.'), right = b.split('.');
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const l = left[i], r = right[i];
+    if (l === undefined) return -1;
+    if (r === undefined) return 1;
+    const ln = /^\d+$/.test(l), rn = /^\d+$/.test(r);
+    if (ln && rn) { if (+l !== +r) return +l < +r ? -1 : 1; continue; }
+    if (ln !== rn) return ln ? -1 : 1;
+    if (l !== r) return l < r ? -1 : 1;
+  }
+  return 0;
+};
+
 const semver = (() => {
   const parse = (v) => { const m = String(v).trim().replace(/^[v=\s]+/, '').match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/); return m ? { M: +m[1], m: +m[2], p: +m[3], pre: m[4] || '' } : null; };
   const cmp = (a, b) => {
@@ -138,7 +166,7 @@ const semver = (() => {
     if (x.p !== y.p) return x.p < y.p ? -1 : 1;
     if (x.pre && !y.pre) return -1;
     if (!x.pre && y.pre) return 1;
-    return x.pre < y.pre ? -1 : x.pre > y.pre ? 1 : 0;
+    return comparePrerelease(x.pre, y.pre);
   };
   const one = (v, range) => {
     const r = String(range).trim();
@@ -192,25 +220,27 @@ const spawnArgs = (first, second, openFd) => {
   // An explicit array is node's own spelling but not node's own VALUES: the graph passes
   // `stdio:["ignore","ignore",Bun.file(path)]`, and node cannot take a BunFile. Every element is
   // translated, whichever spelling it arrived in.
-  if (Array.isArray(options.stdio)) options.stdio = options.stdio.map((v) => toNodeStdio(v, openFd));
+  if (Array.isArray(options.stdio)) options.stdio = options.stdio.map((v, i) => toNodeStdio(v, openFd, i));
   // An explicit `stdio` wins; it is node's own spelling and the graph uses it too. A caller that
   // names none of the three gets NODE's defaults, not Bun's: Bun's per-slot defaults are not
   // documented anywhere this host can read, and inventing them would be a guess wearing the shape of
   // a fix. This is a known limit, stated rather than papered over.
   if (options.stdio === undefined && named.some((v) => v !== undefined)) {
-    options.stdio = named.map((v, i) => (v === undefined ? (i === 0 ? 'inherit' : 'pipe') : toNodeStdio(v, openFd)));
+    options.stdio = named.map((v, i) => (v === undefined ? (i === 0 ? 'inherit' : 'pipe') : toNodeStdio(v, openFd, i)));
   }
   return { command: cmd?.[0], args: cmd?.slice(1) ?? [], options };
 };
 // Bun's per-stream values, in node's vocabulary. A BunFile stands for the descriptor it names. An
 // unrecognised value is refused rather than quietly becoming 'pipe' — a wrong stream is a hang or a
 // lost output with nothing pointing at the cause. [LAW:no-silent-failure]
-const toNodeStdio = (v, openFd) => {
+const toNodeStdio = (v, openFd, slot) => {
   if (v === 'ignore' || v === 'inherit' || v === 'pipe' || v === null || v === undefined) return v ?? 'pipe';
   if (typeof v === 'number') return v;
   if (v && typeof v === 'object' && typeof v.fd === 'number') return v.fd;
   // A BunFile names a path rather than carrying a descriptor, so one is opened for it.
-  if (v && typeof v === 'object' && typeof v.name === 'string') return openFd(v.name);
+  // The slot decides the mode: a descriptor opened append-only cannot be read from, so a BunFile
+  // standing in for stdin has to be opened for reading.
+  if (v && typeof v === 'object' && typeof v.name === 'string') return openFd(v.name, slot === 0 ? 'r' : 'a');
   throw new Error(`spawn: this host does not know the stdio value ${JSON.stringify(v)}`);
 };
 
@@ -262,7 +292,11 @@ function serveOver(http, options = {}) {
       const body = ['GET', 'HEAD'].includes(req.method) ? undefined : req;
       const request = new Request(url, { method: req.method, headers: req.headers, body, duplex: 'half' });
       const response = await handler(request, server);
-      res.writeHead(response.status, Object.fromEntries(response.headers));
+      // The raw pairs, not an object: a header the Fetch iterator yields more than once (Set-Cookie)
+      // collapses to whichever came last when it becomes a key.
+      const headers = [];
+      response.headers.forEach((value, name) => headers.push(name, value));
+      res.writeHead(response.status, headers);
       res.end(Buffer.from(await response.arrayBuffer()));
     } catch {
       // A handler that throws must still answer. Without this the request hangs and the rejection
@@ -310,7 +344,7 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
     gzipSync: (b) => zlib.gzipSync(b), gunzipSync: (b) => zlib.gunzipSync(b),
 
     spawn: (first, second) => {
-      const { command, args, options } = spawnArgs(first, second, (path) => realFs.openSync(path, 'a'));
+      const { command, args, options } = spawnArgs(first, second, (path, mode) => realFs.openSync(path, mode));
       return withBunChildShape(childProcess.spawn(command, args, options));
     },
     which: whichVia(realFs, env, platform),

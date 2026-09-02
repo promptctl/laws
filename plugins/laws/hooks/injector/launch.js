@@ -27,7 +27,8 @@
 const childProcess = require('child_process');
 const path = require('path');
 const { StringDecoder } = require('string_decoder');
-const { readReport } = require('./boot-channel.js');
+const { readReport, RECORD_SEPARATOR } = require('./boot-channel.js');
+const { constants: { signals: SIGNAL_NUMBERS } } = require('os');
 
 // Measured on 2.1.258: ~800ms to link 1,640 modules and ~700ms more to the first frame. The deadline
 // is an order of magnitude of headroom over that, because the cost of waiting too long is a slow
@@ -140,7 +141,9 @@ function run(plan, {
     // one-shot command finishing (silently, if all its output went to stderr), and outside an
     // interactive terminal there is no session to salvage, only a command that already ran.
     const verdict = ({ code, signal, at }) => {
-      const exit = code === null ? 128 : code;
+      // The conventional encoding for "killed by a signal", so a SIGKILL and a SIGTERM stay
+      // distinguishable to whatever reads this wrapper's exit code.
+      const exit = code === null ? 128 + (SIGNAL_NUMBERS[signal] ?? 0) : code;
       if (!plan.reports) return { booted: true, code: exit };
       // A named refusal with nothing painted is a plan that never reached the user's command at all,
       // so there is no work to preserve and nothing to weigh: fall back, terminal or no terminal.
@@ -176,12 +179,16 @@ function run(plan, {
       let pending = '';
       channel.on('data', (chunk) => {
         pending += decoder.write(chunk);
-        const lines = pending.split('\n');
+        const lines = pending.split(RECORD_SEPARATOR);
         pending = lines.pop();
         for (const line of lines) {
           // What a line MEANS is the protocol's business, not this loop's. [LAW:one-source-of-truth]
           const report = readReport(line);
-          if (report.kind === 'started') started = true;
+          // Once the app is running, only an INTERACTIVE session still owes a first frame: a TUI
+          // paints within a second and a half, so silence past the deadline is the hang this check
+          // exists for. A headless run has no frame to owe — it can legitimately think for minutes
+          // before printing — and killing it at the deadline would end work that was going fine.
+          if (report.kind === 'started') { started = true; if (!interactive) clearTimeout(timer); }
           else if (report.kind === 'painted') { paintedAt = paintedAt || Date.now(); clearTimeout(timer); }
           else if (report.kind === 'absent-api') absentApis.push(report.name);
           else if (report.kind === 'refusal') refusal = refusal || report.reason; // the FIRST: the root cause

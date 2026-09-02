@@ -42,7 +42,7 @@ function fakeSpawn(script, { endAfterExit = 0 } = {}) {
       if (step.report !== undefined) channel.emit('data', Buffer.from(step.report + '\n'));
       if (step.raw !== undefined) channel.emit('data', Buffer.from(step.raw));
       if (step.channelError) channel.emit('error', new Error(step.channelError));
-      if (step.exit !== undefined) { exited = true; child.emit('exit', step.exit, null); if (!endAfterExit) end(); }
+      if (step.exit !== undefined) { exited = true; child.emit('exit', step.exit, step.signalName ?? null); if (!endAfterExit) end(); }
       if (step.spawnError) child.emit('error', new Error(step.spawnError));
     }, step.at);
     if (endAfterExit) setTimeout(end, endAfterExit);
@@ -80,6 +80,25 @@ t('...but a CLEAN early exit is a one-shot command finishing, and is never re-ru
 t('...and outside an interactive terminal no exit is ever re-run, whatever the code', async () => {
   const r = await L.run(hosted, { ...fast, interactive: false, spawn: fakeSpawn([{ at: 8, report: 'started' }, { at: 10, report: 'painted' }, { at: 40, exit: 1 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 1 });
+});
+
+t('a headless run that STARTED is not killed for taking its time before printing', async () => {
+  // The deadline guards the host coming up. For a non-interactive run `started` is the end of boot;
+  // killing it for thinking longer than the deadline would end work that was going fine.
+  const spawn = fakeSpawn([{ at: 5, report: 'started' }, { at: 500, exit: 0 }]);
+  const r = await L.run(hosted, { ...fast, interactive: false, deadlineMs: 120, spawn });
+  assert.deepStrictEqual(r, { booted: true, code: 0 });
+});
+
+t('...but an interactive session still owes a first frame, and is killed without one', async () => {
+  const r = await L.run(hosted, { ...fast, interactive: true, spawn: fakeSpawn([{ at: 5, report: 'started' }]) });
+  assert.strictEqual(r.booted, false);
+  assert.match(r.reason, /nothing painted within 300ms/);
+});
+
+t('a signal-terminated exit is reported as 128 plus the signal, not a flat 128', async () => {
+  const r = await L.run(stock, { ...fast, spawn: fakeSpawn([{ at: 10, exit: null, signalName: 'SIGKILL' }]) });
+  assert.deepStrictEqual(r, { booted: true, code: 128 + 9 });
 });
 
 t('a plan that never paints is killed at the deadline rather than hung on', async () => {

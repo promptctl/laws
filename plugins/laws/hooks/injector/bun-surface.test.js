@@ -156,6 +156,12 @@ t('deepEquals does not depend on key order', () => {
   assert.strictEqual(bun.deepEquals(loopA, loopB), true, 'circular data must terminate, not exhaust the stack');
   assert.strictEqual(bun.deepEquals(new Error('boom'), new Error('boom')), true);
   assert.strictEqual(bun.deepEquals(new Error('boom'), new Error('other')), false, 'an Error has no enumerable keys to tell apart');
+  assert.strictEqual(bun.deepEquals(new Number(5), new Number(5)), true);
+  assert.strictEqual(bun.deepEquals(new Number(5), new Number(6)), false, 'a boxed primitive hides its value from every enumerable key');
+  // Collections compare their keys and members structurally, like everything else here.
+  assert.strictEqual(bun.deepEquals(new Set([{ a: 1 }]), new Set([{ a: 1 }])), true, 'Set.has is reference equality');
+  assert.strictEqual(bun.deepEquals(new Map([[{ k: 1 }, 'v']]), new Map([[{ k: 1 }, 'v']])), true, 'and so is Map.has');
+  assert.strictEqual(bun.deepEquals(new Map([[{ k: 1 }, 'v']]), new Map([[{ k: 1 }, 'w']])), false);
 });
 
 // ---- which: no shell, ever ----------------------------------------------------------------------
@@ -205,14 +211,28 @@ t('a spawned child answers the two things the graph asks of it', async () => {
   assert.strictEqual(await child.exited, 0);
 });
 
+t('a repeated response header survives instead of the last one winning', async () => {
+  const { bun } = surface();
+  const server = bun.serve({ port: 0, fetch: () => {
+    const h = new Headers(); h.append('set-cookie', 'a=1'); h.append('set-cookie', 'b=2');
+    return new Response('ok', { headers: h });
+  } });
+  await new Promise((r) => setTimeout(r, 40));
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/`, { signal: AbortSignal.timeout(2000) });
+    assert.deepStrictEqual(res.headers.getSetCookie(), ['a=1', 'b=2'], 'collapsing to an object drops all but one');
+  } finally { server.stop(true); }
+});
+
 t('a BunFile in an explicit stdio array is resolved to a descriptor', () => {
   // The graph passes `stdio:["ignore","ignore",Bun.file(path)]`. Handing that array to node
   // unchanged means handing node an object it cannot use.
   const opened = [];
-  const { bun } = surface({ realFs: { ...realFs, openSync: (p) => { opened.push(p); return 42; } } });
-  const [, , options] = bun.spawn({ cmd: ['x'], stdio: ['ignore', 'ignore', bun.file('/tmp/log')] }).spawned;
-  assert.deepStrictEqual(options.stdio, ['ignore', 'ignore', 42]);
-  assert.deepStrictEqual(opened, ['/tmp/log']);
+  const { bun } = surface({ realFs: { ...realFs, openSync: (p, mode) => { opened.push([p, mode]); return 42; } } });
+  const [, , options] = bun.spawn({ cmd: ['x'], stdio: [bun.file('/tmp/in'), 'ignore', bun.file('/tmp/log')] }).spawned;
+  assert.deepStrictEqual(options.stdio, [42, 'ignore', 42]);
+  // The slot decides the mode: a descriptor opened append-only cannot be read from.
+  assert.deepStrictEqual(opened, [['/tmp/in', 'r'], ['/tmp/log', 'a']]);
 });
 
 t('a child killed by a signal is not reported as a clean exit', async () => {
@@ -324,6 +344,11 @@ t('semver orders and matches ranges', () => {
   assert.strictEqual(S.semver.satisfies('2.1.258', '^2.1.0'), true);
   assert.strictEqual(S.semver.satisfies('3.0.0', '^2.1.0'), false);
   assert.strictEqual(S.semver.satisfies('2.1.258', '>=2.0.0'), true);
+  // Prerelease identifiers compare per field: numerically where they are numeric, and a numeric
+  // identifier ranks below an alphanumeric one. String comparison gets both of these backwards.
+  assert.strictEqual(S.semver.order('1.0.0-2', '1.0.0-10'), -1);
+  assert.strictEqual(S.semver.order('1.0.0-alpha', '1.0.0-2'), 1);
+  assert.strictEqual(S.semver.order('1.0.0-alpha.1', '1.0.0-alpha.beta'), -1);
 });
 
 runAll();
