@@ -78,10 +78,15 @@ t('a missing embedded path raises ENOENT, not undefined', () => {
   assert.throws(() => e.bytes('/$bunfs/root/gone'), (err) => err.code === 'ENOENT' && /gone/.test(err.message));
 });
 
-t('stat reports the stored length', () => {
+t('stat reports the stored length, and answers every predicate a Stats is asked', () => {
   const e = make();
-  assert.strictEqual(e.stat('/$bunfs/root/plain.md').size, Buffer.from('# plain').length);
-  assert.strictEqual(e.stat('/$bunfs/root/plain.md').isFile(), true);
+  const st = e.stat('/$bunfs/root/plain.md');
+  assert.strictEqual(st.size, Buffer.from('# plain').length);
+  assert.strictEqual(st.isFile(), true);
+  // A missing predicate is a TypeError, not a false.
+  for (const q of ['isDirectory', 'isSymbolicLink', 'isSocket', 'isFIFO', 'isBlockDevice', 'isCharacterDevice']) {
+    assert.strictEqual(st[q](), false, q);
+  }
 });
 
 t('the loader is carried through so callers never guess what a module is', () => {
@@ -157,9 +162,18 @@ t('the nested promises object is substituted too, not handed over unwrapped', as
   assert.strictEqual(await sub.promises.readFile('/tmp/real'), 'real');
 });
 
-t('createReadStream passes its options through', () => {
+t('createReadStream passes its options through, all the way to the stream', () => {
   const e = createEmbeddedFs(MODULES, { realFs, streamFrom: (bytes, options) => ({ len: bytes.length, options }) });
   assert.deepStrictEqual(e.substituteForFs(realFs).createReadStream('/$bunfs/root/plain.md', { start: 2 }), { len: 7, options: { start: 2 } });
+});
+
+t('a wrapped fs function keeps the properties node hangs off it', () => {
+  // `realpathSync.native` is the well-known one; a bare arrow wrapper drops every such property.
+  const e = make();
+  const withProps = Object.assign((p) => 'real:' + p, { native: () => 'native' });
+  const sub = e.substituteForFs({ ...realFs, realpathSync: withProps });
+  assert.strictEqual(typeof sub.realpathSync.native, 'function');
+  assert.strictEqual(sub.realpathSync('/$bunfs/root/plain.md'), '/$bunfs/root/plain.md');
 });
 
 t('a read hands back memory the CALLER owns, not a view into the graph', () => {

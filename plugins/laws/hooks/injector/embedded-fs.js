@@ -60,9 +60,12 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
   // utf16le asset read as 'utf8' is mojibake, and the container is the only party that knows which
   // it is — which is the whole reason bun-graph carries the field. [LAW:one-source-of-truth]
   const text = (p) => recordFor(p).text();
+  // A whole Stats shape, not the three predicates this host happens to care about: a caller is
+  // entitled to ask any of them, and a missing one is a TypeError rather than a `false`.
   const stat = (p) => ({
-    size: recordFor(p).length, isFile: () => true, isDirectory: () => false,
-    isSymbolicLink: () => false, mode: 0o444, mtimeMs: 0, mtime: new Date(0),
+    size: recordFor(p).length, mode: 0o444, mtimeMs: 0, mtime: new Date(0), atimeMs: 0, ctimeMs: 0, birthtimeMs: 0,
+    isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false,
+    isSocket: () => false, isFIFO: () => false, isBlockDevice: () => false, isCharacterDevice: () => false,
   });
   // A read with any encoding is a text read; without one it is a byte read.
   const read = (p, options) => ((typeof options === 'string' ? options : options?.encoding) ? text(p) : bytes(p));
@@ -88,13 +91,17 @@ function createEmbeddedFs(modules, { realFs, streamFrom } = {}) {
     for (const [key, value] of Object.entries(real)) {
       if (typeof value !== 'function') continue;
       const answer = names.includes(key) ? served[key] : null;
-      out[key] = (...args) => {
+      const wrapper = (...args) => {
         if (!isEmbedded(args[0])) return value.apply(real, args);
         if (answer) return answer(...args);
         const refusal = new UnservedEmbeddedCall(key, args[0]);
         if (rejects) return Promise.reject(refusal);
         throw refusal;
       };
+      // Node hangs things off its fs functions — `realpathSync.native` is the well-known one — and a
+      // bare arrow would drop every one of them.
+      Object.defineProperties(wrapper, Object.getOwnPropertyDescriptors(value));
+      out[key] = wrapper;
     }
     return out;
   };

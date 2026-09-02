@@ -90,12 +90,15 @@ t('a plan that never paints is killed at the deadline rather than hung on', asyn
   assert.ok(Date.now() - started < 3000, 'the deadline, not the child, ended the wait');
 });
 
-t('a report still in flight when the child is reaped is not lost — no re-run of a plan that painted', async () => {
+t('a report still in flight when the child is reaped is not lost', async () => {
   // 'exit' lands first and 'painted' only afterwards, which is what a real pipe does when a plan
-  // paints and immediately dies. Judging on 'exit' alone would call this "never painted".
+  // paints and immediately dies. Judging on 'exit' alone would report "never painted anything",
+  // which is a different — and false — account of what happened.
   const spawn = fakeSpawn([{ at: 5, exit: 1 }, { at: 20, report: 'painted' }], { endAfterExit: 40 });
   const r = await L.run(hosted, { ...fast, settleMs: 5, spawn });
-  assert.deepStrictEqual(r, { booted: true, code: 1 });
+  assert.strictEqual(r.booted, false);
+  assert.match(r.reason, /painted, then exited 1 after 0ms/);
+  assert.doesNotMatch(r.reason, /before painting anything/);
 });
 
 t('an unreadable boot channel becomes part of the reason rather than vanishing', async () => {
@@ -138,6 +141,15 @@ t('every failure names the Bun APIs the shim did not have, which is the whole di
 t('several reports arriving in one chunk are each read, not just the first', async () => {
   const r = await L.run(hosted, { ...fast, spawn: fakeSpawn([{ at: 10, report: 'absent-api a\nabsent-api b\npainted' }, { at: 250, exit: 0 }]) });
   assert.deepStrictEqual(r, { booted: true, code: 0 });
+});
+
+t('a session is measured to its exit, not to whenever the channel finally closed', async () => {
+  // The plan painted and died 20ms later, well inside the settle window; a channel that takes its
+  // time closing must not make that look like a session that lived.
+  const spawn = fakeSpawn([{ at: 5, report: 'painted' }, { at: 25, exit: 1 }], { endAfterExit: 400 });
+  const r = await L.run(hosted, { ...fast, settleMs: 200, deadlineMs: 2000, spawn });
+  assert.strictEqual(r.booted, false);
+  assert.match(r.reason, /painted, then exited 1 after (1\d|2\d)ms/, 'measured to the exit, not to the channel close 400ms later');
 });
 
 t('a report split across pipe chunks is still read as one line', async () => {

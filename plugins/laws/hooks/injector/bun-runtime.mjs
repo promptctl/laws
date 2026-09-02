@@ -29,9 +29,10 @@ export function createModuleRuntime({
 }) {
   const compiled = new Map();
   const externalModules = new Map();
+  // ONE cache for what a builtin resolves to, shared by the import path and the require path. Two
+  // caches meant two substituted `fs` objects, and a module that imports fs and one that requires it
+  // would have been looking at different things. [LAW:one-source-of-truth]
   const externalExportsCache = new Map();
-
-  const isGraphModule = (specifier) => embedded.loaderOf(specifier) === 'js';
 
   // Anything neither embedded, provided, nor a node builtin would otherwise be resolved out of the
   // HOST's own package tree — a different one than the graph was built against, which is a wrong
@@ -43,36 +44,35 @@ export function createModuleRuntime({
     throw new Error(`the graph ${verb} ${specifier}, which is neither embedded nor a module this host provides`);
   };
 
-  async function externalExports(specifier) {
-    const id = specifier.replace(/^node:/, '');
-    if (provided[id]) return provided[id];
-    if (!isBuiltin(id)) refuseUnknown(specifier, 'imports');
-    const real = await importBuiltin(id);
-    return substitute[id] ? substitute[id](real) : real;
-  }
-
-  function externalExportsSync(specifier) {
+  // Resolving a builtin is synchronous either way — `requireBuiltin` is how both paths reach it, so
+  // the async caller and the sync one see the same object.
+  function externalExports(specifier, verb) {
     const id = specifier.replace(/^node:/, '');
     if (externalExportsCache.has(id)) return externalExportsCache.get(id);
     if (provided[id]) { externalExportsCache.set(id, provided[id]); return provided[id]; }
-    if (!isBuiltin(id)) refuseUnknown(specifier, 'requires');
+    if (!isBuiltin(id)) refuseUnknown(specifier, verb);
     const real = requireBuiltin(id);
     const exports = substitute[id] ? substitute[id](real) : real;
     externalExportsCache.set(id, exports);
     return exports;
   }
 
-  async function externalModule(specifier) {
+  // The PROMISE is cached, not its result: caching after the await is a check-then-set across a
+  // suspension point, and two concurrent importers of the same builtin would each build their own
+  // module for it.
+  function externalModule(specifier) {
     const id = specifier.replace(/^node:/, '');
     const cached = externalModules.get(id);
     if (cached) return cached;
-    const exported = await externalExports(specifier);
-    const names = [...new Set(['default', ...Object.keys(exported)])].filter((k) => /^[A-Za-z_$][\w$]*$/.test(k));
-    const mod = new vm.SyntheticModule(names, function () {
-      for (const n of names) this.setExport(n, n === 'default' ? (exported.default ?? exported) : exported[n]);
-    }, { identifier: specifier });
-    externalModules.set(id, mod);
-    return mod;
+    const building = (async () => {
+      const exported = externalExports(specifier, 'imports');
+      const names = [...new Set(['default', ...Object.keys(exported)])].filter((k) => /^[A-Za-z_$][\w$]*$/.test(k));
+      return new vm.SyntheticModule(names, function () {
+        for (const n of names) this.setExport(n, n === 'default' ? (exported.default ?? exported) : exported[n]);
+      }, { identifier: specifier });
+    })();
+    externalModules.set(id, building);
+    return building;
   }
 
   function moduleFor(name) {
@@ -103,7 +103,7 @@ export function createModuleRuntime({
   // either fail cryptically or, decoded as latin1, parse into nonsense.
   function requireSync(specifier) {
     const loader = embedded.loaderOf(specifier);
-    if (loader === undefined) return externalExportsSync(specifier);
+    if (loader === undefined) return externalExports(specifier, 'requires');
     if (loader === 'js') return namespaceOf(specifier);
     if (loader === 'text') return embedded.text(specifier);
     throw new Error(`${specifier} is a ${loader} module; this host does not serve it to require()`);
@@ -111,7 +111,15 @@ export function createModuleRuntime({
 
   // ONE dispatch, used by both of node's callbacks. Asking the same question in two places is two
   // answers waiting to disagree. [LAW:one-source-of-truth]
-  const resolveModule = (specifier) => isGraphModule(specifier) ? moduleFor(specifier) : externalModule(specifier);
+  // It keys off whether the graph carries the specifier at all, not off whether it is JavaScript: an
+  // embedded asset the host will not evaluate has to be refused for what it IS, and routing it to
+  // the external path would have it reported as a module the graph does not name — which is false.
+  const resolveModule = (specifier) => {
+    const loader = embedded.loaderOf(specifier);
+    if (loader === undefined) return externalModule(specifier);
+    if (loader === 'js') return moduleFor(specifier);
+    throw new Error(`${specifier} is a ${loader} module; this host does not serve it to import()`);
+  };
 
   // The dynamic-import callback must hand back an EVALUATED module: node takes its namespace as it
   // finds it and will not run the body on our behalf.

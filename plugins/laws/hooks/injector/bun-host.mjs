@@ -39,7 +39,10 @@ const { createModuleRuntime } = await import('./bun-runtime.mjs');
 const BOOT_FD = Number(process.env.CLAUDE_LAWS_BOOT_FD || 2);
 const EXIT_NOT_BOOTED = 70;
 const send = (line) => {
-  try { fs.writeSync(BOOT_FD, line + '\n'); } catch { /* the launcher closed the channel; the exit code still carries the verdict */ }
+  // Nothing is swallowed here that could be reported anywhere else: this IS the reporting channel,
+  // so a failure to write to it has no second place to go, and the exit code still carries the
+  // verdict either way. The usual cause is the launcher having closed its end.
+  try { fs.writeSync(BOOT_FD, line + '\n'); } catch { /* see above */ }
 };
 // The one-per-process VERDICT: whether this host ever got the graph as far as the terminal. Later
 // observations still go out through `send` — a graph that painted and then threw has spent its
@@ -50,6 +53,16 @@ const report = (verdict) => { if (!reported) { reported = true; send(verdict); }
 // undefined reason is the silence this whole channel exists to prevent.
 const because = (e) => (e && e.message) || String(e);
 
+// A boot that dies outside every try/catch — an uncaught throw, a rejection nobody owns — still has
+// to leave a name on the channel before it goes. Without this the header's claim that every degrade
+// is reported would simply be false. [LAW:no-silent-failure]
+for (const [event, label] of [['uncaughtException', 'uncaught'], ['unhandledRejection', 'unhandled-rejection']]) {
+  process.on(event, (e) => {
+    send(`boot-threw ${label}: ${because(e)}`);
+    process.exit(EXIT_NOT_BOOTED);
+  });
+}
+
 const [binaryPath, ...userArgs] = process.argv.slice(2);
 const graph = readGraphFromFile(binaryPath);
 if (!graph.ok) {
@@ -57,7 +70,12 @@ if (!graph.ok) {
   process.exit(EXIT_NOT_BOOTED);
 }
 
-const embedded = createEmbeddedFs(graph.modules, { realFs: fs, streamFrom: (bytes) => Readable.from(bytes) });
+const embedded = createEmbeddedFs(graph.modules, {
+  realFs: fs,
+  // The options a caller passed to createReadStream reach here; a closure that ignored them would
+  // silently serve the whole asset to a caller that asked for a slice of it.
+  streamFrom: (bytes, options = {}) => Readable.from(bytes.subarray(options.start ?? 0, options.end === undefined ? undefined : options.end + 1)),
+});
 
 // ---------------------------------------------------------------------------------------------
 // The Bun global
@@ -84,11 +102,10 @@ globalThis.Bun = createBunSurface({
 // non-builtin bare specifier this graph imports. Substituting only for HOSTED code means node's own
 // fs is never patched. `ws` is built ONCE — a factory per resolution path would give the sync and
 // async resolvers each their own `Server` class, and an identity check across them would fail.
-const WS = (() => {
-  const W = globalThis.WebSocket;
-  class Server { on() { return this; } close() {} handleUpgrade() {} }
-  return { WebSocket: W, WebSocketServer: Server, Server, default: W };
-})();
+// Only what the graph imports. Every `from "ws"` in it takes the default export and nothing else,
+// so a WebSocketServer here would be an accept-nothing stub standing in for a capability no caller
+// asks for — and the absence, if one ever does, is recorded.
+const WS = { WebSocket: globalThis.WebSocket, default: globalThis.WebSocket };
 
 const runtime = createModuleRuntime({
   embedded,

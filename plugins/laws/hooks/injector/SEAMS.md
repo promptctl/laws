@@ -168,7 +168,10 @@ Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
   APIs the shim was asked for and does not have, streamed as they are seen rather than collected at
   the end, because on a hang the killed host never reaches an end to report from. `Bun.YAML` and
   `Bun.ant` are genuinely absent from the surface and are recorded rather than stubbed; boot does
-  not need them.
+  not need them. Note that `stripANSI` does NOT appear in that list, and should not: the break
+  removes a member's VALUE, not its key, so the Proxy never sees a missing name. The two lists are
+  independent — the reason names what died, and the parenthetical names what was missing while it
+  ran.
 - One caution for whoever runs that break test again: the app persists a `fullscreenAutoDisabled`
   flag in `~/.claude.json` when its renderer fails to start, so a live break test mutates the user's
   config and must be cleaned up afterwards. This is why the automated suite (`launch.test.js`) uses
@@ -176,8 +179,14 @@ Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
 
 Tests: `bun-graph.test.js` (21 — synthetic containers for every named absence, plus a live read of
 the installed binary), `embedded-fs.test.js` (15), `bun-surface.test.js` (23),
-`bun-runtime.test.mjs` (11) and `launch.test.js` (24, stub plans) — 94 in all. 57 deliberate
+`bun-runtime.test.mjs` (14) and `launch.test.js` (25, stub plans) — 103 in all. 67 deliberate
 source mutations across the five modules were each killed by a test.
+
+Run the mutation sweep against a COPY of this directory, never the working tree. A sweep that edits
+the sources in place leaves a defect on disk that reads as source if it crashes or if two runs
+overlap — which happened here, and cost an audit of every guard in every file to be sure nothing
+else had been left behind. Count a mutation that makes a test HANG as a survivor, too: a case that
+never returns reports nothing, which is no better than one that passes.
 
 ## The frontier: reloading an edited transcript into a running session
 
@@ -268,9 +277,10 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
   records, so it reads both the one-CJS-module 2.1.226 and the 1,818-module ESM graph of 2.1.258
   from one code path, with no disk copy and no version→offset table
   (`promptctl-injector-xy0.1`).
-- DONE (2026-09-02): the recovered graph runs under node — `bun-host.mjs` links it with
-  `vm.SourceTextModule` (node's own ESM loader cannot: `ERR_REQUIRE_CYCLE_MODULE`) and serves the
-  embedded assets as a read-only filesystem, and `launch.js` decides whether a plan became a
+- DONE (2026-09-02): the recovered graph runs under node — `bun-runtime.mjs` links it with
+  `vm.SourceTextModule` (node's own ESM loader cannot: `ERR_REQUIRE_CYCLE_MODULE`), `embedded-fs.js`
+  serves the embedded assets as a read-only filesystem, `bun-surface.js` is the `Bun` global,
+  `bun-host.mjs` wires the four together, and `launch.js` decides whether a plan became a
   session before keeping it. Verified live on 2.1.258 in a PTY: boots to an idle authenticated
   TUI, and with `Bun.stripANSI` removed it is detected as not-booted and falls back to stock
   claude without hanging (`promptctl-injector-xy0.2`).

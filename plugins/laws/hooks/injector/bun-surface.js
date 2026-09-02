@@ -52,18 +52,22 @@ const crc32 = (() => {
 
 // Structural equality, order-independent. JSON.stringify would call {a:1,b:2} and {b:2,a:1}
 // different, which is wrong for a primitive whose whole job is answering that question.
-function deepEquals(a, b) {
+function deepEquals(a, b, seen = new Map()) {
   if (Object.is(a, b)) return true;
   if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
   if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
-  if (Array.isArray(a)) return a.length === b.length && a.every((x, i) => deepEquals(x, b[i]));
+  // A pair already being compared higher up the stack is equal unless something else proves
+  // otherwise; without this, circular data recurses until the stack gives out.
+  if (seen.get(a) === b) return true;
+  seen.set(a, b);
+  if (Array.isArray(a)) return a.length === b.length && a.every((x, i) => deepEquals(x, b[i], seen));
   if (a instanceof Date) return a.getTime() === b.getTime();
   if (a instanceof RegExp) return a.source === b.source && a.flags === b.flags;
-  if (a instanceof Map) return a.size === b.size && [...a].every(([k, v]) => b.has(k) && deepEquals(v, b.get(k)));
+  if (a instanceof Map) return a.size === b.size && [...a].every(([k, v]) => b.has(k) && deepEquals(v, b.get(k), seen));
   if (a instanceof Set) return a.size === b.size && [...a].every((v) => b.has(v));
   if (ArrayBuffer.isView(a)) return a.byteLength === b.byteLength && Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength));
   const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && deepEquals(a[k], b[k]));
+  return keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && deepEquals(a[k], b[k], seen));
 }
 
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
@@ -176,16 +180,24 @@ const spawnArgs = (first, second) => {
   const options = { ...rest, ...(second || {}) };
   const named = STREAM_SLOTS.map((slot) => options[slot]);
   for (const slot of STREAM_SLOTS) delete options[slot];
-  // An explicit `stdio` wins; it is node's own spelling and the graph uses it too.
+  // An explicit `stdio` wins; it is node's own spelling and the graph uses it too. A caller that
+  // names none of the three gets NODE's defaults, not Bun's: Bun's per-slot defaults are not
+  // documented anywhere this host can read, and inventing them would be a guess wearing the shape of
+  // a fix. This is a known limit, stated rather than papered over.
   if (options.stdio === undefined && named.some((v) => v !== undefined)) {
     options.stdio = named.map((v, i) => (v === undefined ? (i === 0 ? 'inherit' : 'pipe') : toNodeStdio(v)));
   }
   return { command: cmd?.[0], args: cmd?.slice(1) ?? [], options };
 };
-// Bun's per-stream values, in node's vocabulary. A BunFile stands for the descriptor it names.
-const toNodeStdio = (v) => (v === 'ignore' || v === 'inherit' || v === 'pipe' ? v
-  : typeof v === 'number' ? v
-    : v && typeof v === 'object' && typeof v.fd === 'number' ? v.fd : 'pipe');
+// Bun's per-stream values, in node's vocabulary. A BunFile stands for the descriptor it names. An
+// unrecognised value is refused rather than quietly becoming 'pipe' — a wrong stream is a hang or a
+// lost output with nothing pointing at the cause. [LAW:no-silent-failure]
+const toNodeStdio = (v) => {
+  if (v === 'ignore' || v === 'inherit' || v === 'pipe') return v;
+  if (typeof v === 'number') return v;
+  if (v && typeof v === 'object' && typeof v.fd === 'number') return v.fd;
+  throw new Error(`spawn: this host does not know the stdio value ${JSON.stringify(v)}`);
+};
 
 // The graph reads a finished child's output as `await child.stdout.text()` and waits on
 // `child.exited`. Node's ChildProcess has neither, so the streams it does have are given those two
@@ -194,30 +206,53 @@ const withBunChildShape = (child) => {
   for (const slot of ['stdout', 'stderr']) {
     const stream = child[slot];
     if (!stream || typeof stream.text === 'function') continue;
-    const drain = async () => { const parts = []; for await (const c of stream) parts.push(c); return Buffer.concat(parts); };
+    // Drained ONCE and shared. A stream is consumed by reading it, so three readers that each drain
+    // it independently means the second and third get nothing back.
+    let drained;
+    const drain = () => (drained ??= (async () => { const parts = []; for await (const c of stream) parts.push(c); return Buffer.concat(parts); })());
     stream.text = async () => (await drain()).toString('utf8');
     stream.json = async () => JSON.parse((await drain()).toString('utf8'));
     stream.bytes = async () => new Uint8Array(await drain());
   }
   if (child.exited === undefined) {
-    child.exited = new Promise((resolve, reject) => { child.on('exit', (code) => resolve(code ?? 0)); child.on('error', reject); });
+    // Listen at once, promise on demand. Both halves are needed: an 'error' event with no listener
+    // is thrown by node, and a promise created eagerly rejects with nobody awaiting it — an
+    // unhandled rejection that ends the process over a child nobody was watching. So the outcome is
+    // captured the moment it happens, and only turned into a promise if something asks.
+    let outcome, settle;
+    const record = (o) => { outcome = o; settle?.(o); };
+    child.on('exit', (code) => record({ code: code ?? 0 }));
+    child.on('error', (error) => record({ error }));
+    let exited;
+    const promise = () => new Promise((resolve, reject) => {
+      const deliver = (o) => (o.error ? reject(o.error) : resolve(o.code));
+      if (outcome) return deliver(outcome);
+      settle = deliver;
+    });
+    Object.defineProperty(child, 'exited', { configurable: true, get: () => (exited ??= promise()) });
   }
   return child;
 };
 
-// Build the surface. `onAbsentApi` is called once per name the graph asks for that is not here.
 // A real server, because the graph really uses one — with a `fetch` handler, `.unref()` and
 // `.stop(true)`. The stub this replaces answered every one of those and served nothing, so a caller
 // that started a listener and waited for a callback on it waited forever.
 function serveOver(http, options = {}) {
   const handler = options.fetch;
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const body = ['GET', 'HEAD'].includes(req.method) ? undefined : req;
-    const request = new Request(url, { method: req.method, headers: req.headers, body, duplex: 'half' });
-    const response = await handler(request, server);
-    res.writeHead(response.status, Object.fromEntries(response.headers));
-    res.end(Buffer.from(await response.arrayBuffer()));
+    try {
+      const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      const body = ['GET', 'HEAD'].includes(req.method) ? undefined : req;
+      const request = new Request(url, { method: req.method, headers: req.headers, body, duplex: 'half' });
+      const response = await handler(request, server);
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(Buffer.from(await response.arrayBuffer()));
+    } catch {
+      // A handler that throws must still answer. Without this the request hangs and the rejection
+      // is unhandled, which takes the whole session down for one bad response.
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    }
   });
   server.listen(options.port ?? 0, options.hostname ?? '127.0.0.1');
   return {
@@ -229,6 +264,7 @@ function serveOver(http, options = {}) {
   };
 }
 
+// Build the surface. `onAbsentApi` is called for every name the graph asks for that is not here.
 function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, env, platform, entryName, onAbsentApi }) {
   const surface = {
     version: '1.3.14', revision: '0', main: entryName, env,
@@ -252,11 +288,10 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
     },
 
     zstdDecompressSync: (b) => zlib.zstdDecompressSync(b),
-    zstdDecompress: async (b) => zlib.zstdDecompressSync(b),
+    zstdDecompress: (b) => new Promise((resolve, reject) => zlib.zstdDecompress(b, (e, out) => (e ? reject(e) : resolve(out)))),
     gzipSync: (b) => zlib.gzipSync(b), gunzipSync: (b) => zlib.gunzipSync(b),
 
     spawn: (first, second) => { const { command, args, options } = spawnArgs(first, second); return withBunChildShape(childProcess.spawn(command, args, options)); },
-    spawnSync: (first, second) => { const { command, args, options } = spawnArgs(first, second); return childProcess.spawnSync(command, args, options); },
     which: whichVia(realFs, env, platform),
 
     hash: Object.assign((x, seed) => fnv1a64(x, seed), {
@@ -269,8 +304,9 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
         if (!HASH_ALGORITHMS.has(algorithm)) throw new Error(`CryptoHasher: this host does not serve the algorithm ${algorithm}`);
         this.h = crypto.createHash(algorithm);
       }
-      update(d) { this.h.update(d); return this; }
-      digest(enc) { return enc ? this.h.digest(enc) : new Uint8Array(this.h.digest()); }
+      update(d, encoding) { this.h.update(d, encoding); return this; }
+      // Bun's encodingless digest is a Uint8Array, and a node Buffer already is one.
+      digest(enc) { return enc ? this.h.digest(enc) : this.h.digest(); }
     },
 
     stringWidth, stripANSI, wrapAnsi, semver, deepEquals,

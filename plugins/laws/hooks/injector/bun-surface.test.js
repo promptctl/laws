@@ -72,8 +72,8 @@ t('the members the graph never uses are absent rather than wrong', () => {
   // Surveyed against the shipped graph: nothing reads Bun.stdin/stdout/stderr or calls Bun.color.
   // Keeping a wrong-shaped member for them would answer plausibly; absence is recorded.
   const { bun, absent } = surface();
-  for (const name of ['stdin', 'stdout', 'stderr', 'color']) assert.strictEqual(bun[name], undefined, name);
-  assert.deepStrictEqual([...new Set(absent)], ['stdin', 'stdout', 'stderr', 'color']);
+  for (const name of ['stdin', 'stdout', 'stderr', 'color', 'spawnSync']) assert.strictEqual(bun[name], undefined, name);
+  assert.deepStrictEqual([...new Set(absent)], ['stdin', 'stdout', 'stderr', 'color', 'spawnSync']);
 });
 
 t('a member the surface does have is never recorded as absent', () => {
@@ -102,6 +102,9 @@ t('the default hash is a 64-bit value, which is what Bun returns', () => {
 
 t('CryptoHasher digests, and refuses an algorithm it cannot serve BY NAME', () => {
   const { bun } = surface();
+  // The encoding argument real Bun accepts is forwarded, not dropped.
+  assert.strictEqual(new bun.CryptoHasher('sha256').update('616263', 'hex').digest('hex'),
+    'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
   assert.strictEqual(new bun.CryptoHasher('sha256').update('abc').digest('hex'),
     'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
   assert.throws(() => new bun.CryptoHasher('xxhash3'), /does not serve the algorithm xxhash3/);
@@ -142,6 +145,9 @@ t('deepEquals does not depend on key order', () => {
   assert.strictEqual(bun.deepEquals({ a: undefined }, {}), false, 'a present undefined key is not an absent one');
   assert.strictEqual(bun.deepEquals(/a/g, /a/g), true);
   assert.strictEqual(bun.deepEquals(/a/g, /b/g), false, 'two RegExps have no enumerable keys to tell apart');
+  const loopA = { name: 'a' }; loopA.self = loopA;
+  const loopB = { name: 'a' }; loopB.self = loopB;
+  assert.strictEqual(bun.deepEquals(loopA, loopB), true, 'circular data must terminate, not exhaust the stack');
 });
 
 // ---- which: no shell, ever ----------------------------------------------------------------------
@@ -167,7 +173,9 @@ t('spawn takes the array form and the object form alike', () => {
   const { bun } = surface();
   assert.deepStrictEqual(bun.spawn(['git', 'status'], { cwd: '/tmp' }).spawned, ['git', ['status'], { cwd: '/tmp' }]);
   assert.deepStrictEqual(bun.spawn({ cmd: ['git', 'status'], cwd: '/tmp' }).spawned, ['git', ['status'], { cwd: '/tmp' }]);
-  assert.deepStrictEqual(bun.spawnSync({ cmd: ['ls'] }).spawnedSync, ['ls', [], {}]);
+  // spawnSync has no call site in the graph, so it is absent rather than kept in a shape that
+  // would only be guessed at — Bun's spawnSync result is not node's.
+  assert.strictEqual(bun.spawnSync, undefined);
 });
 
 t("Bun's per-stream options become node's stdio, instead of being silently dropped", () => {
@@ -187,6 +195,41 @@ t('a spawned child answers the two things the graph asks of it', async () => {
   const child = bun.spawn({ cmd: [process.execPath, '-e', 'process.stdout.write("hi")'], stdout: 'pipe' });
   assert.strictEqual(await child.stdout.text(), 'hi');
   assert.strictEqual(await child.exited, 0);
+});
+
+t('an unrecognised stdio value is refused by name, not quietly turned into a pipe', () => {
+  const { bun } = surface();
+  assert.throws(() => bun.spawn({ cmd: ['x'], stdout: 'somethingelse' }), /does not know the stdio value "somethingelse"/);
+});
+
+t('a child\'s output can be read once — and reading it twice does not come back empty', async () => {
+  const { bun } = surface({ childProcess: require('child_process') });
+  const child = bun.spawn({ cmd: [process.execPath, '-e', 'process.stdout.write("hi")'], stdout: 'pipe' });
+  assert.strictEqual(await child.stdout.text(), 'hi');
+  assert.strictEqual(await child.stdout.text(), 'hi', 'a stream is consumed by reading it; the drain has to be shared');
+});
+
+t('the exited promise is built only when something asks for it', async () => {
+  // Created eagerly it rejects on 'error' with nobody awaiting, and an unhandled rejection ends the
+  // process over a child nobody was watching.
+  const { bun } = surface({ childProcess: require('child_process') });
+  const child = bun.spawn({ cmd: ['definitely-not-a-real-binary-xyz'], stdout: 'ignore', stderr: 'ignore' });
+  await new Promise((r) => setTimeout(r, 60));
+  await assert.rejects(() => child.exited);
+});
+
+t('a handler that throws still answers, rather than hanging the request', async () => {
+  const { bun } = surface();
+  const server = bun.serve({ port: 0, fetch: () => { throw new Error('handler blew up'); } });
+  await new Promise((r) => setTimeout(r, 40));
+  try {
+    // Bounded on purpose. Without the 500 the request never answers, and an unbounded fetch would
+    // turn this case into a hang — which reports nothing and is no better than a case that passes.
+    const res = await fetch(`http://127.0.0.1:${server.port}/`, { signal: AbortSignal.timeout(2000) });
+    assert.strictEqual(res.status, 500);
+  } finally {
+    server.stop(true);
+  }
 });
 
 t('serve actually serves — the handler runs and its response comes back', async () => {

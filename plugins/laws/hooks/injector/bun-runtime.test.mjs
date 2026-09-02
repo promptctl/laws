@@ -118,6 +118,31 @@ t('require REFUSES a native blob by name rather than feeding bytes to the JavaSc
   assert.throws(() => runtime.requireSync('/$bunfs/root/blob.node'), /is a napi module; this host does not serve it/);
 });
 
+t('a dynamic import of an embedded ASSET is refused for what it is, not called missing', async () => {
+  // Routing it to the external path would report "the graph names no module", which is false — the
+  // graph names it; this host just will not evaluate a text asset as JavaScript.
+  const { runtime } = build();
+  await runtime.linkAll();
+  await assert.rejects(() => runtime.evaluatedModule('/$bunfs/root/notes.md'),
+    /is a text module; this host does not serve it to import\(\)/);
+});
+
+t('the import path and the require path see the SAME substituted builtin', async () => {
+  // Two caches meant two `fs` objects, so a module that imports fs and one that requires it would
+  // have been looking at different things.
+  const { runtime } = build();
+  await runtime.linkAll();
+  await runtime.evaluatedModule('/$bunfs/root/chunk-embedded-read.js');
+  assert.strictEqual(runtime.requireSync('fs'), runtime.requireSync('node:fs'));
+  assert.strictEqual(runtime.requireSync('fs').readFileSync('/$bunfs/root/notes.md', 'utf8'), '# embedded notes');
+});
+
+t('concurrent importers of one builtin share a single module', async () => {
+  const { runtime } = build();
+  const [a, b] = await Promise.all([runtime.evaluatedModule('path'), runtime.evaluatedModule('path')]);
+  assert.strictEqual(a, b, 'caching after the await is a check-then-set across a suspension point');
+});
+
 t('a module the graph does not carry is refused with its name, not a property-of-undefined', () => {
   const { runtime } = build();
   assert.throws(() => runtime.moduleFor('/$bunfs/root/never-existed.js'), /the graph names no module \/\$bunfs\/root\/never-existed\.js/);

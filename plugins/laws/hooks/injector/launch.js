@@ -125,7 +125,7 @@ function run(plan, {
     // are the ones where re-trying would repeat work the user already got: a clean exit is a
     // one-shot command finishing (silently, if all its output went to stderr), and outside an
     // interactive terminal there is no session to salvage, only a command that already ran.
-    const verdict = ({ code, signal }) => {
+    const verdict = ({ code, signal, at }) => {
       const exit = code === null ? 128 : code;
       if (!plan.reports) return { booted: true, code: exit };
       // A named refusal with nothing painted is a plan that never reached the user's command at all,
@@ -135,7 +135,10 @@ function run(plan, {
       if (refusal && !paintedAt) return { booted: false, reason: because(refusal) };
       if (exit === 0 || !interactive) return { booted: true, code: exit };
       if (!paintedAt) return { booted: false, reason: because(`exited ${signal || code} before painting anything`) };
-      const lived = Date.now() - paintedAt;
+      // Clamped: a paint report can arrive AFTER the exit, because the pipe outlives the process.
+      // The paint really did happen first, so the honest reading of that ordering is a session that
+      // lasted no time at all — not a negative one.
+      const lived = Math.max(0, at - paintedAt);
       if (lived >= settleMs) return { booted: true, code: exit };
       const died = refusal ? `: ${refusal}` : '';
       return { booted: false, reason: because(`painted, then exited ${exit} after ${lived}ms — never became a session${died}`) };
@@ -168,7 +171,9 @@ function run(plan, {
     }
 
     child.on('error', (e) => { clearTimeout(timer); resolve({ booted: false, reason: `could not start ${plan.command}: ${e.message}` }); });
-    child.on('exit', (code, signal) => { ended = { code, signal }; settle(); });
+    // The instant of the exit, not the instant the verdict is formed: settle() also waits on the
+    // boot channel closing, and a slow close would otherwise be counted as time the session lived.
+    child.on('exit', (code, signal) => { ended = { code, signal, at: Date.now() }; settle(); });
   });
 }
 
