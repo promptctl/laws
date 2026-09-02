@@ -584,6 +584,11 @@ horizon_lit_import() {
 # enforces the "no remote yet" half of that rule; this is the single place the other half
 # is added. [LAW:single-enforcer]
 #
+# There is a second, tighter constraint on WHEN, and run-loop.sh is where it is argued:
+# a repo cannot be un-created by anything this eval is allowed to do, so it is minted only
+# once the session it belongs to is proven healthy. Callers that create a repo before the
+# run works produce permanent litter in a real org.
+#
 # ONE REPO PER RUN, never a shared repo reset between runs: a run's PRs and review threads
 # ARE part of the bundle promptctl-horizon-7ry.4 captures, so resetting a shared one would
 # destroy the previous run's record to save a name.

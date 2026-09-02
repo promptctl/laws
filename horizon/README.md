@@ -157,19 +157,32 @@ run, loudly.
 
 ### The run's own GitHub repo
 
-Between seeding and launch, the driver creates a public repo for the run —
-`promptctl/horizon-run-<utc-timestamp>` — sets it as the project's `origin`, and pushes
-the seeded history. The goal wording drives the agent to carry every unit of work to a
-merged PR, which needs somewhere to push and a place for the reviewer Action to run.
-Public, not private: Actions minutes are unmetered on public repositories.
+The driver creates a public repo for the run — `promptctl/horizon-run-<utc-timestamp>` —
+sets it as the project's `origin`, and pushes the seeded history. The goal wording drives
+the agent to carry every unit of work to a merged PR, which needs somewhere to push and a
+place for the reviewer Action to run. Public, not private: Actions minutes are unmetered
+on public repositories.
 
 One repo per run, never a shared one reset between runs. A run's PRs and review threads
 are part of what the run *is*, so reusing a repo would trade the previous run's record
 for a tidier namespace.
 
-The order is not negotiable. `lit init` adopts a backlog from a git remote when it finds
-one, so the remote is added strictly *after* seeding — a project born with an `origin`
-would start from that remote's backlog instead of the seed's, and nothing would say so.
+**When it is created is load-bearing, and there are constraints on both sides.**
+
+It cannot come before seeding: `lit init` adopts a backlog from a git remote when it
+finds one, so a project born with an `origin` starts from that remote's backlog instead
+of the seed's, and nothing says so.
+
+It also must not come before the run is known to work. Deleting a repo needs a scope this
+eval deliberately does not hold — so a repo created for a run that never started is not
+cleanup work, it is permanent litter in a real org. Four accumulated exactly that way
+before this was understood. So the repo is minted at the last point where the session is
+*proven healthy* (booted to a live input box, handing off through the in-place transport)
+and has *still been given no work*, which is the only window where it can neither be
+wasted by a boot failure nor raced by an agent reaching for its first push.
+
+The rule this encodes is worth stating plainly: **do not acquire the ability to delete
+repositories — stop creating ones that need deleting.**
 
 ### Two paths, opposite lifetimes, one login
 
