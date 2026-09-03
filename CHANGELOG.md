@@ -1,3 +1,75 @@
+Each version's section is written in the PR that bumps `plugins/laws/.claude-plugin/plugin.json`; pushing the matching `vX.Y.Z` tag publishes that section as the GitHub release notes (`.github/workflows/release.yml`).
+
+## v0.25.0 - 2026-09-03
+
+- laws(prompt): make the hold the spine of the craft - every text enters at distance zero (#41)
+- laws(prompt): measure distance at fire time, and split every prompt along objective vs. constraint (#40)
+- injector: host the extracted bundle under node, with a boot self-check and a stock fallback (#39)
+- refactor(memento): replace the moved skills with pointers to their own repo (#38)
+- horizon: seed a run's time zero, reproducibly, from the reference seed (#36)
+- injector: recover the bundle in memory from the installed binary (#37)
+- horizon: pin the controlled-inclusion instrument, recorded per run (#35)
+- Declare markdown out of review scope, and drop paths-ignore (#30)
+- memento(context-ceiling): enforce the ceiling where an autonomous session can see it (#34)
+- feat(memento): lower the context ceiling to 250k, and give the number one home (#33)
+- ci(review): reconverge code-review.yml; the workflow now excludes itself from review (#32)
+- Make polishing-by-subtraction citable, and stop comment bloat in review responses (#29)
+- ci(release): trigger on master after the default-branch rename
+- memento(finalize): the escalation to KILL now asks who it is killing
+- laws(inspect-eval): the frontier comment outlived the decision it described
+- laws(launcher): release the port hold on every path that leaves, not just the good one
+- laws(excise): the switch-gate comment described a design that was never built
+- laws(router): a transcript that would not resolve now says so
+- laws(launcher): one rule for handing a session back, and one arm per flag
+- memento(finalize): a successor that never came up is torn down, not left racing
+- laws(inspect-eval): a silent target is the fourth arm, and every call now carries a clock
+- laws(excise): which crafts exist is derived, never enumerated
+- memento(address-pr-reviews): a promised page nobody named is an error, not a stop
+- memento(finalize): say which transport honours --reset, because two of three cannot
+- laws(seams): the reload is done — the ledger said it was still to build
+- memento(address-pr-reviews): one enforcer for response shape, and cover the paging
+- memento(finalize): name the detached path's own failure arms
+- memento(finalize): prove the process we retire is the one we captured
+- laws(launcher): a switch that cannot be applied hands the session back, resumed
+- laws(injector): a dropped socket rejects in-flight calls instead of hanging them
+- laws(policy): the policy file is the one source for enforcement AND for the text
+- memento(finalize): every session gets the same close-out capability - add the detached-window transport
+- routing(gate): release the connect timeout so a completed switch is not stuck 15s
+- routing(gate): stop counting discarded transcript branches as engaged crafts
+- routing: prefer a fresh subagent over stacking crafts, and say why not a fork
+- routing(gate): the craft conflict is directed, not a mutual incompatibility
+- Paginate the review-thread read so a long-running PR stays fetchable
+- routing(gate): retire the whole conflicting craft set, not one member of it
+- routing(gate): stop pinning a session id the user already chose
+- routing(gate): make an inspector refusal fail instead of reading as success
+- Paginate the reviews read that finds blocking change requests
+- routing(gate): identify the switch's owning session instead of inferring it (promptctl-routing-rat.5)
+- routing(gate): offer the switch only where it can actually be enacted (promptctl-routing-rat.5)
+- routing(gate): stop claiming an ordering the summary flow cannot deliver (promptctl-routing-rat.5)
+- routing(gate): retire the craft's engagement, not just its guidance (promptctl-routing-rat.5)
+- repo: untrack .in_use/44765 — Claude Code plugin bookkeeping, not source
+- routing(gate): put the plugin bin dir on PATH so the deny's instruction is runnable (promptctl-routing-rat.5)
+- routing(gate): the reload — claude-laws launcher, laws-switch, and the four-option enactment (promptctl-routing-rat.5)
+- routing(gate): SEAM 1 retired — the hook payload already carries transcript_path (promptctl-routing-rat.5)
+- routing(gate): the rewind is disk surgery — rewindTo(), verified live (promptctl-routing-rat.5)
+- routing(gate): measured — disk-only rewind does not survive --resume on 2.1.226 (promptctl-routing-rat.5)
+- routing(gate): injector foundation — inspector channel re-verified on CC 2.1.226 (promptctl-routing-rat.5)
+- routing(gate): one source of truth for craft compatibility; correct the runtime gate to fire only on incompatible pairs (promptctl-routing-rat.5)
+- memento(finalize): prove the pane we deliver into is really ours, and test it (#22)
+- memento(context-ceiling): force the close-out at the 350k token ceiling (#21)
+- fix(ci): pass CLAUDE_CODE_OAUTH_TOKEN so PROVIDER=auto can authenticate (#20)
+- repo: ignore Claude Code's .in_use bookkeeping and Python bytecode
+- memento(finalize): --reset states the next session's context instead of guessing it
+- memento(address-pr-reviews): stop restating message-in-a-bottle's delivery semantics
+- memento(finalize): delete the drop-file fallback — no transport is a failure, not a delivery
+- skills(laws): the session that writes the artifact reads the craft itself (promptctl-routing-rat.3) (#19)
+- evals: delete the single-session eval system — banned in this repo, period (#18)
+- hooks: compatibility-gate the craft guard - coexist by default, refuse only laws:code + laws:prompt (promptctl-routing-rat.2) (#17)
+- memento(finalize-session): gate iTerm2 goal-carry on a readiness probe, not a fixed sleep (#16)
+- plugins(memento): extract workflow tooling into its own plugin; symmetric plugins/{laws,memento} (#15)
+- evals(suites): headroom for the code suite - a held-out-coverage task and its honestly-recorded campaign (#14)
+- evals(suites): the laws:code suite — four tasks, one-command runs, a live sensitivity record (#13)
+
 ## v0.24.1 - 2026-08-01
 
 - hooks: minimal route text - lean on skill descriptions, drop disabled laws:ticket route (#12)

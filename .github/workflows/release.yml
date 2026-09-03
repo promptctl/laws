@@ -1,109 +1,56 @@
 name: release
 
-# On every push to master, release the version currently in the plugin manifest -
-# but only if it hasn't been released before. The "tag already exists" check makes
-# the tag immutable (never moved), makes releases fire only when the version bumps,
-# and makes the whole workflow safe to re-run.
+# A pushed `vX.Y.Z` tag is the release. The workflow never writes to master and
+# never moves a tag; it checks that the tag agrees with the plugin manifest and
+# that CHANGELOG.md carries a section for it, then publishes that section as
+# the GitHub release notes. [LAW:one-source-of-truth] the changelog section is
+# authored in the PR that bumps the version, and the release derives from it.
+#
+# To release: merge the PR that bumps plugins/laws/.claude-plugin/plugin.json
+# and adds the `## vX.Y.Z - date` section to CHANGELOG.md, then
+#   git tag -a vX.Y.Z -m vX.Y.Z <merge-commit> && git push origin vX.Y.Z
 
 on:
   push:
-    branches: [master]
-
-# One release at a time; never let two runs race to create the same tag.
-concurrency:
-  group: release
-  cancel-in-progress: false
+    tags: ['v*']
 
 permissions:
-  contents: write # create tags, push the changelog commit, cut the release
+  contents: write # create the release
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout full history and tags
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          fetch-tags: true
+      - uses: actions/checkout@v4
 
-      - name: Read version from plugin manifest
-        id: ver
+      - name: Check the tag against the plugin manifest
         run: |
           set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
           version="$(jq -r '.version' plugins/laws/.claude-plugin/plugin.json)"
-          if [ -z "$version" ] || [ "$version" = "null" ]; then
-            echo "::error::plugins/laws/.claude-plugin/plugin.json has no .version"; exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-
-      - name: Skip if this version is already released
-        id: gate
-        run: |
-          set -euo pipefail
-          tag="${{ steps.ver.outputs.tag }}"
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "released=true" >> "$GITHUB_OUTPUT"
-            echo "$tag already exists - nothing to release."
-          else
-            echo "released=false" >> "$GITHUB_OUTPUT"
-            echo "$tag is new - releasing."
+          if [ "v${version}" != "${tag}" ]; then
+            echo "::error::tag ${tag} does not match plugins/laws/.claude-plugin/plugin.json version ${version}"
+            exit 1
           fi
 
-      - name: Build changelog section and release notes
-        if: steps.gate.outputs.released == 'false'
+      - name: Extract the release notes from CHANGELOG.md
         run: |
           set -euo pipefail
-          tag="${{ steps.ver.outputs.tag }}"
-          date="$(date -u +%Y-%m-%d)"
+          tag="${GITHUB_REF_NAME}"
+          # Lines under the `## <tag> - <date>` header, up to the next `## ` header.
+          awk -v tag="${tag}" '/^## /{ inside = ($2 == tag); next } inside' CHANGELOG.md \
+            > "${RUNNER_TEMP}/notes.md"
+          if ! grep -q '[^[:space:]]' "${RUNNER_TEMP}/notes.md"; then
+            echo "::error::CHANGELOG.md has no '## ${tag} - <date>' section with content"
+            exit 1
+          fi
 
-          # Highest previously released tag, if any. On the first release this is
-          # empty and the range covers the whole history.
-          prev="$(git tag --list 'v*' --sort=-version:refname | head -n1 || true)"
-          if [ -n "$prev" ]; then range="$prev..HEAD"; else range=""; fi
-
-          # One bullet per commit, skipping merges and the bot's own changelog commits.
-          bullets="$(git log --no-merges --invert-grep --grep='^chore(release)' \
-            --pretty='- %s' ${range})"
-          [ -n "$bullets" ] || bullets="- No changes."
-
-          # Release body: bullets only (the release is already titled with the tag).
-          printf '%s\n' "$bullets" > RELEASE_NOTES.md
-
-          # Changelog entry: version header + bullets, prepended to CHANGELOG.md.
-          touch CHANGELOG.md
-          {
-            printf '## %s - %s\n\n' "$tag" "$date"
-            printf '%s\n\n' "$bullets"
-            cat CHANGELOG.md
-          } > CHANGELOG.next
-          mv CHANGELOG.next CHANGELOG.md
-
-      - name: Commit changelog
-        if: steps.gate.outputs.released == 'false'
-        run: |
-          set -euo pipefail
-          git config user.name  'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add CHANGELOG.md
-          git commit -m "chore(release): ${{ steps.ver.outputs.tag }} changelog [skip ci]"
-          git push origin HEAD:master
-
-      - name: Create immutable tag
-        if: steps.gate.outputs.released == 'false'
-        run: |
-          set -euo pipefail
-          tag="${{ steps.ver.outputs.tag }}"
-          git tag -a "$tag" -m "$tag"           # annotated; points at the changelog commit
-          git push origin "refs/tags/$tag"      # create-only; the workflow never force-pushes a tag
-
-      - name: Create GitHub release
-        if: steps.gate.outputs.released == 'false'
+      - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release create "${{ steps.ver.outputs.tag }}" \
-            --title "${{ steps.ver.outputs.tag }}" \
-            --notes-file RELEASE_NOTES.md
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file "${RUNNER_TEMP}/notes.md"
