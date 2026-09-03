@@ -1,6 +1,6 @@
 ---
 name: prompt
-description: Craft reference for any text another LLM will consume — task prompts, subagent instructions, prompts written into files or code, and persistent agent guidance (CLAUDE.md files, system prompts, skill bodies, hook text). Use BEFORE writing either kind. The regime determines the craft — a short-horizon prompt wants terse, complete, say-it-once instructions; persistent guidance wants redundancy, imagery, and rehearsed temptations; and a long-running prompt's constraints follow the guidance regime even while its objective stays terse — applying either regime's style to the other is a known failure mode.
+description: Craft reference for any text another LLM will read - a one-turn instruction to a subagent, a message that opens a long run, a prompt written into a file or code, a system prompt, a CLAUDE.md, a skill body, a hook. Use BEFORE writing any of them. Every text enters the reader's context at distance zero; what differs is the hold - how many turns after entry it must still be steering the reader. The hold picks the craft, not the kind of file and not the text's length. A one-turn hold wants terse, complete, said-once. A long hold keeps the body terse and hardens only the lines nothing will re-ask - boundaries, the stop condition, constraints that bite late. A whole-session hold against situations the writer cannot see buys redundancy, imagery, and rehearsed temptations. Reading the hold off the text's length or its filename is the known failure.
 ---
 
 # Producing this artifact
