@@ -1,6 +1,6 @@
 <!--
   Style authority for future edits to this file: skills/prompt/references/craft.md
-  (far-end regime - amplitude, images, rehearsed temptations, disarmed proverbs,
+  (the whole-session hold - amplitude, images, rehearsed temptations, disarmed proverbs,
   negative examples, stakes register). The specifications this file teaches are NOT
   its style authority: a spec is exact and stated-once; this guidance must keep
   firing deep in a long session. Cut only what is wrong, never what repeats.
