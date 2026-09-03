@@ -1,6 +1,6 @@
 ---
 name: prompt
-description: Craft reference for any text another LLM will consume - task prompts, subagent instructions, prompts written into files or code, and persistent agent guidance (CLAUDE.md files, system prompts, skill bodies, hook text). Use BEFORE writing either kind. The regime determines the craft - task prompts want terse, complete, say-it-once instructions; persistent guidance wants redundancy, imagery, and rehearsed temptations - and applying either regime's style to the other is a known failure mode.
+description: Craft reference for any text another LLM will consume - task prompts, subagent instructions, prompts written into files or code, and persistent agent guidance (CLAUDE.md files, system prompts, skill bodies, hook text). Use BEFORE writing either kind. The regime determines the craft - a short-horizon prompt wants terse, complete, say-it-once instructions; persistent guidance wants redundancy, imagery, and rehearsed temptations; and a long-running prompt's constraints follow the guidance regime even while its objective stays terse - applying either regime's style to the other is a known failure mode.
 ---
 
 # Authoring text for LLMs
@@ -121,21 +121,37 @@ full-length specimen of the far-end style, as is the page you are reading.)
 
 ## Same physics, different regime - why the genre exists at all
 
-An objection will occur to you, and it is correct as far as it goes: everything the
-model reads is one surface - guidance, task prompts, tool results, file contents, all
-just prompt, one attention over one context. There is no separate parser for guidance.
-So how can it be a different genre?
+An objection will occur to you, and it is correct - not partially, but as mechanics:
+everything the model reads is one surface - guidance, task prompts, tool results, file
+contents, all just prompt, one attention over one context. There is no separate parser
+for guidance, and every token enters the window at distance zero - no text *sits*
+nearer the decision than any other. So how can it be a different genre?
 
-Because genre lives not in the substrate but in the **operating regime**. Four axes
+Because genre lives not in the substrate but in the **operating regime**. Five axes
 separate a task prompt's regime from guidance's, and every device in this document is
 the price of some axis:
 
-- **Distance to the decision.** A task prompt sits next to the decision it governs:
-  recent, attended. Guidance is injected at session start and must fire a hundred
-  thousand tokens later, against competing defaults the local context is *actively
-  feeding* ("just add a guard" is suggested by the very code on screen). Redundancy
-  and imagery are what retrieval-under-interference costs; amplitude matters when you
-  are far from the receiver.
+- **Distance to the decision - measured at fire time, not at write time.** Since
+  nothing sits anywhere, distance is what *accumulates* between the reading and the
+  decision. A subagent's prompt is the oldest text in its window by the time the
+  choice arrives; what saves it on a short task is only that little has piled up and
+  the prompt still owns most of the window's mass. Guidance must fire a hundred
+  thousand tokens later, a sliver of the window, against competing defaults the
+  local context is *actively feeding* ("just add a guard" is suggested by the very
+  code on screen). Redundancy and imagery are what retrieval-under-interference
+  costs; amplitude is how a sliver keeps its share of the activation. Genuinely
+  distance-zero text exists - an injection landing moments before its decision, like
+  the router hook below - and almost nothing else qualifies.
+
+- **Rehearsed vs. inert.** The agent loop re-asks "what was I asked to do?" at every
+  step, so a prompt's *objective* is rehearsed for free, all run long. Its
+  *constraints* are re-asked by nothing. This is the signature everyone has watched:
+  an agent deep in a run still knows exactly what it is building and has forgotten
+  the "do not touch the tests" clause in the same paragraph. The driver remembers
+  the destination and forgets the speed limit. Guidance is all speed limit - no loop
+  refreshes it, so it survives only by the devices. And the split runs through the
+  middle of every prompt, not between documents: state the destination once; arm the
+  limits in proportion to the horizon.
 
 - **Known vs. unknown target.** A task prompt addresses one situation its author can
   see, so it can specify. Guidance addresses a distribution nobody has seen yet, so it
@@ -154,23 +170,29 @@ the price of some axis:
   to its source. One is a command; the other is infrastructure, engineered like
   infrastructure.
 
-The calibration rule falls out of the axes: **terseness is licensed by proximity;
-distance must be paid for in amplitude.** The skill-router hook this plugin ships is
-short and works, injected *at* the decision point - distance zero, nothing to survive.
+The calibration rule falls out of the axes: **terseness is licensed by an imminent
+decision, dominant mass, and a rehearsing loop; interference must be paid for in
+amplitude.** The skill-router hook this plugin ships is short and works, injected
+moments before the decision it governs - nothing piled up yet, nothing to survive.
 The laws skill cannot afford that brevity: it must still be winning arguments deep in
 someone else's diff, hours later. And the middle obeys the same rule - a long-horizon
 agent prompt that runs autonomously for two hundred thousand tokens has drifted into
-guidance's regime and needs guidance's devices, whatever its author calls it. So
-before writing, ask: *how far from the decision, and how alone, will this text be when
-it has to work?* The answer - not the label - selects the devices.
+guidance's regime and needs guidance's devices, whatever its author calls it: its
+destination line may stay terse, because the loop rehearses it; its speed limits may
+not. So before writing, ask of each sentence: *how much will have piled up before
+this must fire, what share of the window will it hold then, and will the loop
+rehearse it - or must it survive alone?* The answers - not the label - select the
+devices.
 
 ---
 
-## The proximate end: task prompts
+## The proximate end: the short-horizon prompt
 
-If your text is proximate - a subagent prompt, a one-off instruction, anything
-consumed once, near its decision, with the requester able to see the result - the
-calibration flips. Proximity licenses terseness. Say each thing once, clearly:
+Proximate is earned, not assumed - no prompt is proximate by kind. Text is proximate
+when its decisions arrive within a short run of its reading, while it still owns most
+of the window's mass: a quick subagent task, a one-off instruction, consumed once,
+with the requester able to see the result. There the calibration flips and terseness
+wins. Say each thing once, clearly:
 
 - **State the deliverable exactly**: what artifact, what format, where it goes.
   Vague asks get default behavior.
@@ -190,9 +212,14 @@ calibration flips. Proximity licenses terseness. Say each thing once, clearly:
 - **On return, read the artifact, not the report.** Validate against the
   requirements, not the worker's self-assessment.
 
-One anti-rule: do not import the far end's devices. Redundancy, imagery, and stakes
-framing at distance zero read as emphasis and distort weighting - the reader is
-already attending. Save the amplitude for text that must survive distance.
+One anti-rule, scoped honestly: do not import the far end's devices into text that is
+genuinely proximate. Redundancy, imagery, and stakes framing in a short prompt read
+as emphasis and distort weighting - the reader is already attending, and your words
+are most of what it attends to. But a prompt that launches a long autonomous run is
+proximate only in its objective: the loop will rehearse the destination for free, and
+nothing will rehearse the constraints. Keep the destination terse; give the
+constraints that must still hold at hour three the far end's arming - and spend the
+amplitude there, not on the deliverable statement.
 
 ---
 
