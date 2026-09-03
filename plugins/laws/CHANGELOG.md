@@ -1,4 +1,4 @@
-Each version's section is written in the PR that bumps `plugins/laws/.claude-plugin/plugin.json`; pushing the matching `vX.Y.Z` tag publishes that section as the GitHub release notes (`.github/workflows/release.yml`).
+Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
 ## v0.25.0 - 2026-09-03
 
