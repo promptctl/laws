@@ -1,56 +1,16 @@
 name: release
 
-# A pushed `vX.Y.Z` tag is the release. The workflow never writes to master and
-# never moves a tag; it checks that the tag agrees with the plugin manifest and
-# that CHANGELOG.md carries a section for it, then publishes that section as
-# the GitHub release notes. [LAW:one-source-of-truth] the changelog section is
-# authored in the PR that bumps the version, and the release derives from it.
-#
-# To release: merge the PR that bumps plugins/laws/.claude-plugin/plugin.json
-# and adds the `## vX.Y.Z - date` section to CHANGELOG.md, then
-#   git tag -a vX.Y.Z -m vX.Y.Z <merge-commit> && git push origin vX.Y.Z
+# One process for every promptctl plugin repo. The implementation lives in
+# promptctl/.github, with the procedure in its RELEASING.md. This file only
+# says when it runs. [LAW:one-source-of-truth]
 
 on:
   push:
-    tags: ['v*']
+    tags: ['*--v*']
 
 permissions:
-  contents: write # create the release
+  contents: write
 
 jobs:
   release:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check the tag against the plugin manifest
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          version="$(jq -r '.version' plugins/laws/.claude-plugin/plugin.json)"
-          if [ "v${version}" != "${tag}" ]; then
-            echo "::error::tag ${tag} does not match plugins/laws/.claude-plugin/plugin.json version ${version}"
-            exit 1
-          fi
-
-      - name: Extract the release notes from CHANGELOG.md
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          # Lines under the `## <tag> - <date>` header, up to the next `## ` header.
-          awk -v tag="${tag}" '/^## /{ inside = ($2 == tag); next } inside' CHANGELOG.md \
-            > "${RUNNER_TEMP}/notes.md"
-          if ! grep -q '[^[:space:]]' "${RUNNER_TEMP}/notes.md"; then
-            echo "::error::CHANGELOG.md has no '## ${tag} - <date>' section with content"
-            exit 1
-          fi
-
-      - name: Create the GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" \
-            --verify-tag \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file "${RUNNER_TEMP}/notes.md"
+    uses: promptctl/.github/.github/workflows/release-plugin.yml@master
