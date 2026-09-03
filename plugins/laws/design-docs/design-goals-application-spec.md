@@ -110,7 +110,7 @@ a shipping procedure.
 - Same shape as the other artifact skills: a thin `SKILL.md` that names the target,
   the output path, and the acceptance criterion, then sends the writer to read the
   craft before observing anything; and the craft in `references/craft.md`, written
-  in the far-end style under the `prompt` skill's authority - the spec-writing
+  in the whole-session-hold style under the `prompt` skill's authority - the spec-writing
   session is long and autonomous, and the contamination temptation ("the implementer
   needs to know how this works inside") arrives deep in it, exactly where guidance
   has to still fire.
