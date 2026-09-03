@@ -14,42 +14,61 @@ horizon/pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha]
 
 Builds `<run-dir>` from nothing:
 
-- `pinned/` - a `git archive` snapshot of `plugins/memento` at the resolved
-  `memento-ref` (default: this repo's current `HEAD`), plus a marketplace.json that
-  declares that snapshot and *nothing else*.
+- `pinned/` - a `git archive` snapshot of memento at the resolved `memento-ref`,
+  fetched from the repository that owns it (`https://github.com/promptctl/memento`;
+  `memento-ref` names a ref in *that* repository and defaults to its default branch,
+  `master`), plus a marketplace.json that declares that snapshot and *nothing else*.
+  The snapshot is memento's whole tree, not just its `memento/` plugin directory:
+  memento keeps one copy of each skill at its repo root and symlinks it into every
+  plugin that ships it, so archiving the plugin directory alone extracts dangling
+  links. Snapshotting the closure is what makes the pin self-contained - `claude
+  plugin install` then materialises those links into real files in its cache.
 - `config/` - a fresh `CLAUDE_CONFIG_DIR`, provisioned through the real `claude
   plugin` CLI, with memento installed and enabled and no other plugin even
   installable - the pinned marketplace never lists one.
-- `manifest.json` - canonical JSON (sorted keys, no timestamps) recording every
-  pinned identity: memento's commit and tree sha, the sha256 of the `lit` binary
-  currently on `PATH`, the commit the reviewer action's `v1` tag resolves to plus the
-  sha256 of its prompt file, and the sha256 of `horizon/GOAL_PROMPT.md`.
+- `manifest.json` - canonical JSON (`schema_version: 2`, sorted keys, no timestamps)
+  recording every pinned identity: memento's repository URL, commit and tree sha; the
+  sha256 of the `lit` binary currently on `PATH` and of the `/next` procedure that
+  binary writes; the commit the reviewer action's `v1` tag resolves to plus the sha256
+  of its prompt file; and the commit and sha256 of `horizon/GOAL_PROMPT.md`.
 
-  `memento` and `goal_wording` are pure functions of `memento-ref`, so two runs at
-  the same `memento-ref` are byte-identical on those fields by construction. The
-  other two are resolved outside it: `lit` from whatever binary is on `PATH` (see
+  memento's fields are a pure function of `memento-ref`, so two runs at the same
+  `memento-ref` are byte-identical there by construction. `goal_wording` is resolved
+  separately, against this repo's own `HEAD`: `GOAL_PROMPT.md` lives here, and once
+  memento moved to its own repository one sha could no longer honestly stand for both,
+  so the commit it was read at is recorded as `goal_wording.ref`. The other two are
+  resolved outside `memento-ref` entirely: `lit` from whatever binary is on `PATH` (see
   below), and the reviewer live against a moving tag (`v1`) - left unpinned, two runs
   made minutes apart could legitimately disagree if the tag moved. Pass
-  `[reviewer-sha]` explicitly - the same way a campaign already pins `memento-ref`
-  for cross-run consistency - and the manifest is byte-identical across runs on every
-  pinned field, provided the `lit` binary on `PATH` did not change between them.
-  `reviewer.resolved_from` records whether this run resolved the tag live (`tag`) or
-  was handed the sha (`override`), so the manifest never implies a check that did not
-  happen.
+  `[reviewer-sha]` explicitly - the same way a campaign already pins `memento-ref`,
+  whose default likewise tracks a moving branch - and the manifest is byte-identical
+  across runs on every pinned field, provided the `lit` binary on `PATH` did not change
+  between them. `reviewer.resolved_from` records whether this run resolved the tag live
+  (`tag`) or was handed the sha (`override`), so the manifest never implies a check
+  that did not happen.
 
 A session launched with `CLAUDE_CONFIG_DIR=<run-dir>/config` sees memento's skills and
 nothing of the owner's live laws plugin, `CLAUDE.md`, or memory. Two distinct
 mechanisms produce that, and they are worth keeping straight: no *plugin* but memento
 can be installed because the pinned marketplace never declares one - controlled
-inclusion, not a launch-time filter over the owner's live config. `CLAUDE.md` and
-memory are absent for the unrelated reason that `horizon_provision_config_dir` builds
-the config dir from nothing (`rm -rf` then `mkdir`), so anything that later seeds or
-templates that directory reintroduces the leak the marketplace guarantee does not
-cover.
+inclusion, not a launch-time filter over the owner's live config. That marketplace is
+generated over the top of memento's own, which the whole-tree archive brings along and
+which declares two plugins (memento and auto-bottle); the overwrite *is* the inclusion
+control, because what a run can install is what the generated file lists, and it lists
+one thing. `CLAUDE.md` and memory are absent for the unrelated reason that
+`horizon_provision_config_dir` builds the config dir from nothing (`rm -rf` then
+`mkdir`), so anything that later seeds or templates that directory reintroduces the
+leak the marketplace guarantee does not cover.
 `lit` itself has no version string to pin (see lib.sh's comment on `horizon_lit_path`
 for what `lit doctor` actually reports), so its identity is recorded as the sha256 of
 whatever binary `command -v lit` resolves to; a later run whose `lit` hash disagrees
-with an earlier manifest is a real config drift, not noise.
+with an earlier manifest is a real config drift, not noise. The loop's pickup step is
+pinned the same way and for the same reason: `next` is not a plugin skill any more -
+the procedure ships inside the lit binary, and `lit init` writes it into the project at
+`.claude/skills/next/SKILL.md` - so the pin runs lit against a throwaway repo, hashes
+what it wrote, and records that hash. A lit too old to write it fails the pin loudly,
+naming the upgrade (it needs one newer than 0.11.0). memento supplies the loop's other
+two skills, `address-pr-reviews` and `message-in-a-bottle`.
 
 ## Verify
 
@@ -57,13 +76,24 @@ with an earlier manifest is a real config drift, not noise.
 horizon/verify-instrument.sh
 ```
 
-Resolves the reviewer's pinned commit once (so a moving tag can't turn into test
-flakiness) and runs `pin-instrument.sh` twice with it, checks the manifests are
-byte-identical, then checks the isolated config dir has exactly memento installed
-and enabled, carries no `CLAUDE.md` and no memory content under `projects/*/memory/`,
-exposes the standard memento skills at its actual installed location (verified to
-fall under the config dir, not merely to exist somewhere), and that the `lit` on
-`PATH` matches what the manifest recorded.
+Resolves both moving refs once - memento's default branch and the reviewer's `v1` tag -
+and hands the same shas to both `pin-instrument.sh` runs, so a push or a tag move
+landing between the two calls cannot turn into test flakiness, then checks the
+manifests are byte-identical.
+
+It then checks the isolated config dir has exactly memento installed and enabled,
+carries no `CLAUDE.md` and no memory content under `projects/*/memory/`, and exposes
+memento's skills at its actual installed location (verified to fall under the config
+dir, not merely to exist somewhere) with contents equal, byte for byte, to the snapshot
+they were pinned from. Equality rather than existence, because existence is what let
+this verifier once go green against an instrument whose skills were all pointer stubs:
+the directories were there, holding nothing an agent could follow. The pin now refuses
+such a snapshot outright, so "the same bytes the snapshot carried" is the whole
+remaining question.
+
+Finally it checks both halves of `lit`'s recorded identity: the binary on `PATH`
+against the manifest's hash of it, and the `/next` procedure that binary writes - run
+into a throwaway repo again and re-hashed - against the manifest's hash of that.
 
 ## Seeding a run's time zero
 

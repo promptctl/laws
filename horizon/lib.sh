@@ -118,35 +118,94 @@ horizon_repo_root() {
     || horizon_die "not inside a git repo: $anchor"
 }
 
-# ── memento: pinned by git-archive snapshot, never by a live directory pointer ─────
-# Usage: horizon_resolve_memento_ref <repo_root> <ref>  -> prints the resolved commit sha
-horizon_resolve_memento_ref() {
-  local repo_root="$1" ref="$2"
-  git -C "$repo_root" rev-parse --verify "${ref}^{commit}" 2>/dev/null \
+# ── memento: pinned from the repo that owns it, never from this checkout ───────────
+# memento's skills live in promptctl/memento; what is left under this repo's
+# plugins/memento is pointer stubs telling a reader to go install that marketplace
+# (PR #38). A run provisioned from this checkout would therefore hand its agent three
+# pointers, inside an isolated config dir where following them is not possible.
+# [LAW:one-source-of-truth] the skills have exactly one home and the instrument reads
+# from it - a snapshot of the copy that already drifted is not a pin, it is a lie with
+# a sha attached.
+: "${HORIZON_MEMENTO_REPO_URL:=https://github.com/promptctl/memento}"
+: "${HORIZON_MEMENTO_DEFAULT_REF:=master}"
+HORIZON_MEMENTO_PLUGIN_SUBDIR="memento"
+# The skills the GOAL_PROMPT loop needs *from the plugin*. `next` is deliberately not
+# among them: it is a pointer in memento too, because the pickup procedure now ships
+# inside the lit binary, and it is checked where it actually lands - see
+# HORIZON_NEXT_SKILL_REL_PATH in the lit section below. This array is the whole
+# definition of "the plugin is fit for the loop"; the pin checks the snapshot against
+# it and the verifier checks the install against it, both reading this one list.
+HORIZON_MEMENTO_SKILLS=(address-pr-reviews message-in-a-bottle)
+# A moved skill leaves this heading behind - it is how both pointer stubs in this
+# ecosystem are written, memento's `next` and this repo's plugins/memento. Checking it
+# is a convention check, not proof that a body contains a procedure; it earns its place
+# because a pointer standing where a procedure should be is exactly how this instrument
+# went green while broken.
+HORIZON_MOVED_SKILL_HEADING='^# Moved$'
+
+# Fetch the pinned memento objects into an object store of our own and resolve the ref
+# against it. Depth 1: a run needs one commit's tree, never the history behind it.
+#
+# Returns the resolved sha rather than leaving callers to read FETCH_HEAD afterwards.
+# That ref is ambient state in the fetched store - a second fetch into the same store
+# moves it under any caller still working from the first - so the sha travels as a
+# value from here on. [LAW:no-ambient-temporal-coupling]
+# Usage: horizon_memento_fetch <git_dir> <ref>  -> prints the resolved commit sha
+horizon_memento_fetch() {
+  local git_dir="$1" ref="$2"
+  git init --bare -q "$git_dir" \
+    || horizon_die "could not create the memento object store at $git_dir"
+  git -C "$git_dir" fetch --depth 1 "$HORIZON_MEMENTO_REPO_URL" "$ref" \
+    || horizon_die "could not fetch '$ref' from $HORIZON_MEMENTO_REPO_URL"
+  git -C "$git_dir" rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null \
     || horizon_die "memento ref does not resolve to a commit: $ref"
 }
 
-# Usage: horizon_memento_tree_sha <repo_root> <commit_sha>  -> tree sha of plugins/memento
+# Usage: horizon_memento_tree_sha <git_dir> <commit_sha>  -> tree sha of that commit
 horizon_memento_tree_sha() {
-  local repo_root="$1" commit_sha="$2"
-  git -C "$repo_root" rev-parse --verify "${commit_sha}:plugins/memento" 2>/dev/null \
-    || horizon_die "plugins/memento does not exist at $commit_sha"
+  local git_dir="$1" commit_sha="$2"
+  git -C "$git_dir" rev-parse --verify "${commit_sha}^{tree}" 2>/dev/null \
+    || horizon_die "no tree for memento commit $commit_sha"
 }
 
-# Extract plugins/memento at the pinned commit into <snapshot_dir>/plugins/memento and
-# write a single-plugin marketplace.json alongside it. This directory - not the live
-# repo - is what gets registered as the marketplace, so a later commit to memento on
-# this checkout can never leak into an already-pinned run.
-# Usage: horizon_build_memento_snapshot <repo_root> <commit_sha> <snapshot_dir>
+# Extract the pinned commit's whole tree into <snapshot_dir> and write a marketplace
+# over it that declares exactly one plugin. This directory - not a live clone - is what
+# gets registered, so a later push to memento can never leak into an already-pinned run.
+#
+# The WHOLE tree, not just the plugin subdir: memento keeps one copy of each skill at
+# the repo root and symlinks it into every plugin that ships it, so an archive of
+# `memento/` alone extracts dangling links. Snapshotting the closure is what makes the
+# pin self-contained; `claude plugin install` then materialises those links into real
+# files in its cache.
+#
+# The archive also carries memento's own marketplace.json, which declares a second
+# plugin (auto-bottle). Overwriting it here IS the inclusion control - what a run can
+# install is what this file lists, and it lists one thing.
+# [LAW:types-are-the-program] the marketplace.json we generate IS the admitted set.
+# Usage: horizon_build_memento_snapshot <git_dir> <commit_sha> <snapshot_dir>
 horizon_build_memento_snapshot() {
-  local repo_root="$1" commit_sha="$2" snapshot_dir="$3"
+  local git_dir="$1" commit_sha="$2" snapshot_dir="$3"
   rm -rf "$snapshot_dir"
   mkdir -p "$snapshot_dir"
-  git -C "$repo_root" archive "$commit_sha" -- plugins/memento \
+  git -C "$git_dir" archive "$commit_sha" \
     | tar -x -C "$snapshot_dir" \
-    || horizon_die "git archive of plugins/memento at $commit_sha failed"
-  [ -d "$snapshot_dir/plugins/memento" ] \
-    || horizon_die "archive produced no plugins/memento tree"
+    || horizon_die "git archive of memento at $commit_sha failed"
+  local plugin_dir="$snapshot_dir/$HORIZON_MEMENTO_PLUGIN_SUBDIR"
+  [ -d "$plugin_dir" ] \
+    || horizon_die "memento at $commit_sha carries no $HORIZON_MEMENTO_PLUGIN_SUBDIR/ plugin directory"
+  # Each required skill, present and carrying a procedure, checked at pin time. `-f`
+  # follows the symlink, so a skill whose closure did not come along fails HERE rather
+  # than as an agent mid-run finding nothing behind the name. [LAW:no-silent-failure]
+  local skill skill_file
+  for skill in "${HORIZON_MEMENTO_SKILLS[@]}"; do
+    skill_file="$plugin_dir/skills/$skill/SKILL.md"
+    [ -f "$skill_file" ] \
+      || horizon_die "memento at $commit_sha does not provide the '$skill' skill"
+    # Negated, never `grep -q ... && die`: that form's own exit status is 1 on the
+    # healthy path, which under the callers' `set -e` aborts the pin on a good skill.
+    ! grep -q "$HORIZON_MOVED_SKILL_HEADING" "$skill_file" \
+      || horizon_die "memento at $commit_sha ships '$skill' as a pointer stub, not a procedure"
+  done
   mkdir -p "$snapshot_dir/.claude-plugin"
   cat > "$snapshot_dir/.claude-plugin/marketplace.json" <<EOF
 {
@@ -154,7 +213,7 @@ horizon_build_memento_snapshot() {
   "description": "Pinned, controlled-inclusion snapshot for the horizon eval instrument. Exposes exactly one plugin: memento, at $commit_sha.",
   "owner": {"name": "Brandon Fryslie"},
   "plugins": [
-    {"name": "memento", "source": "./plugins/memento", "description": "Agent-native workflow tooling (pinned snapshot, $commit_sha)."}
+    {"name": "memento", "source": "./$HORIZON_MEMENTO_PLUGIN_SUBDIR", "description": "Agent-native workflow tooling (pinned snapshot, $commit_sha)."}
   ]
 }
 EOF
@@ -191,6 +250,36 @@ horizon_lit_sha256() {
   local p
   p="$(horizon_lit_path)"
   horizon_sha256_file "$p" || horizon_die "could not hash lit binary at $p"
+}
+
+# The pickup half of the GOAL_PROMPT loop is no longer a plugin skill at all: it ships
+# inside the lit binary, and `lit init` writes it into the project at this path. So the
+# instrument's third named skill is pinned exactly like the other two - by the content
+# lit actually produces, recorded in the manifest - and a lit too old to produce it
+# fails the pin rather than a run. [LAW:one-source-of-truth]
+HORIZON_NEXT_SKILL_REL_PATH=".claude/skills/next/SKILL.md"
+
+# Usage: horizon_lit_next_skill_sha256 <scratch_dir>  -> sha256 of the /next skill the
+# lit on PATH writes into a fresh repo
+#
+# Running lit is the only way to read this identity: the procedure is embedded in the
+# binary, so nothing on disk to hash and no version string to trust. Built on the same
+# seeding primitives a real run uses (defined further down this file), so the probe
+# repo is the same shape lit will meet at seed time and not a special case.
+# [LAW:verifiable-goals] [LAW:behavior-not-structure] the check is what lit produces,
+# never which version it claims to be.
+horizon_lit_next_skill_sha256() {
+  local scratch="$1"
+  [ -n "$scratch" ] || horizon_die "horizon_lit_next_skill_sha256: no scratch directory given"
+  horizon_project_init "$scratch"
+  horizon_lit_init "$scratch"
+  local skill_file="$scratch/$HORIZON_NEXT_SKILL_REL_PATH"
+  [ -f "$skill_file" ] \
+    || horizon_die "the lit on PATH does not write $HORIZON_NEXT_SKILL_REL_PATH, so a run's agent has no way to pull a ticket - it needs a lit newer than 0.11.0 (\`lit version\`; \`lit upgrade\`)"
+  ! grep -q "$HORIZON_MOVED_SKILL_HEADING" "$skill_file" \
+    || horizon_die "the lit on PATH writes $HORIZON_NEXT_SKILL_REL_PATH as a pointer stub, not a procedure"
+  horizon_sha256_file "$skill_file" \
+    || horizon_die "could not hash $skill_file"
 }
 
 # ── reviewer: resolve the moving `v1` tag to the exact commit it points at right now,
@@ -254,10 +343,20 @@ horizon_reviewer_prompt_sha256() {
   printf '%s' "$content" | tr -d '\n' | horizon_base64_decode_stdin | horizon_sha256_stdin
 }
 
-# ── the standard /goal wording: pinned by content hash at the same resolved repo
-# commit memento is pinned at (GOAL_PROMPT.md lives in this same repo), never off
-# the live working tree - an uncommitted local edit must not produce a manifest
-# value with no corresponding commit to audit it against.
+# ── the standard /goal wording: pinned by content hash at a commit of THIS repo,
+# where GOAL_PROMPT.md lives, never off the live working tree - an uncommitted local
+# edit must not produce a manifest value with no corresponding commit to audit it
+# against. That commit is this repo's own, no longer memento's: once memento moved to
+# its own repository the two shas stopped describing the same thing, and one variable
+# standing for two facts is a manifest that cannot be audited. [LAW:one-source-of-truth]
+
+# Usage: horizon_resolve_commit <repo_root> <ref>  -> prints the resolved commit sha
+horizon_resolve_commit() {
+  local repo_root="$1" ref="$2"
+  git -C "$repo_root" rev-parse --verify "${ref}^{commit}" 2>/dev/null \
+    || horizon_die "ref does not resolve to a commit in $repo_root: $ref"
+}
+
 # Usage: horizon_goal_wording_sha256 <repo_root> <commit_sha>
 horizon_goal_wording_sha256() {
   local repo_root="$1" commit_sha="$2" tmp
