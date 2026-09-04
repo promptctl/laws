@@ -21,6 +21,7 @@ const UNOWNED = {
   none: 'no-live-conversation-contains-that-message',
   several: 'several-live-conversations-contain-that-message',
   neverAnnounced: 'no-seam-ever-announced-a-conversation',
+  allEnded: 'every-conversation-the-seam-announced-has-since-ended',
   noUuid: 'no-message-uuid-was-given-to-identify-a-conversation',
 };
 
@@ -34,14 +35,25 @@ function createSeamRegistry() {
   // a strong list would grow for the life of the process and pin every message array it ever saw.
   // Holding weakly makes the app's own lifetime the authority: a controller it has dropped simply
   // stops being here. [LAW:no-shared-mutable-globals] one owner, and it outlives nothing.
-  const announced = [];
-  const live = () => announced.map((ref) => ref.deref()).filter(Boolean);
+  let announced = [];
+  // Latched, never reset: "the seam has fired at least once" is a fact about this process's boot and
+  // stays true after every conversation it saw has ended. Without it, a session running for hours
+  // with a healthy seam reports the same thing as one where the splice never landed, and sends
+  // whoever is debugging a stale uuid hunting a boot defect instead.
+  let everAnnounced = false;
+  // Compacting, not just filtering: the WeakRefs go dead but the array holding them does not, so
+  // without this the bookkeeping grows for the life of the process and every lookup scans entries
+  // that can never resolve again.
+  const live = () => {
+    announced = announced.filter((ref) => ref.deref() !== undefined);
+    return announced.map((ref) => ref.deref());
+  };
   return {
     // What the injected source calls. Its return value lands in a class field on the instance, so it
     // returns undefined deliberately: the field is a side effect of announcing, never a value the
     // app should find something in.
     registrar: {
-      controller(instance) { announced.push(new WeakRef(instance)); },
+      controller(instance) { everAnnounced = true; announced.push(new WeakRef(instance)); },
     },
 
     // How many announced. The host reports this so a boot where the seam spliced but never fired is
@@ -59,7 +71,12 @@ function createSeamRegistry() {
       // send whoever reads the log to different places. [LAW:no-silent-failure]
       if (!uuid) return { ok: false, reason: UNOWNED.noUuid };
       const controllers = live();
-      if (controllers.length === 0) return { ok: false, reason: UNOWNED.neverAnnounced };
+      // Two different diagnoses, and collapsing them points the reader at the wrong half of the
+      // system: one says the injection never happened, the other says it did and the conversation
+      // being named is simply over.
+      if (controllers.length === 0) {
+        return { ok: false, reason: everAnnounced ? UNOWNED.allEnded : UNOWNED.neverAnnounced };
+      }
       const owners = controllers.filter((c) => snapshotOf(c).some((m) => m && m.uuid === uuid));
       if (owners.length === 0) return { ok: false, reason: UNOWNED.none, detail: uuid };
       if (owners.length > 1) return { ok: false, reason: UNOWNED.several, detail: uuid };

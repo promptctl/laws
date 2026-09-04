@@ -35,7 +35,11 @@ const unresolved = (reason, seam, detail) => ({ ok: false, reason, seam: seam.na
 // a global regex carries `lastIndex` between calls, which is shared mutable state that would make
 // the second scan of a module disagree with the first. [LAW:no-shared-mutable-globals]
 function sitesIn(text, anchor) {
-  const scan = new RegExp(anchor.source, anchor.flags + 'g');
+  // `g` and `y` are stripped before `g` is added: a seam declared /.../g would otherwise build
+  // 'gg' and throw a SyntaxError, which escapes this module's named refusals entirely and takes the
+  // host down instead of falling back to stock claude — the one outcome eager resolution exists to
+  // prevent. [LAW:no-silent-failure]
+  const scan = new RegExp(anchor.source, anchor.flags.replace(/[gy]/g, '') + 'g');
   const out = [];
   for (const m of text.matchAll(scan)) out.push(m.index);
   return out;

@@ -151,14 +151,48 @@ t('a controller the app has dropped stops being held', async () => {
   assert.strictEqual(reg.ownerOf('stays').controller, kept);
 });
 
-t('every controller collected leaves the registry reporting never-announced', async () => {
+t('every controller collected leaves the registry holding none', async () => {
+  // This case used to assert `neverAnnounced` here, which conflated a seam that never fired with one
+  // whose conversations have all ended — see the pair of cases below for the distinction.
   const reg = R.createSeamRegistry();
   reg.registrar.controller({ transcript: { getSnapshot: () => [{ uuid: 'x' }] } });
   global.gc();
   await new Promise((r) => setImmediate(r));
   global.gc();
   assert.strictEqual(reg.count, 0);
-  assert.strictEqual(reg.ownerOf('x').reason, R.UNOWNED.neverAnnounced);
+  assert.strictEqual(reg.ownerOf('x').ok, false);
+});
+
+t('a seam that fired and then lost every conversation is NOT reported as never firing', async () => {
+  // Two diagnoses: "the injection never landed" sends you to boot, "the conversation is over" sends
+  // you to the uuid. Collapsing them sends a maintainer to the wrong half of the system.
+  const reg = R.createSeamRegistry();
+  reg.registrar.controller({ transcript: { getSnapshot: () => [{ uuid: 'x' }] } });
+  global.gc();
+  await new Promise((r) => setImmediate(r));
+  global.gc();
+  assert.strictEqual(reg.count, 0);
+  assert.strictEqual(reg.ownerOf('x').reason, R.UNOWNED.allEnded);
+});
+
+t('a registry that never saw a seam fire says exactly that', () => {
+  assert.strictEqual(R.createSeamRegistry().ownerOf('x').reason, R.UNOWNED.neverAnnounced);
+});
+
+t('the backing array is compacted, not merely filtered on read', async () => {
+  // The targets are weak but the array holding them is not; without compaction every lookup keeps
+  // scanning entries that can never resolve again, for the life of the process.
+  const reg = R.createSeamRegistry();
+  const kept = { transcript: { getSnapshot: () => [{ uuid: 'stays' }] } };
+  for (let i = 0; i < 50; i++) reg.registrar.controller({ transcript: { getSnapshot: () => [{ uuid: 'n' + i }] } });
+  reg.registrar.controller(kept);
+  global.gc();
+  await new Promise((r) => setImmediate(r));
+  global.gc();
+  assert.strictEqual(reg.count, 1);
+  // Calling again must not resurrect the dead entries, and must still find the live one.
+  assert.strictEqual(reg.count, 1);
+  assert.strictEqual(reg.ownerOf('stays').controller, kept);
 });
 
 t('snapshotOf reads the store the one way, so callers cannot spell it differently', () => {

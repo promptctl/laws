@@ -403,9 +403,10 @@ writer bolted alongside.
   conversation, `seam-registry.js` proves which controller owns a conversation, `live-switch.js`
   crosses from the disk-shaped decision to the live store, `switch-request.js` composes them, and
   `switch-channel.js` is the unix socket `laws-switch` dials instead of `BUN_INSPECT`. Verified live
-  on 2.1.258 for both `rewind_discard` and `tombstone` with the session PID unchanged and files
-  written after the craft load intact; 77 of 78 deliberate mutations are killed by a test, the one
-  survivor being an equivalent mutant named in the source. See the resolved section above, including
+  on 2.1.258 for all three enacting choices — `rewind_discard`, `tombstone` and `rewind_summarize` —
+  each with the session PID unchanged and the file written after the craft load intact; 99 of 100 deliberate mutations are killed by a
+  test, the one survivor being an equivalent mutant that `switch-channel.js` names in those words at
+  its `finish` latch — flipping it changes no observable behaviour, so no test can kill it. See the resolved section above, including
   the durability limitation (`promptctl-injector-xy0.3`).
 - DONE (2026-08-16): the rewind for options 3/4 is disk surgery — `rewindTo()`, sever + repoint,
   verified live against a real transcript. **SEAM 2a is not needed**, and neither is native

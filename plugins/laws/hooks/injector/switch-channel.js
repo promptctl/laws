@@ -38,7 +38,16 @@ const socketPathIn = (dir) => path.join(dir, SOCKET_NAME);
 // reaches the separator. A guard here would be code defending against a state the encoding makes
 // unrepresentable. [LAW:no-defensive-null-guards]
 const RECORD_SEPARATOR = '\n';
-const encode = (value) => JSON.stringify(value) + RECORD_SEPARATOR;
+const encode = (value) => {
+  const json = JSON.stringify(value);
+  // `JSON.stringify` RETURNS undefined for undefined, a function or a symbol rather than throwing,
+  // so concatenating blindly would put the literal text "undefined" on the wire and the far end
+  // would report a parse error — a real defect in the caller, disguised as a transport fault. This
+  // is the one place both directions pass through, so it is the one place that has to notice.
+  // [LAW:no-silent-failure]
+  if (typeof json !== 'string') throw new TypeError('a ' + typeof value + ' cannot be encoded as a record');
+  return json + RECORD_SEPARATOR;
+};
 
 // Every way the channel itself can fail to carry a switch, named — distinct from the reasons the
 // ENACTMENT can refuse, which come back inside a well-formed response. [LAW:no-silent-failure]
@@ -46,9 +55,18 @@ const encode = (value) => JSON.stringify(value) + RECORD_SEPARATOR;
 // cannot drift from the spelling. [LAW:one-source-of-truth]
 const THREW = 'the-switch-threw';
 const UNENCODABLE = 'the-response-could-not-be-encoded';
+// The server failing to parse the CLIENT's request is the opposite fault from the client failing to
+// parse the server's reply, and reusing UNREACHABLE.malformed for it told the caller "the hosted
+// session answered with something that is not a response" — pointing at the wrong end of the wire.
+const UNPARSEABLE = 'the-switch-request-could-not-be-parsed';
 
+// Split by ONE question: did the request provably never arrive? Only `noSocket` — the connection
+// itself never opened — can answer yes, and only that answer lets a caller tell the user nothing
+// happened. A peer that accepted and then went quiet may have enacted the switch already, so it gets
+// its own reason rather than being folded in with a refused connection. [LAW:no-silent-failure]
 const UNREACHABLE = {
   noSocket: 'no-hosted-session-is-listening',
+  noAnswer: 'the-hosted-session-accepted-the-switch-and-then-closed-without-answering',
   timeout: 'the-hosted-session-did-not-answer',
   malformed: 'the-hosted-session-answered-with-something-that-is-not-a-response',
 };
@@ -100,7 +118,7 @@ function createSwitchServer({ net, dir, onRequest, onError }) {
           onError(e);
         }
       },
-      onMalformed: (e) => socket.end(encode({ ok: false, reason: UNREACHABLE.malformed, detail: because(e) })),
+      onMalformed: (e) => socket.end(encode({ ok: false, reason: UNPARSEABLE, detail: because(e) })),
     });
   });
   server.on('error', (e) => onError(e));
@@ -116,9 +134,17 @@ function requestSwitch({ net, dir, request, timeoutMs = 15000 }) {
   return new Promise((resolve) => {
     // This latch is for READABILITY, not correctness: resolving an already-settled promise is
     // itself a no-op, so every arm below may fire without harm. It says out loud that exactly one
-    // of them is meant to win, which is why a mutation of it changes no behaviour.
+    // of them is meant to win.
+    //
+    // It is therefore an EQUIVALENT MUTANT and the one deliberate SURVIVOR of the mutation sweep:
+    // flipping this initialiser changes no observable behaviour, so no test can kill it. Named here
+    // in the words a reader would actually grep for, because the record in SEAMS.md sends them
+    // looking.
     let settled = false;
     const finish = (value) => { if (!settled) { settled = true; resolve(value); } };
+    // Whether the connection ever opened is the fact that decides whether a caller may say "nothing
+    // was changed", so it is tracked rather than inferred from which handler fired first.
+    let connected = false;
     const socket = net.createConnection(socketPathIn(dir));
     const timer = setTimeout(() => { socket.destroy(); finish({ ok: false, reason: UNREACHABLE.timeout }); }, timeoutMs);
     if (timer.unref) timer.unref();
@@ -126,17 +152,32 @@ function requestSwitch({ net, dir, request, timeoutMs = 15000 }) {
 
     // No listener means no hosted session — the stock binary, or a host that failed its boot check.
     // That is a different fact from a session that answered with a refusal, and the caller acts on
-    // it differently, so it must not be collapsed into one.
-    socket.on('error', (e) => done({ ok: false, reason: UNREACHABLE.noSocket, detail: because(e) }));
-    socket.on('connect', () => socket.write(encode(request)));
+    // it differently, so it must not be collapsed into one. It is also different from a connection
+    // that opened and then broke: the same `connected` question decides both this arm and `close`,
+    // because a socket reset after acceptance may have enacted the switch before it died.
+    socket.on('error', (e) => done({
+      ok: false, reason: connected ? UNREACHABLE.noAnswer : UNREACHABLE.noSocket, detail: because(e),
+    }));
+    // Guarded for the same reason the server's reply is: this runs inside a plain event listener, so
+    // a throw here is uncaught and takes the laws-switch process down instead of coming back as a
+    // reason the caller can report.
+    socket.on('connect', () => {
+      connected = true;
+      try { socket.write(encode(request)); }
+      catch (e) { done({ ok: false, reason: UNENCODABLE, detail: because(e) }); }
+    });
     readOneRecord(socket, {
       onRecord: (response) => done(response),
       onMalformed: (e) => done({ ok: false, reason: UNREACHABLE.malformed, detail: because(e) }),
     });
     // A peer that closes without answering has not answered. Without this the promise would hang
-    // until the timeout and report the wrong reason for the right failure.
-    socket.on('close', () => finish({ ok: false, reason: UNREACHABLE.noSocket }));
+    // until the timeout and report the wrong reason for the right failure. WHICH failure depends on
+    // whether it ever accepted us: a refused connection proves the request never arrived, while one
+    // that was accepted and then dropped may have enacted the switch before going quiet.
+    socket.on('close', () => finish({
+      ok: false, reason: connected ? UNREACHABLE.noAnswer : UNREACHABLE.noSocket,
+    }));
   });
 }
 
-module.exports = { SOCKET_NAME, socketPathIn, RECORD_SEPARATOR, UNREACHABLE, THREW, UNENCODABLE, encode, createSwitchServer, requestSwitch };
+module.exports = { SOCKET_NAME, socketPathIn, RECORD_SEPARATOR, UNREACHABLE, THREW, UNENCODABLE, UNPARSEABLE, encode, createSwitchServer, requestSwitch };

@@ -32,6 +32,9 @@
 'use strict';
 
 const { stubText, SWITCH_ACTIONS } = require('../scripts/laws-excise.js');
+// One spelling of "a controller's live messages", shared with seam-registry, whose suite asserts
+// callers cannot spell it differently. [LAW:one-source-of-truth]
+const { snapshotOf } = require('./seam-registry.js');
 
 // Every way a decision can fail to become a live plan, named — these reach the caller that asked for
 // the switch, so they are contract. [LAW:no-silent-failure]
@@ -41,6 +44,7 @@ const UNPLANNABLE = {
   noTemplate: 'the-live-conversation-has-no-user-message-to-shape-a-summary-from',
   summaryMissing: 'rewind_summarize-was-asked-for-without-a-summary',
   notStubbable: 'a-craft-load-message-does-not-carry-replaceable-text',
+  nothingBefore: 'the-craft-load-is-the-first-live-message-so-a-discard-has-nowhere-to-land',
 };
 
 // The app's own value for "the user picked a message and rewound to it", which is what a craft switch
@@ -61,7 +65,11 @@ const unplannable = (reason, detail) => ({ ok: false, reason, detail });
 // The live messages a craft load produced, by uuid. `decide()` names the OLDEST conflicting load in
 // `rewind.summarizeTo`; that uuid is the one that crosses, and the tombstone targets every live
 // message whose uuid appears in the decision's own set.
-const liveIndexOf = (snapshot, uuid) => snapshot.findIndex((m) => m && m.uuid === uuid);
+// It enforces its own precondition rather than trusting a caller's: an absent uuid would otherwise
+// match the first record that also has none, and this function is what PROVES a message's identity —
+// the same ambiguity seam-registry's ownerOf refuses, which only screens the anchor and not the rest
+// of the conflicting set. [LAW:parse-dont-validate]
+const liveIndexOf = (snapshot, uuid) => (uuid ? snapshot.findIndex((m) => m && m.uuid === uuid) : -1);
 
 // A tombstoned copy. A NEW object, never a mutation: the store is read through getSnapshot and the UI
 // re-renders on identity, so editing in place would change the conversation without redrawing it.
@@ -116,18 +124,31 @@ function planLiveSwitch({ snapshot, decision, choice, summary, uuid, now }) {
   // argument. It returns BEFORE the tombstones are built, and that ordering is load-bearing: the
   // messages a tombstone would rewrite are the ones this choice deletes, so requiring them to be
   // rewritable would refuse a switch over the shape of a message about to cease existing.
-  if (choice === 'rewind_discard') return { ...empty, rewindAt: snapshot[loadIndex] };
+  if (choice === 'rewind_discard') {
+    // The disk path refuses this exact state (its `discardTo` is the load's parentUuid, which is
+    // absent when the load is first), and the live path must agree: aiming the rewind at index 0
+    // would truncate the conversation to nothing and report success. Two enforcers of one rule do
+    // not get to disagree about what is legal. [LAW:single-enforcer]
+    if (loadIndex === 0) return unplannable(UNPLANNABLE.nothingBefore, loadUuid);
+    return { ...empty, rewindAt: snapshot[loadIndex] };
+  }
 
-  // Every conflicting craft load, paired with the medium it loaded so the stub says which craft it
-  // replaced. `decision.conflicts` is the decision's own set named by uuid — the only naming that
-  // crosses into the live store. Refusing when one is missing is the point: a partial tombstone
-  // leaves a craft engaged that the switch reported as retired, which is the defect the gate exists
-  // to prevent, one level up. And the REPLACEMENT is built here rather than at apply time, so a plan
-  // is proof that every tombstone can be carried out — deferring it would leave a way to fail
-  // halfway through, with the rewind already applied and no way back.
-  // [LAW:no-silent-failure] [LAW:parse-dont-validate]
+  // WHICH conflicts must survive the crossing depends on which of them the choice keeps, and that is
+  // the same reasoning the discard arm above uses. `tombstone` keeps the whole conversation, so every
+  // conflicting load stays engaged and every one must be stubbed. `rewind_summarize` cuts at
+  // loadIndex + 1, and `decision.conflicts` is ordered oldest-first with the anchor at [0] — so every
+  // OTHER conflict is newer, sits past the cut, and is deleted by the rewind whether or not it was
+  // ever stubbed. Demanding those be live and rewritable would refuse the switch over the shape of a
+  // message about to cease existing, which is exactly what the disk path does not do.
+  const mustStub = choice === 'tombstone' ? decision.conflicts : decision.conflicts.slice(0, 1);
+
+  // Refusing when one of THESE is missing is the point: a partial tombstone leaves a craft engaged
+  // that the switch reported as retired, which is the defect the gate exists to prevent one level up.
+  // And the REPLACEMENT is built here rather than at apply time, so a plan is proof that every
+  // tombstone can be carried out — deferring it would leave a way to fail halfway through, with the
+  // rewind already applied and no way back. [LAW:no-silent-failure] [LAW:parse-dont-validate]
   const tombstones = [];
-  for (const { uuid: conflictUuid, medium } of decision.conflicts) {
+  for (const { uuid: conflictUuid, medium } of mustStub) {
     const message = snapshot[liveIndexOf(snapshot, conflictUuid)];
     if (!message) return unplannable(UNPLANNABLE.notLive, conflictUuid);
     const stubbed = stubbedMessage(message, medium, decision.incoming);
@@ -162,7 +183,7 @@ function applyLiveSwitch(controller, plan) {
 
   // Read AFTER the rewind: the rewind is what decided which messages still exist, so building the
   // replacement from the pre-rewind array would reinstate the ones it just dropped.
-  const after = controller.transcript.getSnapshot();
+  const after = snapshotOf(controller);
   const stubs = new Map(plan.tombstones.map((t) => [t.uuid, t.stubbed]));
 
   // A substitution, and nothing else: every replacement was proven at plan time, so there is no arm

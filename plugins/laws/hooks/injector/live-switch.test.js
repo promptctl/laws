@@ -172,7 +172,11 @@ t('rewind_discard does not care whether the craft load is rewritable', () => {
   // a message that is about to cease existing — a wrong refusal, and one the tombstone-shaped cases
   // above would never catch.
   const odd = { type: 'user', uuid: 'load-code', message: { role: 'user', content: [{ type: 'image' }] } };
-  const p = L.planLiveSwitch({ snapshot: [odd, said('x', 'after')], decision: decision(), choice: 'rewind_discard', uuid: 'u', now: 'N' });
+  // Something before it, so the refusal under test is stubbability and not "nothing to land on".
+  const p = L.planLiveSwitch({
+    snapshot: [said('first', 'hi'), odd, said('x', 'after')],
+    decision: decision(), choice: 'rewind_discard', uuid: 'u', now: 'N',
+  });
   assert.strictEqual(p.ok, true);
   assert.strictEqual(p.rewindAt, odd);
   assert.deepStrictEqual(p.tombstones, []);
@@ -181,6 +185,52 @@ t('rewind_discard does not care whether the craft load is rewritable', () => {
 t('rewind_summarize DOES care, because it keeps and rewrites the craft load', () => {
   const odd = { type: 'user', uuid: 'load-code', message: { role: 'user', content: [{ type: 'image' }] } };
   const p = L.planLiveSwitch({ snapshot: [odd, said('x', 'after')], decision: decision(), choice: 'rewind_summarize', summary: 's', uuid: 'u', now: 'N' });
+  assert.strictEqual(p.reason, L.UNPLANNABLE.notStubbable);
+});
+
+t('a craft load with nothing before it refuses a discard instead of emptying the conversation', () => {
+  // The disk path hard-refuses this state; the live path aiming at index 0 would truncate to nothing
+  // and report success. Two enforcers of one rule do not get to disagree about what is legal.
+  const snapshot = [load('load-code', 'code'), said('after', 'more')];
+  const p = L.planLiveSwitch({ snapshot, decision: decision(), choice: 'rewind_discard', uuid: 'u', now: 'N' });
+  assert.strictEqual(p.ok, false);
+  assert.strictEqual(p.reason, L.UNPLANNABLE.nothingBefore);
+});
+
+t('a craft load with anything before it discards normally', () => {
+  const p = plan({ choice: 'rewind_discard' });
+  assert.strictEqual(p.ok, true);
+});
+
+t('an absent uuid finds nothing rather than matching a record that has none', () => {
+  // liveIndexOf proves message identity; an undefined uuid would otherwise match the first record
+  // without one and tombstone the wrong message.
+  const d = decision({ conflicts: [{ uuid: 'load-code', medium: 'code' }, { uuid: undefined, medium: 'prose' }] });
+  const snapshot = [said('before', 'x'), load('load-code', 'code'), { type: 'progress' }, said('after', 'y')];
+  const p = L.planLiveSwitch({ snapshot, decision: d, choice: 'tombstone', uuid: 'u', now: 'N' });
+  assert.strictEqual(p.ok, false);
+  assert.strictEqual(p.reason, L.UNPLANNABLE.notLive);
+});
+
+t('rewind_summarize needs only the ANCHOR to be stubbable — the rest are past the cut', () => {
+  // Every non-anchor conflict is newer, sits past loadIndex+1, and is deleted by the rewind whether
+  // or not it was ever stubbed. Demanding it be rewritable refuses a switch over the shape of a
+  // message about to cease existing — the same reasoning the discard arm already uses.
+  const doomed = { type: 'user', uuid: 'load-prose', isMeta: true, message: { role: 'user', content: [{ type: 'image' }] } };
+  const snapshot = [said('before', 'x'), load('load-code', 'code'), doomed, said('after', 'y')];
+  const d = decision({ conflicts: [{ uuid: 'load-code', medium: 'code' }, { uuid: 'load-prose', medium: 'prose' }] });
+  const p = L.planLiveSwitch({ snapshot, decision: d, choice: 'rewind_summarize', summary: 's', uuid: 'u', now: 'N' });
+  assert.strictEqual(p.ok, true);
+  assert.deepStrictEqual(p.tombstones.map((x) => x.uuid), ['load-code']);
+});
+
+t('tombstone still requires EVERY conflict, because it keeps them all', () => {
+  // With no rewind they all remain engaged, so a partial tombstone would leave a retired craft live.
+  const doomed = { type: 'user', uuid: 'load-prose', isMeta: true, message: { role: 'user', content: [{ type: 'image' }] } };
+  const snapshot = [said('before', 'x'), load('load-code', 'code'), doomed, said('after', 'y')];
+  const d = decision({ conflicts: [{ uuid: 'load-code', medium: 'code' }, { uuid: 'load-prose', medium: 'prose' }] });
+  const p = L.planLiveSwitch({ snapshot, decision: d, choice: 'tombstone', uuid: 'u', now: 'N' });
+  assert.strictEqual(p.ok, false);
   assert.strictEqual(p.reason, L.UNPLANNABLE.notStubbable);
 });
 

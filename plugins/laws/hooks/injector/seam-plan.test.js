@@ -94,6 +94,20 @@ t('scanning twice gives the same answer — no lastIndex carried between calls',
   assert.deepStrictEqual(P.sitesIn(text, SEAM.anchor), [0]);
 });
 
+t('an anchor declared global does not build an invalid regex', () => {
+  // 'g' + 'g' is a SyntaxError, which would escape this module's named refusals and crash the host
+  // instead of falling back to stock claude.
+  const globalSeam = { name: 'g', anchor: /mark\s*=\s*(?=\()/g, insert: 'X;' };
+  const plan = P.resolveSeams(graph([['/a.js', 'let q;mark=(1)']]), [globalSeam]);
+  assert.strictEqual(plan.ok, true);
+  assert.strictEqual(plan.sites[0].index, 6);
+});
+
+t('a sticky anchor is handled the same way', () => {
+  const sticky = { name: 'y', anchor: /mark/y, insert: 'X;' };
+  assert.deepStrictEqual(P.sitesIn('mark and mark', sticky.anchor), [0, 9]);
+});
+
 t('resolveSeams refuses on the first failing seam and returns no partial plan', () => {
   // A plan that patched some seams and not others would leave the app half-injected, which is a
   // state no caller has a use for.

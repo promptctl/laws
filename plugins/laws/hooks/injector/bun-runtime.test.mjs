@@ -79,7 +79,7 @@ function build(modules = MODULES, extra = {}) {
 // ---- the transform, which is the whole wire the craft switch hangs from -------------------------
 //
 // A regression here fails SILENTLY: no boot error, no exception — the seam simply never reaches the
-// compiler and the registrar is never called. seam-plan.test.mjs covers `transformFor` in isolation,
+// compiler and the registrar is never called. seam-plan.test.js covers `transformFor` in isolation,
 // which is a different claim from "the runtime actually applies it".
 
 t('a transform reaches the compiler — the evaluated module reflects the edited source', async () => {

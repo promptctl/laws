@@ -112,14 +112,15 @@ t('no listener is its own named reason, not a timeout and not a refusal', async 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-t('a peer that closes without answering resolves as unreachable, not as a hang', async () => {
-  // Without this the promise would sit until the timeout and then name the wrong failure.
+t('a peer that closes without answering resolves promptly, not as a hang', async () => {
+  // Without this the promise would sit until the timeout and then name the wrong failure. The reason
+  // is noAnswer rather than noSocket because the connection did open — see the pair of cases below.
   const dir = tmpdir();
   const server = net.createServer((socket) => socket.destroy());
   await new Promise((r) => server.listen(C.socketPathIn(dir), r));
   const out = await C.requestSwitch({ net, dir, request: { choice: 'reject' }, timeoutMs: 5000 });
   assert.strictEqual(out.ok, false);
-  assert.strictEqual(out.reason, C.UNREACHABLE.noSocket);
+  assert.strictEqual(out.reason, C.UNREACHABLE.noAnswer);
   server.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -161,7 +162,7 @@ t('a client that sends garbage is answered, not left hanging', async () => {
   });
   const answer = JSON.parse(reply);
   assert.strictEqual(answer.ok, false);
-  assert.strictEqual(answer.reason, C.UNREACHABLE.malformed);
+  assert.strictEqual(answer.reason, C.UNPARSEABLE);
   // The detail is the parse failure's MESSAGE, not the error object stringified around it.
   assert.ok(answer.detail && !answer.detail.startsWith('SyntaxError'), 'detail was the error itself: ' + answer.detail);
   server.close();
@@ -185,15 +186,15 @@ t('the enactment is not called at all when the request does not parse', async ()
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-t('a session that closes CLEANLY without answering is unreachable, not a success', async () => {
-  // Distinct from the destroy() case above: there the client sees an error first, so the close arm
-  // never runs. Here close is the only thing that fires, and it must not resolve as ok.
+t('a session that closes CLEANLY without answering is a failure, not a success', async () => {
+  // It ACCEPTED the connection, so this is noAnswer rather than noSocket — the request may have
+  // arrived and run before the peer went quiet, which is what stops the caller claiming otherwise.
   const dir = tmpdir();
   const server = net.createServer((socket) => socket.end());
   await new Promise((r) => server.listen(C.socketPathIn(dir), r));
   const out = await C.requestSwitch({ net, dir, request: { choice: 'reject' }, timeoutMs: 4000 });
   assert.strictEqual(out.ok, false);
-  assert.strictEqual(out.reason, C.UNREACHABLE.noSocket);
+  assert.strictEqual(out.reason, C.UNREACHABLE.noAnswer);
   server.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -240,6 +241,72 @@ t('an unencodable response does not kill the process', async () => {
   await new Promise((r) => setTimeout(r, 100));
   process.off('unhandledRejection', onRejection);
   assert.deepStrictEqual(rejections, []);
+});
+
+t('the SERVER failing to parse the request says so, not that the session answered badly', async () => {
+  // Reusing the client-side reason told the caller "the hosted session answered with something that
+  // is not a response" when in fact its own request would not parse — the wrong end of the wire.
+  const dir = tmpdir();
+  const server = C.createSwitchServer({ net, dir, onRequest: () => ({ ok: true }), onError: (e) => errors.push(e) });
+  const reply = await new Promise((resolve) => {
+    const socket = net.createConnection(C.socketPathIn(dir), () => socket.write('{ broken\n'));
+    let buf = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (d) => { buf += d; });
+    socket.on('close', () => resolve(buf));
+    setTimeout(() => { socket.destroy(); resolve('{"reason":"NEVER ANSWERED"}'); }, 2000).unref();
+  });
+  assert.strictEqual(JSON.parse(reply).reason, C.UNPARSEABLE);
+  assert.notStrictEqual(JSON.parse(reply).reason, C.UNREACHABLE.malformed);
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t('a value JSON cannot represent is refused by encode rather than sent as "undefined"', () => {
+  // JSON.stringify RETURNS undefined for these rather than throwing, so a blind concatenation would
+  // put the literal text "undefined" on the wire and the far end would call it a parse error.
+  for (const value of [undefined, () => {}, Symbol('x')]) {
+    assert.throws(() => C.encode(value), TypeError, 'encoded ' + String(value));
+  }
+});
+
+t('an onRequest that returns nothing is reported as unencodable, not as a bad answer', async () => {
+  const out = await exchange(() => undefined);
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, C.UNENCODABLE);
+});
+
+t('a request that cannot be encoded fails by name instead of crashing the caller', async () => {
+  // The throw would happen inside a plain 'connect' listener, where nothing catches it.
+  const dir = tmpdir();
+  const server = C.createSwitchServer({ net, dir, onRequest: () => ({ ok: true }), onError: (e) => errors.push(e) });
+  const circular = {};
+  circular.self = circular;
+  const out = await C.requestSwitch({ net, dir, request: circular, timeoutMs: 2000 });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, C.UNENCODABLE);
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t('a peer that accepts and then closes is NOT reported as no-listener', async () => {
+  // The distinction decides whether a caller may tell the user nothing happened: a refused
+  // connection proves the request never arrived; an accepted one may have enacted the switch.
+  const dir = tmpdir();
+  const server = net.createServer((socket) => socket.destroy());
+  await new Promise((r) => server.listen(C.socketPathIn(dir), r));
+  const out = await C.requestSwitch({ net, dir, request: { choice: 'reject' }, timeoutMs: 4000 });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, C.UNREACHABLE.noAnswer);
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t('a connection that never opened keeps the no-listener reason', async () => {
+  const dir = tmpdir();
+  const out = await C.requestSwitch({ net, dir, request: { choice: 'reject' }, timeoutMs: 2000 });
+  assert.strictEqual(out.reason, C.UNREACHABLE.noSocket);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 t('a second record arriving DURING a slow enactment is ignored', async () => {

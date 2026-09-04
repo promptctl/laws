@@ -216,17 +216,10 @@ function newest(hitList) {
 // not tombstone size. The rewind options move the leaf back, so they reprocess far less — 'discard'
 // is cheapest because nothing after the pre-craft point is new.
 //
-// ALL FOUR ARE ON-DISK TRANSCRIPT SURGERY, applied by the LAUNCHER after the session has already
-// exited — no injected tool runs, and claude's native rewind is never driven. This paragraph used
-// to describe custom injected tools driving that native mechanism internally through a
-// `rewindAnchorUuid` anchor; that is Path A, and hooks/injector/SEAMS.md marks its seam SUPERSEDED
-// (2026-08-16, "do not build against it") because rewindTo() reaches the same end state through the
-// transcript alone. What ships is Path B (SEAMS.md, DONE 2026-08-23): the in-session gate records
-// the choice, the session ends, bin/claude-laws rewrites the file, and claude is relaunched with
-// --resume. The user still never types /rewind or hunts for the message, but that is because the
-// file was already rewritten before the session came back — not because anything drove a picker on
-// their behalf. A reader who believed the old text would go looking for an injected-tool component
-// that does not exist to maintain. [LAW:one-source-of-truth] SEAMS.md owns which path shipped.
+// THIS FILE'S FOUR ACTIONS ARE ON-DISK SURGERY, and they are no longer the only enactment. A second
+// path — hooks/injector/live-switch.js — applies the same four choices to the RUNNING session by
+// calling the app's own rewind, with no relaunch. Both are live; which one runs depends on whether a
+// hosted session is listening. [LAW:one-source-of-truth] SEAMS.md owns the record of both.
 //
 // The edit is conversation-only and NEVER reverts code, so on-disk file deliverables survive EVERY
 // option, 'discard' included. The frontier is over conversation context + cache cost, not on-disk work.
@@ -236,10 +229,9 @@ function newest(hitList) {
 // claimed to prevent this by tombstoning BEFORE the summary was composed — that ordering is NOT
 // achievable here and the claim has been removed rather than left to reassure a reader. The
 // summary can only be written from the live session's own context, and that context necessarily
-// still holds the craft: the live message store is closure-local, so nothing can excise the craft
-// from a running session's context before asking it to summarize (see hooks/injector/SEAMS.md).
-// The excise does run before the summary is APPENDED TO THE FILE, but that is file ordering and
-// buys nothing against a summary already composed under the craft's influence.
+// still holds the craft: the agent composes it BEFORE any switch runs, on either path. Excising
+// first is file ordering, and buys nothing against a summary already composed under the craft's
+// influence.
 // So the protection that actually acts is the INSTRUCTION the agent composes against — carried in
 // the deny message and in laws-switch's usage — which tells it to summarize its work and not the
 // craft's guidance. That is a weaker guarantee than a structural one, and it is named here as

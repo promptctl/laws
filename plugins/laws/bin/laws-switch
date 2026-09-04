@@ -132,13 +132,16 @@ const request = {
     process.exit(0);
   }
   if (live.reason !== UNREACHABLE.noSocket) {
-    // "Nothing was changed" is only true of a REFUSAL — a plan that was never applied. A switch that
-    // THREW is different in kind: applyLiveSwitch drives the app's own rewind first, and that
-    // mutation is already visible with no rollback available, so a later throw leaves a conversation
-    // that may genuinely be shorter than it was. Reporting that as "nothing changed" would be a lie
-    // in exactly the case the user most needs the truth. [LAW:no-silent-failure]
-    const what = live.reason === THREW
-      ? 'The switch FAILED PART WAY THROUGH. Your conversation may already have been rewound; check it before retrying.'
+    // ONE question decides the wording: could the switch already have run? Only a session that
+    // REFUSED it by name — a plan never applied — can be reported as having changed nothing. Every
+    // other outcome here reached a listening session, and applyLiveSwitch drives the app's own
+    // rewind before it can reply, with no rollback available: a throw, a timeout, an unreadable
+    // answer or a peer that went quiet all leave a conversation that may genuinely be shorter than
+    // it was. Claiming otherwise would be a lie in exactly the case the user most needs the truth.
+    // [LAW:no-silent-failure]
+    const MAY_HAVE_RUN = [THREW, UNREACHABLE.noAnswer, UNREACHABLE.timeout, UNREACHABLE.malformed];
+    const what = MAY_HAVE_RUN.includes(live.reason)
+      ? 'The switch may have run PART WAY. Your conversation may already have been rewound; check it before retrying.'
       : 'Nothing was changed.';
     die('the hosted session refused the switch (' + live.reason + (live.detail ? ': ' + live.detail : '') + '). ' + what);
   }
