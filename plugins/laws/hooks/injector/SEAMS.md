@@ -353,6 +353,15 @@ user in writing, and no arm runs caller-supplied code.
 - `tombstone`: PID **31796 before and after**, `marker.txt` still read `SURVIVES`, the conversation was
   KEPT, and the session then loaded `laws:prompt` successfully with the `laws:code` body gone from
   context (59,642 → 41,954 tokens).
+- `rewind_summarize`: PID **71844 before and after**, `kept.txt` still read `PRESERVED`, the
+  conversation was rewound to the craft load, the load itself was tombstoned, and the summary was
+  appended — **rendering as an ordinary user message**, which is the point of shaping it from a live
+  template rather than building one from a literal. Asked afterwards what it could see, the session
+  answered: "Only a tombstone — I invoked Skill(laws:code), and what came back was the excision
+  notice, not one line of the guidance body." The engaged-craft marker was released and stayed
+  released.
+
+All three enacting choices are therefore verified live, each with the session PID unchanged.
 
 **Releasing the craft lock is half the switch, and the live path nearly shipped without it.** The
 launcher used to call `skill-router.sh retire-craft` after the session exited; live there is no such
