@@ -17,8 +17,8 @@
 #                [LAW:no-silent-failure], a stale leftover file must never masquerade
 #                as this run's output).
 # [memento-ref]  git ref to pin memento at, resolved against the repository that OWNS
-#                memento (promptctl/memento), not this checkout - what is left here is
-#                pointer stubs. Defaults to that repo's default branch. A campaign that
+#                memento (promptctl/memento), not this checkout, which carries no copy
+#                of memento. Defaults to that repo's default branch. A campaign that
 #                wants one fixed ref across every run in the campaign
 #                (promptctl-horizon-7ry.5) passes it explicitly on every invocation
 #                rather than relying on this default, which tracks a moving branch.
