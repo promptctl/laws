@@ -17,6 +17,10 @@ const fs = require('fs');
 const path = require('path');
 const M = require(path.join(__dirname, '..', 'hooks', 'scripts', 'laws-excise.js'));
 const { connect } = require(path.join(__dirname, '..', 'hooks', 'injector', 'inspect-eval.js'));
+const { requestSwitch, UNREACHABLE } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-channel.js'));
+const { spawnSync } = require('child_process');
+// The router owns the engaged-craft lock's layout; this is the only sanctioned way to release one.
+const ROUTER = path.join(__dirname, '..', 'hooks', 'scripts', 'skill-router.sh');
 
 const CHOICES = Object.keys(M.SWITCH_ACTIONS);
 
@@ -69,23 +73,73 @@ if (choice === 'rewind_summarize' && !summary) {
   die('rewind_summarize needs --summary "<what you did since the craft loaded>". You are the only one who can write it: the summary is composed from your live context, and after the rewind that context is gone. Summarize YOUR WORK ONLY — what you did, decided, and left unfinished. Do NOT restate, paraphrase, or carry over any of the retiring craft\'s guidance, rules, or vocabulary: that guidance is being excised on purpose, and a summary that smuggles it back in defeats the switch you asked for.', 2);
 }
 
-fs.writeFileSync(path.join(dir, 'request.json'), JSON.stringify({
+const request = {
   sessionId: pending.sessionId,
   transcript: pending.transcript,
   incomingMedium: pending.incomingMedium,
   choice,
   summary,
-}, null, 2) + '\n');
-fs.unlinkSync(pendingPath);
+};
 
-// End the session through its OWN dispatch path. An agent cannot type a slash command into its own
-// session, so the exit has to arrive from outside the tool loop — which is what the inspector
-// channel is for. The trailing CARRIAGE RETURN is what submits: a newline types the text and
-// leaves it sitting at the prompt (measured).
-const wsurl = process.env.BUN_INSPECT;
-if (!wsurl) die('BUN_INSPECT is unset — cannot end the session to complete the switch. The choice is recorded; exit the session manually and it will be applied on relaunch.');
-
+// TWO ways to enact one request, and which one runs is decided by which host is listening — never by
+// a preference. The live path needs no relaunch and no inspector; the relaunch path is what shipped
+// before it and is still the only thing a stock-Bun session has.
+//
+// [LAW:no-mode-explosion] this fork is PRICED, not adopted: promptctl-injector-xy0.4 deletes the
+// relaunch arm along with BUN_INSPECT and the launcher loop that reads request.json. Until it does,
+// removing the arm here would leave a session launched by the current claude-laws unable to switch
+// at all.
 (async () => {
+  // The hosted session's channel. Its absence is a fact about the host, reported by name, and it is
+  // the one condition under which falling back is correct rather than a silent second data source.
+  const live = await requestSwitch({ net: require('net'), dir, request });
+  if (live.ok) {
+    fs.unlinkSync(pendingPath);
+    // Releasing the engaged-craft markers is HALF the switch: the conversation no longer carries the
+    // retired craft, but until its lock is released the guard still refuses the craft the user just
+    // switched to — a switch that reports success and leaves the session unable to do the thing it
+    // switched for. On the relaunch path the launcher did this after the session exited; on the live
+    // path there is no such moment, so it happens here, in the process that asked for the switch.
+    //
+    // Through the ROUTER, never by deleting a path composed here: the lock layout is the router's,
+    // and a second spelling of it would be a second source for where a marker lives.
+    // [LAW:one-source-of-truth]
+    for (const craft of live.switchedFrom || []) {
+      const retire = spawnSync(ROUTER, ['retire-craft'], {
+        input: JSON.stringify({ session_id: request.sessionId, craft }),
+        encoding: 'utf8',
+      });
+      // Loud, and not fatal: the switch itself already happened and cannot be undone, so the useful
+      // thing is to say which half did not complete rather than to imply neither did.
+      // [LAW:no-silent-failure]
+      if (retire.status !== 0) {
+        process.stderr.write('laws-switch: the switch was applied but laws:' + craft
+          + ' could not be released (' + (retire.stderr || '').trim() + '); loading laws:'
+          + request.incomingMedium + ' may still be refused this session.\n');
+      }
+    }
+    const retired = (live.switchedFrom || []).map((c) => 'laws:' + c).join(', ');
+    process.stdout.write(
+      'Switched to laws:' + live.switchedTo + ', live — this session was not restarted, and every file '
+      + 'written since ' + retired + ' loaded is untouched on disk.\n'
+      + (live.rewound ? 'The conversation was rewound in place.\n' : '')
+      + (live.tombstoned ? 'Retired ' + retired + ' in place.\n' : ''),
+    );
+    process.exit(0);
+  }
+  if (live.reason !== UNREACHABLE.noSocket) {
+    die('the hosted session refused the switch (' + live.reason + (live.detail ? ': ' + live.detail : '') + '). Nothing was changed.');
+  }
+
+  // No hosted session is listening: record the request and end the session so the launcher applies
+  // it on relaunch. An agent cannot type a slash command into its own session, so the exit has to
+  // arrive from outside the tool loop — which is what the inspector channel is for. The trailing
+  // CARRIAGE RETURN is what submits: a newline types the text and leaves it at the prompt (measured).
+  fs.writeFileSync(path.join(dir, 'request.json'), JSON.stringify(request, null, 2) + '\n');
+  fs.unlinkSync(pendingPath);
+
+  const wsurl = process.env.BUN_INSPECT;
+  if (!wsurl) die('BUN_INSPECT is unset — cannot end the session to complete the switch. The choice is recorded; exit the session manually and it will be applied on relaunch.');
   try {
     const c = connect(wsurl);
     await c.ready;

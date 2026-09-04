@@ -312,6 +312,13 @@ function decide(rawLines, opts = {}) {
     current, incoming, deep,
     tombstoneTokens,                                       // the cost that varies with depth (option 'tombstone')
     conflictIndices: ordered.map((h) => h.i),              // every line the injector tombstones (option 'tombstone')
+    // The same set named by UUID instead of by line. A line index cannot cross into the LIVE
+    // conversation (../injector/live-switch.js): the in-memory store is a flat array carrying
+    // transient records the file never has, and the file carries bookkeeping records with no uuid at
+    // all, so the two are not positionally comparable in either direction. Derived from the same
+    // `ordered` array as conflictIndices, which is what stops the two from naming different sets.
+    // [LAW:one-source-of-truth]
+    conflicts: ordered.map((h) => ({ uuid: parsed[h.i].uuid, medium: h.medium })),
     // Auto-targets for the rewind options, so the user never hunts for the craft message:
     //   summarizeTo = the OLDEST conflicting load line  (#3: rewind-to-craft, then tombstone + summarize)
     //   discardTo   = the message before it             (#4: rewind-to-pre-craft, then discard)
@@ -549,7 +556,10 @@ function applyRequest(requestPath, opts = {}) {
 
 module.exports = {
   parsePolicy, loadPolicy, conflictsWith, MALFORMED_WARNING,
-  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS,
+  // stubText is exported because the LIVE enactment (../injector/live-switch.js) stubs message
+  // objects rather than JSONL lines, so it cannot go through exciseAt. Two spellings of the
+  // tombstone wording would be two sources for one fact. [LAW:one-source-of-truth]
+  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS, stubText,
   applyRequest, run,
 };
 

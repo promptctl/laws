@@ -1,0 +1,188 @@
+#!/usr/bin/env node
+// Tests for switch-request.js — composing decision, ownership and enactment into one applied switch.
+//
+// The properties under test are that this file DECIDES nothing (the verdict comes from laws-excise,
+// unchanged), that every refusal its parts produce travels back by name rather than being flattened
+// into a generic failure, and that a request which no longer applies refuses instead of enacting a
+// stale one.
+
+'use strict';
+const assert = require('assert');
+const S = require('./switch-request.js');
+const { createSeamRegistry } = require('./seam-registry.js');
+const { UNPLANNABLE } = require('./live-switch.js');
+
+let pass = 0, fail = 0;
+const cases = [];
+const t = (name, fn) => cases.push({ name, fn });
+// A suite that stops early must not look green. Every handle this file opens is unref'd or closed,
+// so a case that never resolves lets node drain the event loop and exit 0 with the summary never
+// printed — a passing exit code for a suite that ran half its cases. The exit hook is what makes
+// that visible, because it is the only thing that still runs when nothing else does.
+let finished = false;
+process.on('exit', () => {
+  if (finished) return;
+  console.log(`\nINCOMPLETE - exited after ${pass + fail} of ${cases.length} cases`);
+  process.exitCode = 1;
+});
+async function runAll() {
+  for (const { name, fn } of cases) {
+    try { await fn(); pass++; console.log('ok   - ' + name); }
+    catch (e) { fail++; console.log('FAIL - ' + name + '\n       ' + (e && e.message)); }
+  }
+  finished = true;
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+}
+
+const load = (uuid, medium) => ({
+  type: 'user', uuid, isMeta: true, timestamp: 't0',
+  message: { role: 'user', content: [{ type: 'text', text: `Base directory for this skill: /laws/skills/${medium}/` }] },
+});
+const said = (uuid, text) => ({ type: 'user', uuid, timestamp: 't1', message: { role: 'user', content: text } });
+
+const DECISION = {
+  trigger: true, current: ['code'], incoming: 'prompt', deep: false,
+  conflicts: [{ uuid: 'L', medium: 'code' }],
+  rewind: { summarizeTo: 'L', discardTo: 'A' },
+};
+
+function harness(over = {}) {
+  const snapshot = over.snapshot || [said('A', 'hi'), load('L', 'code'), said('B', 'after')];
+  const replaced = [];
+  const rewinds = [];
+  const controller = {
+    transcript: { getSnapshot: () => snapshot, replace: (m) => replaced.push(m) },
+    rewindConversationTo: (m, source) => rewinds.push([m.uuid, source]),
+  };
+  const registry = createSeamRegistry();
+  registry.registrar.controller(controller);
+  const seen = {};
+  return {
+    replaced, rewinds, controller, registry, seen,
+    run: (o = {}) => S.enactSwitch({
+      request: { transcript: '/t.jsonl', choice: 'tombstone', incomingMedium: 'prompt', ...o.request },
+      registry: o.registry || registry,
+      decide: o.decide || ((lines, opts) => { seen.lines = lines; seen.opts = opts; return over.decision || DECISION; }),
+      conflictEdges: [['code', 'prompt']],
+      readFile: o.readFile || (() => over.raw ?? 'line1\nline2\n'),
+      uuid: () => 'NEW', now: () => 'NOW',
+      ...o.extra,
+    }),
+  };
+}
+
+// ---- the request ---------------------------------------------------------------------------------
+
+t('a request missing a field refuses AND names which fields', () => {
+  const h = harness();
+  const out = h.run({ request: { transcript: undefined, incomingMedium: undefined } });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, S.REFUSED.incomplete);
+  assert.strictEqual(out.detail, 'transcript, incomingMedium');
+});
+
+t('an unreadable transcript is a named refusal, not a crash', () => {
+  const h = harness();
+  const out = h.run({ readFile: () => { throw new Error('ENOENT'); } });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, S.REFUSED.unreadable);
+  // Exact: String(e) would read "Error: ENOENT" and still match a substring check.
+  assert.strictEqual(out.detail, 'ENOENT');
+});
+
+// ---- the decision --------------------------------------------------------------------------------
+
+t('the verdict is taken from decide(), which is handed the policy it was given', () => {
+  const h = harness();
+  h.run();
+  assert.deepStrictEqual(h.seen.opts, { conflictEdges: [['code', 'prompt']], incomingMedium: 'prompt' });
+});
+
+t('a trailing newline does not become an extra empty record', () => {
+  // The line numbering the decision is built on has to be the numbering laws-excise itself uses.
+  const h = harness({ raw: 'a\nb\n' });
+  h.run();
+  assert.deepStrictEqual(h.seen.lines, ['a', 'b']);
+});
+
+t('a transcript with no trailing newline keeps its last line', () => {
+  const h = harness({ raw: 'a\nb' });
+  h.run();
+  assert.deepStrictEqual(h.seen.lines, ['a', 'b']);
+});
+
+t('a switch that no longer applies refuses, carrying the reason it stopped applying', () => {
+  // The conversation kept moving between the offer and the choice; enacting a stale verdict would
+  // edit messages the user never agreed to.
+  const h = harness({ decision: { trigger: false, reason: 'compatible' } });
+  const out = h.run();
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, S.REFUSED.moot);
+  assert.strictEqual(out.detail, 'compatible');
+});
+
+t('nothing is enacted when the decision no longer triggers', () => {
+  const h = harness({ decision: { trigger: false, reason: 'first-craft' } });
+  h.run();
+  assert.deepStrictEqual([h.rewinds, h.replaced], [[], []]);
+});
+
+// ---- ownership -----------------------------------------------------------------------------------
+
+t('a conversation nobody holds passes the registry\'s own refusal straight through', () => {
+  const h = harness();
+  const out = h.run({ registry: createSeamRegistry() });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'no-seam-ever-announced-a-conversation');
+});
+
+t('the conversation is chosen by which one holds the decision\'s anchor', () => {
+  const h = harness();
+  const registry = createSeamRegistry();
+  registry.registrar.controller({ transcript: { getSnapshot: () => [said('elsewhere', 'x')] } });
+  registry.registrar.controller(h.controller);
+  const out = h.run({ registry });
+  assert.strictEqual(out.ok, true);
+});
+
+// ---- enactment -----------------------------------------------------------------------------------
+
+t('a plan that cannot be made passes its own refusal through, unflattened', () => {
+  const h = harness();
+  const out = h.run({ request: { choice: 'rewind_summarize' } });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, UNPLANNABLE.summaryMissing);
+});
+
+t('a completed switch reports what it did and what it retired', () => {
+  const h = harness();
+  const out = h.run({ request: { choice: 'tombstone' } });
+  assert.deepStrictEqual(out, {
+    ok: true, rewound: false, tombstoned: 1, changed: true,
+    choice: 'tombstone', switchedFrom: ['code'], switchedTo: 'prompt',
+  });
+});
+
+t('rewind_discard drives the app\'s own rewind at the craft load', () => {
+  const h = harness();
+  const out = h.run({ request: { choice: 'rewind_discard' } });
+  assert.strictEqual(out.ok, true);
+  assert.deepStrictEqual(h.rewinds, [['L', 'message_selector']]);
+});
+
+t('reject reaches the store not at all', () => {
+  const h = harness();
+  const out = h.run({ request: { choice: 'reject' } });
+  assert.deepStrictEqual([h.rewinds, h.replaced], [[], []]);
+  assert.strictEqual(out.changed, false);
+});
+
+t('the enactment is handed no way to write a file', () => {
+  // Structural, not a promise in prose: on-disk deliverables survive every choice because nothing
+  // here is given a writer. If a write ever appears, this assertion is what has to change first.
+  assert.ok(!S.enactSwitch.toString().includes('writeFile'));
+  assert.deepStrictEqual(S.REQUIRED, ['transcript', 'choice', 'incomingMedium']);
+});
+
+runAll();

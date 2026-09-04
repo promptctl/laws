@@ -1,0 +1,171 @@
+// live-switch.js — turn a switch decision into the operations that enact it on a LIVE conversation.
+//
+// WHY THIS IS NOT laws-excise's job. That module owns the policy and the DISK surgery, and it stays
+// the only place that decides anything: `decide()` is called here unchanged and its verdict is taken
+// whole. What this file adds is the crossing from the on-disk representation to the in-memory one,
+// which is a real boundary because the two are not the same data structure:
+//
+//   on disk — a TREE. Records carry parentUuid, branches can be severed, and bookkeeping records
+//             (last-prompt, mode, file-history-snapshot) have no uuid at all.
+//   live    — a FLAT ARRAY. No parentUuid anywhere; the app cuts it with lastIndexOf. It also holds
+//             transient `progress` records that are never persisted.
+//
+// MEASURED on a hosted 2.1.258 session: 27 disk records against 18 live messages, and every disk
+// record carrying a uuid was present live. So UUID is the only thing that crosses, and `decide()`'s
+// `conflictIndices` — which are LINE NUMBERS — must never be used on this side. They name positions
+// in a file, and using them against the live array would silently address the wrong messages.
+//
+// THE OFF-BY-ONE THAT MATTERS. The two rewinds are not symmetric with their disk counterparts:
+//   rewindTo(lines, anchor)        keeps THROUGH the anchor  (disk; the anchor survives)
+//   rewindConversationTo(msg)      keeps UP TO msg           (live; msg itself is dropped)
+// So a live rewind that must keep the craft-load message is given the message AFTER it, and a live
+// rewind that must drop the craft-load message is given the craft-load message itself. Both spellings
+// produce the same conversation as the disk path, and getting this backwards is a one-message error
+// that would look almost right.
+//
+// [LAW:effects-at-boundaries] planLiveSwitch is pure — snapshot in, plan out — so every case above is
+//   testable against synthetic snapshots with no binary, no session and no terminal. applyLiveSwitch
+//   is the one unit that touches the running app.
+// [LAW:parse-dont-validate] a plan is proof that every uuid the decision named is present live; the
+//   applier takes message OBJECTS, never uuids, so it cannot be handed one that does not resolve.
+
+'use strict';
+
+const { stubText } = require('../scripts/laws-excise.js');
+
+// Every way a decision can fail to become a live plan, named — these reach the caller that asked for
+// the switch, so they are contract. [LAW:no-silent-failure]
+const UNPLANNABLE = {
+  unknownChoice: 'not-one-of-the-four-switch-choices',
+  notLive: 'a-message-the-decision-named-is-not-in-the-live-conversation',
+  noTemplate: 'the-live-conversation-has-no-user-message-to-shape-a-summary-from',
+  summaryMissing: 'rewind_summarize-was-asked-for-without-a-summary',
+  notStubbable: 'a-craft-load-message-does-not-carry-replaceable-text',
+};
+
+// The app's own value for "the user picked a message and rewound to it", which is what a craft switch
+// is. It is used rather than a string of our own because it is the one the app's source already
+// carries: an unrecognised source would take the caller through a validator this file cannot see, and
+// the two behavioural branches downstream of it (`auto_restore_cancel`) are ones we specifically do
+// NOT want. The telemetry it produces is therefore the app's, and honest about what happened.
+const REWIND_SOURCE = 'message_selector';
+
+const CHOICES = ['reject', 'tombstone', 'rewind_summarize', 'rewind_discard'];
+
+const unplannable = (reason, detail) => ({ ok: false, reason, detail });
+
+// The live messages a craft load produced, by uuid. `decide()` names the OLDEST conflicting load in
+// `rewind.summarizeTo`; that uuid is the one that crosses, and the tombstone targets every live
+// message whose uuid appears in the decision's own set.
+const liveIndexOf = (snapshot, uuid) => snapshot.findIndex((m) => m && m.uuid === uuid);
+
+// A tombstoned copy. A NEW object, never a mutation: the store is read through getSnapshot and the UI
+// re-renders on identity, so editing in place would change the conversation without redrawing it.
+function stubbedMessage(message, medium, activeMedium) {
+  const content = message.message && message.message.content;
+  // A craft load is a meta user message whose content is a one-element text block — the shape
+  // craftMediumOf recognises on disk. Anything else is not the message we think it is, and stubbing
+  // it would be a guess written into the user's conversation.
+  if (!Array.isArray(content) || !content[0] || typeof content[0].text !== 'string') return null;
+  return {
+    ...message,
+    message: {
+      ...message.message,
+      content: [{ ...content[0], text: stubText(medium, activeMedium) }, ...content.slice(1)],
+    },
+  };
+}
+
+// The summary is SHAPED FROM a real user message rather than built from a literal. A live message
+// carries far more fields than the renderer's minimum (permissionMode, promptSource, promptId,
+// origin…), and inventing a shape from the few that are obvious is how a message renders as a blank
+// row. The template supplies every field; only identity, time and content are overridden.
+function summaryFrom(snapshot, { uuid, timestamp, text }) {
+  const template = [...snapshot].reverse().find((m) => m && m.type === 'user' && m.message);
+  if (!template) return null;
+  return { ...template, uuid, timestamp, message: { ...template.message, content: text } };
+}
+
+// Turn a decision into the live operations that enact it.
+//   snapshot  — controller.transcript.getSnapshot()
+//   decision  — decide()'s verdict, taken whole and unmodified
+//   choice    — one of CHOICES
+//   summary   — the text for rewind_summarize
+//   uuid/now  — identity and time, passed in because they are effects [LAW:effects-at-boundaries]
+function planLiveSwitch({ snapshot, decision, choice, summary, uuid, now }) {
+  if (!CHOICES.includes(choice)) return unplannable(UNPLANNABLE.unknownChoice, choice);
+  // Every plan carries the same three fields. reject is the one where all of them are empty, so it
+  // needs no case of its own anywhere downstream. [LAW:dataflow-not-control-flow]
+  const empty = { ok: true, choice, rewindAt: null, tombstones: [], append: null };
+  if (choice === 'reject') return empty;
+
+  const loadUuid = decision.rewind.summarizeTo;
+  const loadIndex = liveIndexOf(snapshot, loadUuid);
+  if (loadIndex === -1) return unplannable(UNPLANNABLE.notLive, loadUuid);
+
+  // Discard drops the craft load itself and everything after it — live rewind is exclusive of its
+  // argument. It returns BEFORE the tombstones are built, and that ordering is load-bearing: the
+  // messages a tombstone would rewrite are the ones this choice deletes, so requiring them to be
+  // rewritable would refuse a switch over the shape of a message about to cease existing.
+  if (choice === 'rewind_discard') return { ...empty, rewindAt: snapshot[loadIndex] };
+
+  // Every conflicting craft load, paired with the medium it loaded so the stub says which craft it
+  // replaced. `decision.conflicts` is the decision's own set named by uuid — the only naming that
+  // crosses into the live store. Refusing when one is missing is the point: a partial tombstone
+  // leaves a craft engaged that the switch reported as retired, which is the defect the gate exists
+  // to prevent, one level up. And the REPLACEMENT is built here rather than at apply time, so a plan
+  // is proof that every tombstone can be carried out — deferring it would leave a way to fail
+  // halfway through, with the rewind already applied and no way back.
+  // [LAW:no-silent-failure] [LAW:parse-dont-validate]
+  const tombstones = [];
+  for (const { uuid: conflictUuid, medium } of decision.conflicts) {
+    const message = snapshot[liveIndexOf(snapshot, conflictUuid)];
+    if (!message) return unplannable(UNPLANNABLE.notLive, conflictUuid);
+    const stubbed = stubbedMessage(message, medium, decision.incoming);
+    if (!stubbed) return unplannable(UNPLANNABLE.notStubbable, conflictUuid);
+    tombstones.push({ uuid: conflictUuid, stubbed });
+  }
+
+  if (choice === 'tombstone') return { ...empty, tombstones };
+
+  // rewind_summarize: keep the craft load (tombstoned), drop everything after it, then say what was
+  // lost. The anchor is the message AFTER the load, because the live rewind drops what it is given.
+  if (!summary) return unplannable(UNPLANNABLE.summaryMissing);
+  const append = summaryFrom(snapshot, { uuid, timestamp: now, text: summary });
+  if (!append) return unplannable(UNPLANNABLE.noTemplate);
+  // A craft load that is the very last live message has nothing after it to drop, so there is no
+  // rewind to do — only the tombstone and the summary. An empty value, not a special case.
+  const rewindAt = loadIndex + 1 < snapshot.length ? snapshot[loadIndex + 1] : null;
+  return { ...empty, rewindAt, tombstones, append };
+}
+
+// Apply a plan to the running app. The only unit here that touches the live session.
+//
+// The branch on `plan.rewindAt` is the domain's own enum surfacing — a rewind and a tombstone invoke
+// genuinely different app operations, and `rewindConversationTo` does far more than slice an array
+// (it resets the turn, bumps the conversation id, evicts rewound file tracking). Collapsing them
+// would mean running that reset for a choice that must not have it.
+//
+// [LAW:no-ambient-temporal-coupling] a discrete owned event: rewind, read, replace, return. Nothing
+// is left listening, and no later behaviour of the session depends on when this ran.
+function applyLiveSwitch(controller, plan) {
+  if (plan.rewindAt) controller.rewindConversationTo(plan.rewindAt, REWIND_SOURCE);
+
+  // Read AFTER the rewind: the rewind is what decided which messages still exist, so building the
+  // replacement from the pre-rewind array would reinstate the ones it just dropped.
+  const after = controller.transcript.getSnapshot();
+  const stubs = new Map(plan.tombstones.map((t) => [t.uuid, t.stubbed]));
+
+  // A substitution, and nothing else: every replacement was proven at plan time, so there is no arm
+  // here that can fail with the rewind already applied.
+  const replaced = after.map((message) => (message && stubs.get(message.uuid)) || message);
+  const messages = plan.append ? [...replaced, plan.append] : replaced;
+
+  // Only when something actually differs: replacing with an equal array would redraw the transcript
+  // and bump the store for a choice (reject) that promised to change nothing.
+  const changed = messages.length !== after.length || messages.some((m, i) => m !== after[i]);
+  if (changed) controller.transcript.replace(messages);
+  return { ok: true, rewound: plan.rewindAt !== null, tombstoned: plan.tombstones.length, changed };
+}
+
+module.exports = { UNPLANNABLE, CHOICES, REWIND_SOURCE, stubbedMessage, summaryFrom, planLiveSwitch, applyLiveSwitch };

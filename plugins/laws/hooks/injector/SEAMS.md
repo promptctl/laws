@@ -191,7 +191,12 @@ overlap — which happened here, and cost an audit of every guard in every file 
 else had been left behind. Count a mutation that makes a test HANG as a survivor, too: a case that
 never returns reports nothing, which is no better than one that passes.
 
-## The frontier: reloading an edited transcript into a running session
+## The frontier: reloading an edited transcript into a running session — CLOSED 2026-09-03
+
+**Everything below is history.** The blocker it describes (the live message store is closure-local,
+so the reload needs an in-CLOSURE frame) was true of 2.1.226 and is not true of 2.1.258, and the
+answer turned out to need neither of the two paths it weighs. Kept because the measurement that
+ruled out global eval is still the reason nothing tries it. See "RESOLVED 2026-09-03" below.
 
 The gate's reload options (tombstone / rewind) edit the ON-DISK transcript, then need the running
 session to REFLECT that edit. The blocker, empirically pinned on 2.1.226:
@@ -269,6 +274,103 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
   Kept only as a record of what was mapped.
 - **DO NOT TOUCH — `fileHistoryRewind`.** That reverts FILE edits. The gate is conversation-only;
   on-disk deliverables must survive every option, including discard. Anchor: `Rewinding to snapshot for `.
+  Re-confirmed 2026-09-03 on 2.1.258: that anchor lives in `chunk-darxmw8c.js`, a DIFFERENT chunk from
+  the one the live switch touches, and nothing in the injector references it. The invariant is
+  structural rather than promised — the live path is handed no writer at all — and it was checked the
+  only way that means anything: a file written after the craft loaded was still on disk, with its
+  contents intact, after both a `rewind_discard` and a `tombstone`.
+
+## RESOLVED 2026-09-03 on 2.1.258: the switch is enacted LIVE, and SEAM 2b was never there
+
+**SEAM 2b does not exist in the shape the epic scoped.** It was described as a
+`tengu_conversation_rewind` `useCallback` closed over React state, reachable only from a `Debugger`
+breakpoint at a column offset inside one 24MB CJS wrapper. On 2.1.258 the conversation lives on an
+ordinary class:
+
+```js
+class A3 { session; store; _setAppState; transcript; turn; draft; scope; engine; ...
+  rewindConversationTo(T, I) { let {transcript:q} = this; let Ce = q.getSnapshot(); ... q.replace(Ce.slice(0, Ce.lastIndexOf(T))); ... }
+  restoreMessageSync = (T, I) => { ... }      // a class FIELD: runs at construction, `this` bound
+}
+```
+
+Nothing about the app opened up; code-splitting simply stopped hiding it. **No inspector is used,
+no breakpoint is set, and the process is never paused.**
+
+**Why minification does not erase these anchors.** Bun renames every module-scope binding — the class
+is `A3`, the accessor that reaches it is two letters — but it cannot rename a PROPERTY without
+proving nothing reaches it dynamically. Method and field names come through verbatim. That is why a
+seam anchors on a property name and never on an offset, a variable, or a line number. Measured across
+all 1,818 embedded modules: `rewindConversationTo(` occurs **once**, `restoreMessageSync=(` occurs
+**once**, they are 1,788 characters apart with **no intervening `class`**, and resolving both takes
+**20ms**. `chunk-4rshw79s.js` is a 9,462-byte barrel whose export clause is fully readable —
+`loadConversationForResume`, `deserializeMessagesWithInterruptDetection`, `loadMessagesFromJsonlPath`.
+
+**The mechanism.** `seams.js` declares the anchor; `seam-plan.js` resolves it against the whole graph
+BEFORE anything is compiled and refuses on zero matches, several modules, or several sites;
+`bun-runtime`'s `moduleFor` — the one place a record becomes a module — splices in one class field:
+
+```js
+__lawsSeam=globalThis.__LAWS_SEAM__.controller(this);
+```
+
+Every controller announces itself to `seam-registry.js`, which does not pick one: the caller names a
+message uuid and the registry returns the controller whose live store **provably contains it**, or
+refuses. An unresolved seam is fatal at boot, which the launcher answers by exec'ing stock claude.
+
+**Disk and live are different data structures, joined only by uuid.** Measured on a hosted session:
+27 disk records against 18 live messages. Disk is a TREE (records carry `parentUuid`) and carries
+uuid-less bookkeeping (`last-prompt`, `mode`, `file-history-snapshot`) that never appears live; live
+is a FLAT ARRAY with no `parentUuid` anywhere, carrying transient `progress` records that are never
+persisted. **Every disk record with a uuid was present live (disk-only: 0.)** So `decide()`'s
+`conflictIndices` are LINE NUMBERS and must never cross; `decide()` gained a `conflicts` field naming
+the same set by uuid, derived from the same `ordered` array so the two cannot disagree.
+
+**The off-by-one, stated once so it is never re-derived wrongly:**
+
+| | keeps |
+|---|---|
+| `rewindTo(lines, anchor)` — disk | THROUGH the anchor (anchor survives) |
+| `rewindConversationTo(msg)` — live | UP TO msg (msg itself is dropped) |
+
+So `rewind_discard` aims at the craft-load message **itself**, and `rewind_summarize` aims **one past
+it**. The rewind source passed is `"message_selector"` — the app's own value for a user-chosen
+rewind, used rather than a string of our own because an unrecognised source would take an unknown
+validator path and because the two branches downstream of `auto_restore_cancel` are ones we
+specifically do not want.
+
+**The channel replaces BUN_INSPECT by changing what it can SAY.** `switch-channel.js` listens on a
+unix socket inside the launcher's `mktemp -d` handoff directory. The inspector's vocabulary is
+"evaluate this string"; this one's entire vocabulary is "apply one of four named choices to the switch
+already pending". The worst a hostile child can do with it is the thing the session just offered the
+user in writing, and no arm runs caller-supplied code.
+
+**VERIFIED LIVE on 2.1.258, in a real PTY under tmux, against the hosted graph:**
+
+- `rewind_discard`: session PID **78389 before and after** — the proof there was no relaunch. The live
+  conversation was rewound to before the craft load; context fell 60,503 → 36,974 tokens.
+  `deliverable.txt`, written after the craft loaded, still read `KEEPME`.
+- `tombstone`: PID **31796 before and after**, `marker.txt` still read `SURVIVES`, the conversation was
+  KEPT, and the session then loaded `laws:prompt` successfully with the `laws:code` body gone from
+  context (59,642 → 41,954 tokens).
+
+**Releasing the craft lock is half the switch, and the live path nearly shipped without it.** The
+launcher used to call `skill-router.sh retire-craft` after the session exited; live there is no such
+moment. Measured: after a successful live switch the `code` marker was still held, so the session
+still could not load the craft it had just switched to. `laws-switch` now retires each craft in
+`switchedFrom` through the router, which owns the lock layout.
+
+**DURABILITY — a named limitation, measured rather than assumed.** The live rewind writes nothing to
+the transcript: 64 records before and after. On the next turn the app re-roots the chain itself — the
+new user record's `parentUuid` was the record at position 14, immediately before the craft load at
+position 15 — leaving the old tail as an orphan branch, which is the same non-destructive shape
+`rewindTo` produces. But the trailing `last-prompt` pointer is NOT repointed, and per the 2026-08-16
+measurement above a resume needs sever AND repoint. **So a live switch has exactly the durability
+semantics of the app's own `/rewind`, no better and no worse.** Nothing here writes the transcript,
+deliberately: the running app is that file's writer, and a second writer editing underneath it would
+be two maps of one conversation. If a resumed session must also come up switched, that is a separate
+piece of work and it belongs where the app's own rewind persistence is understood — not in a second
+writer bolted alongside.
 
 ## Status ledger
 
@@ -287,6 +389,15 @@ From the recovered `ONE-LAW-SEAMS.md` (pinned to 2.1.197 — offsets are stale, 
   session before keeping it. Verified live on 2.1.258 in a PTY: boots to an idle authenticated
   TUI, and with `Bun.stripANSI` removed it is detected as not-booted and falls back to stock
   claude without hanging (`promptctl-injector-xy0.2`).
+- DONE (2026-09-03): the switch is enacted LIVE, in place, with no relaunch and no inspector —
+  `seams.js` + `seam-plan.js` splice one class field into the one chunk that carries the
+  conversation, `seam-registry.js` proves which controller owns a conversation, `live-switch.js`
+  crosses from the disk-shaped decision to the live store, `switch-request.js` composes them, and
+  `switch-channel.js` is the unix socket `laws-switch` dials instead of `BUN_INSPECT`. Verified live
+  on 2.1.258 for both `rewind_discard` and `tombstone` with the session PID unchanged and files
+  written after the craft load intact; 77 of 78 deliberate mutations are killed by a test, the one
+  survivor being an equivalent mutant named in the source. See the resolved section above, including
+  the durability limitation (`promptctl-injector-xy0.3`).
 - DONE (2026-08-16): the rewind for options 3/4 is disk surgery — `rewindTo()`, sever + repoint,
   verified live against a real transcript. **SEAM 2a is not needed**, and neither is native
   `/rewind` with its modal arrow-key driving. See the resolved section above.

@@ -1,0 +1,125 @@
+// switch-channel.js — the request/response channel between `laws-switch` and the hosted session.
+//
+// WHY THIS EXISTS INSTEAD OF BUN_INSPECT. The switch used to be enacted over Bun's inspector socket,
+// whose vocabulary is "evaluate this string in your global scope". That capability is inherited by
+// every process the agent spawns, and it cannot be withheld from an attacker without also withholding
+// it from the legitimate caller, because the two are indistinguishable — a nested Bash-tool process
+// and `laws-switch` look exactly alike. The fix is not to secure the channel but to change what the
+// channel can SAY: this one's entire vocabulary is "apply one of four named choices to the switch
+// that is already pending". The worst a hostile caller can do with it is the thing the session just
+// offered the user in writing, and there is no arm that runs caller-supplied code.
+//
+// WHY BOTH HALVES LIVE HERE. A writer and a reader that each carry their own idea of a protocol have
+// two ideas of it, and the day they differ the client reports success for a switch that never
+// happened. [LAW:one-source-of-truth]
+//
+// [LAW:effects-at-boundaries] `net` and the socket path are parameters, so both halves are testable
+//   over a pair of in-memory streams with no filesystem and no listener.
+// [LAW:no-ambient-temporal-coupling] one connection carries one request and one response and is then
+//   closed. Nothing is left listening between switches, and no later behaviour depends on when a
+//   previous connection happened to end.
+
+'use strict';
+
+const path = require('path');
+// How an error becomes a human-readable detail has ONE spelling in this tree, and it already exists.
+// A second one here would drift from it, and would also be worse: stringifying the message alone
+// renders a thrown non-Error as the word "undefined", which this handles. [LAW:one-source-of-truth]
+const { because } = require('./boot-guard.js');
+
+// The socket lives in the handoff directory the launcher already creates with mktemp -d, so it
+// inherits that directory's 0700 permissions rather than inventing a location with its own.
+const SOCKET_NAME = 'switch.sock';
+const socketPathIn = (dir) => path.join(dir, SOCKET_NAME);
+
+// One JSON object per line, one line each way. Nothing strips newlines out of the payload because
+// nothing has to: JSON.stringify escapes them to the two characters `\` and `n`, so a reason
+// carrying a newline — an error message with a stack, say — is already a single line by the time it
+// reaches the separator. A guard here would be code defending against a state the encoding makes
+// unrepresentable. [LAW:no-defensive-null-guards]
+const RECORD_SEPARATOR = '\n';
+const encode = (value) => JSON.stringify(value) + RECORD_SEPARATOR;
+
+// Every way the channel itself can fail to carry a switch, named — distinct from the reasons the
+// ENACTMENT can refuse, which come back inside a well-formed response. [LAW:no-silent-failure]
+const UNREACHABLE = {
+  noSocket: 'no-hosted-session-is-listening',
+  timeout: 'the-hosted-session-did-not-answer',
+  malformed: 'the-hosted-session-answered-with-something-that-is-not-a-response',
+};
+
+// Read a stream until the first record separator, then hand over exactly one parsed value. Anything
+// after the first line is ignored by construction: this protocol is one request, one response.
+function readOneRecord(socket, { onRecord, onMalformed }) {
+  let buffer = '';
+  let settled = false;
+  socket.setEncoding('utf8');
+  socket.on('data', (chunk) => {
+    if (settled) return;
+    buffer += chunk;
+    const end = buffer.indexOf(RECORD_SEPARATOR);
+    if (end === -1) return;
+    settled = true;
+    // A record that does not parse is a fact about the peer, not a value to pass on: handing a
+    // half-read object downstream is how a switch reports success it never had.
+    try { onRecord(JSON.parse(buffer.slice(0, end))); }
+    catch (e) { onMalformed(e); }
+  });
+}
+
+// The hosted session's half. `onRequest` is async and returns the response object; whatever it
+// returns is what the caller sees, so the enactment's own named refusals travel back intact.
+function createSwitchServer({ net, dir, onRequest, onError }) {
+  const server = net.createServer((socket) => {
+    // A connection that breaks mid-switch is the peer's business, and it must not take the session
+    // down with it — this listener lives inside the user's running Claude Code.
+    socket.on('error', (e) => onError(e));
+    readOneRecord(socket, {
+      onRecord: async (request) => {
+        // An enactment that throws still has to answer: a caller left hanging cannot tell a crash
+        // from a switch that is merely slow, and would report neither.
+        let response;
+        try { response = await onRequest(request); }
+        catch (e) { response = { ok: false, reason: 'the-switch-threw', detail: because(e) }; }
+        socket.end(encode(response));
+      },
+      onMalformed: (e) => socket.end(encode({ ok: false, reason: UNREACHABLE.malformed, detail: because(e) })),
+    });
+  });
+  server.on('error', (e) => onError(e));
+  server.listen(socketPathIn(dir));
+  // unref so a listening socket never becomes the reason the session refuses to exit.
+  if (server.unref) server.unref();
+  return { server, close: () => server.close() };
+}
+
+// `laws-switch`'s half. Resolves with the session's response, or with a named unreachable — never
+// rejects, because every outcome here is something the caller has to report rather than throw.
+function requestSwitch({ net, dir, request, timeoutMs = 15000 }) {
+  return new Promise((resolve) => {
+    // This latch is for READABILITY, not correctness: resolving an already-settled promise is
+    // itself a no-op, so every arm below may fire without harm. It says out loud that exactly one
+    // of them is meant to win, which is why a mutation of it changes no behaviour.
+    let settled = false;
+    const finish = (value) => { if (!settled) { settled = true; resolve(value); } };
+    const socket = net.createConnection(socketPathIn(dir));
+    const timer = setTimeout(() => { socket.destroy(); finish({ ok: false, reason: UNREACHABLE.timeout }); }, timeoutMs);
+    if (timer.unref) timer.unref();
+    const done = (value) => { clearTimeout(timer); socket.end(); finish(value); };
+
+    // No listener means no hosted session — the stock binary, or a host that failed its boot check.
+    // That is a different fact from a session that answered with a refusal, and the caller acts on
+    // it differently, so it must not be collapsed into one.
+    socket.on('error', (e) => done({ ok: false, reason: UNREACHABLE.noSocket, detail: because(e) }));
+    socket.on('connect', () => socket.write(encode(request)));
+    readOneRecord(socket, {
+      onRecord: (response) => done(response),
+      onMalformed: (e) => done({ ok: false, reason: UNREACHABLE.malformed, detail: because(e) }),
+    });
+    // A peer that closes without answering has not answered. Without this the promise would hang
+    // until the timeout and report the wrong reason for the right failure.
+    socket.on('close', () => finish({ ok: false, reason: UNREACHABLE.noSocket }));
+  });
+}
+
+module.exports = { SOCKET_NAME, socketPathIn, RECORD_SEPARATOR, UNREACHABLE, encode, createSwitchServer, requestSwitch };

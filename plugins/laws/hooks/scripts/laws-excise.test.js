@@ -217,6 +217,32 @@ t('two conflicting crafts engaged → BOTH are named, oldest first', () => {
   assert.deepStrictEqual(d.conflictIndices, [1, 3]);
 });
 
+t('the conflicting set is ALSO named by uuid, for consumers that cannot use line numbers', () => {
+  // The live enactment (../injector/live-switch.js) works on an in-memory array that holds different
+  // records than the file does, in both directions — so a line index means nothing to it and uuid is
+  // the only naming that crosses.
+  const d = M.decide(twoConflicts(), { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
+  assert.deepStrictEqual(d.conflicts, [{ uuid: 'A', medium: 'code' }, { uuid: 'B', medium: 'prose' }]);
+});
+
+t('the two namings of the conflicting set can never disagree', () => {
+  // Both are derived from one ordered array; this is the assertion that fails if they ever stop
+  // being. [LAW:one-source-of-truth]
+  const lines = twoConflicts();
+  const d = M.decide(lines, { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
+  assert.strictEqual(d.conflicts.length, d.conflictIndices.length);
+  d.conflictIndices.forEach((lineIndex, i) => {
+    assert.strictEqual(JSON.parse(lines[lineIndex]).uuid, d.conflicts[i].uuid);
+    assert.strictEqual(d.conflicts[i].medium, d.current[i]);
+  });
+});
+
+t('the rewind anchor is the FIRST conflict named by uuid', () => {
+  // live-switch resolves the live conversation by this uuid, so the two must be the same message.
+  const d = M.decide(twoConflicts(), { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
+  assert.strictEqual(d.rewind.summarizeTo, d.conflicts[0].uuid);
+});
+
 t('a compatible craft is never swept in with the conflicting ones', () => {
   // Only prompt conflicts with code here, so prose must be left alone despite being engaged.
   const d = M.decide(twoConflicts(), { conflictEdges: EDGES, incomingMedium: 'prompt' });
