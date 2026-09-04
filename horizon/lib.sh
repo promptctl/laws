@@ -127,7 +127,11 @@ horizon_repo_root() {
 # from it - a snapshot of the copy that already drifted is not a pin, it is a lie with
 # a sha attached.
 : "${HORIZON_MEMENTO_REPO_URL:=https://github.com/promptctl/memento}"
-: "${HORIZON_MEMENTO_DEFAULT_REF:=master}"
+# `HEAD` rather than a branch name: the remote owns which branch is its default, and a
+# name copied into this file is that fact going stale - a rename would break every
+# default invocation. git asks the remote directly, so there is nothing here to drift.
+# [LAW:one-source-of-truth]
+: "${HORIZON_MEMENTO_DEFAULT_REF:=HEAD}"
 HORIZON_MEMENTO_PLUGIN_SUBDIR="memento"
 # The skills the GOAL_PROMPT loop needs *from the plugin*. `next` is deliberately not
 # among them: it is a pointer in memento too, because the pickup procedure now ships

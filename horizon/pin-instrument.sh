@@ -45,8 +45,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
-# Scratch that exists only to produce recorded identities: memento's objects, and a
-# throwaway repo to read the /next procedure lit embeds. Neither is an output of the
+# Scratch that exists only to produce recorded identities: memento's objects, and the
+# throwaway repos lit writes its /next procedure into. Neither is an output of the
 # run - everything they establish reaches the run dir as a manifest field or as the
 # pinned snapshot - so the run dir keeps its three documented outputs and nothing else.
 # Script scope, not main's: the EXIT trap runs after main's locals are gone, and under

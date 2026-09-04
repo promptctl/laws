@@ -9,7 +9,7 @@ assumed.
 ## The one command
 
 ```sh
-horizon/pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha]
+horizon/pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha] [goal-ref]
 ```
 
 Builds `<run-dir>` from nothing:
@@ -17,7 +17,9 @@ Builds `<run-dir>` from nothing:
 - `pinned/` - a `git archive` snapshot of memento at the resolved `memento-ref`,
   fetched from the repository that owns it (`https://github.com/promptctl/memento`;
   `memento-ref` names a ref in *that* repository and defaults to its default branch,
-  `master`), plus a marketplace.json that declares that snapshot and *nothing else*.
+  which git asks the remote for at fetch time rather than reading a branch name copied
+  into this codebase to go stale), plus a marketplace.json that declares that snapshot
+  and *nothing else*.
   The snapshot is memento's whole tree, not just its `memento/` plugin directory:
   memento keeps one copy of each skill at its repo root and symlinks it into every
   plugin that ships it, so archiving the plugin directory alone extracts dangling
@@ -34,16 +36,20 @@ Builds `<run-dir>` from nothing:
 
   memento's fields are a pure function of `memento-ref`, so two runs at the same
   `memento-ref` are byte-identical there by construction. `goal_wording` is resolved
-  separately, against this repo's own `HEAD`: `GOAL_PROMPT.md` lives here, and once
+  separately, against `[goal-ref]` in this repo: `GOAL_PROMPT.md` lives here, and once
   memento moved to its own repository one sha could no longer honestly stand for both,
-  so the commit it was read at is recorded as `goal_wording.ref`. The other two are
-  resolved outside `memento-ref` entirely: `lit` from whatever binary is on `PATH` (see
-  below), and the reviewer live against a moving tag (`v1`) - left unpinned, two runs
-  made minutes apart could legitimately disagree if the tag moved. Pass
-  `[reviewer-sha]` explicitly - the same way a campaign already pins `memento-ref`,
-  whose default likewise tracks a moving branch - and the manifest is byte-identical
-  across runs on every pinned field, provided the `lit` binary on `PATH` did not change
-  between them. `reviewer.resolved_from` records whether this run resolved the tag live
+  so the commit it was read at is recorded as `goal_wording.ref`. `lit` is resolved
+  outside all of that, from whatever binary is on `PATH` (see below).
+
+  Three of those identities hang off refs that move on their own: `memento-ref`
+  defaults to memento's default branch, `goal-ref` to this checkout's `HEAD` - which
+  advances whenever anything commits here - and the reviewer is resolved live against a
+  moving tag (`v1`). Left to their defaults, two runs made minutes apart can
+  legitimately disagree because one of the three moved between them. A campaign that
+  wants its manifests byte-identical across runs passes all three explicitly -
+  `memento-ref`, `reviewer-sha`, `goal-ref` - and the only field that can still drift
+  afterwards is `lit`, if the binary on `PATH` changed in the meantime.
+  `reviewer.resolved_from` records whether this run resolved the tag live
   (`tag`) or was handed the sha (`override`), so the manifest never implies a check
   that did not happen.
 
@@ -65,10 +71,19 @@ whatever binary `command -v lit` resolves to; a later run whose `lit` hash disag
 with an earlier manifest is a real config drift, not noise. The loop's pickup step is
 pinned the same way and for the same reason: `next` is not a plugin skill any more -
 the procedure ships inside the lit binary, and `lit init` writes it into the project at
-`.claude/skills/next/SKILL.md` - so the pin runs lit against a throwaway repo, hashes
-what it wrote, and records that hash. A lit too old to write it fails the pin loudly,
-naming the upgrade (it needs one newer than 0.11.0). memento supplies the loop's other
-two skills, `address-pr-reviews` and `message-in-a-bottle`.
+`.claude/skills/next/SKILL.md` - so the pin runs `lit init` against two throwaway repos,
+under deliberately different project directory names, hashes what it wrote into each,
+and records the hash only if the two agree; a disagreement stops the pin with `the /next
+procedure lit writes depends on the project directory name`. The recorded hash claims to
+describe every run, which holds only if those bytes are a property of the lit
+*binary* rather than of the project, and lit demonstrably does derive project-specific
+state from the directory name: the issue prefix comes from it. So this file's
+independence of that name is established on every pin rather than assumed. Without the
+second probe, a future lit that templated the procedure would put a hash in the manifest
+that no real run reproduces, while every check in the instrument stayed green. A lit too
+old to write the procedure at all fails the pin loudly, naming the upgrade (it needs one
+newer than 0.11.0). memento supplies the loop's other two skills, `address-pr-reviews`
+and `message-in-a-bottle`.
 
 ## Verify
 
@@ -76,10 +91,10 @@ two skills, `address-pr-reviews` and `message-in-a-bottle`.
 horizon/verify-instrument.sh
 ```
 
-Resolves both moving refs once - memento's default branch and the reviewer's `v1` tag -
-and hands the same shas to both `pin-instrument.sh` runs, so a push or a tag move
-landing between the two calls cannot turn into test flakiness, then checks the
-manifests are byte-identical.
+Resolves all three moving refs once - memento's default branch, the reviewer's `v1` tag,
+and this checkout's own `HEAD` - and hands the same shas to both `pin-instrument.sh`
+runs, so a push, a tag move, or a commit landing here between the two calls cannot turn
+into test flakiness, then checks the manifests are byte-identical.
 
 It then checks the isolated config dir has exactly memento installed and enabled,
 carries no `CLAUDE.md` and no memory content under `projects/*/memory/`, and exposes
@@ -93,7 +108,8 @@ remaining question.
 
 Finally it checks both halves of `lit`'s recorded identity: the binary on `PATH`
 against the manifest's hash of it, and the `/next` procedure that binary writes - run
-into a throwaway repo again and re-hashed - against the manifest's hash of that.
+into two differently named throwaway repos again, required to come out the same from
+both, and re-hashed - against the manifest's hash of that.
 
 ## Seeding a run's time zero
 

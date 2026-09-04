@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify the instrument against its two acceptance criteria:
+# Verify the instrument against its three acceptance criteria:
 #
 #   1. Two invocations of pin-instrument.sh, same inputs, produce byte-identical
 #      manifest.json files. The reviewer's `v1` tag is resolved live over the
