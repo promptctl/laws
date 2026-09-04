@@ -80,6 +80,20 @@ the point of the plugin. It's what keeps the point from eating itself.
 
 The hook is pure bash - no dependencies, nothing to configure.
 
+## Looking for memento?
+
+The `next`, `message-in-a-bottle` and `address-pr-reviews` skills used to ship from
+this repo. They live in their own marketplace now:
+
+```
+/plugin marketplace add promptctl/memento
+/plugin install memento@memento
+```
+
+That marketplace also carries `auto-bottle@memento` - the same close-out skill plus a
+`Stop` hook that refuses to end a turn past a hard context ceiling until the close-out
+has run.
+
 ## Why the skills read the way they do
 
 Open `laws:code` or `laws:prompt` expecting a tight spec and you'll find something

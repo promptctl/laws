@@ -119,13 +119,11 @@ horizon_repo_root() {
 }
 
 # ── memento: pinned from the repo that owns it, never from this checkout ───────────
-# memento's skills live in promptctl/memento; what is left under this repo's
-# plugins/memento is pointer stubs telling a reader to go install that marketplace
-# (PR #38). A run provisioned from this checkout would therefore hand its agent three
-# pointers, inside an isolated config dir where following them is not possible.
+# memento's skills live in promptctl/memento and this repo carries no copy of them,
+# so there is nothing here a run could be provisioned from even by accident.
 # [LAW:one-source-of-truth] the skills have exactly one home and the instrument reads
-# from it - a snapshot of the copy that already drifted is not a pin, it is a lie with
-# a sha attached.
+# from it - a snapshot of a second copy is not a pin, it is a lie with a sha
+# attached.
 : "${HORIZON_MEMENTO_REPO_URL:=https://github.com/promptctl/memento}"
 # `HEAD` rather than a branch name: the remote owns which branch is its default, and a
 # name copied into this file is that fact going stale - a rename would break every
@@ -140,11 +138,11 @@ HORIZON_MEMENTO_PLUGIN_SUBDIR="memento"
 # definition of "the plugin is fit for the loop"; the pin checks the snapshot against
 # it and the verifier checks the install against it, both reading this one list.
 HORIZON_MEMENTO_SKILLS=(address-pr-reviews message-in-a-bottle)
-# A moved skill leaves this heading behind - it is how both pointer stubs in this
-# ecosystem are written, memento's `next` and this repo's plugins/memento. Checking it
-# is a convention check, not proof that a body contains a procedure; it earns its place
-# because a pointer standing where a procedure should be is exactly how this instrument
-# went green while broken.
+# A moved skill leaves this heading behind - it is how memento's own `next` pointer is
+# written, the one pointer left in this ecosystem. Checking it is a convention check,
+# not proof that a body contains a procedure; it earns its place because a pointer
+# standing where a procedure should be is exactly how this instrument went green while
+# broken.
 HORIZON_MOVED_SKILL_HEADING='^# Moved$'
 
 # Fetch the pinned memento objects into an object store of our own and resolve the ref
