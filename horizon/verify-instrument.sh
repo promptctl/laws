@@ -2,11 +2,12 @@
 # Verify the instrument against its three acceptance criteria:
 #
 #   1. Two invocations of pin-instrument.sh, same inputs, produce byte-identical
-#      manifest.json files. The reviewer's `v1` tag is resolved live over the
-#      network by pin-instrument.sh, so this script resolves it exactly ONCE and
-#      passes the same sha into both invocations - otherwise a tag moving between
-#      the two calls (or a flaky API response) would fail this check for reasons
-#      that have nothing to do with the instrument itself.
+#      manifest.json files. Three of the refs a pin resolves move on their own -
+#      memento's default branch, the reviewer's `v1` tag, and this checkout's own
+#      HEAD - so this script resolves all three exactly ONCE and passes the same
+#      shas into both invocations. Otherwise a push, a tag move, or a commit landing
+#      here between the two calls would fail this check for reasons that have
+#      nothing to do with the instrument itself.
 #   2. A session launched against the produced CLAUDE_CONFIG_DIR has memento
 #      installed and enabled, and has nothing else installed - no laws plugin, no
 #      owner CLAUDE.md, no owner memory - because the pinned marketplace never
@@ -28,6 +29,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
+# Every tool this run reaches for, checked before the first line that reaches for one -
+# including the `mktemp` just below, which at script scope would otherwise run before
+# any check ran at all. Placement is the enforcement, so there is no ordering left to
+# remember. Only the two-line bootstrap above precedes it, and it cannot be covered:
+# `dirname` is what locates the file that defines the checker.
+# [LAW:single-enforcer] [LAW:no-ambient-temporal-coupling]
+horizon_need_base
+horizon_need git
+horizon_need gh
+horizon_need claude
+horizon_need python3
+horizon_need lit
+horizon_need diff
+
 # Canonicalized at creation: on macOS mktemp -d hands back /var/... while the real
 # path is /private/var/..., and the isolation check below compares a path derived from
 # this against one the claude CLI may report already resolved. [LAW:one-source-of-truth]
@@ -47,14 +62,6 @@ manifest_value() {
 }
 
 main() {
-  horizon_need_base
-  horizon_need git
-  horizon_need gh
-  horizon_need claude
-  horizon_need python3
-  horizon_need lit
-  horizon_need diff
-
   local repo_root ref reviewer_sha goal_ref
   # memento's default branch is a moving ref, exactly like the reviewer's `v1` tag:
   # resolved once here and handed to both runs as a sha, so a push landing between the

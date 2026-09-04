@@ -45,6 +45,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh
 . "$SCRIPT_DIR/lib.sh"
 
+# Every tool this run reaches for, checked before the first line that reaches for one -
+# including the `mktemp` just below, which at script scope would otherwise run before
+# any check ran at all. Placement is the enforcement, so there is no ordering left to
+# remember. Only the two-line bootstrap above precedes it, and it cannot be covered:
+# `dirname` is what locates the file that defines the checker.
+# [LAW:single-enforcer] [LAW:no-ambient-temporal-coupling]
+horizon_need_base
+horizon_need git
+horizon_need gh
+horizon_need claude
+horizon_need python3
+horizon_need lit
+horizon_need cat
+# Reached from inside lib.sh pipelines - git archive | tar, and the reviewer prompt
+# decode. Absent, pipefail would blame the tool at the head of the pipe instead of
+# the one that is actually missing.
+horizon_need tar
+horizon_need base64
+
 # Scratch that exists only to produce recorded identities: memento's objects, and the
 # throwaway repos lit writes its /next procedure into. Neither is an output of the
 # run - everything they establish reaches the run dir as a manifest field or as the
@@ -59,19 +78,6 @@ main() {
   local run_dir="${1:-}" memento_ref="${2:-}" reviewer_sha_override="${3:-}" goal_ref="${4:-}"
   [ -n "$run_dir" ] || horizon_die "usage: pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha] [goal-ref]"
   [ -e "$run_dir" ] && horizon_die "run-dir already exists, refusing to overwrite: $run_dir"
-
-  horizon_need_base
-  horizon_need git
-  horizon_need gh
-  horizon_need claude
-  horizon_need python3
-  horizon_need lit
-  horizon_need cat
-  # Reached from inside lib.sh pipelines - git archive | tar, and the reviewer prompt
-  # decode. Absent, pipefail would blame the tool at the head of the pipe instead of
-  # the one that is actually missing.
-  horizon_need tar
-  horizon_need base64
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
