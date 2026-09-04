@@ -74,6 +74,17 @@ function harness(over = {}) {
 
 // ---- the request ---------------------------------------------------------------------------------
 
+t('every refusal states that the live conversation is untouched', () => {
+  // The caller reads this fact rather than recognising reason strings, so each arm must carry it —
+  // an arm that forgets makes the CLI warn about a rewind that never happened.
+  const h = harness();
+  assert.strictEqual(h.run({ request: { transcript: undefined } }).mutated, false);
+  assert.strictEqual(h.run({ readFile: () => { throw new Error('ENOENT'); } }).mutated, false);
+  assert.strictEqual(harness({ decision: { trigger: false, reason: 'compatible' } }).run().mutated, false);
+  assert.strictEqual(h.run({ registry: createSeamRegistry() }).mutated, false);
+  assert.strictEqual(h.run({ request: { choice: 'rewind_summarize' } }).mutated, false);
+});
+
 t('a request missing a field refuses AND names which fields', () => {
   const h = harness();
   const out = h.run({ request: { transcript: undefined, incomingMedium: undefined } });
@@ -169,6 +180,27 @@ t('rewind_discard drives the app\'s own rewind at the craft load', () => {
   const out = h.run({ request: { choice: 'rewind_discard' } });
   assert.strictEqual(out.ok, true);
   assert.deepStrictEqual(h.rewinds, [['L', 'message_selector']]);
+});
+
+t('reject succeeds even when no conversation can be identified', () => {
+  // It edits nothing, so it must not have to prove which conversation it would have edited. This
+  // failed before whenever the conversation carrying the craft had ended — refusing to do nothing
+  // because it could not find the thing it was not going to touch.
+  const h = harness();
+  const out = h.run({ request: { choice: 'reject' }, registry: createSeamRegistry() });
+  assert.strictEqual(out.ok, true);
+  assert.deepStrictEqual([out.rewound, out.tombstoned, out.changed], [false, 0, false]);
+  assert.deepStrictEqual(out.switchedFrom, []);
+});
+
+t('an ownership refusal says how many conversations the seam is holding', () => {
+  // "Holding three, none of them yours" and "holding none" are different things to go and look at.
+  const h = harness();
+  const registry = createSeamRegistry();
+  registry.registrar.controller({ transcript: { getSnapshot: () => [said('elsewhere', 'x')] } });
+  const out = h.run({ registry });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.live, 1);
 });
 
 t('reject reaches the store not at all', () => {

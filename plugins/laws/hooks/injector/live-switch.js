@@ -133,6 +133,12 @@ function planLiveSwitch({ snapshot, decision, choice, summary, uuid, now }) {
     return { ...empty, rewindAt: snapshot[loadIndex] };
   }
 
+  // Checked BEFORE any work, because it is the most fundamental thing wrong with the request. Left
+  // until after the tombstones were built, a missing summary surfaced as `notStubbable` whenever the
+  // anchor's shape was also unusual — telling the caller its message was malformed when what it
+  // actually did was forget an argument. The most basic precondition reports first.
+  if (choice === 'rewind_summarize' && !summary) return unplannable(UNPLANNABLE.summaryMissing);
+
   // WHICH conflicts must survive the crossing depends on which of them the choice keeps, and that is
   // the same reasoning the discard arm above uses. `tombstone` keeps the whole conversation, so every
   // conflicting load stays engaged and every one must be stubbed. `rewind_summarize` cuts at
@@ -160,7 +166,6 @@ function planLiveSwitch({ snapshot, decision, choice, summary, uuid, now }) {
 
   // rewind_summarize: keep the craft load (tombstoned), drop everything after it, then say what was
   // lost. The anchor is the message AFTER the load, because the live rewind drops what it is given.
-  if (!summary) return unplannable(UNPLANNABLE.summaryMissing);
   const append = summaryFrom(snapshot, { uuid, timestamp: now, text: summary });
   if (!append) return unplannable(UNPLANNABLE.noTemplate);
   // A craft load that is the very last live message has nothing after it to drop, so there is no

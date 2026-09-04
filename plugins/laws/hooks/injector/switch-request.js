@@ -35,6 +35,12 @@ const { toRawLines } = require('../scripts/laws-excise.js');
 const { because } = require('./boot-guard.js');
 
 // Refusals this composition adds to the ones its parts already name. [LAW:no-silent-failure]
+// Every refusal below happens BEFORE applyLiveSwitch runs, so each one can state as a fact that the
+// live conversation is untouched. The caller then needs no table of which reasons are safe: it reads
+// the fact. A reason string is a name for what went wrong; it is not evidence about what was done.
+// [LAW:types-are-the-program]
+const untouched = (reason, detail) => ({ ok: false, reason, detail, mutated: false });
+
 const REFUSED = {
   incomplete: 'the-switch-request-is-missing-a-field',
   unreadable: 'the-transcript-named-by-the-request-cannot-be-read',
@@ -50,26 +56,40 @@ const REQUIRED = ['transcript', 'choice', 'incomingMedium'];
 //   readFile / uuid / now  — the effects
 function enactSwitch({ request, registry, decide, conflictEdges, readFile, uuid, now }) {
   const missing = REQUIRED.filter((k) => !request || !request[k]);
-  if (missing.length) return { ok: false, reason: REFUSED.incomplete, detail: missing.join(', ') };
+  if (missing.length) return untouched(REFUSED.incomplete, missing.join(', '));
 
   let raw;
   try { raw = readFile(request.transcript); }
-  catch (e) { return { ok: false, reason: REFUSED.unreadable, detail: because(e) }; }
+  catch (e) { return untouched(REFUSED.unreadable, because(e)); }
 
   const decision = decide(toRawLines(raw), { conflictEdges, incomingMedium: request.incomingMedium });
   // Not an error and not a success: the conversation moved and there is nothing left to switch away
   // from. Saying so by name is what stops the caller reporting a switch that never happened.
-  if (!decision.trigger) return { ok: false, reason: REFUSED.moot, detail: decision.reason };
+  if (!decision.trigger) return untouched(REFUSED.moot, decision.reason);
+
+  // `reject` edits nothing, so it must not have to prove which conversation it would have edited.
+  // Requiring ownership here made declining an offer fail whenever the conversation that carried the
+  // craft had since ended — refusing to do nothing, on the grounds that it could not find the thing
+  // it was not going to touch.
+  if (request.choice === 'reject') {
+    return {
+      ok: true, rewound: false, tombstoned: 0, changed: false,
+      choice: request.choice, switchedFrom: [], switchedTo: decision.incoming,
+    };
+  }
 
   // The decision names its anchor by uuid; the conversation holding that uuid is the one to edit.
   const owner = registry.ownerOf(decision.rewind.summarizeTo);
-  if (!owner.ok) return owner;
+  // How many conversations the seam is holding is the difference between "the uuid is stale" and
+  // "the injection never landed", and it costs one field to say so. [LAW:no-silent-failure]
+  if (!owner.ok) return { ...owner, live: registry.count, mutated: false };
 
   const plan = planLiveSwitch({
     snapshot: snapshotOf(owner.controller),
     decision, choice: request.choice, summary: request.summary, uuid: uuid(), now: now(),
   });
-  if (!plan.ok) return plan;
+  // A plan that could not be made was never applied — the planner is pure and touches nothing.
+  if (!plan.ok) return { ...plan, mutated: false };
 
   const applied = applyLiveSwitch(owner.controller, plan);
   // What was retired travels back so the caller can release the craft locks it owns, rather than

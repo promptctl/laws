@@ -200,19 +200,51 @@ t('a session that accepted and then went quiet gets the same warning', async () 
   assert.match(out.stderr, /may have run PART WAY/);
 });
 
-t('a refusal BY NAME is the one case that may claim nothing changed', async () => {
+t('a switch whose ANSWER failed to encode still warns — it ran before the reply did', async () => {
+  // The reason this arm exists: the server's encode failure happens AFTER applyLiveSwitch has driven
+  // the app's own rewind. Enumerating the unsafe reasons is what let this one be forgotten.
   const { dir, tmp } = bed();
-  const server = serve(dir, { ok: false, reason: 'the-switch-no-longer-applies', detail: 'compatible' });
+  const server = serve(dir, { ok: false, reason: 'the-switch-ran-but-its-answer-could-not-be-encoded' });
   const out = await run(['tombstone'], { dir, tmp });
   server.close();
   assert.strictEqual(out.status, 1);
-  assert.match(out.stderr, /Nothing was changed/);
+  assert.match(out.stderr, /may have run PART WAY/);
+});
+
+t('a reason nobody anticipated is treated as uncertain, not as nothing', async () => {
+  // The whole point of enumerating the SAFE side: an unknown reason defaults to the warning.
+  const { dir, tmp } = bed();
+  const server = serve(dir, { ok: false, reason: 'some-future-reason-nobody-listed' });
+  const out = await run(['tombstone'], { dir, tmp });
+  server.close();
+  assert.match(out.stderr, /may have run PART WAY/);
+});
+
+t('a refusal BY NAME is the one case that may claim nothing changed', async () => {
+  const { dir, tmp } = bed();
+  const server = serve(dir, { ok: false, reason: 'the-switch-no-longer-applies', detail: 'compatible', mutated: false });
+  const out = await run(['tombstone'], { dir, tmp });
+  server.close();
+  assert.strictEqual(out.status, 1);
   assert.match(out.stderr, /the-switch-no-longer-applies/);
+  // The session SAID it refused before touching anything, so this may say so plainly. The claim
+  // rests on `mutated: false` travelling back, not on this file recognising the reason string.
+  assert.match(out.stderr, /Nothing was changed/);
+});
+
+t('a refusal that does NOT state its effect is treated as uncertain', async () => {
+  // Absence of the fact is not evidence of safety: an omission can only make the message more
+  // cautious, never turn it into a false reassurance.
+  const { dir, tmp } = bed();
+  const silent = serve(dir, { ok: false, reason: 'the-switch-no-longer-applies' });
+  const out = await run(['tombstone'], { dir, tmp });
+  silent.close();
+  assert.match(out.stderr, /may have run PART WAY/);
 });
 
 t('a refused switch leaves the pending decision in place to retry', async () => {
   const { dir, tmp } = bed();
-  const server = serve(dir, { ok: false, reason: 'the-switch-no-longer-applies' });
+  const server = serve(dir, { ok: false, reason: 'the-switch-no-longer-applies', mutated: false });
   await run(['tombstone'], { dir, tmp });
   server.close();
   assert.ok(fs.existsSync(path.join(dir, 'pending.json')));

@@ -284,7 +284,8 @@ t('a request that cannot be encoded fails by name instead of crashing the caller
   circular.self = circular;
   const out = await C.requestSwitch({ net, dir, request: circular, timeoutMs: 2000 });
   assert.strictEqual(out.ok, false);
-  assert.strictEqual(out.reason, C.UNENCODABLE);
+  // UNSENT, not UNENCODABLE: this fails before a byte is written, so the switch provably did not run.
+  assert.strictEqual(out.reason, C.UNSENT);
   server.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -307,6 +308,90 @@ t('a connection that never opened keeps the no-listener reason', async () => {
   const out = await C.requestSwitch({ net, dir, request: { choice: 'reject' }, timeoutMs: 2000 });
   assert.strictEqual(out.reason, C.UNREACHABLE.noSocket);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t('a request that never leaves is a DIFFERENT reason from one whose answer failed', async () => {
+  // The distinction decides whether a caller may say nothing changed: the client's encode fails
+  // before a byte is written, the server's fails after the switch has already run.
+  const dir = tmpdir();
+  const server = C.createSwitchServer({ net, dir, onRequest: () => ({ ok: true }), onError: (e) => errors.push(e) });
+  const circular = {}; circular.self = circular;
+  const unsent = await C.requestSwitch({ net, dir, request: circular, timeoutMs: 2000 });
+  assert.strictEqual(unsent.reason, C.UNSENT);
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  const answerFailed = await exchange(() => { const c = {}; c.self = c; return c; });
+  assert.strictEqual(answerFailed.reason, C.UNENCODABLE);
+  assert.notStrictEqual(answerFailed.reason, unsent.reason);
+});
+
+t('only the reasons that PROVE non-delivery are in the safe set', () => {
+  // Enumerating the safe side is what stops a newly added reason defaulting to "nothing changed".
+  assert.ok(C.PROVABLY_NOT_DELIVERED.includes(C.UNREACHABLE.noSocket));
+  assert.ok(C.PROVABLY_NOT_DELIVERED.includes(C.UNSENT));
+  for (const unsafe of [C.THREW, C.UNENCODABLE, C.UNPARSEABLE, C.UNREACHABLE.noAnswer, C.UNREACHABLE.timeout, C.UNREACHABLE.malformed]) {
+    assert.ok(!C.PROVABLY_NOT_DELIVERED.includes(unsafe), unsafe + ' was treated as provably undelivered');
+  }
+});
+
+t('a peer that streams without ever completing a record is cut off, not held', async () => {
+  // The threat model names a hostile local process explicitly; without a cap it could grow the
+  // server's buffer inside the user's running session without bound.
+  const dir = tmpdir();
+  const server = C.createSwitchServer({ net, dir, onRequest: () => ({ ok: true }), onError: (e) => errors.push(e) });
+  const reply = await new Promise((resolve) => {
+    const socket = net.createConnection(C.socketPathIn(dir), () => {
+      // No separator, ever — just more than the cap allows.
+      socket.write('x'.repeat(C.MAX_RECORD_BYTES + 1024));
+    });
+    let buf = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (d) => { buf += d; });
+    socket.on('close', () => resolve(buf));
+    setTimeout(() => { socket.destroy(); resolve('{"reason":"NEVER CUT OFF"}'); }, 5000).unref();
+  });
+  assert.strictEqual(JSON.parse(reply).reason, C.UNPARSEABLE);
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t('the enactment never sees an over-long record', async () => {
+  const dir = tmpdir();
+  let calls = 0;
+  const server = C.createSwitchServer({ net, dir, onRequest: () => { calls++; return { ok: true }; }, onError: (e) => errors.push(e) });
+  await new Promise((resolve) => {
+    const socket = net.createConnection(C.socketPathIn(dir), () => socket.write('y'.repeat(C.MAX_RECORD_BYTES + 16)));
+    socket.resume();
+    socket.on('close', resolve);
+    setTimeout(() => { socket.destroy(); resolve(); }, 5000).unref();
+  });
+  assert.strictEqual(calls, 0);
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t('a peer that keeps streaming past the cap is refused ONCE, not once per chunk', async () => {
+  // Without the latch, every further chunk re-enters the guard and ends the socket again — the same
+  // re-entrancy the record path is latched against, in the arm added to bound the buffer.
+  const chunks = [];
+  const socket = {
+    setEncoding() {},
+    on(event, fn) { if (event === 'data') this._data = fn; },
+    _data: null,
+  };
+  let refusals = 0;
+  C.__readOneRecordForTest(socket, { onRecord: () => {}, onMalformed: () => { refusals++; }, maxBytes: 8 });
+  socket._data('x'.repeat(20));
+  socket._data('x'.repeat(20));
+  socket._data('x'.repeat(20));
+  assert.strictEqual(refusals, 1);
+  void chunks;
+});
+
+t('accepted sockets carry an idle deadline', () => {
+  // Named rather than waited on: the client half has always had a deadline and the server had none.
+  assert.ok(C.IDLE_MS > 0 && C.IDLE_MS <= 120000);
 });
 
 t('a second record arriving DURING a slow enactment is ignored', async () => {

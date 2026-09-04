@@ -38,6 +38,11 @@ const socketPathIn = (dir) => path.join(dir, SOCKET_NAME);
 // reaches the separator. A guard here would be code defending against a state the encoding makes
 // unrepresentable. [LAW:no-defensive-null-guards]
 const RECORD_SEPARATOR = '\n';
+// A switch request is a handful of short fields; anything approaching this is not one. The cap and
+// the idle timeout exist for the same reason: this listener lives inside the user's running session,
+// and a peer that opens a connection and then does nothing must not be able to hold resources there.
+const MAX_RECORD_BYTES = 1 << 20;
+const IDLE_MS = 30000;
 const encode = (value) => {
   const json = JSON.stringify(value);
   // `JSON.stringify` RETURNS undefined for undefined, a function or a symbol rather than throwing,
@@ -54,7 +59,12 @@ const encode = (value) => {
 // The two refusals the SERVER originates, named here so the client can recognise them and the tests
 // cannot drift from the spelling. [LAW:one-source-of-truth]
 const THREW = 'the-switch-threw';
-const UNENCODABLE = 'the-response-could-not-be-encoded';
+// Split by WHEN it happens, because that is what decides whether the switch may already have run.
+// The client's failure happens before a byte is written, so nothing was delivered; the server's
+// happens after `onRequest` has already driven the app's own rewind. One reason for both would give
+// the CLI a string it cannot act on — the origin is exactly the part it needs.
+const UNSENT = 'the-switch-request-could-not-be-encoded-and-was-never-sent';
+const UNENCODABLE = 'the-switch-ran-but-its-answer-could-not-be-encoded';
 // The server failing to parse the CLIENT's request is the opposite fault from the client failing to
 // parse the server's reply, and reusing UNREACHABLE.malformed for it told the caller "the hosted
 // session answered with something that is not a response" — pointing at the wrong end of the wire.
@@ -73,13 +83,21 @@ const UNREACHABLE = {
 
 // Read a stream until the first record separator, then hand over exactly one parsed value. Anything
 // after the first line is ignored by construction: this protocol is one request, one response.
-function readOneRecord(socket, { onRecord, onMalformed }) {
+function readOneRecord(socket, { onRecord, onMalformed, maxBytes = MAX_RECORD_BYTES }) {
   let buffer = '';
   let settled = false;
   socket.setEncoding('utf8');
   socket.on('data', (chunk) => {
     if (settled) return;
     buffer += chunk;
+    // A peer that streams without ever sending a separator would otherwise grow this buffer without
+    // limit. The threat model here names such a peer explicitly — any local process can reach the
+    // socket — so the bound is enforced rather than assumed. [LAW:no-silent-failure]
+    if (buffer.length > maxBytes) {
+      settled = true;
+      onMalformed(new Error('record exceeded ' + maxBytes + ' bytes without a separator'));
+      return;
+    }
     const end = buffer.indexOf(RECORD_SEPARATOR);
     if (end === -1) return;
     settled = true;
@@ -97,6 +115,9 @@ function createSwitchServer({ net, dir, onRequest, onError }) {
     // A connection that breaks mid-switch is the peer's business, and it must not take the session
     // down with it — this listener lives inside the user's running Claude Code.
     socket.on('error', (e) => onError(e));
+    // A peer that connects and then says nothing is dropped rather than held. The client's half has
+    // always had a deadline; the server's needs one for the same reason and did not have it.
+    socket.setTimeout(IDLE_MS, () => socket.destroy());
     readOneRecord(socket, {
       onRecord: async (request) => {
         // The WHOLE body is guarded, not just the enactment. `onRecord` is async and is invoked
@@ -164,7 +185,7 @@ function requestSwitch({ net, dir, request, timeoutMs = 15000 }) {
     socket.on('connect', () => {
       connected = true;
       try { socket.write(encode(request)); }
-      catch (e) { done({ ok: false, reason: UNENCODABLE, detail: because(e) }); }
+      catch (e) { done({ ok: false, reason: UNSENT, detail: because(e) }); }
     });
     readOneRecord(socket, {
       onRecord: (response) => done(response),
@@ -180,4 +201,15 @@ function requestSwitch({ net, dir, request, timeoutMs = 15000 }) {
   });
 }
 
-module.exports = { SOCKET_NAME, socketPathIn, RECORD_SEPARATOR, UNREACHABLE, THREW, UNENCODABLE, UNPARSEABLE, encode, createSwitchServer, requestSwitch };
+module.exports = {
+  SOCKET_NAME, socketPathIn, RECORD_SEPARATOR, MAX_RECORD_BYTES, IDLE_MS,
+  UNREACHABLE, THREW, UNENCODABLE, UNSENT, UNPARSEABLE,
+  // The reasons that PROVE the request never reached a session. Everything else — named or not —
+  // may have run, so a caller enumerates this set and treats the rest as uncertain. Enumerating the
+  // unsafe side instead is what let UNENCODABLE be forgotten. [LAW:dataflow-not-control-flow]
+  PROVABLY_NOT_DELIVERED: [UNREACHABLE.noSocket, UNSENT],
+  encode, createSwitchServer, requestSwitch,
+  // Exported for its own tests: the reader's latching and its buffer cap are reachable through a
+  // socket only by streaming a megabyte, which is a slow way to assert a one-line invariant.
+  __readOneRecordForTest: readOneRecord,
+};

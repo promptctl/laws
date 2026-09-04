@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const M = require(path.join(__dirname, '..', 'hooks', 'scripts', 'laws-excise.js'));
 const { connect } = require(path.join(__dirname, '..', 'hooks', 'injector', 'inspect-eval.js'));
-const { requestSwitch, UNREACHABLE, THREW } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-channel.js'));
+const { requestSwitch, UNREACHABLE, PROVABLY_NOT_DELIVERED } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-channel.js'));
 const { spawnSync } = require('child_process');
 // The router owns the engaged-craft lock's layout; this is the only sanctioned way to release one.
 const ROUTER = path.join(__dirname, '..', 'hooks', 'scripts', 'skill-router.sh');
@@ -132,17 +132,17 @@ const request = {
     process.exit(0);
   }
   if (live.reason !== UNREACHABLE.noSocket) {
-    // ONE question decides the wording: could the switch already have run? Only a session that
-    // REFUSED it by name — a plan never applied — can be reported as having changed nothing. Every
-    // other outcome here reached a listening session, and applyLiveSwitch drives the app's own
-    // rewind before it can reply, with no rollback available: a throw, a timeout, an unreadable
-    // answer or a peer that went quiet all leave a conversation that may genuinely be shorter than
-    // it was. Claiming otherwise would be a lie in exactly the case the user most needs the truth.
+    // ONE question decides the wording: could the switch already have run? It is answered from
+    // FACTS, not from a table of reason strings. The session says `mutated: false` when it refused
+    // before touching anything, and the channel names the two reasons that prove the request never
+    // arrived at all. Anything else — a throw mid-apply, an answer that would not encode, a peer
+    // that went quiet — leaves it genuinely unknown, and unknown gets the warning. An omission here
+    // can then only make the message more cautious, never turn it into a false reassurance.
     // [LAW:no-silent-failure]
-    const MAY_HAVE_RUN = [THREW, UNREACHABLE.noAnswer, UNREACHABLE.timeout, UNREACHABLE.malformed];
-    const what = MAY_HAVE_RUN.includes(live.reason)
-      ? 'The switch may have run PART WAY. Your conversation may already have been rewound; check it before retrying.'
-      : 'Nothing was changed.';
+    const untouched = live.mutated === false || PROVABLY_NOT_DELIVERED.includes(live.reason);
+    const what = untouched
+      ? 'Nothing was changed.'
+      : 'The switch may have run PART WAY. Your conversation may already have been rewound; check it before retrying.';
     die('the hosted session refused the switch (' + live.reason + (live.detail ? ': ' + live.detail : '') + '). ' + what);
   }
 

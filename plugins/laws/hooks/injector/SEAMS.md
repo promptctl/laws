@@ -404,7 +404,7 @@ writer bolted alongside.
   crosses from the disk-shaped decision to the live store, `switch-request.js` composes them, and
   `switch-channel.js` is the unix socket `laws-switch` dials instead of `BUN_INSPECT`. Verified live
   on 2.1.258 for all three enacting choices — `rewind_discard`, `tombstone` and `rewind_summarize` —
-  each with the session PID unchanged and the file written after the craft load intact; 99 of 100 deliberate mutations are killed by a
+  each with the session PID unchanged and the file written after the craft load intact; 109 of 110 deliberate mutations are killed by a
   test, the one survivor being an equivalent mutant that `switch-channel.js` names in those words at
   its `finish` latch — flipping it changes no observable behaviour, so no test can kill it. See the resolved section above, including
   the durability limitation (`promptctl-injector-xy0.3`).

@@ -56,8 +56,11 @@ function createSeamRegistry() {
       controller(instance) { everAnnounced = true; announced.push(new WeakRef(instance)); },
     },
 
-    // How many announced. The host reports this so a boot where the seam spliced but never fired is
-    // distinguishable from one where it fired — two different failures with one symptom.
+    // How many conversations are live RIGHT NOW. It is not a boot signal and nothing reports it at
+    // boot: whether the seam ever fired is `everAnnounced`'s job, and this number legitimately falls
+    // back to zero as conversations end. switch-request carries it on an ownership refusal, where
+    // "the seam is holding three conversations, none of them yours" and "it is holding none" are
+    // different things to go and look at.
     get count() { return live().length; },
 
     // The controller whose live conversation contains `uuid`. Refusing on several is not caution:
