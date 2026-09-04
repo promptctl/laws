@@ -61,7 +61,7 @@ const MODULES = [
   record('/$bunfs/root/blob.node', 'RAWBYTES', 'napi'),
 ];
 
-function build(modules = MODULES) {
+function build(modules = MODULES, extra = {}) {
   const embedded = createEmbeddedFs(modules, { realFs: require_('fs'), streamFrom: () => null });
   const errors = [];
   const runtime = createModuleRuntime({
@@ -71,9 +71,66 @@ function build(modules = MODULES) {
     substitute: { fs: (real) => embedded.substituteForFs(real) },
     requireBuiltin: (id) => require_('node:' + id),
     onEvaluationError: (name, e) => errors.push([name, e.message]),
+    ...extra,
   });
   return { runtime, errors, embedded };
 }
+
+// ---- the transform, which is the whole wire the craft switch hangs from -------------------------
+//
+// A regression here fails SILENTLY: no boot error, no exception — the seam simply never reaches the
+// compiler and the registrar is never called. seam-plan.test.mjs covers `transformFor` in isolation,
+// which is a different claim from "the runtime actually applies it".
+
+t('a transform reaches the compiler — the evaluated module reflects the edited source', async () => {
+  const seen = [];
+  const { runtime } = build(MODULES, {
+    transform: (name, text) => {
+      seen.push(name);
+      return name === '/$bunfs/root/cli' ? text + '\nglobalThis.__spliced = "landed";\n' : text;
+    },
+  });
+  delete globalThis.__spliced;
+  await runtime.linkAll();
+  await runtime.evaluateEntry('/$bunfs/root/cli');
+  assert.strictEqual(globalThis.__spliced, 'landed', 'the transform never reached the compiler');
+  delete globalThis.__spliced;
+});
+
+t('every js module is offered to the transform, exactly once each', async () => {
+  const seen = [];
+  const { runtime } = build(MODULES, { transform: (name, text) => { seen.push(name); return text; } });
+  await runtime.linkAll();
+  const js = MODULES.filter((m) => m.loader === 'js').map((m) => m.name);
+  assert.deepStrictEqual(seen.slice().sort(), js.slice().sort());
+  assert.strictEqual(new Set(seen).size, seen.length, 'a module was compiled twice');
+});
+
+t('the transform is handed the module NAME and its own text, in that order', async () => {
+  // Swapped arguments would still "work" for an identity transform and silently disable the seam.
+  const pairs = [];
+  const { runtime } = build(MODULES, { transform: (name, text) => { pairs.push([name, text]); return text; } });
+  await runtime.linkAll();
+  for (const [name, text] of pairs) {
+    const record = MODULES.find((m) => m.name === name);
+    assert.ok(record, 'first argument was not a module name: ' + name);
+    assert.strictEqual(text, record.text(), 'second argument was not that module\'s source');
+  }
+});
+
+t('a transform that returns the text unchanged leaves the graph running verbatim', async () => {
+  const { runtime } = build(MODULES, { transform: (name, text) => text });
+  await runtime.linkAll();
+  await runtime.evaluateEntry('/$bunfs/root/cli');
+  assert.strictEqual(globalThis.__result.greet, 'hello');
+});
+
+t('with no transform supplied the graph still runs — the seam is optional to the runtime', async () => {
+  const { runtime } = build();
+  await runtime.linkAll();
+  await runtime.evaluateEntry('/$bunfs/root/cli');
+  assert.strictEqual(globalThis.__result.greet, 'hello');
+});
 
 // ---- the whole graph, end to end ----------------------------------------------------------------
 

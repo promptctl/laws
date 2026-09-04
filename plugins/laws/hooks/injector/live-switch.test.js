@@ -59,6 +59,13 @@ const plan = (over = {}) => L.planLiveSwitch({
 
 // ---- the choices --------------------------------------------------------------------------------
 
+t('the accepted choices ARE the switch actions, not a copy of them', () => {
+  // bin/laws-switch derives its list from the same table; a fifth action must not be accepted by the
+  // CLI and refused here. [LAW:one-source-of-truth]
+  const { SWITCH_ACTIONS } = require('../scripts/laws-excise.js');
+  assert.deepStrictEqual(L.CHOICES.slice().sort(), Object.keys(SWITCH_ACTIONS).sort());
+});
+
 t('a choice that is not one of the four refuses by name', () => {
   const p = plan({ choice: 'obliterate' });
   assert.strictEqual(p.ok, false);
@@ -224,15 +231,33 @@ t('the summary is shaped from a real user message, not invented', () => {
   assert.strictEqual(summary.timestamp, 'NOW');
 });
 
-t('a conversation with no user message to shape a summary from refuses', () => {
+t('a conversation whose only user record is the craft load REFUSES to shape a summary from it', () => {
+  // This assertion used to say the opposite, and the opposite was the bug: a craft load is a user
+  // record by `type` but an INJECTED one by `isMeta`, so spreading it would stamp the user's summary
+  // as injected non-chat content — defeating the option whose whole purpose is preserving that work.
   const p = L.planLiveSwitch({
     snapshot: [load('load-code', 'code')], decision: decision(),
     choice: 'rewind_summarize', summary: 's', uuid: 'u', now: 'N',
   });
-  // The craft load IS a user message, so shape one that is not.
-  const onlyNoise = L.summaryFrom([noise('n')], { uuid: 'u', timestamp: 'N', text: 's' });
-  assert.strictEqual(onlyNoise, null);
-  assert.strictEqual(p.ok, true);   // the load itself is a valid template
+  assert.strictEqual(p.ok, false);
+  assert.strictEqual(p.reason, L.UNPLANNABLE.noTemplate);
+});
+
+t('a summary never inherits isMeta from the record it was shaped from', () => {
+  const summary = L.summaryFrom(SNAP, { uuid: 'new', timestamp: 'NOW', text: 'what happened' });
+  assert.ok(!summary.isMeta, 'the summary was marked as injected content');
+});
+
+t('summaryFrom skips meta records to reach a real user turn behind them', () => {
+  const snap = [said('real', 'typed by a person'), load('meta', 'code')];
+  const summary = L.summaryFrom(snap, { uuid: 'u', timestamp: 'N', text: 'x' });
+  assert.strictEqual(summary.uuid, 'u');
+  assert.ok(!summary.isMeta);
+  assert.strictEqual(summary.message.content, 'x');
+});
+
+t('a conversation with no non-meta user record at all yields no template', () => {
+  assert.strictEqual(L.summaryFrom([noise('n'), load('m', 'code')], { uuid: 'u', timestamp: 'N', text: 's' }), null);
 });
 
 t('the summary is shaped from the LAST user message, not the first', () => {
@@ -306,6 +331,24 @@ t('reject touches the store not at all', () => {
   const out = L.applyLiveSwitch(c, plan({ choice: 'reject' }));
   assert.deepStrictEqual(c.calls, []);
   assert.deepStrictEqual(out, { ok: true, rewound: false, tombstoned: 0, changed: false });
+});
+
+t('rewind_discard reports changed:true — a truncation is not a no-op', () => {
+  // `after` is read AFTER the rewind, so comparing it with the array built from it says "identical"
+  // for a discard and would have the caller report that nothing happened, moments after the
+  // conversation was destructively truncated.
+  const c = fakeController(SNAP.slice());
+  const out = L.applyLiveSwitch(c, plan({ choice: 'rewind_discard' }));
+  assert.deepStrictEqual(out, { ok: true, rewound: true, tombstoned: 0, changed: true });
+  assert.deepStrictEqual(c.messages.map((m) => m.uuid), ['before']);
+});
+
+t('rewind_discard changes the conversation without needing a replace()', () => {
+  // The rewind alone did the work; calling replace() with an identical array would redraw for
+  // nothing. `changed` and "we called replace" are separate questions.
+  const c = fakeController(SNAP.slice());
+  L.applyLiveSwitch(c, plan({ choice: 'rewind_discard' }));
+  assert.deepStrictEqual(c.calls.map((x) => x[0]), ['rewind']);
 });
 
 t('what was done comes back, so the caller can report it rather than assume it', () => {

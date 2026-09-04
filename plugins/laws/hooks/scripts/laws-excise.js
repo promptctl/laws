@@ -260,6 +260,18 @@ const estimateTokens = (chars) => Math.round(chars / 4);  // rough; errs high �
 //   incomingMedium given  → pre-load gate (injected Skill-call intercept): the transcript holds the
 //                           engaged crafts; the incoming one is not yet on disk.
 //   incomingMedium absent → post-hoc: loads already present; the newest is the incoming one.
+// How a transcript's TEXT becomes its records, in one place. Three callers split this string — the
+// two on-disk paths below and the live enactment in ../injector/switch-request.js — and the line
+// numbering `decide()` reports is only meaningful if all three agree. Copies of the rule would drift
+// the first time it has to learn about CRLF or a BOM, and the live path's uuids would then refer to
+// different records than the disk path's indices. [LAW:one-source-of-truth]
+function toRawLines(text) {
+  const lines = text.split('\n');
+  // The trailing '' a final newline produces is an artefact of splitting, not a record.
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
 function decide(rawLines, opts = {}) {
   const edges = opts.conflictEdges;
   if (!Array.isArray(edges)) throw new Error("decide: conflictEdges is required (call loadPolicy first)");
@@ -500,9 +512,8 @@ function run(file, opts = {}) {
   const dryRun = opts.dryRun || false;
   const pairs = opts.conflictEdges || loadPolicy(opts.policyPath); // boundary read (may throw — loud)
   const text = fs.readFileSync(file, 'utf8');
-  const eol = text.endsWith('\n');
-  let rawLines = text.split('\n');
-  if (eol) rawLines.pop(); // trailing '' from final newline — restore on write
+  const eol = text.endsWith('\n'); // restored on write
+  let rawLines = toRawLines(text);
   const stubbedAll = [];
   for (;;) {
     const d = decide(rawLines, { conflictEdges: pairs });
@@ -531,9 +542,8 @@ function applyRequest(requestPath, opts = {}) {
   }
   const pairs = opts.conflictEdges || loadPolicy(opts.policyPath);
   const text = fs.readFileSync(req.transcript, 'utf8');
-  const eol = text.endsWith('\n');
-  const rawLines = text.split('\n');
-  if (eol) rawLines.pop();
+  const eol = text.endsWith('\n'); // restored on write
+  const rawLines = toRawLines(text);
 
   const decision = decide(rawLines, { conflictEdges: pairs, incomingMedium: req.incomingMedium });
   // The conflict must still be there. If it is not, the session changed under us — say so instead
@@ -559,7 +569,7 @@ module.exports = {
   // stubText is exported because the LIVE enactment (../injector/live-switch.js) stubs message
   // objects rather than JSONL lines, so it cannot go through exciseAt. Two spellings of the
   // tombstone wording would be two sources for one fact. [LAW:one-source-of-truth]
-  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS, stubText,
+  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS, stubText, toRawLines,
   applyRequest, run,
 };
 

@@ -42,6 +42,11 @@ const encode = (value) => JSON.stringify(value) + RECORD_SEPARATOR;
 
 // Every way the channel itself can fail to carry a switch, named — distinct from the reasons the
 // ENACTMENT can refuse, which come back inside a well-formed response. [LAW:no-silent-failure]
+// The two refusals the SERVER originates, named here so the client can recognise them and the tests
+// cannot drift from the spelling. [LAW:one-source-of-truth]
+const THREW = 'the-switch-threw';
+const UNENCODABLE = 'the-response-could-not-be-encoded';
+
 const UNREACHABLE = {
   noSocket: 'no-hosted-session-is-listening',
   timeout: 'the-hosted-session-did-not-answer',
@@ -76,12 +81,24 @@ function createSwitchServer({ net, dir, onRequest, onError }) {
     socket.on('error', (e) => onError(e));
     readOneRecord(socket, {
       onRecord: async (request) => {
-        // An enactment that throws still has to answer: a caller left hanging cannot tell a crash
-        // from a switch that is merely slow, and would report neither.
+        // The WHOLE body is guarded, not just the enactment. `onRecord` is async and is invoked
+        // fire-and-forget from the data handler, so anything escaping here becomes an unhandled
+        // rejection — which can take down the hosted Claude Code session this listener lives inside,
+        // the exact outcome the comment above promises will never happen. `encode` is the live risk:
+        // its contract accepts whatever a caller's onRequest returns, and a circular structure or a
+        // Map does not survive JSON.stringify. [LAW:no-silent-failure]
         let response;
         try { response = await onRequest(request); }
-        catch (e) { response = { ok: false, reason: 'the-switch-threw', detail: because(e) }; }
-        socket.end(encode(response));
+        catch (e) { response = { ok: false, reason: THREW, detail: because(e) }; }
+        try { socket.end(encode(response)); }
+        catch (e) {
+          // The answer itself could not be written. Say so in a shape that always encodes, and if
+          // even that fails there is nothing left to say it with — close, and let the client's own
+          // no-answer path name it.
+          try { socket.end(encode({ ok: false, reason: UNENCODABLE, detail: because(e) })); }
+          catch { socket.destroy(); }
+          onError(e);
+        }
       },
       onMalformed: (e) => socket.end(encode({ ok: false, reason: UNREACHABLE.malformed, detail: because(e) })),
     });
@@ -122,4 +139,4 @@ function requestSwitch({ net, dir, request, timeoutMs = 15000 }) {
   });
 }
 
-module.exports = { SOCKET_NAME, socketPathIn, RECORD_SEPARATOR, UNREACHABLE, encode, createSwitchServer, requestSwitch };
+module.exports = { SOCKET_NAME, socketPathIn, RECORD_SEPARATOR, UNREACHABLE, THREW, UNENCODABLE, encode, createSwitchServer, requestSwitch };

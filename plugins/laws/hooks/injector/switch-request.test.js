@@ -178,10 +178,31 @@ t('reject reaches the store not at all', () => {
   assert.strictEqual(out.changed, false);
 });
 
-t('the enactment is handed no way to write a file', () => {
-  // Structural, not a promise in prose: on-disk deliverables survive every choice because nothing
-  // here is given a writer. If a write ever appears, this assertion is what has to change first.
-  assert.ok(!S.enactSwitch.toString().includes('writeFile'));
+t('no choice writes to the filesystem — on-disk deliverables survive all four', () => {
+  // Asserted BEHAVIOURALLY. This used to read enactSwitch's source text for the string "writeFile",
+  // which pins a spelling rather than a contract and passes for any writer named differently.
+  // [LAW:behavior-not-structure] Instead every write entry point on the real fs module is replaced
+  // for the duration of a full run of each choice, and any call at all is a failure.
+  const fs = require('fs');
+  const WRITERS = ['writeFileSync', 'appendFileSync', 'writeSync', 'renameSync', 'unlinkSync',
+    'createWriteStream', 'openSync', 'rmSync', 'truncateSync', 'copyFileSync', 'mkdirSync'];
+  const original = {};
+  const calls = [];
+  for (const name of WRITERS) { original[name] = fs[name]; fs[name] = (...a) => { calls.push([name, a[0]]); }; }
+  try {
+    for (const choice of ['reject', 'tombstone', 'rewind_discard', 'rewind_summarize']) {
+      const h = harness();
+      // A summary throughout, so rewind_summarize runs its full length instead of refusing early.
+      const out = h.run({ request: { choice, summary: 'what happened' } });
+      assert.ok(out.ok || out.reason, 'choice ' + choice + ' produced no result at all');
+    }
+  } finally {
+    for (const name of WRITERS) fs[name] = original[name];
+  }
+  assert.deepStrictEqual(calls, [], 'the enactment wrote to the filesystem');
+});
+
+t('the request contract is exactly the three fields the enactment needs', () => {
   assert.deepStrictEqual(S.REQUIRED, ['transcript', 'choice', 'incomingMedium']);
 });
 

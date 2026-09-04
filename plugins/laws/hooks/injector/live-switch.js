@@ -31,7 +31,7 @@
 
 'use strict';
 
-const { stubText } = require('../scripts/laws-excise.js');
+const { stubText, SWITCH_ACTIONS } = require('../scripts/laws-excise.js');
 
 // Every way a decision can fail to become a live plan, named — these reach the caller that asked for
 // the switch, so they are contract. [LAW:no-silent-failure]
@@ -50,7 +50,11 @@ const UNPLANNABLE = {
 // NOT want. The telemetry it produces is therefore the app's, and honest about what happened.
 const REWIND_SOURCE = 'message_selector';
 
-const CHOICES = ['reject', 'tombstone', 'rewind_summarize', 'rewind_discard'];
+// DERIVED, never re-listed. bin/laws-switch already takes its accepted choices from this same
+// table, so a fifth action added there would be accepted by the CLI and refused here as
+// `unknownChoice` — the live path and the relaunch path silently disagreeing about what a switch is.
+// [LAW:one-source-of-truth]
+const CHOICES = Object.keys(SWITCH_ACTIONS);
 
 const unplannable = (reason, detail) => ({ ok: false, reason, detail });
 
@@ -81,7 +85,12 @@ function stubbedMessage(message, medium, activeMedium) {
 // origin…), and inventing a shape from the few that are obvious is how a message renders as a blank
 // row. The template supplies every field; only identity, time and content are overridden.
 function summaryFrom(snapshot, { uuid, timestamp, text }) {
-  const template = [...snapshot].reverse().find((m) => m && m.type === 'user' && m.message);
+  // `isMeta` is excluded, and that exclusion is the whole correctness of this function. A craft load
+  // IS a user-typed record by `type`, but it is an injected one — which is exactly what `isMeta`
+  // marks. Spreading it would stamp the user's summary as injected non-chat content and let the app
+  // treat it the way it treats guidance rather than the way it treats what the user said, defeating
+  // the option that exists to PRESERVE that work.
+  const template = [...snapshot].reverse().find((m) => m && m.type === 'user' && m.message && !m.isMeta);
   if (!template) return null;
   return { ...template, uuid, timestamp, message: { ...template.message, content: text } };
 }
@@ -161,11 +170,17 @@ function applyLiveSwitch(controller, plan) {
   const replaced = after.map((message) => (message && stubs.get(message.uuid)) || message);
   const messages = plan.append ? [...replaced, plan.append] : replaced;
 
-  // Only when something actually differs: replacing with an equal array would redraw the transcript
-  // and bump the store for a choice (reject) that promised to change nothing.
-  const changed = messages.length !== after.length || messages.some((m, i) => m !== after[i]);
-  if (changed) controller.transcript.replace(messages);
-  return { ok: true, rewound: plan.rewindAt !== null, tombstoned: plan.tombstones.length, changed };
+  // Two different questions, and conflating them reported a destructive rewind as a no-op. Whether
+  // to CALL replace() is about the array: replacing with an equal one would redraw the transcript
+  // and bump the store for a choice (reject) that promised to change nothing. Whether the
+  // conversation CHANGED includes the rewind, which already happened above and which `after` — read
+  // after it — cannot witness.
+  const replaces = messages.length !== after.length || messages.some((m, i) => m !== after[i]);
+  if (replaces) controller.transcript.replace(messages);
+  return {
+    ok: true, rewound: plan.rewindAt !== null, tombstoned: plan.tombstones.length,
+    changed: plan.rewindAt !== null || replaces,
+  };
 }
 
 module.exports = { UNPLANNABLE, CHOICES, REWIND_SOURCE, stubbedMessage, summaryFrom, planLiveSwitch, applyLiveSwitch };

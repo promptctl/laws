@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const M = require(path.join(__dirname, '..', 'hooks', 'scripts', 'laws-excise.js'));
 const { connect } = require(path.join(__dirname, '..', 'hooks', 'injector', 'inspect-eval.js'));
-const { requestSwitch, UNREACHABLE } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-channel.js'));
+const { requestSwitch, UNREACHABLE, THREW } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-channel.js'));
 const { spawnSync } = require('child_process');
 // The router owns the engaged-craft lock's layout; this is the only sanctioned way to release one.
 const ROUTER = path.join(__dirname, '..', 'hooks', 'scripts', 'skill-router.sh');
@@ -113,8 +113,12 @@ const request = {
       // thing is to say which half did not complete rather than to imply neither did.
       // [LAW:no-silent-failure]
       if (retire.status !== 0) {
+        // A spawn that never started leaves status null and stderr empty, so reading stderr alone
+        // printed a warning with an empty parenthesis — loud in form and silent in content, which is
+        // the failure this branch exists to prevent. [LAW:no-silent-failure]
+        const why = (retire.stderr || '').trim() || (retire.error && retire.error.message) || 'no output';
         process.stderr.write('laws-switch: the switch was applied but laws:' + craft
-          + ' could not be released (' + (retire.stderr || '').trim() + '); loading laws:'
+          + ' could not be released (' + why + '); loading laws:'
           + request.incomingMedium + ' may still be refused this session.\n');
       }
     }
@@ -128,7 +132,15 @@ const request = {
     process.exit(0);
   }
   if (live.reason !== UNREACHABLE.noSocket) {
-    die('the hosted session refused the switch (' + live.reason + (live.detail ? ': ' + live.detail : '') + '). Nothing was changed.');
+    // "Nothing was changed" is only true of a REFUSAL — a plan that was never applied. A switch that
+    // THREW is different in kind: applyLiveSwitch drives the app's own rewind first, and that
+    // mutation is already visible with no rollback available, so a later throw leaves a conversation
+    // that may genuinely be shorter than it was. Reporting that as "nothing changed" would be a lie
+    // in exactly the case the user most needs the truth. [LAW:no-silent-failure]
+    const what = live.reason === THREW
+      ? 'The switch FAILED PART WAY THROUGH. Your conversation may already have been rewound; check it before retrying.'
+      : 'Nothing was changed.';
+    die('the hosted session refused the switch (' + live.reason + (live.detail ? ': ' + live.detail : '') + '). ' + what);
   }
 
   // No hosted session is listening: record the request and end the session so the launcher applies

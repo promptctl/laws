@@ -25,6 +25,12 @@
 'use strict';
 
 const { planLiveSwitch, applyLiveSwitch } = require('./live-switch.js');
+// How a controller's live messages are read, and how a transcript's text becomes records, each have
+// one home. Re-spelling either here would be a second copy free to drift from the original — and
+// seam-registry's own suite asserts that callers cannot spell the first one differently.
+// [LAW:one-source-of-truth]
+const { snapshotOf } = require('./seam-registry.js');
+const { toRawLines } = require('../scripts/laws-excise.js');
 // One spelling of "what went wrong", shared with the rest of the injector. [LAW:one-source-of-truth]
 const { because } = require('./boot-guard.js');
 
@@ -50,12 +56,7 @@ function enactSwitch({ request, registry, decide, conflictEdges, readFile, uuid,
   try { raw = readFile(request.transcript); }
   catch (e) { return { ok: false, reason: REFUSED.unreadable, detail: because(e) }; }
 
-  // Split exactly as laws-excise's own reader does, so the line numbering the decision is built on
-  // is the same numbering everywhere. A trailing newline would otherwise add an empty final record.
-  const lines = raw.split('\n');
-  if (lines.length && lines[lines.length - 1] === '') lines.pop();
-
-  const decision = decide(lines, { conflictEdges, incomingMedium: request.incomingMedium });
+  const decision = decide(toRawLines(raw), { conflictEdges, incomingMedium: request.incomingMedium });
   // Not an error and not a success: the conversation moved and there is nothing left to switch away
   // from. Saying so by name is what stops the caller reporting a switch that never happened.
   if (!decision.trigger) return { ok: false, reason: REFUSED.moot, detail: decision.reason };
@@ -65,7 +66,7 @@ function enactSwitch({ request, registry, decide, conflictEdges, readFile, uuid,
   if (!owner.ok) return owner;
 
   const plan = planLiveSwitch({
-    snapshot: owner.controller.transcript.getSnapshot(),
+    snapshot: snapshotOf(owner.controller),
     decision, choice: request.choice, summary: request.summary, uuid: uuid(), now: now(),
   });
   if (!plan.ok) return plan;

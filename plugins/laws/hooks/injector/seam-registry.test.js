@@ -8,6 +8,16 @@
 
 'use strict';
 const assert = require('assert');
+
+// Collection is the behaviour under test, and it cannot be observed without a way to force it — so
+// this suite re-runs itself with --expose-gc rather than skipping the case when gc is absent. A
+// conditionally-skipped test is one that reports nothing on the machine where it matters.
+if (!global.gc) {
+  const { spawnSync } = require('child_process');
+  const r = spawnSync(process.execPath, ['--expose-gc', __filename], { stdio: 'inherit' });
+  process.exit(r.status === null ? 1 : r.status);
+}
+
 const R = require('./seam-registry.js');
 
 let pass = 0, fail = 0;
@@ -100,6 +110,55 @@ t('a hole in the live array does not throw', () => {
   const reg = R.createSeamRegistry();
   reg.registrar.controller({ transcript: { getSnapshot: () => [null, { uuid: 'u1' }] } });
   assert.strictEqual(reg.ownerOf('u1').ok, true);
+});
+
+t('an absent uuid refuses on its own reason, never matching messages that have none', () => {
+  // The trap: `m.uuid === undefined` is true of every record without a uuid, so without this guard
+  // the first conversation holding one would come back as the PROVEN owner of nothing.
+  const reg = R.createSeamRegistry();
+  reg.registrar.controller({ transcript: { getSnapshot: () => [{ type: 'progress' }, { uuid: 'u1' }] } });
+  for (const absent of [undefined, null, '']) {
+    const owner = reg.ownerOf(absent);
+    assert.strictEqual(owner.ok, false, 'accepted ' + JSON.stringify(absent));
+    assert.strictEqual(owner.reason, R.UNOWNED.noUuid);
+  }
+});
+
+t('an absent uuid is NOT reported as "no conversation holds it"', () => {
+  // Two different facts: one sends you looking for a conversation, the other for a caller bug.
+  const reg = R.createSeamRegistry();
+  reg.registrar.controller({ transcript: { getSnapshot: () => [{ uuid: 'u1' }] } });
+  assert.notStrictEqual(reg.ownerOf(undefined).reason, R.UNOWNED.none);
+});
+
+t('a controller the app has dropped stops being held', async () => {
+  // The registry must never be the reason a conversation stays alive: the seam fires for every
+  // controller the app builds and nothing tells us when one ends.
+  const reg = R.createSeamRegistry();
+  let doomed = { transcript: { getSnapshot: () => [{ uuid: 'gone' }] } };
+  const kept = { transcript: { getSnapshot: () => [{ uuid: 'stays' }] } };
+  reg.registrar.controller(doomed);
+  reg.registrar.controller(kept);
+  assert.strictEqual(reg.count, 2);
+
+  doomed = null;
+  global.gc();
+  await new Promise((r) => setImmediate(r));
+  global.gc();
+
+  assert.strictEqual(reg.count, 1, 'a dropped controller is still held');
+  assert.strictEqual(reg.ownerOf('gone').reason, R.UNOWNED.none);
+  assert.strictEqual(reg.ownerOf('stays').controller, kept);
+});
+
+t('every controller collected leaves the registry reporting never-announced', async () => {
+  const reg = R.createSeamRegistry();
+  reg.registrar.controller({ transcript: { getSnapshot: () => [{ uuid: 'x' }] } });
+  global.gc();
+  await new Promise((r) => setImmediate(r));
+  global.gc();
+  assert.strictEqual(reg.count, 0);
+  assert.strictEqual(reg.ownerOf('x').reason, R.UNOWNED.neverAnnounced);
 });
 
 t('snapshotOf reads the store the one way, so callers cannot spell it differently', () => {

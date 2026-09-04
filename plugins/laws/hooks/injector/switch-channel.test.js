@@ -219,6 +219,29 @@ t('a second record on one connection is ignored — one exchange per connection'
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+t('a response that cannot be encoded is answered, not turned into an unhandled rejection', async () => {
+  // onRecord is async and fire-and-forget, so anything escaping it becomes an unhandled rejection —
+  // which can take down the hosted session this listener lives inside.
+  const circular = { ok: true };
+  circular.self = circular;
+  const out = await exchange(() => circular);
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, C.UNENCODABLE);
+});
+
+t('an unencodable response does not kill the process', async () => {
+  // The specific outcome the guard exists to prevent, asserted rather than argued.
+  const rejections = [];
+  const onRejection = (e) => rejections.push(e);
+  process.on('unhandledRejection', onRejection);
+  const circular = { ok: true };
+  circular.self = circular;
+  await exchange(() => circular);
+  await new Promise((r) => setTimeout(r, 100));
+  process.off('unhandledRejection', onRejection);
+  assert.deepStrictEqual(rejections, []);
+});
+
 t('a second record arriving DURING a slow enactment is ignored', async () => {
   // The window the latch actually protects. `onRequest` is awaited, so between parsing a record and
   // ending the socket there is real time in which another record can arrive — and enacting the same
