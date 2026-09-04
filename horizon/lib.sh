@@ -259,27 +259,49 @@ horizon_lit_sha256() {
 # fails the pin rather than a run. [LAW:one-source-of-truth]
 HORIZON_NEXT_SKILL_REL_PATH=".claude/skills/next/SKILL.md"
 
+# Usage: horizon_lit_next_skill_write <project_dir>  -> path of the /next skill lit wrote
+#
+# One `lit init` against one fresh project, returning the file it produced. Built on the
+# seeding primitives (defined further down this file) so the probe repo carries the same
+# neutralised git config a seeded project does.
+horizon_lit_next_skill_write() {
+  local project_dir="$1"
+  horizon_project_init "$project_dir"
+  horizon_lit_init "$project_dir"
+  local skill_file="$project_dir/$HORIZON_NEXT_SKILL_REL_PATH"
+  [ -f "$skill_file" ] \
+    || horizon_die "the lit on PATH does not write $HORIZON_NEXT_SKILL_REL_PATH, so a run's agent has no way to pull a ticket - it needs a lit newer than 0.11.0 (\`lit version\`; \`lit upgrade\`)"
+  ! grep -q "$HORIZON_MOVED_SKILL_HEADING" "$skill_file" \
+    || horizon_die "the lit on PATH writes $HORIZON_NEXT_SKILL_REL_PATH as a pointer stub, not a procedure"
+  printf '%s\n' "$skill_file"
+}
+
 # Usage: horizon_lit_next_skill_sha256 <scratch_dir>  -> sha256 of the /next skill the
-# lit on PATH writes into a fresh repo
+# lit on PATH writes
 #
 # Running lit is the only way to read this identity: the procedure is embedded in the
-# binary, so nothing on disk to hash and no version string to trust. What it writes does
-# not depend on the repo it writes into - a bare init and a seeded project produce the
-# same bytes - so a probe this small records what a real run gets.
+# binary, so nothing on disk to hash and no version string to trust.
+#
+# Twice, under two deliberately different project names, because one recorded hash can
+# only stand for every run if the bytes are a property of the BINARY. lit does derive
+# project-specific state from the directory name - the issue prefix comes from it - so
+# this file's independence of that name is a real property to establish, not one to
+# assume: were it ever templated, every call site probes under its own fixed name, so
+# the manifest would record a hash no real run reproduces and every check here would
+# stay green. That is the failure this instrument exists to refuse.
 # [LAW:verifiable-goals] [LAW:behavior-not-structure] the check is what lit produces,
 # never which version it claims to be.
 horizon_lit_next_skill_sha256() {
   local scratch="$1"
   [ -n "$scratch" ] || horizon_die "horizon_lit_next_skill_sha256: no scratch directory given"
-  horizon_project_init "$scratch"
-  horizon_lit_init "$scratch"
-  local skill_file="$scratch/$HORIZON_NEXT_SKILL_REL_PATH"
-  [ -f "$skill_file" ] \
-    || horizon_die "the lit on PATH does not write $HORIZON_NEXT_SKILL_REL_PATH, so a run's agent has no way to pull a ticket - it needs a lit newer than 0.11.0 (\`lit version\`; \`lit upgrade\`)"
-  ! grep -q "$HORIZON_MOVED_SKILL_HEADING" "$skill_file" \
-    || horizon_die "the lit on PATH writes $HORIZON_NEXT_SKILL_REL_PATH as a pointer stub, not a procedure"
-  horizon_sha256_file "$skill_file" \
-    || horizon_die "could not hash $skill_file"
+  local file_a file_b sha_a sha_b
+  file_a="$(horizon_lit_next_skill_write "$scratch/lit-next-probe")"
+  file_b="$(horizon_lit_next_skill_write "$scratch/a-differently-named-project")"
+  sha_a="$(horizon_sha256_file "$file_a")" || horizon_die "could not hash $file_a"
+  sha_b="$(horizon_sha256_file "$file_b")" || horizon_die "could not hash $file_b"
+  [ "$sha_a" = "$sha_b" ] \
+    || horizon_die "the /next procedure lit writes depends on the project directory name ($sha_a vs $sha_b), so no single recorded hash describes every run"
+  printf '%s\n' "$sha_a"
 }
 
 # ── reviewer: resolve the moving `v1` tag to the exact commit it points at right now,

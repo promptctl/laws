@@ -55,7 +55,7 @@ main() {
   horizon_need lit
   horizon_need diff
 
-  local ref reviewer_sha
+  local repo_root ref reviewer_sha goal_ref
   # memento's default branch is a moving ref, exactly like the reviewer's `v1` tag:
   # resolved once here and handed to both runs as a sha, so a push landing between the
   # two invocations cannot fail the reproducibility check for reasons that have nothing
@@ -66,10 +66,15 @@ main() {
   horizon_log "resolving reviewer once for both runs: ${REVIEWER_REPO}@${REVIEWER_TAG}"
   reviewer_sha="$(horizon_reviewer_sha)"
 
+  # This checkout's HEAD is a moving ref too - anything committing here between the two
+  # runs would otherwise change goal_wording under them. Pinned once, like the other two.
+  repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
+  goal_ref="$(horizon_resolve_commit "$repo_root" "HEAD")"
+
   horizon_log "run 1: pinning at $ref"
-  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run1" "$ref" "$reviewer_sha"
+  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run1" "$ref" "$reviewer_sha" "$goal_ref"
   horizon_log "run 2: pinning at $ref"
-  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run2" "$ref" "$reviewer_sha"
+  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run2" "$ref" "$reviewer_sha" "$goal_ref"
 
   if diff -u "$WORK/run1/manifest.json" "$WORK/run2/manifest.json" >/dev/null; then
     pass "two invocations produced byte-identical manifest.json"

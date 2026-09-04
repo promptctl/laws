@@ -10,7 +10,7 @@
 # resolves back to something checkable.
 #
 # Usage:
-#   horizon/pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha]
+#   horizon/pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha] [goal-ref]
 #
 # <run-dir>      directory to build the run's environment in (created fresh; an
 #                existing run-dir is refused rather than silently merged into -
@@ -27,6 +27,11 @@
 #                on the reviewer's identity without racing the moving tag twice -
 #                verify-instrument.sh's reproducibility check is exactly this -
 #                resolves it once and passes it here explicitly.
+# [goal-ref]     ref of THIS repo to read the standard /goal wording at. Defaults to
+#                this checkout's `HEAD`, which moves whenever anything commits here -
+#                so the same caller that pins the two refs above pins this one too,
+#                or a commit landing mid-verification fails the reproducibility check
+#                for a reason that has nothing to do with the instrument.
 #
 # Produces, under <run-dir>:
 #   pinned/                 the memento git-archive snapshot + its marketplace.json
@@ -51,8 +56,8 @@ WORK="$(mktemp -d)" || horizon_die "could not create a scratch directory"
 trap 'rm -rf "$WORK"' EXIT
 
 main() {
-  local run_dir="${1:-}" memento_ref="${2:-}" reviewer_sha_override="${3:-}"
-  [ -n "$run_dir" ] || horizon_die "usage: pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha]"
+  local run_dir="${1:-}" memento_ref="${2:-}" reviewer_sha_override="${3:-}" goal_ref="${4:-}"
+  [ -n "$run_dir" ] || horizon_die "usage: pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha] [goal-ref]"
   [ -e "$run_dir" ] && horizon_die "run-dir already exists, refusing to overwrite: $run_dir"
 
   horizon_need_base
@@ -71,6 +76,10 @@ main() {
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
   [ -z "$memento_ref" ] && memento_ref="$HORIZON_MEMENTO_DEFAULT_REF"
+  # Defaulted to a ref and resolved unconditionally below, never branched on whether an
+  # override was given: resolving an explicit sha returns that sha and additionally
+  # proves it exists in this checkout. [LAW:dataflow-not-control-flow]
+  [ -z "$goal_ref" ] && goal_ref="HEAD"
 
   mkdir -p "$run_dir"
 
@@ -118,10 +127,10 @@ main() {
   reviewer_prompt_sha256="$(horizon_reviewer_prompt_sha256 "$reviewer_sha")"
 
   horizon_log "recording the standard /goal wording"
-  # This repo's own HEAD, not memento's sha: GOAL_PROMPT.md lives here, and since
+  # A commit of this repo, not memento's sha: GOAL_PROMPT.md lives here, and since
   # memento moved out the two commits describe different repositories.
-  local goal_ref goal_sha256
-  goal_ref="$(horizon_resolve_commit "$repo_root" "HEAD")"
+  local goal_sha256
+  goal_ref="$(horizon_resolve_commit "$repo_root" "$goal_ref")"
   goal_sha256="$(horizon_goal_wording_sha256 "$repo_root" "$goal_ref")"
 
   python3 - "$run_dir/manifest.json" \
