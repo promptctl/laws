@@ -62,7 +62,6 @@ main() {
   horizon_need python3
   horizon_need lit
   horizon_need cat
-  horizon_need grep
   # Reached from inside lib.sh pipelines - git archive | tar, and the reviewer prompt
   # decode. Absent, pipefail would blame the tool at the head of the pipe instead of
   # the one that is actually missing.

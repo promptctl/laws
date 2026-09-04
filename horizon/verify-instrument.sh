@@ -54,7 +54,6 @@ main() {
   horizon_need python3
   horizon_need lit
   horizon_need diff
-  horizon_need grep
 
   local ref reviewer_sha
   # memento's default branch is a moving ref, exactly like the reviewer's `v1` tag:

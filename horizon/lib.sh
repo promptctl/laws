@@ -59,7 +59,7 @@ horizon_need() {
 # function, and the five drifting per-script copies this replaced are the worse failure.
 # cat/tar/base64 stay with pin-instrument.sh only because they are reached from nothing
 # else at all.
-HORIZON_BASE_TOOLS=(awk cp find mkdir mktemp rm sort tr)
+HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp rm sort tr)
 
 horizon_need_base() {
   local tool
@@ -263,9 +263,9 @@ HORIZON_NEXT_SKILL_REL_PATH=".claude/skills/next/SKILL.md"
 # lit on PATH writes into a fresh repo
 #
 # Running lit is the only way to read this identity: the procedure is embedded in the
-# binary, so nothing on disk to hash and no version string to trust. Built on the same
-# seeding primitives a real run uses (defined further down this file), so the probe
-# repo is the same shape lit will meet at seed time and not a special case.
+# binary, so nothing on disk to hash and no version string to trust. What it writes does
+# not depend on the repo it writes into - a bare init and a seeded project produce the
+# same bytes - so a probe this small records what a real run gets.
 # [LAW:verifiable-goals] [LAW:behavior-not-structure] the check is what lit produces,
 # never which version it claims to be.
 horizon_lit_next_skill_sha256() {
