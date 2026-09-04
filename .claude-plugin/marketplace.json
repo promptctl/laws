@@ -9,11 +9,6 @@
       "name": "laws",
       "source": "./plugins/laws",
       "description": "Universal architectural laws for code work, medium-scoped quality skills (code / prose / prompt), and a skill-router hook that loads the right one for each task."
-    },
-    {
-      "name": "memento",
-      "source": "./plugins/memento",
-      "description": "Pointers only: next, message-in-a-bottle and address-pr-reviews moved to their own marketplace at https://github.com/promptctl/memento. What ships here just tells an agent where to install them."
     }
   ]
 }
