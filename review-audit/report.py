@@ -43,6 +43,17 @@ def finding_ids(findings: list[dict]) -> dict[str, dict]:
     return ids
 
 
+def should_have(row: dict, path: Path) -> dict:
+    """A correct response is its own should_have; an incorrect one must say what
+    should have happened. [LAW:parse-dont-validate] the field is filled or refused here,
+    never guessed downstream."""
+    if row.get("should_have"):
+        return row
+    if row.get("response_correct") == "yes":
+        return row | {"should_have": row["response"]}
+    raise SystemExit(f"{path}: {row['finding']} has response_correct={row.get('response_correct')!r} but no should_have")
+
+
 def table(title: str, counter: Counter, total: int | None = None) -> str:
     total = total if total is not None else sum(counter.values())
     lines = [f"### {title}", "", "| key | n | % |", "|---|---|---|"]
@@ -81,7 +92,7 @@ def main(argv: list[str]) -> int:
                     raise SystemExit(f"{path}: duplicate verdict for {row['finding']}")
                 if row["finding"] not in findings:
                     raise SystemExit(f"{path}: verdict for unknown finding {row['finding']}")
-                finding_verdicts[row["finding"]] = row | {"batch": path.stem}
+                finding_verdicts[row["finding"]] = should_have(row, path) | {"batch": path.stem}
             elif "pr" in row:
                 if row["pr"] not in prs:
                     raise SystemExit(f"{path}: verdict for unknown PR {row['pr']}")
