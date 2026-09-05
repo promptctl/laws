@@ -16,6 +16,7 @@ shape.py   data/           ->  derived/{prs,findings}.jsonl  one row per PR and 
 bundle.py  derived/        ->  bundles/<repo>/<number>.md    one markdown packet per PR + batches.json
            (reviewing agents read a batch under prompts/classify.md and write verdicts/<batch>.jsonl)
 report.py  derived/ + verdicts/  ->  aggregate tables + derived/joined.jsonl
+render.py  derived/ + verdicts/  ->  rendered/index.md + rendered/<repo>/<number>.md   the verdicts as documents a person reads
 ```
 
 ```sh
@@ -23,9 +24,10 @@ review-audit/fetch.py  --org promptctl --out review-audit/data
 review-audit/shape.py  --data review-audit/data --out review-audit/derived
 review-audit/bundle.py --derived review-audit/derived --out review-audit/bundles
 review-audit/report.py --derived review-audit/derived --verdicts review-audit/verdicts
+review-audit/render.py --derived review-audit/derived --verdicts review-audit/verdicts --out review-audit/rendered
 ```
 
-`data/` is gitignored: it is large and reproducible. Re-running `fetch.py` refetches
+`data/`, `derived/`, `bundles/` and `rendered/` are gitignored: large and reproducible from the stage before them; `verdicts/` is the hand-made input and is committed. Re-running `fetch.py` refetches
 only PRs whose `updatedAt` changed; `--refresh` refetches everything.
 
 ## What a finding row carries
