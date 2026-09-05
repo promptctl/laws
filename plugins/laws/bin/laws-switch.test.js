@@ -178,14 +178,14 @@ t('a rewind is reported as a rewind, and a tombstone as a tombstone', async () =
   const rewound = await run(['rewind_discard'], { dir: d1, tmp: t1 });
   server.close();
   assert.match(rewound.stdout, /rewound in place/);
-  assert.ok(!/Retired laws:code in place/.test(rewound.stdout));
+  assert.ok(!/no longer loads laws:code/.test(rewound.stdout));
 
   const { dir: d2, tmp: t2 } = bed();
   lockSlot(t2, ['code']);
   server = serve(d2, { ok: true, rewound: false, tombstoned: 1, changed: true, switchedFrom: ['code'], switchedTo: 'prompt' });
   const stubbed = await run(['tombstone'], { dir: d2, tmp: t2 });
   server.close();
-  assert.match(stubbed.stdout, /Retired laws:code in place/);
+  assert.match(stubbed.stdout, /The conversation no longer loads laws:code/);
   assert.ok(!/rewound in place/.test(stubbed.stdout));
 });
 
@@ -300,6 +300,9 @@ t('a router that exits non-zero is reported, and the switch still counts as appl
   assert.match(out.stderr, /could not be released \(router said no\)/);
   assert.match(out.stderr, /may still be refused this session/);
   assert.match(out.stdout, /Switched to laws:prompt/);
+  // stdout may only claim what it measured. The lock release just failed, so nothing here may read as
+  // confirmation that it happened — a caller reading stdout alone would otherwise see clean success.
+  assert.ok(!/[Rr]etired|released/.test(out.stdout), 'stdout claimed a release that failed');
 });
 
 t('a router that cannot be launched at all still names a cause', async () => {

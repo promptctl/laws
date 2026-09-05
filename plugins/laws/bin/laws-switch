@@ -134,7 +134,10 @@ const request = {
       'Switched to laws:' + live.switchedTo + ', live — this session was not restarted, and every file '
       + 'written since ' + retired + ' loaded is untouched on disk.\n'
       + (live.rewound ? 'The conversation was rewound in place.\n' : '')
-      + (live.tombstoned ? 'Retired ' + retired + ' in place.\n' : ''),
+      // Says only what `live.tombstoned` measured — a transcript fact. It used to say "Retired ... in
+      // place", borrowing the vocabulary of the router's lock release, which a stdout-only reader
+      // would take as confirmation of a release that may have just failed to stderr.
+      + (live.tombstoned ? 'The conversation no longer loads ' + retired + '.\n' : ''),
     );
     process.exit(0);
   }
