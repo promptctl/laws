@@ -42,9 +42,19 @@ async function runAll() {
   process.exit(fail ? 1 : 0);
 }
 
+// Every temp directory this suite makes goes through here, so the exit handler at the bottom has ONE
+// list to remove. A case that mkdtemps by hand is a second registry of the same fact, and the one
+// that drifts is always the one nobody is looking at. [LAW:one-source-of-truth]
+const TEMPS = [];
+const temp = (prefix) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  TEMPS.push(dir);
+  return dir;
+};
+
 // One copy of the plugin for the whole suite; the two cases that break the router restore it.
 const PLUGIN_SRC = path.join(__dirname, '..');
-const WORK = fs.mkdtempSync(path.join(os.tmpdir(), 'laws-switch-test-'));
+const WORK = temp('laws-switch-test-');
 execFileSync('cp', ['-R', PLUGIN_SRC, path.join(WORK, 'laws')]);
 const SWITCH = path.join(WORK, 'laws', 'bin', 'laws-switch');
 const ROUTER = path.join(WORK, 'laws', 'hooks', 'scripts', 'skill-router.sh');
@@ -103,8 +113,8 @@ function run(args, { dir, tmp, env = {} }) {
 
 // Each case gets its own handoff dir AND its own TMPDIR, so the lock slots cannot collide.
 function bed() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'laws-sw-dir-'));
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'laws-sw-tmp-'));
+  const dir = temp('laws-sw-dir-');
+  const tmp = temp('laws-sw-tmp-');
   pending(dir);
   return { dir, tmp };
 }
@@ -340,12 +350,16 @@ t('rewind_summarize without a summary refuses rather than summarising nothing', 
 });
 
 t('no pending decision is its own message, not a crash', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'laws-sw-dir-'));
+  const dir = temp('laws-sw-dir-');
   const out = await run(['tombstone'], { dir, tmp: dir });
   assert.strictEqual(out.status, 1);
   assert.match(out.stderr, /no pending craft switch/);
 });
 
-process.on('exit', () => { try { fs.rmSync(WORK, { recursive: true, force: true }); } catch { /* best effort */ } });
+process.on('exit', () => {
+  for (const dir of TEMPS) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+});
 
 runAll();
