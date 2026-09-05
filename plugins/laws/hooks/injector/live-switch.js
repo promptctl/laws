@@ -62,6 +62,12 @@ const CHOICES = Object.keys(SWITCH_ACTIONS);
 
 const unplannable = (reason, detail) => ({ ok: false, reason, detail });
 
+// The shape of a switch that did nothing. Exported because `reject` reaches it without a controller
+// — it deliberately never proves ownership — so it cannot go through applyLiveSwitch to get here.
+// One spelling, so a new field cannot arrive for three of the four choices and not the fourth.
+// [LAW:one-source-of-truth]
+const noopResult = () => ({ ok: true, rewound: false, tombstoned: 0, changed: false });
+
 // The live messages a craft load produced, by uuid. `decide()` names the OLDEST conflicting load in
 // `rewind.summarizeTo`; that uuid is the one that crosses, and the tombstone targets every live
 // message whose uuid appears in the decision's own set.
@@ -204,9 +210,11 @@ function applyLiveSwitch(controller, plan) {
   const replaces = messages.length !== after.length || messages.some((m, i) => m !== after[i]);
   if (replaces) controller.transcript.replace(messages);
   return {
-    ok: true, rewound: plan.rewindAt !== null, tombstoned: plan.tombstones.length,
+    ...noopResult(),
+    rewound: plan.rewindAt !== null,
+    tombstoned: plan.tombstones.length,
     changed: plan.rewindAt !== null || replaces,
   };
 }
 
-module.exports = { UNPLANNABLE, CHOICES, REWIND_SOURCE, stubbedMessage, summaryFrom, planLiveSwitch, applyLiveSwitch };
+module.exports = { UNPLANNABLE, CHOICES, REWIND_SOURCE, noopResult, stubbedMessage, summaryFrom, planLiveSwitch, applyLiveSwitch };

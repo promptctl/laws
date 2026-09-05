@@ -1,13 +1,12 @@
 // switch-channel.js — the request/response channel between `laws-switch` and the hosted session.
 //
-// WHY THIS EXISTS INSTEAD OF BUN_INSPECT. The switch used to be enacted over Bun's inspector socket,
-// whose vocabulary is "evaluate this string in your global scope". That capability is inherited by
-// every process the agent spawns, and it cannot be withheld from an attacker without also withholding
-// it from the legitimate caller, because the two are indistinguishable — a nested Bash-tool process
-// and `laws-switch` look exactly alike. The fix is not to secure the channel but to change what the
-// channel can SAY: this one's entire vocabulary is "apply one of four named choices to the switch
-// that is already pending". The worst a hostile caller can do with it is the thing the session just
-// offered the user in writing, and there is no arm that runs caller-supplied code.
+// WHY THIS EXISTS INSTEAD OF BUN_INSPECT. This channel authenticates nobody, and no local socket
+// can: at equal privilege a hostile process and `laws-switch` are indistinguishable. The only thing
+// a channel controls is its VOCABULARY. The inspector's was "evaluate this string in your global
+// scope". This one's is "apply one of these four named choices to the switch already pending" — the
+// request carries a choice, and which transcript, craft and session it concerns come from the
+// pending offer, read by the server rather than accepted from the caller. Equal privilege still
+// means equal capability; the gain is that the capability is now small.
 //
 // WHY BOTH HALVES LIVE HERE. A writer and a reader that each carry their own idea of a protocol have
 // two ideas of it, and the day they differ the client reports success for a switch that never

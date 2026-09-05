@@ -120,7 +120,10 @@ t('a live switch reports success, consumes the pending decision, and releases th
   assert.strictEqual(out.status, 0, out.stderr);
   assert.match(out.stdout, /Switched to laws:prompt, live/);
   assert.match(out.stdout, /this session was not restarted/);
-  assert.ok(!fs.existsSync(path.join(dir, 'pending.json')), 'the pending decision was left behind');
+  // The stub session does not consume it — the real one does, and that is asserted in
+  // switch-request.test.js. What matters here is that the CLI does not remove it either: the offer
+  // belongs to the process that applied the switch.
+  assert.ok(fs.existsSync(path.join(dir, 'pending.json')), 'the CLI removed an offer it does not own');
   assert.ok(!fs.existsSync(path.join(dir, 'request.json')), 'a relaunch request was written on the live path');
   assert.deepStrictEqual(fs.readdirSync(slot), [], 'the craft lock was not released');
 });
@@ -131,9 +134,9 @@ t('the request carries the pending decision and the chosen option', async () => 
   const server = serve(dir, { ok: true, rewound: true, tombstoned: 0, changed: true, switchedFrom: ['code'], switchedTo: 'prompt' });
   await run(['rewind_discard'], { dir, tmp });
   server.close();
-  assert.deepStrictEqual(server.seen, [{
-    sessionId: SID, transcript: '/tmp/t.jsonl', incomingMedium: 'prompt', choice: 'rewind_discard',
-  }]);
+  // ONLY the decision. The transcript, craft and session are the offer's to state, and the session
+  // reads them from the offer itself — so a caller cannot substitute them, and does not send them.
+  assert.deepStrictEqual(server.seen, [{ choice: 'rewind_discard' }]);
 });
 
 t('a summary reaches the session verbatim', async () => {

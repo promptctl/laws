@@ -401,6 +401,19 @@ t('rewind_discard changes the conversation without needing a replace()', () => {
   assert.deepStrictEqual(c.calls.map((x) => x[0]), ['rewind']);
 });
 
+t('the no-op result says nothing happened, in one spelling', () => {
+  // reject reaches this without a controller — it never proves ownership — so it cannot come through
+  // applyLiveSwitch to get the shape. Both callers share this one, and a new field must not arrive
+  // for three of the four choices and not the fourth.
+  assert.deepStrictEqual(L.noopResult(), { ok: true, rewound: false, tombstoned: 0, changed: false });
+});
+
+t('applying a plan reports every field the no-op result declares', () => {
+  const c = fakeController(SNAP.slice());
+  const out = L.applyLiveSwitch(c, plan({ choice: 'tombstone' }));
+  assert.deepStrictEqual(Object.keys(out).sort(), Object.keys(L.noopResult()).sort());
+});
+
 t('what was done comes back, so the caller can report it rather than assume it', () => {
   const c = fakeController(SNAP.slice());
   const out = L.applyLiveSwitch(c, plan({ choice: 'rewind_summarize', summary: 's' }));

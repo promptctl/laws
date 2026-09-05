@@ -20,6 +20,7 @@
 //   the graph asked for that this surface does not have.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 
 // The boot channel is a file descriptor passed in as a value, so this host is runnable by hand
@@ -129,6 +130,7 @@ globalThis[REGISTRAR] = seams.registrar;
 // absent capability, not a degraded one. Every refusal it can produce is named by the modules it
 // composes and travels back to the caller unchanged.
 if (process.env.LAWS_SWITCH_DIR) {
+  const offerPath = path.join(process.env.LAWS_SWITCH_DIR, 'pending.json');
   const net = require_('node:net');
   const { createSwitchServer } = require_('./switch-channel.js');
   const { enactSwitch } = require_('./switch-request.js');
@@ -138,6 +140,17 @@ if (process.env.LAWS_SWITCH_DIR) {
     dir: process.env.LAWS_SWITCH_DIR,
     onRequest: (request) => enactSwitch({
       request,
+      // The pending offer is read HERE, by the session, and never taken from the caller. It is what
+      // makes the channel's vocabulary actually be "the switch already pending" rather than "any
+      // transcript you name". A missing or unreadable offer is an absent offer, which the enactment
+      // refuses by name.
+      readOffer: () => {
+        try { return JSON.parse(fs.readFileSync(offerPath, 'utf8')); }
+        catch { return null; }
+      },
+      // An offer is for one switch. Removing it here — in the process that applied it — is what makes
+      // that true for every caller, not only for the one that goes through bin/laws-switch.
+      consumeOffer: () => { try { fs.unlinkSync(offerPath); } catch { /* already gone */ } },
       registry: seams,
       decide,
       // Read per request rather than once: the policy file is the user's, and a session that has

@@ -58,10 +58,13 @@ function harness(over = {}) {
   const registry = createSeamRegistry();
   registry.registrar.controller(controller);
   const seen = {};
+  const consumed = [];
   return {
-    replaced, rewinds, controller, registry, seen,
+    replaced, rewinds, controller, registry, seen, consumed,
     run: (o = {}) => S.enactSwitch({
-      request: { transcript: '/t.jsonl', choice: 'tombstone', incomingMedium: 'prompt', ...o.request },
+      request: { choice: 'tombstone', ...o.request },
+      readOffer: o.readOffer || (() => (consumed.length ? null : ('offer' in o ? o.offer : { transcript: '/t.jsonl', incomingMedium: 'prompt', sessionId: 'S' }))),
+      consumeOffer: o.consumeOffer || (() => consumed.push(true)),
       registry: o.registry || registry,
       decide: o.decide || ((lines, opts) => { seen.lines = lines; seen.opts = opts; return over.decision || DECISION; }),
       conflictEdges: [['code', 'prompt']],
@@ -78,19 +81,66 @@ t('every refusal states that the live conversation is untouched', () => {
   // The caller reads this fact rather than recognising reason strings, so each arm must carry it —
   // an arm that forgets makes the CLI warn about a rewind that never happened.
   const h = harness();
-  assert.strictEqual(h.run({ request: { transcript: undefined } }).mutated, false);
-  assert.strictEqual(h.run({ readFile: () => { throw new Error('ENOENT'); } }).mutated, false);
+  assert.strictEqual(h.run({ request: { choice: undefined } }).mutated, false);
+  assert.strictEqual(h.run({ offer: null }).mutated, false);
+  assert.strictEqual(h.run({ extra: { readFile: () => { throw new Error('ENOENT'); } } }).mutated, false);
   assert.strictEqual(harness({ decision: { trigger: false, reason: 'compatible' } }).run().mutated, false);
   assert.strictEqual(h.run({ registry: createSeamRegistry() }).mutated, false);
   assert.strictEqual(h.run({ request: { choice: 'rewind_summarize' } }).mutated, false);
 });
 
-t('a request missing a field refuses AND names which fields', () => {
+t('a request naming no choice refuses', () => {
   const h = harness();
-  const out = h.run({ request: { transcript: undefined, incomingMedium: undefined } });
+  const out = h.run({ request: { choice: undefined } });
   assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, S.REFUSED.incomplete);
-  assert.strictEqual(out.detail, 'transcript, incomingMedium');
+  assert.strictEqual(out.detail, 'choice');
+});
+
+t('a CHOICE is all a caller may decide — the rest comes from the offer', () => {
+  // The security property, asserted rather than described: which transcript and which incoming craft
+  // the switch concerns are the offer's to state. A caller that names its own is ignored.
+  assert.deepStrictEqual(S.REQUIRED, ['choice']);
+  assert.deepStrictEqual(S.OFFERED, ['transcript', 'incomingMedium']);
+});
+
+t('a transcript named by the CALLER is never read', () => {
+  // The capability that used to exist: point the session at any file and have decide() run on it.
+  const h = harness();
+  const read = [];
+  h.run({
+    request: { choice: 'tombstone', transcript: '/attacker/chosen.jsonl', incomingMedium: 'prose' },
+    extra: { readFile: (p) => { read.push(p); return 'a\nb\n'; } },
+  });
+  assert.deepStrictEqual(read, ['/t.jsonl'], 'the caller chose which file the session read');
+});
+
+t('the incoming craft comes from the offer, not from the caller', () => {
+  const h = harness();
+  h.run({ request: { choice: 'tombstone', incomingMedium: 'prose' } });
+  assert.strictEqual(h.seen.opts.incomingMedium, 'prompt');
+});
+
+t('no pending offer refuses by name — there is no switch to apply', () => {
+  // The "already pending" half of what this channel promises, which nothing used to check.
+  const h = harness();
+  const out = h.run({ offer: null });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, S.REFUSED.noOffer);
+  assert.strictEqual(out.mutated, false);
+});
+
+t('a half-written offer is refused, not filled in', () => {
+  const h = harness();
+  const out = h.run({ offer: { transcript: '/t.jsonl' } });
+  assert.strictEqual(out.reason, S.REFUSED.noOffer);
+  assert.strictEqual(out.detail, 'incomingMedium');
+});
+
+t('an unreadable offer is an absent offer', () => {
+  const h = harness();
+  const out = h.run({ readOffer: () => null });
+  assert.strictEqual(out.reason, S.REFUSED.noOffer);
 });
 
 t('an unreadable transcript is a named refusal, not a crash', () => {
@@ -166,6 +216,40 @@ t('a plan that cannot be made passes its own refusal through, unflattened', () =
   assert.strictEqual(out.reason, UNPLANNABLE.summaryMissing);
 });
 
+t('an applied switch consumes its offer — one offer, one switch', () => {
+  // Without this the offer stays on disk and can be enacted again by anyone who does not go through
+  // bin/laws-switch, and a second rewind lands on a conversation the first already cut.
+  const h = harness();
+  assert.strictEqual(h.run({ request: { choice: 'tombstone' } }).ok, true);
+  assert.deepStrictEqual(h.consumed, [true]);
+});
+
+t('a second attempt on a consumed offer finds nothing pending', () => {
+  const h = harness();
+  h.run({ request: { choice: 'tombstone' } });
+  const again = h.run({ request: { choice: 'tombstone' } });
+  assert.strictEqual(again.ok, false);
+  assert.strictEqual(again.reason, S.REFUSED.noOffer);
+});
+
+t('reject consumes the offer too — declining is answering it', () => {
+  const h = harness();
+  assert.strictEqual(h.run({ request: { choice: 'reject' } }).ok, true);
+  assert.deepStrictEqual(h.consumed, [true]);
+});
+
+t('a REFUSED switch leaves the offer alone, so it can still be answered', () => {
+  const h = harness({ decision: { trigger: false, reason: 'compatible' } });
+  h.run();
+  assert.deepStrictEqual(h.consumed, []);
+});
+
+t('a plan that could not be made leaves the offer alone', () => {
+  const h = harness();
+  h.run({ request: { choice: 'rewind_summarize' } });
+  assert.deepStrictEqual(h.consumed, []);
+});
+
 t('a completed switch reports what it did and what it retired', () => {
   const h = harness();
   const out = h.run({ request: { choice: 'tombstone' } });
@@ -234,8 +318,8 @@ t('no choice writes to the filesystem — on-disk deliverables survive all four'
   assert.deepStrictEqual(calls, [], 'the enactment wrote to the filesystem');
 });
 
-t('the request contract is exactly the three fields the enactment needs', () => {
-  assert.deepStrictEqual(S.REQUIRED, ['transcript', 'choice', 'incomingMedium']);
+t('the offer contract is exactly what the enactment needs from it', () => {
+  assert.deepStrictEqual(S.OFFERED, ['transcript', 'incomingMedium']);
 });
 
 runAll();

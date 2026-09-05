@@ -406,7 +406,10 @@ writer bolted alongside.
   on 2.1.258 for all three enacting choices — `rewind_discard`, `tombstone` and `rewind_summarize` —
   each with the session PID unchanged and the file written after the craft load intact; 109 of 110 deliberate mutations are killed by a
   test, the one survivor being an equivalent mutant that `switch-channel.js` names in those words at
-  its `finish` latch — flipping it changes no observable behaviour, so no test can kill it. See the resolved section above, including
+  its `finish` latch — flipping it changes no observable behaviour, so no test can kill it. The
+  channel authenticates nobody and cannot: what it controls is its vocabulary, so a request carries a
+  CHOICE and the transcript, craft and session come from the pending offer the session reads itself.
+  The offer is single-use, consumed by the process that applied the switch. See the resolved section above, including
   the durability limitation (`promptctl-injector-xy0.3`).
 - DONE (2026-08-16): the rewind for options 3/4 is disk surgery — `rewindTo()`, sever + repoint,
   verified live against a real transcript. **SEAM 2a is not needed**, and neither is native

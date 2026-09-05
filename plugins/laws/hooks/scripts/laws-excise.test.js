@@ -210,6 +210,25 @@ const twoConflicts = () => [
   said('c2', 'B', 'work under prose'),
 ];
 
+t('toRawLines drops the split artifact and nothing else', () => {
+  // Three callers depend on splitting the same way — run(), applyRequest(), and the live path — and
+  // the line numbering decide() reports is only meaningful if they agree. The `if` here must not
+  // become a `while`: stripping ALL trailing blanks would shift every index for a transcript with a
+  // blank last line, silently moving what conflictIndices point at.
+  assert.deepStrictEqual(M.toRawLines('a\nb'), ['a', 'b'], 'no trailing newline');
+  assert.deepStrictEqual(M.toRawLines('a\nb\n'), ['a', 'b'], 'one trailing newline');
+  assert.deepStrictEqual(M.toRawLines('a\nb\n\n'), ['a', 'b', ''], 'a real blank line survives');
+  assert.deepStrictEqual(M.toRawLines('a\nb\n\n\n'), ['a', 'b', '', ''], 'only ONE artifact is dropped');
+});
+
+t('toRawLines keeps interior blanks and handles an empty transcript', () => {
+  assert.deepStrictEqual(M.toRawLines('a\n\nb\n'), ['a', '', 'b']);
+  assert.deepStrictEqual(M.toRawLines(''), []);
+  // One blank line AND a terminator: only the terminator's artifact is dropped, so a record remains.
+  assert.deepStrictEqual(M.toRawLines('\n'), ['']);
+  assert.deepStrictEqual(M.toRawLines('only'), ['only']);
+});
+
 t('two conflicting crafts engaged → BOTH are named, oldest first', () => {
   const d = M.decide(twoConflicts(), { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
   assert.strictEqual(d.trigger, true);

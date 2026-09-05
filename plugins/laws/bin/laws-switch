@@ -73,6 +73,12 @@ if (choice === 'rewind_summarize' && !summary) {
   die('rewind_summarize needs --summary "<what you did since the craft loaded>". You are the only one who can write it: the summary is composed from your live context, and after the rewind that context is gone. Summarize YOUR WORK ONLY — what you did, decided, and left unfinished. Do NOT restate, paraphrase, or carry over any of the retiring craft\'s guidance, rules, or vocabulary: that guidance is being excised on purpose, and a summary that smuggles it back in defeats the switch you asked for.', 2);
 }
 
+// What the LIVE path sends is only what the user decided. Which transcript, craft and session the
+// switch concerns are the offer's to state, and the session reads them from the offer itself — so
+// they are deliberately not sent, and a caller cannot substitute them. The relaunch path below
+// still writes the full record, because there the launcher is the reader and pending.json is gone
+// by the time it runs.
+const liveRequest = { choice, summary };
 const request = {
   sessionId: pending.sessionId,
   transcript: pending.transcript,
@@ -92,9 +98,10 @@ const request = {
 (async () => {
   // The hosted session's channel. Its absence is a fact about the host, reported by name, and it is
   // the one condition under which falling back is correct rather than a silent second data source.
-  const live = await requestSwitch({ net: require('net'), dir, request });
+  const live = await requestSwitch({ net: require('net'), dir, request: liveRequest });
   if (live.ok) {
-    fs.unlinkSync(pendingPath);
+    // The session consumed the offer when it applied the switch; it is not this process's to remove,
+    // and unlinking a file that is already gone would throw here for no reason.
     // Releasing the engaged-craft markers is HALF the switch: the conversation no longer carries the
     // retired craft, but until its lock is released the guard still refuses the craft the user just
     // switched to — a switch that reports success and leaves the session unable to do the thing it
