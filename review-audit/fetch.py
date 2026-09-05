@@ -250,8 +250,12 @@ def main(argv: list[str]) -> int:
     for repo in repos:
         name = repo["name"]
         prs = paged(PR_LIST_QUERY, ("data", "repository", "pullRequests"), subject=f"PRs of {args.org}/{name}", owner=args.org, repo=name)
-        if len(prs) != repo["pullRequests"]["totalCount"]:
-            raise RuntimeError(f"{name}: listed {len(prs)} PRs but totalCount is {repo['pullRequests']['totalCount']}")
+        # A PR opened while listing appends to the CREATED_AT-ascending list, so the
+        # count may exceed the one taken earlier; fewer, or a repeated number, means
+        # the cursor walk lost or duplicated a page.  [LAW:no-silent-failure]
+        numbers = [pr["number"] for pr in prs]
+        if len(set(numbers)) != len(numbers) or len(numbers) < repo["pullRequests"]["totalCount"]:
+            raise RuntimeError(f"{name}: listed {len(numbers)} PRs ({len(set(numbers))} distinct) but totalCount was {repo['pullRequests']['totalCount']}")
         fetched = 0
         for pr in prs:
             path = args.out / name / f"{pr['number']}.json"
