@@ -12,3 +12,4 @@ __pycache__/
 review-audit/data/
 review-audit/derived/
 review-audit/bundles/
+review-audit/rendered/
