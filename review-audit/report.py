@@ -73,19 +73,30 @@ def cross(title: str, rows: list[tuple[str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--derived", type=Path, required=True)
-    ap.add_argument("--verdicts", type=Path, required=True)
-    ap.add_argument("--out", type=Path, help="write joined finding rows here as JSONL")
-    args = ap.parse_args(argv)
+class Joined:
+    """Everything downstream stages read: derived PRs and findings keyed by id, and the
+    verdicts joined onto them. [LAW:one-source-of-truth] the single join of verdicts to
+    derived rows; report.py and render.py both consume it."""
 
-    findings = finding_ids(load_jsonl(args.derived / "findings.jsonl"))
-    prs = {f"{p['repo']}#{p['number']}": p for p in load_jsonl(args.derived / "prs.jsonl")}
+    def __init__(self, prs: dict[str, dict], findings: dict[str, dict], finding_verdicts: dict[str, dict], pr_verdicts: dict[str, dict]):
+        self.prs = prs
+        self.findings = findings
+        self.finding_verdicts = finding_verdicts
+        self.pr_verdicts = pr_verdicts
 
+    @property
+    def rows(self) -> list[dict]:
+        """Derived finding rows carrying their verdict under `verdict`, in id order."""
+        return [self.findings[fid] | {"id": fid, "verdict": v} for fid, v in self.finding_verdicts.items()]
+
+
+def join(derived: Path, verdicts: Path) -> Joined:
+    """Load derived rows and every verdict file, refusing duplicates and unknown ids."""
+    findings = finding_ids(load_jsonl(derived / "findings.jsonl"))
+    prs = {f"{p['repo']}#{p['number']}": p for p in load_jsonl(derived / "prs.jsonl")}
     finding_verdicts: dict[str, dict] = {}
     pr_verdicts: dict[str, dict] = {}
-    for path in sorted(args.verdicts.glob("*.jsonl")):
+    for path in sorted(verdicts.glob("*.jsonl")):
         for row in load_jsonl(path):
             if "finding" in row:
                 if row["finding"] in finding_verdicts:
@@ -99,6 +110,18 @@ def main(argv: list[str]) -> int:
                 pr_verdicts[row["pr"]] = row | {"batch": path.stem}
             else:
                 raise SystemExit(f"{path}: row is neither a finding nor a PR verdict: {json.dumps(row)[:200]}")
+    return Joined(prs, findings, finding_verdicts, pr_verdicts)
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--derived", type=Path, required=True)
+    ap.add_argument("--verdicts", type=Path, required=True)
+    ap.add_argument("--out", type=Path, help="write joined finding rows here as JSONL")
+    args = ap.parse_args(argv)
+
+    j = join(args.derived, args.verdicts)
+    findings, prs, finding_verdicts, pr_verdicts = j.findings, j.prs, j.finding_verdicts, j.pr_verdicts
 
     reviewed_prs = set(pr_verdicts)
     expected = {fid for fid, f in findings.items() if f"{f['repo']}#{f['number']}" in reviewed_prs}
@@ -106,7 +129,7 @@ def main(argv: list[str]) -> int:
     if missing:
         print(f"WARNING: {len(missing)} findings of reviewed PRs have no verdict, e.g. {missing[:5]}", file=sys.stderr)
 
-    joined = [findings[fid] | {"id": fid, "verdict": v} for fid, v in finding_verdicts.items()]
+    joined = j.rows
     if args.out:
         args.out.write_text("".join(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in joined))
 
