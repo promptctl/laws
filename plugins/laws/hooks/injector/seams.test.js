@@ -84,8 +84,14 @@ t('an object property is not a site — restoreMessageSync: au.restoreMessageSyn
   assert.deepStrictEqual(sitesIn('{restoreMessageSync:au.restoreMessageSync,draft:Vu}', controller.anchor), []);
 });
 
-t('a longer name containing it is not a site — handleRestoreMessage', () => {
-  assert.deepStrictEqual(sitesIn('handleRestoreMessage=(1)', controller.anchor), []);
+t('the name as a SUFFIX of a longer identifier is not a site', () => {
+  // The `\w` and `$` arms of the lookbehind, which every other exclusion here leaves untouched — they
+  // all exercise the `.` arm. This is the over-broad direction the header calls the dangerous one: a
+  // minified name ENDING in this one would resolve to exactly one site and splice inside an
+  // identifier, rather than refusing.
+  assert.deepStrictEqual(sitesIn('zrestoreMessageSync=(1)', controller.anchor), []);
+  assert.deepStrictEqual(sitesIn('$restoreMessageSync=(1)', controller.anchor), []);
+  assert.deepStrictEqual(sitesIn('_9restoreMessageSync=(1)', controller.anchor), []);
 });
 
 t('an assignment whose value is not parenthesised is not a site', () => {
