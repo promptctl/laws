@@ -9,3 +9,6 @@ skill_content_analysis/
 
 # Python bytecode from the address-pr-reviews provider modules.
 __pycache__/
+review-audit/data/
+review-audit/derived/
+review-audit/bundles/
