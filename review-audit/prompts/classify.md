@@ -107,7 +107,8 @@ Field meanings:
   not match the eventual action.
 - **response_correct** — was accept / different-fix / push-back the right call given the
   truth of the premise. Judge the *choice*, not how well the eventual fix was executed.
-- **should_have** — the response the agent should have given.
+- **should_have** — the response the agent should have given. Required on every record;
+  when `response_correct` is `yes` it equals `response`.
 - **caused_by / cause_kind** — fill these whenever this finding exists because of an
   earlier fix: on an ON-NAMED-FIX-COMMIT or ON-POST-REVIEW-COMMIT flag, and any time the
   text shows it regardless of flags. Name the earlier finding by id.
