@@ -216,17 +216,10 @@ function newest(hitList) {
 // not tombstone size. The rewind options move the leaf back, so they reprocess far less — 'discard'
 // is cheapest because nothing after the pre-craft point is new.
 //
-// ALL FOUR ARE ON-DISK TRANSCRIPT SURGERY, applied by the LAUNCHER after the session has already
-// exited — no injected tool runs, and claude's native rewind is never driven. This paragraph used
-// to describe custom injected tools driving that native mechanism internally through a
-// `rewindAnchorUuid` anchor; that is Path A, and hooks/injector/SEAMS.md marks its seam SUPERSEDED
-// (2026-08-16, "do not build against it") because rewindTo() reaches the same end state through the
-// transcript alone. What ships is Path B (SEAMS.md, DONE 2026-08-23): the in-session gate records
-// the choice, the session ends, bin/claude-laws rewrites the file, and claude is relaunched with
-// --resume. The user still never types /rewind or hunts for the message, but that is because the
-// file was already rewritten before the session came back — not because anything drove a picker on
-// their behalf. A reader who believed the old text would go looking for an injected-tool component
-// that does not exist to maintain. [LAW:one-source-of-truth] SEAMS.md owns which path shipped.
+// THIS FILE'S FOUR ACTIONS ARE ON-DISK SURGERY, and they are no longer the only enactment. A second
+// path — hooks/injector/live-switch.js — applies the same four choices to the RUNNING session by
+// calling the app's own rewind, with no relaunch. Both are live; which one runs depends on whether a
+// hosted session is listening. [LAW:one-source-of-truth] SEAMS.md owns the record of both.
 //
 // The edit is conversation-only and NEVER reverts code, so on-disk file deliverables survive EVERY
 // option, 'discard' included. The frontier is over conversation context + cache cost, not on-disk work.
@@ -236,10 +229,9 @@ function newest(hitList) {
 // claimed to prevent this by tombstoning BEFORE the summary was composed — that ordering is NOT
 // achievable here and the claim has been removed rather than left to reassure a reader. The
 // summary can only be written from the live session's own context, and that context necessarily
-// still holds the craft: the live message store is closure-local, so nothing can excise the craft
-// from a running session's context before asking it to summarize (see hooks/injector/SEAMS.md).
-// The excise does run before the summary is APPENDED TO THE FILE, but that is file ordering and
-// buys nothing against a summary already composed under the craft's influence.
+// still holds the craft: the agent composes it BEFORE any switch runs, on either path. Excising
+// first is file ordering, and buys nothing against a summary already composed under the craft's
+// influence.
 // So the protection that actually acts is the INSTRUCTION the agent composes against — carried in
 // the deny message and in laws-switch's usage — which tells it to summarize its work and not the
 // craft's guidance. That is a weaker guarantee than a structural one, and it is named here as
@@ -260,6 +252,18 @@ const estimateTokens = (chars) => Math.round(chars / 4);  // rough; errs high �
 //   incomingMedium given  → pre-load gate (injected Skill-call intercept): the transcript holds the
 //                           engaged crafts; the incoming one is not yet on disk.
 //   incomingMedium absent → post-hoc: loads already present; the newest is the incoming one.
+// How a transcript's TEXT becomes its records, in one place. Three callers split this string — the
+// two on-disk paths below and the live enactment in ../injector/switch-request.js — and the line
+// numbering `decide()` reports is only meaningful if all three agree. Copies of the rule would drift
+// the first time it has to learn about CRLF or a BOM, and the live path's uuids would then refer to
+// different records than the disk path's indices. [LAW:one-source-of-truth]
+function toRawLines(text) {
+  const lines = text.split('\n');
+  // The trailing '' a final newline produces is an artefact of splitting, not a record.
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
 function decide(rawLines, opts = {}) {
   const edges = opts.conflictEdges;
   if (!Array.isArray(edges)) throw new Error("decide: conflictEdges is required (call loadPolicy first)");
@@ -312,6 +316,13 @@ function decide(rawLines, opts = {}) {
     current, incoming, deep,
     tombstoneTokens,                                       // the cost that varies with depth (option 'tombstone')
     conflictIndices: ordered.map((h) => h.i),              // every line the injector tombstones (option 'tombstone')
+    // The same set named by UUID instead of by line. A line index cannot cross into the LIVE
+    // conversation (../injector/live-switch.js): the in-memory store is a flat array carrying
+    // transient records the file never has, and the file carries bookkeeping records with no uuid at
+    // all, so the two are not positionally comparable in either direction. Derived from the same
+    // `ordered` array as conflictIndices, which is what stops the two from naming different sets.
+    // [LAW:one-source-of-truth]
+    conflicts: ordered.map((h) => ({ uuid: parsed[h.i].uuid, medium: h.medium })),
     // Auto-targets for the rewind options, so the user never hunts for the craft message:
     //   summarizeTo = the OLDEST conflicting load line  (#3: rewind-to-craft, then tombstone + summarize)
     //   discardTo   = the message before it             (#4: rewind-to-pre-craft, then discard)
@@ -493,9 +504,8 @@ function run(file, opts = {}) {
   const dryRun = opts.dryRun || false;
   const pairs = opts.conflictEdges || loadPolicy(opts.policyPath); // boundary read (may throw — loud)
   const text = fs.readFileSync(file, 'utf8');
-  const eol = text.endsWith('\n');
-  let rawLines = text.split('\n');
-  if (eol) rawLines.pop(); // trailing '' from final newline — restore on write
+  const eol = text.endsWith('\n'); // restored on write
+  let rawLines = toRawLines(text);
   const stubbedAll = [];
   for (;;) {
     const d = decide(rawLines, { conflictEdges: pairs });
@@ -524,9 +534,8 @@ function applyRequest(requestPath, opts = {}) {
   }
   const pairs = opts.conflictEdges || loadPolicy(opts.policyPath);
   const text = fs.readFileSync(req.transcript, 'utf8');
-  const eol = text.endsWith('\n');
-  const rawLines = text.split('\n');
-  if (eol) rawLines.pop();
+  const eol = text.endsWith('\n'); // restored on write
+  const rawLines = toRawLines(text);
 
   const decision = decide(rawLines, { conflictEdges: pairs, incomingMedium: req.incomingMedium });
   // The conflict must still be there. If it is not, the session changed under us — say so instead
@@ -549,7 +558,10 @@ function applyRequest(requestPath, opts = {}) {
 
 module.exports = {
   parsePolicy, loadPolicy, conflictsWith, MALFORMED_WARNING,
-  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS,
+  // stubText is exported because the LIVE enactment (../injector/live-switch.js) stubs message
+  // objects rather than JSONL lines, so it cannot go through exciseAt. Two spellings of the
+  // tombstone wording would be two sources for one fact. [LAW:one-source-of-truth]
+  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS, stubText, toRawLines,
   applyRequest, run,
 };
 

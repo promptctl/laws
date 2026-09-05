@@ -24,9 +24,13 @@ import { isBuiltin } from 'node:module';
 //   requireBuiltin — how a node builtin is reached. One path, so the import side and the require
 //                    side cannot end up looking at different objects
 //   onEvaluationError — a module body that rejects after this runtime has already returned
+//   transform   — (name, text) -> text, applied to every module on its way to the compiler. This is
+//                 the ONE place a record becomes a module, so it is the only place a source edit can
+//                 live without a second one appearing somewhere else later. [LAW:single-enforcer]
+//                 What it does is the caller's business: this runtime knows nothing about seams.
 export function createModuleRuntime({
   embedded, sources, provided = {}, substitute = {},
-  requireBuiltin, onEvaluationError,
+  requireBuiltin, onEvaluationError, transform = (name, text) => text,
 }) {
   const compiled = new Map();
   const externalModules = new Map();
@@ -84,7 +88,10 @@ export function createModuleRuntime({
     // one — "cannot read properties of undefined" would name only the symptom.
     if (!record) throw new Error(`the graph names no module ${name}`);
     if (record.loader !== 'js') throw new Error(`${name} is a ${record.loader} module and cannot be evaluated as JavaScript`);
-    const mod = new vm.SourceTextModule(record.text(), {
+    // Unconditional: every module goes through the same call, and a graph with no seams gets back
+    // byte-identical text. Deciding per module whether to transform would put the variability in a
+    // branch here instead of in the plan's data. [LAW:dataflow-not-control-flow]
+    const mod = new vm.SourceTextModule(transform(name, record.text()), {
       identifier: name,
       // Bun's import.meta, reproduced rather than rewritten into the source.
       initializeImportMeta(meta) {
