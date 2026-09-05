@@ -215,10 +215,10 @@ case "$out" in
   *) ok "  ... and offers no switch it cannot enact";;
 esac
 
-# 10. retire-craft: the launcher's half of the switch. These assert the ARC a real switch travels
-#     - deny, retire, resume, load - because that arc is where the two halves meet and where each
-#     half's own suite stops looking. A --resume keeps the same session_id (measured on 2.1.226),
-#     so the resumed session lands in the SAME lock slot the guard just refused from.
+# 10. retire-craft: the lock half of the switch. These assert the ARC a real switch travels
+#     - deny, retire, load - because that arc is where the two halves meet and where each half's
+#     own suite stops looking. The session never restarts, so the load lands in the SAME lock slot
+#     the guard just refused from.
 retire_payload() { # <session_id> <craft>
   printf '{"session_id":"%s","craft":"%s"}' "$1" "$2"
 }
@@ -322,7 +322,7 @@ rm -rf "$swdir2"
 
 # 11b. A transcript path that does not resolve. json_field's grammar truncates at an embedded
 #      quote, so a mangled read reaches here as a path to nothing; acting on it would write a
-#      pending.json naming a transcript the launcher cannot operate on.
+#      pending.json naming a transcript nothing can read.
 swdir3=$(mktemp -d)
 run guard "$(skill_payload SW3 laws:code)" >/dev/null
 out=$(printf '%s' "$(switch_payload SW3 laws:prompt "$TMPDIR/does-not-exist.jsonl")" | LAWS_SWITCH_DIR="$swdir3" LAWS_SWITCH_SESSION=SW3 "$ROUTER" guard 2>/dev/null)
@@ -371,7 +371,7 @@ chmod 700 "$swdir5"; rm -rf "$swdir5"
 # 11e. A transcript_path that does not resolve. 11c reaches this same branch through a quoted path,
 #      but it accepts either outcome because the grammar decides which - so nothing there pins the
 #      REPORT. Here the path is simply absent, which is deterministic, and the assertion is that a
-#      resolution failure is distinguishable from the launcher legitimately withholding the offer
+#      resolution failure is distinguishable from the guard legitimately withholding the offer
 #      (subagent, nested claude, unpinned session). Both look like "deny, no switch" to the reader;
 #      only the stderr line tells them whether the hook is broken.
 swdir6=$(mktemp -d)
@@ -411,9 +411,8 @@ esac
                               || ok "  ... and left the owning session's pending decision alone"
 rm -rf "$swdir6"
 
-# 12b. With no pinned session at all (the launcher disables the switch in one-shot mode, and any
-#      plain `claude` has never had one), the offer must not appear even though the inherited
-#      switch dir exists.
+# 12b. With no pinned session at all (any plain `claude` has never had one), the offer must not
+#      appear even though the inherited switch dir exists.
 swdir7=$(mktemp -d); sw7=$(mktemp "$TMPDIR/sw7.XXXXXX.jsonl")
 run guard "$(skill_payload SW7 laws:code)" >/dev/null
 out=$(printf '%s' "$(switch_payload SW7 laws:prompt "$sw7")" | LAWS_SWITCH_DIR="$swdir7" "$ROUTER" guard 2>/dev/null)

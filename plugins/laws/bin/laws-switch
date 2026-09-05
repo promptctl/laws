@@ -30,9 +30,8 @@ function die(msg, code = 1) { process.stderr.write('laws-switch: ' + msg + '\n')
 const args = process.argv.slice(2);
 // The choice is POSITIONAL AND FIRST, never searched for. Scanning for "the first token that is
 // not a flag" would have to know which flags take values — `--summary "some text"` puts a bare
-// word in argv that is not a choice — and a scanner that must track that is the same argv-parsing
-// hazard claude-laws refuses to take on for claude's own flags, plus a new maintenance debt every
-// time a flag is added. A fixed position cannot mistake a value for a positional.
+// word in argv that is not a choice — plus a new maintenance debt every time a flag is added. A
+// fixed position cannot mistake a value for a positional.
 const choice = args[0];
 const sumAt = args.indexOf('--summary');
 const summary = sumAt >= 0 ? args[sumAt + 1] : undefined;
