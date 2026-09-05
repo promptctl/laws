@@ -389,9 +389,45 @@ t('a peer that keeps streaming past the cap is refused ONCE, not once per chunk'
   void chunks;
 });
 
-t('accepted sockets carry an idle deadline', () => {
-  // Named rather than waited on: the client half has always had a deadline and the server had none.
+t('the cap counts BYTES, not UTF-16 code units', () => {
+  // `setEncoding('utf8')` hands the reader a decoded string, so its `.length` undercounts UTF-8 by up
+  // to 3x. A cap that a CJK payload can exceed threefold is not the cap its name promises.
+  const socket = {
+    setEncoding() {},
+    on(event, fn) { if (event === 'data') this._data = fn; },
+    _data: null,
+  };
+  let refusals = 0;
+  C.__readOneRecordForTest(socket, { onRecord: () => {}, onMalformed: () => { refusals++; }, maxBytes: 8 });
+  // Four characters of three UTF-8 bytes each: 4 code units, 12 bytes. Under the cap by `.length`.
+  socket._data('語'.repeat(4));
+  assert.strictEqual(refusals, 1, 'a 12-byte payload passed an 8-byte cap');
+});
+
+t('the default idle deadline is a sane one', () => {
   assert.ok(C.IDLE_MS > 0 && C.IDLE_MS <= 120000);
+});
+
+t('an idle connection is actually destroyed once the deadline passes', async () => {
+  // The behaviour, not the constant. `idleMs` is a parameter for the same reason `maxBytes` and
+  // `timeoutMs` are: a limit nothing can shorten is a limit no test can watch fire, and a wrong event
+  // or a forgotten `.destroy()` would ship in silence.
+  const dir = tmpdir();
+  const server = C.createSwitchServer({
+    net, dir, idleMs: 50,
+    onRequest: async () => ({ ok: true }),
+    onError: (e) => errors.push(e),
+  });
+  const dropped = await new Promise((resolve) => {
+    const socket = net.createConnection(C.socketPathIn(dir));
+    socket.resume();
+    socket.on('error', () => {});          // the server dropping us is the point, not a failure
+    socket.on('close', () => resolve(true));
+    setTimeout(() => { socket.destroy(); resolve(false); }, 3000).unref();
+  });
+  assert.strictEqual(dropped, true, 'the session held an idle connection open past its deadline');
+  server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 t('a second record arriving DURING a slow enactment is ignored', async () => {

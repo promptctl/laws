@@ -84,15 +84,19 @@ const UNREACHABLE = {
 // after the first line is ignored by construction: this protocol is one request, one response.
 function readOneRecord(socket, { onRecord, onMalformed, maxBytes = MAX_RECORD_BYTES }) {
   let buffer = '';
+  // Counted rather than read off `buffer.length`: `setEncoding` below makes that UTF-16 code units,
+  // which undercounts UTF-8 by up to 3x — a peer sending CJK would get three times the cap.
+  let bytes = 0;
   let settled = false;
   socket.setEncoding('utf8');
   socket.on('data', (chunk) => {
     if (settled) return;
     buffer += chunk;
+    bytes += Buffer.byteLength(chunk, 'utf8');
     // A peer that streams without ever sending a separator would otherwise grow this buffer without
     // limit. The threat model here names such a peer explicitly — any local process can reach the
     // socket — so the bound is enforced rather than assumed. [LAW:no-silent-failure]
-    if (buffer.length > maxBytes) {
+    if (bytes > maxBytes) {
       settled = true;
       onMalformed(new Error('record exceeded ' + maxBytes + ' bytes without a separator'));
       return;
@@ -109,14 +113,14 @@ function readOneRecord(socket, { onRecord, onMalformed, maxBytes = MAX_RECORD_BY
 
 // The hosted session's half. `onRequest` is async and returns the response object; whatever it
 // returns is what the caller sees, so the enactment's own named refusals travel back intact.
-function createSwitchServer({ net, dir, onRequest, onError }) {
+function createSwitchServer({ net, dir, onRequest, onError, idleMs = IDLE_MS }) {
   const server = net.createServer((socket) => {
     // A connection that breaks mid-switch is the peer's business, and it must not take the session
     // down with it — this listener lives inside the user's running Claude Code.
     socket.on('error', (e) => onError(e));
     // A peer that connects and then says nothing is dropped rather than held. The client's half has
     // always had a deadline; the server's needs one for the same reason and did not have it.
-    socket.setTimeout(IDLE_MS, () => socket.destroy());
+    socket.setTimeout(idleMs, () => socket.destroy());
     readOneRecord(socket, {
       onRecord: async (request) => {
         // The WHOLE body is guarded, not just the enactment. `onRecord` is async and is invoked
@@ -194,7 +198,7 @@ function requestSwitch({ net, dir, request, timeoutMs = 15000 }) {
     // until the timeout and report the wrong reason for the right failure. WHICH failure depends on
     // whether it ever accepted us: a refused connection proves the request never arrived, while one
     // that was accepted and then dropped may have enacted the switch before going quiet.
-    socket.on('close', () => finish({
+    socket.on('close', () => done({
       ok: false, reason: connected ? UNREACHABLE.noAnswer : UNREACHABLE.noSocket,
     }));
   });
