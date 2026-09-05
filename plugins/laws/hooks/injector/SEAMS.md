@@ -181,8 +181,8 @@ Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
 
 Tests: `bun-graph.test.js` (21 — synthetic containers for every named absence, plus a live read of
 the installed binary), `embedded-fs.test.js` (22), `bun-surface.test.js` (30),
-`bun-runtime.test.mjs` (15), `boot-channel.test.js` (7), `boot-guard.test.js` (5) and
-`launch.test.js` (32, stub plans) — 132 in all. 111 deliberate source mutations across the seven
+`bun-runtime.test.mjs` (20), `boot-channel.test.js` (7), `boot-guard.test.js` (5) and
+`launch.test.js` (32, stub plans) — 137 in all. 111 deliberate source mutations across the seven
 modules were each killed by a test.
 
 Run the mutation sweep against a COPY of this directory, never the working tree. A sweep that edits

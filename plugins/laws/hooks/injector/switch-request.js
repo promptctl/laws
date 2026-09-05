@@ -8,8 +8,8 @@
 // first. [LAW:single-enforcer]
 //
 // WHAT THE CALLER GETS TO SAY, AND WHY IT IS SO LITTLE. A request carries a CHOICE and nothing else
-// that matters: which transcript, which incoming craft, and which session all come from the pending
-// offer the gate left behind, read here rather than accepted from the caller. That is what makes the
+// that matters: which transcript and which incoming craft both come from the pending offer the gate
+// left behind, read here rather than accepted from the caller. That is what makes the
 // channel's vocabulary actually be "one of four named choices to the switch that is already
 // pending". It used to take the transcript path from the request, which meant a caller could point
 // the session at any file it liked and have `decide()` run against it — a materially larger
