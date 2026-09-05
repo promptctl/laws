@@ -1,4 +1,4 @@
-# The injected craft-compatibility gate — status, primitives, and frontier
+# The injected craft-compatibility gate — status, mechanism, and history
 
 Part B of `promptctl-routing-rat.5`: the runtime mechanism that turns the PreToolUse guard's
 plain DENY of an incompatible craft load into a four-choice SWITCH
@@ -10,21 +10,32 @@ bash guard and the JS gate read).
 
 > Bundle symbol names are minified and **drift every Claude Code release**. Resolve seams by the
 > invariant anchors below (strings, body fingerprints, stable env/CLI surfaces), never by a
-> minified name. Everything in "Verified primitives" was re-confirmed on the shipped **2.1.226**
-> binary; re-run `inspect-eval.js --probe` after any update to catch drift in seconds.
+> minified name. Nothing here is re-derived by hand after an update: `seam-plan.js` resolves every
+> anchor against the whole module graph at launch and refuses on a miss, so drift shows up as a boot
+> refusal and a fallback to stock claude rather than as silent misbehaviour.
 
-## The channel: Bun's inspector, opened by an env var
+## HISTORY — the channel that was: Bun's inspector, opened by an env var
+
+**Removed 2026-09-05.** The gate no longer opens an inspector, sets `BUN_INSPECT`, or evaluates
+anything in the session's global scope; the switch is enacted live and in place (see "RESOLVED
+2026-09-03" below), and `inspect-eval.js` was deleted along with the relaunch launcher it served
+(`promptctl-injector-xy0.4`). The measurements in this section and the next are kept because they
+are facts about the shipped binary, not about the apparatus — the next person to point an inspector
+at Claude Code would otherwise pay for them a second time.
 
 Claude Code ships as a Bun-compiled standalone Mach-O (`~/.local/share/claude/versions/<v>`, a
 symlink target of `claude`). It honors `BUN_INSPECT`: set it to a ws URL and the process opens a
 WebKit/JSC inspector on that socket. **No code patch — just an env var** — which is why the
-channel is stable across weekly minified releases and satisfies the ticket's "lightweight,
-shippable in the plugin" bar. For the compiled binary the ws URL you set IS the endpoint; there
+channel was stable across weekly minified releases and met the ticket's "lightweight, shippable in
+the plugin" bar. For the compiled binary the ws URL you set IS the endpoint; there
 is no `http://host:port/json/list` discovery (that exists only for `bun --inspect-brk bundle.js`).
 
-## Verified primitives (shipped 2.1.226) — the foundation is real and current
+## HISTORY — primitives measured over that channel (shipped 2.1.226)
 
-Reproduce: `BUN_INSPECT="ws://127.0.0.1:9933/dbg?wait=1" claude --help &` then
+These four were measured, and each is a property of the binary rather than of the client that asked.
+They were exercised through `inspect-eval.js`, deleted 2026-09-05; reproducing them today means
+writing a ws client again. The command was
+`BUN_INSPECT="ws://127.0.0.1:9933/dbg?wait=1" claude --help &` followed by
 `node inspect-eval.js ws://127.0.0.1:9933/dbg --probe`.
 
 1. **Inspector opens.** `BUN_INSPECT="ws://127.0.0.1:<port>/dbg?wait=1"` opens a LISTEN socket on
@@ -41,10 +52,12 @@ Reproduce: `BUN_INSPECT="ws://127.0.0.1:9933/dbg?wait=1" claude --help &` then
    evaluated in-process made the `/context` panel render in the live session. The TUI reads stdin
    in pull mode (paused ReadStream, one `readable` listener, zero `data` listeners), so `.push()`
    is the right primitive and a trailing `\r` submits. This runs commands through the session's
-   OWN dispatch path — the gate's reload can therefore ride Claude's own mechanisms (`/compact`,
-   `/clear`) rather than reaching into minified internals.
+   OWN dispatch path, which was the reason the reload was once expected to ride Claude's own
+   mechanisms (`/compact`, `/clear`) rather than reach into minified internals.
 
-`inspect-eval.js` packages primitives 1–4 (`connect`, `evaluate`, `injectStdin`, `probe`).
+`inspect-eval.js` packaged primitives 1–4 as `connect`, `evaluate`, `injectStdin` and `probe`. By the
+end its only remaining job was ending the session so the launcher could relaunch it, and it was
+deleted with the launcher on 2026-09-05.
 
 ## The container format: Bun's module table, read from the installed binary
 
@@ -206,17 +219,18 @@ session to REFLECT that edit. The blocker, empirically pinned on 2.1.226:
   the in-place reload (`loadConversationForResume` → `setMessagesParams`) cannot be driven from a
   global eval; it needs an in-CLOSURE frame.
 
-Two ways across, an open owner decision (see "Decision pending"):
+Two ways across were weighed at the time. **Neither is the design; both are superseded.**
 
-- **Path A — in-closure injection (owner's stated preference: in-process, no relaunch).** Set a
-  `Debugger` breakpoint at a module-scope callsite to get a paused frame with closure access, then
-  `Debugger.evaluateOnCallFrame` to call the store's own reload. The skill-load funnel (SEAM 1) is
-  the natural pause point: it fires exactly on the 2nd craft load — the trigger AND an in-closure
-  entry at once. Cost: needs the 2.1.226 bundle dumped (`Debugger.getScriptSource`) and the seams
-  re-derived by anchor; fragile against weekly minification. This is the multi-day part.
-- **Path B — restart-in-place (`claude --resume <sid>`).** A launcher wrapper re-execs the public
-  resume flag after Part A edits the transcript. Robust (public CLI, no minified anchors) and
-  lightweight, but it is the "external relaunch" the owner deprioritized in `promptctl-routing-rat.2`.
+- **Path A — in-closure injection.** Set a `Debugger` breakpoint at a module-scope callsite to get a
+  paused frame with closure access, then `Debugger.evaluateOnCallFrame` to call the store's own
+  reload. The skill-load funnel (SEAM 1) was the natural pause point: it fires exactly on the 2nd
+  craft load — the trigger AND an in-closure entry at once. Never built. On 2.1.258 the conversation
+  turned out to sit on an ordinary class, so no breakpoint, no paused frame and no inspector are
+  needed to reach it.
+- **Path B — restart-in-place (`claude --resume <sid>`).** A launcher wrapper re-execing the public
+  resume flag after Part A edits the transcript. This one was built and shipped on 2026-08-23 as
+  `bin/claude-laws`, and removed on 2026-09-05: once the switch could be enacted against the running
+  store, the relaunch had nothing left to do.
 
 ### RESOLVED 2026-08-16 on 2.1.226: the rewind is disk surgery — `rewindTo()` in `../scripts/laws-excise.js`
 
@@ -250,9 +264,11 @@ Corrects `promptctl-routing-rat.2`'s "excision = reparent, VERIFIED" (recorded a
 reparenting the FIRST POST-RANGE record is the additive form, and it does not rewind on 2.1.226.
 The tombstone half of `.2` is unaffected — that is in-place content replacement, not a tree edit.
 
-Still open for option 2 (tombstone in place, full conversation kept): it edits an early message
-without moving the leaf, so a resumed session picks it up, but making the ALREADY-RUNNING session
-re-read the file is the reload question below.
+Option 2 (tombstone in place, full conversation kept) was left hanging on the reload question at the
+time: it edits an early message without moving the leaf, so a resumed session picks it up, but the
+already-running session had no reason to re-read the file. That question is answered — the live path
+tombstones the running conversation in its own store and never asks the file to be re-read. See
+"RESOLVED 2026-09-03" below.
 
 ## Seam anchors carried forward (re-derive against the 2.1.226 bundle before use)
 
@@ -339,11 +355,14 @@ rewind, used rather than a string of our own because an unrecognised source woul
 validator path and because the two branches downstream of `auto_restore_cancel` are ones we
 specifically do not want.
 
-**The channel replaces BUN_INSPECT by changing what it can SAY.** `switch-channel.js` listens on a
-unix socket inside the launcher's `mktemp -d` handoff directory. The inspector's vocabulary is
-"evaluate this string"; this one's entire vocabulary is "apply one of four named choices to the switch
-already pending". The worst a hostile child can do with it is the thing the session just offered the
-user in writing, and no arm runs caller-supplied code.
+**The channel replaced BUN_INSPECT by changing what it can SAY.** `switch-channel.js` listens on a
+unix socket (`switch.sock`) inside the handoff directory named by `LAWS_SWITCH_DIR`, inheriting that
+directory's permissions rather than inventing a location with its own. No local socket authenticates
+anyone — at equal privilege a hostile process and `laws-switch` are indistinguishable — so the only
+thing a channel controls is its VOCABULARY. The inspector's was "evaluate this string in your global
+scope"; this one's entire vocabulary is "apply one of four named choices to the switch already
+pending". The worst a hostile child can do with it is the thing the session just offered the user in
+writing, and no arm runs caller-supplied code.
 
 **VERIFIED LIVE on 2.1.258, in a real PTY under tmux, against the hosted graph:**
 
@@ -385,7 +404,10 @@ writer bolted alongside.
 
 - DONE: compatibility policy has one home; `decide()`/`exciseAt()` fire only on an incompatible
   pair and tombstone only the conflicting craft (`../scripts/laws-excise.js` + tests).
-- DONE: injection channel re-verified on 2.1.226; `inspect-eval.js` packages the primitives.
+- DONE, THEN REMOVED (2026-09-05): the inspector channel was verified on 2.1.226 and packaged as
+  `inspect-eval.js`. Live enactment left it with nothing to do but end the session for a relaunch, so
+  it was deleted with the launcher (`promptctl-injector-xy0.4`). The measurements it produced are
+  kept in the two HISTORY sections above.
 - DONE (2026-08-31): the bundle is recoverable in memory from the installed binary —
   `bun-graph.js`, which parses Bun's own module table rather than scanning for NUL-delimited
   records, so it reads both the one-CJS-module 2.1.226 and the 1,818-module ESM graph of 2.1.258
@@ -414,16 +436,22 @@ writer bolted alongside.
 - DONE (2026-08-16): the rewind for options 3/4 is disk surgery — `rewindTo()`, sever + repoint,
   verified live against a real transcript. **SEAM 2a is not needed**, and neither is native
   `/rewind` with its modal arrow-key driving. See the resolved section above.
-- DONE (2026-08-23): the reload — Path B, via `../../bin/claude-laws`. All four options edit the
-  transcript, and a RESUMED session reads it while the already-running one does not; the launcher
-  closes that gap by relaunching, applying the surgery after exit, and `--resume`ing so the
-  corrected transcript is reread. `claude-laws.test.sh` exercises the four options end to end,
-  including the multi-craft, one-shot and session-selector cases. The on-disk-files-survive
-  invariant still holds by construction (`rewindTo`/`exciseAt` write nothing but the transcript)
-  and is now exercised rather than only argued. Distribution of the launcher is sibling
-  `promptctl-routing-rat.7`.
+- DONE (2026-08-23), SUPERSEDED (2026-09-03), REMOVED (2026-09-05): the reload — Path B, via
+  `bin/claude-laws`. All four options edit the transcript, and a RESUMED session reads it while the
+  already-running one does not; the launcher closed that gap by relaunching, applying the surgery
+  after exit, and `--resume`ing so the corrected transcript was reread. `claude-laws.test.sh`
+  exercised the four options end to end, including the multi-craft, one-shot and session-selector
+  cases. Live in-place enactment made the relaunch's only job disappear, so the launcher,
+  `laws-switch`'s relaunch arm (`request.json`, `BUN_INSPECT`, driving `/exit`) and
+  `laws-excise.js`'s `applyRequest()` / `--apply` reader of the handoff file were all deleted
+  (`promptctl-injector-xy0.4`). The on-disk-files-survive invariant did not depend on any of it and
+  still holds: `rewindTo`/`exciseAt` write nothing but the transcript, and the live path is handed no
+  file writer at all.
 - DONE (2026-08-16): SEAM 1 is unnecessary, confirmed by probe — the PreToolUse payload carries
   `transcript_path` alongside `tool_input.skill`, so detection + `decide()` run in the hook off
-  public surfaces. **With SEAM 1 and SEAM 2a both retired, the gate carries NO minified anchor at
-  all**: detection is a hook, enactment is two pure functions over the transcript, and the reload
-  is a launcher driving the public CLI. Nothing here needs re-deriving when Claude Code updates.
+  public surfaces. With SEAM 1 and SEAM 2a both retired, **detection and the disk surgery carry no
+  minified anchor at all**: a hook plus two pure functions over the transcript. The LIVE path does
+  carry anchors — `rewindConversationTo` and `restoreMessageSync` — but they are PROPERTY names,
+  which minification cannot rename, and `seam-plan.js` resolves them against the whole graph at every
+  launch and refuses on a miss. So nothing here is re-derived by hand when Claude Code updates: drift
+  is a boot refusal and a fallback to stock claude, not a silent wrong answer.

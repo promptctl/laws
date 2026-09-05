@@ -26,8 +26,8 @@ const path = require('path');
 // renders a thrown non-Error as the word "undefined", which this handles. [LAW:one-source-of-truth]
 const { because } = require('./boot-guard.js');
 
-// The socket lives in the handoff directory the launcher already creates with mktemp -d, so it
-// inherits that directory's 0700 permissions rather than inventing a location with its own.
+// The socket lives in the handoff directory named by LAWS_SWITCH_DIR, inheriting that directory's
+// permissions rather than inventing a location with its own.
 const SOCKET_NAME = 'switch.sock';
 const socketPathIn = (dir) => path.join(dir, SOCKET_NAME);
 

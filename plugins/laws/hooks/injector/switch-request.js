@@ -19,8 +19,7 @@
 // WHY THE DECISION IS RE-MADE FROM DISK RATHER THAN CARRIED. The offer names a transcript, not a
 // verdict. Between the gate offering the switch and the user choosing one, the conversation kept
 // moving — so the verdict is recomputed against the transcript as it stands at the moment of
-// enactment, and a switch that no longer applies refuses instead of enacting a stale one. This
-// mirrors what the on-disk path already does in `applyRequest`.
+// enactment, and a switch that no longer applies refuses instead of enacting a stale one.
 //
 // WHY IT DOES NOT TOUCH THE TRANSCRIPT FILE. The running app is the file's writer; a second writer
 // editing it underneath would be two maps of one conversation, free to diverge.

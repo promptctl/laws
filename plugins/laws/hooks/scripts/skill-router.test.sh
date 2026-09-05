@@ -168,8 +168,9 @@ assert_allow "missing policy file still allows the load (degraded)" "$out"
 case "$err" in *"no craft pairs readable"*) ok "missing policy file warns on stderr";; *) bad "missing policy file did not warn (got: $err)";; esac
 
 # 9. The switch offer. It is an EXTRA route out of the deny, available only when the session was
-#    launched by claude-laws (only the launcher can relaunch and enact a choice). The deny itself
-#    must be identical either way - the switch never weakens the refusal.
+#    launched by the laws launcher (only a hosted session can enact a choice against its own live
+#    conversation). The deny itself must be identical either way - the switch never weakens the
+#    refusal.
 switch_payload() { # <session_id> <skill> <transcript_path>
   printf '{"session_id":"%s","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$1" "$3" "$2"
 }
@@ -181,21 +182,21 @@ swdir=$(mktemp -d)
 sw1=$(mktemp "$TMPDIR/sw1.XXXXXX.jsonl")
 run guard "$(skill_payload SW1 laws:code)" >/dev/null            # engage code
 out=$(printf '%s' "$(switch_payload SW1 laws:prompt "$sw1")" | LAWS_SWITCH_DIR="$swdir" LAWS_SWITCH_SESSION=SW1 "$ROUTER" guard 2>/dev/null)
-assert_deny "under claude-laws, the deny still refuses and also offers the switch" \
+assert_deny "under the launcher, the deny still refuses and also offers the switch" \
   "$out" "laws:code" "laws:prompt" "laws-switch" "rewind_summarize"
 case "$out" in
   *"dispatch a fresh subagent"*) ok "  ... and keeps the subagent escape hatch";;
   *) bad "  ... lost the subagent escape hatch (got: $out)";;
 esac
 if [ -f "$swdir/pending.json" ]; then
-  ok "  ... and records the pending decision for the launcher"
+  ok "  ... and records the pending decision for the hosted session to read"
   pend=$(cat "$swdir/pending.json")
   case "$pend" in
     *'"current":"code"'*'"incomingMedium":"prompt"'*) ok "  ... naming the engaged craft and the incoming one";;
     *) bad "  ... pending.json has the wrong shape (got: $pend)";;
   esac
   case "$pend" in
-    *"$sw1"*) ok "  ... and the transcript the launcher must operate on";;
+    *"$sw1"*) ok "  ... and the transcript the switch must be computed against";;
     *) bad "  ... pending.json is missing the transcript path (got: $pend)";;
   esac
 else
@@ -208,16 +209,16 @@ rm -rf "$swdir"
 # 9b. Without the launcher there is nothing that could enact a switch, so it must not be advertised.
 run guard "$(skill_payload SW2 laws:code)" >/dev/null
 out=$(run guard "$(switch_payload SW2 laws:prompt /tmp/sw2.jsonl)")
-assert_deny "without claude-laws, the deny is unchanged" "$out" "laws:code" "laws:prompt"
+assert_deny "without the launcher, the deny is unchanged" "$out" "laws:code" "laws:prompt"
 case "$out" in
   *"laws-switch"*) bad "  ... but offered a switch that cannot be enacted";;
   *) ok "  ... and offers no switch it cannot enact";;
 esac
 
-# 10. retire-craft: the launcher's half of the switch. These assert the ARC a real switch travels
-#     - deny, retire, resume, load - because that arc is where the two halves meet and where each
-#     half's own suite stops looking. A --resume keeps the same session_id (measured on 2.1.226),
-#     so the resumed session lands in the SAME lock slot the guard just refused from.
+# 10. retire-craft: the lock half of the switch. These assert the ARC a real switch travels
+#     - deny, retire, load - because that arc is where the two halves meet and where each half's
+#     own suite stops looking. The session never restarts, so the load lands in the SAME lock slot
+#     the guard just refused from.
 retire_payload() { # <session_id> <craft>
   printf '{"session_id":"%s","craft":"%s"}' "$1" "$2"
 }
@@ -303,16 +304,17 @@ sub_payload() { # <session_id> <agent_id> <skill> <transcript_path>
   printf '{"session_id":"%s","agent_id":"%s","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$1" "$2" "$4" "$3"
 }
 
-# 11a. A SUBAGENT must never be offered it. laws-switch would end the session through the
-#      launcher's inspector - killing the PARENT - and operate on the parent's transcript.
-#      The subagent escape hatch the deny recommends would destroy its own caller.
+# 11a. A SUBAGENT must never be offered it. It shares the parent's session_id, so its offer would
+#      overwrite the parent's and the parent's host would then rewind the parent's live conversation
+#      against the subagent's transcript. The escape hatch the deny recommends would corrupt its own
+#      caller.
 swdir2=$(mktemp -d); sw2=$(mktemp "$TMPDIR/sw2.XXXXXX.jsonl")
 printf '%s' "$(sub_payload SUB1 AGENT7 laws:code "$sw2")"   | LAWS_SWITCH_DIR="$swdir2" LAWS_SWITCH_SESSION=SUB1 "$ROUTER" guard >/dev/null 2>&1
 out=$(printf '%s' "$(sub_payload SUB1 AGENT7 laws:prompt "$sw2")" | LAWS_SWITCH_DIR="$swdir2" LAWS_SWITCH_SESSION=SUB1 "$ROUTER" guard 2>/dev/null)
 assert_deny "a subagent is still refused the incompatible craft" "$out" "laws:code" "laws:prompt"
 case "$out" in
-  *"laws-switch"*) bad "  ... but was offered a switch that would kill its parent session";;
-  *) ok "  ... and is offered no switch that would kill its parent session";;
+  *"laws-switch"*) bad "  ... but was offered a switch that would corrupt its parent session";;
+  *) ok "  ... and is offered no switch that would corrupt its parent session";;
 esac
 [ -f "$swdir2/pending.json" ] && bad "  ... and wrote a pending decision the parent would enact" \
                               || ok "  ... and wrote no pending decision for the parent to enact"
@@ -320,7 +322,7 @@ rm -rf "$swdir2"
 
 # 11b. A transcript path that does not resolve. json_field's grammar truncates at an embedded
 #      quote, so a mangled read reaches here as a path to nothing; acting on it would write a
-#      pending.json naming a transcript the launcher cannot operate on.
+#      pending.json naming a transcript nothing can read.
 swdir3=$(mktemp -d)
 run guard "$(skill_payload SW3 laws:code)" >/dev/null
 out=$(printf '%s' "$(switch_payload SW3 laws:prompt "$TMPDIR/does-not-exist.jsonl")" | LAWS_SWITCH_DIR="$swdir3" LAWS_SWITCH_SESSION=SW3 "$ROUTER" guard 2>/dev/null)
@@ -369,7 +371,7 @@ chmod 700 "$swdir5"; rm -rf "$swdir5"
 # 11e. A transcript_path that does not resolve. 11c reaches this same branch through a quoted path,
 #      but it accepts either outcome because the grammar decides which - so nothing there pins the
 #      REPORT. Here the path is simply absent, which is deterministic, and the assertion is that a
-#      resolution failure is distinguishable from the launcher legitimately withholding the offer
+#      resolution failure is distinguishable from the guard legitimately withholding the offer
 #      (subagent, nested claude, unpinned session). Both look like "deny, no switch" to the reader;
 #      only the stderr line tells them whether the hook is broken.
 swdir6=$(mktemp -d)
@@ -393,9 +395,10 @@ fi
 rm -rf "$swdir6"
 
 # 12. A NESTED claude is the case an "am I a subagent" test cannot see: its own session_id, no
-#     agent_id, and it inherits LAWS_SWITCH_DIR and BUN_INSPECT from the launcher's environment.
-#     Were it offered the switch it would overwrite the owning session's pending decision and
-#     drive /exit down the launcher's inspector, killing the session that started it.
+#     agent_id, and it inherits LAWS_SWITCH_DIR from the launcher's environment. Were it offered
+#     the switch it would overwrite the owning session's pending decision, and the host reads the
+#     offer rather than the request - so the owning session would rewind itself against a transcript
+#     that is not its own.
 swdir6=$(mktemp -d); sw6=$(mktemp "$TMPDIR/sw6.XXXXXX.jsonl")
 printf '%s' "$(switch_payload NESTED laws:code "$sw6")"   | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=OWNER "$ROUTER" guard >/dev/null 2>&1
 out=$(printf '%s' "$(switch_payload NESTED laws:prompt "$sw6")" | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=OWNER "$ROUTER" guard 2>/dev/null)
@@ -408,9 +411,8 @@ esac
                               || ok "  ... and left the owning session's pending decision alone"
 rm -rf "$swdir6"
 
-# 12b. With no pinned session at all (the launcher disables the switch in one-shot mode, and any
-#      plain `claude` has never had one), the offer must not appear even though the inherited
-#      switch dir exists.
+# 12b. With no pinned session at all (any plain `claude` has never had one), the offer must not
+#      appear even though the inherited switch dir exists.
 swdir7=$(mktemp -d); sw7=$(mktemp "$TMPDIR/sw7.XXXXXX.jsonl")
 run guard "$(skill_payload SW7 laws:code)" >/dev/null
 out=$(printf '%s' "$(switch_payload SW7 laws:prompt "$sw7")" | LAWS_SWITCH_DIR="$swdir7" "$ROUTER" guard 2>/dev/null)

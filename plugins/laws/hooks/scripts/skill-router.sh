@@ -333,25 +333,26 @@ case "$HOOK_TYPE" in
         conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
         # The switch is an extra ROUTE OUT of the deny, offered only when the session was started
-        # by claude-laws (it is the launcher that can relaunch and enact the choice). Built as a
-        # VALUE - empty when unavailable - and always appended, so the deny path itself is the
-        # same code every time. [LAW:dataflow-not-control-flow]
+        # by the laws launcher (only a HOSTED session can enact the choice against its own live
+        # conversation). Built as a VALUE - empty when unavailable - and always appended, so the
+        # deny path itself is the same code every time. [LAW:dataflow-not-control-flow]
         switch_offer=""
         # ONLY THE SESSION THE LAUNCHER STARTED MAY BE OFFERED THE SWITCH, and the test is
         # identity, not inference. The launcher pins its session id up front (claude --session-id)
         # and exports it, so this compares ids rather than guessing from context.
         #
-        # Everything else that reaches this code inherits LAWS_SWITCH_DIR and BUN_INSPECT from the
-        # launcher's environment and would otherwise look eligible:
+        # Everything else that reaches this code inherits LAWS_SWITCH_DIR from the launcher's
+        # environment and would otherwise look eligible:
         #   - a dispatched SUBAGENT shares the owning session_id and is told apart only by
         #     agent_id, which is why the id check alone is not enough;
         #   - a NESTED `claude` started from a Bash call is its own top-level session - own
         #     session_id, no agent_id at all - so an "am I not a subagent" test lets it straight
         #     through.
-        # Either one writing pending.json would hand the launcher a decision naming a conversation
-        # it does not own, and either one running laws-switch would drive /exit down the launcher's
-        # inspector and kill the session that started it. The subagent escape hatch this very deny
-        # recommends would destroy its own caller.
+        # Either one writing pending.json overwrites the HOSTING session's offer, and the host reads
+        # the offer rather than the request - so it would recompute the switch from a transcript that
+        # is not its own and then apply the result to its own live conversation. The subagent escape
+        # hatch this very deny recommends would rewind its own caller to a point that never existed
+        # there.
         # [LAW:composability] the dependence on being the launcher's own session is checked, never
         # assumed from the ambient environment.
         if [ -n "${LAWS_SWITCH_SESSION:-}" ] && [ "$sid" = "${LAWS_SWITCH_SESSION:-}" ] \
@@ -397,18 +398,17 @@ case "$HOOK_TYPE" in
     ;;
 
   retire-craft)
-    # The launcher's half of retiring a craft, and the reason a switch takes effect at all.
+    # The lock half of retiring a craft, and the reason a switch takes effect at all.
     #
     # Retiring a craft is ONE job with two halves: the transcript surgery removes the craft's
     # guidance, and this releases the engagement marker. Ship only the first and the resumed
-    # session refuses the very load the switch existed to permit - the transcript says the craft
-    # is gone while the lock still says it is engaged. A --resume keeps the same session_id
-    # (measured, 2.1.226), so the lock is the SAME slot the guard already refused from, and
-    # session-start deliberately preserves the set across resume. Both halves or neither.
+    # session refuses the very load the switch existed to permit - the conversation says the craft
+    # is gone while the lock still says it is engaged. The session never restarts, so the lock is
+    # the SAME slot the guard already refused from. Both halves or neither.
     # [LAW:composability] one complete job, no hidden strings - the same lesson rewindTo records.
     #
     # The lock layout (LOCK_ROOT, sanitize, slot_dir_for) lives in this file and only here, so
-    # the launcher asks for the release instead of rebuilding the path and drifting from it.
+    # laws-switch asks for the release instead of rebuilding the path and drifting from it.
     # [LAW:one-source-of-truth]
     #
     # It releases only; it never pre-claims the incoming craft. A marker means "this craft

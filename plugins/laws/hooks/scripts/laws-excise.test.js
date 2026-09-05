@@ -211,7 +211,7 @@ const twoConflicts = () => [
 ];
 
 t('toRawLines drops the split artifact and nothing else', () => {
-  // Three callers depend on splitting the same way — run(), applyRequest(), and the live path — and
+  // Both callers depend on splitting the same way — run() and the live path — and
   // the line numbering decide() reports is only meaningful if they agree. The `if` here must not
   // become a `while`: stripping ALL trailing blanks would shift every index for a transcript with a
   // blank last line, silently moving what conflictIndices point at.
@@ -615,90 +615,6 @@ t('no option ever removes a record from the transcript', () => {
       assert.ok(r.lines[i] !== undefined, choice + ' lost record ' + i);
     }
   }
-});
-
-// ---- applyRequest(): the production entry point ---------------------------------------------
-// `laws-excise.js --apply <request.json>` and bin/claude-laws both land here, and the shell suite
-// swaps a hand-written double in for this module — which is what makes those tests hermetic and
-// also what left the real implementation with no coverage at all. [LAW:verifiable-goals]
-function requestFixture(extra = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'excise-apply-'));
-  const transcript = path.join(dir, 'session.jsonl');
-  fs.writeFileSync(transcript, switchFixture().join('\n') + '\n');
-  const req = path.join(dir, 'request.json');
-  fs.writeFileSync(req, JSON.stringify({
-    transcript, choice: 'tombstone', incomingMedium: 'prompt', sessionId: 'sid-1', ...extra,
-  }));
-  return { dir, transcript, req };
-}
-
-t('applyRequest refuses a request missing any required field', () => {
-  for (const field of ['transcript', 'choice', 'incomingMedium']) {
-    const { dir, req } = requestFixture();
-    const body = JSON.parse(fs.readFileSync(req, 'utf8'));
-    delete body[field];
-    fs.writeFileSync(req, JSON.stringify(body));
-    assert.throws(() => M.applyRequest(req, { conflictEdges: EDGES }),
-      new RegExp('missing ' + field), field + ' was accepted as absent');
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-// The session kept appending records between the hook's deny and its exit, so the decision is
-// recomputed against the transcript as it finally landed. If the conflict is gone, the switch did
-// not happen — reporting success would read as a completed switch that never ran.
-// [LAW:no-silent-failure]
-t('applyRequest refuses a request the transcript no longer supports, and writes nothing', () => {
-  const { dir, transcript, req } = requestFixture({ incomingMedium: 'prose' });  // compatible now
-  const before = fs.readFileSync(transcript, 'utf8');
-  assert.throws(() => M.applyRequest(req, { conflictEdges: EDGES }),
-    /no longer applies \(compatible\): nothing was changed/);
-  assert.strictEqual(fs.readFileSync(transcript, 'utf8'), before, 'a stale request still edited the transcript');
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-t('applyRequest enacts the switch against the file and reports what it retired', () => {
-  const { dir, transcript, req } = requestFixture();
-  const r = M.applyRequest(req, { conflictEdges: EDGES });
-  assert.strictEqual(r.changed, true);
-  assert.strictEqual(r.resume, true);
-  assert.deepStrictEqual(r.switchedFrom, ['code']);
-  assert.strictEqual(r.switchedTo, 'prompt');
-  assert.strictEqual(r.sessionId, 'sid-1');
-  const out = fs.readFileSync(transcript, 'utf8');
-  assert.ok(out.endsWith('\n'), 'the transcript lost its trailing newline');
-  const live = out.trim().split('\n').map((l) => M.craftMediumOf(JSON.parse(l))).filter(Boolean);
-  assert.deepStrictEqual(live, [], 'the conflicting craft survived --apply: ' + live);
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-t('applyRequest --dry-run reports the switch without touching the file', () => {
-  const { dir, transcript, req } = requestFixture();
-  const before = fs.readFileSync(transcript, 'utf8');
-  const r = M.applyRequest(req, { conflictEdges: EDGES, dryRun: true });
-  assert.strictEqual(r.changed, true);
-  assert.strictEqual(fs.readFileSync(transcript, 'utf8'), before, '--dry-run wrote the transcript');
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-t('applyRequest reject leaves the transcript alone and says nothing changed', () => {
-  const { dir, transcript, req } = requestFixture({ choice: 'reject' });
-  const before = fs.readFileSync(transcript, 'utf8');
-  const r = M.applyRequest(req, { conflictEdges: EDGES });
-  assert.strictEqual(r.changed, false);
-  assert.strictEqual(r.resume, false);
-  assert.strictEqual(fs.readFileSync(transcript, 'utf8'), before);
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-t('applyRequest rewind_summarize lands the file on the summary the agent wrote', () => {
-  const { dir, transcript, req } = requestFixture({ choice: 'rewind_summarize', summary: 'what I did' });
-  const r = M.applyRequest(req, { conflictEdges: EDGES });
-  assert.strictEqual(r.changed, true);
-  const out = fs.readFileSync(transcript, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.strictEqual(out[out.length - 1].message.content, 'what I did');
-  assert.strictEqual(out[out.length - 1].parentUuid, 'CRAFT');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
