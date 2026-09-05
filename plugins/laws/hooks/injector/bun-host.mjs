@@ -149,8 +149,13 @@ if (process.env.LAWS_SWITCH_DIR) {
         catch { return null; }
       },
       // An offer is for one switch. Removing it here — in the process that applied it — is what makes
-      // that true for every caller, not only for the one that goes through bin/laws-switch.
-      consumeOffer: () => { try { fs.unlinkSync(offerPath); } catch { /* already gone */ } },
+      // that true for every caller, not only for the one that goes through bin/laws-switch. ENOENT
+      // means it is already consumed; any other failure leaves a live offer against a conversation
+      // this switch has already cut, so it is reported rather than swallowed. [LAW:no-silent-failure]
+      consumeOffer: () => {
+        try { fs.unlinkSync(offerPath); }
+        catch (e) { if (e.code !== 'ENOENT') send(`switch-offer-not-consumed ${because(e)}`); }
+      },
       registry: seams,
       decide,
       // Read per request rather than once: the policy file is the user's, and a session that has
