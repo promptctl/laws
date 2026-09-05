@@ -333,25 +333,26 @@ case "$HOOK_TYPE" in
         conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
         # The switch is an extra ROUTE OUT of the deny, offered only when the session was started
-        # by claude-laws (it is the launcher that can relaunch and enact the choice). Built as a
-        # VALUE - empty when unavailable - and always appended, so the deny path itself is the
-        # same code every time. [LAW:dataflow-not-control-flow]
+        # by the laws launcher (only a HOSTED session can enact the choice against its own live
+        # conversation). Built as a VALUE - empty when unavailable - and always appended, so the
+        # deny path itself is the same code every time. [LAW:dataflow-not-control-flow]
         switch_offer=""
         # ONLY THE SESSION THE LAUNCHER STARTED MAY BE OFFERED THE SWITCH, and the test is
         # identity, not inference. The launcher pins its session id up front (claude --session-id)
         # and exports it, so this compares ids rather than guessing from context.
         #
-        # Everything else that reaches this code inherits LAWS_SWITCH_DIR and BUN_INSPECT from the
-        # launcher's environment and would otherwise look eligible:
+        # Everything else that reaches this code inherits LAWS_SWITCH_DIR from the launcher's
+        # environment and would otherwise look eligible:
         #   - a dispatched SUBAGENT shares the owning session_id and is told apart only by
         #     agent_id, which is why the id check alone is not enough;
         #   - a NESTED `claude` started from a Bash call is its own top-level session - own
         #     session_id, no agent_id at all - so an "am I not a subagent" test lets it straight
         #     through.
-        # Either one writing pending.json would hand the launcher a decision naming a conversation
-        # it does not own, and either one running laws-switch would drive /exit down the launcher's
-        # inspector and kill the session that started it. The subagent escape hatch this very deny
-        # recommends would destroy its own caller.
+        # Either one writing pending.json overwrites the HOSTING session's offer, and the host reads
+        # the offer rather than the request - so it would recompute the switch from a transcript that
+        # is not its own and then apply the result to its own live conversation. The subagent escape
+        # hatch this very deny recommends would rewind its own caller to a point that never existed
+        # there.
         # [LAW:composability] the dependence on being the launcher's own session is checked, never
         # assumed from the ambient environment.
         if [ -n "${LAWS_SWITCH_SESSION:-}" ] && [ "$sid" = "${LAWS_SWITCH_SESSION:-}" ] \
