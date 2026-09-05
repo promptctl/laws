@@ -40,7 +40,6 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 
 // WHICH CRAFTS EXIST IS DERIVED, NEVER ENUMERATED. skill-router.sh's guard treats any
 // `laws:<x>` skill as a craft precisely so that "a new craft is covered the day it is added";
@@ -520,61 +519,17 @@ function run(file, opts = {}) {
   return { file, changed, stubbed: stubbedAll };
 }
 
-// Enact a switch request against the transcript it names. Runs from the LAUNCHER, after the
-// session has exited — see the timing note on SWITCH_ACTIONS.
-//
-// The request carries the CHOICE and the incoming craft, never the resolved line indices: the
-// decision is recomputed here against the transcript as it finally landed, because the session
-// kept appending records between the hook's deny and its exit. Carrying stale indices across that
-// gap is how you tombstone the wrong line. [LAW:one-source-of-truth]
-function applyRequest(requestPath, opts = {}) {
-  const req = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
-  for (const field of ['transcript', 'choice', 'incomingMedium']) {
-    if (!req[field]) throw new Error('switch request is missing ' + field + ': ' + requestPath);
-  }
-  const pairs = opts.conflictEdges || loadPolicy(opts.policyPath);
-  const text = fs.readFileSync(req.transcript, 'utf8');
-  const eol = text.endsWith('\n'); // restored on write
-  const rawLines = toRawLines(text);
-
-  const decision = decide(rawLines, { conflictEdges: pairs, incomingMedium: req.incomingMedium });
-  // The conflict must still be there. If it is not, the session changed under us — say so instead
-  // of writing a "successful" no-op the user will read as a completed switch. [LAW:no-silent-failure]
-  if (!decision.trigger) {
-    throw new Error('switch request no longer applies (' + decision.reason + '): nothing was changed');
-  }
-  const env = {
-    severUuid: crypto.randomUUID(),
-    summaryUuid: crypto.randomUUID(),
-    now: new Date().toISOString(),
-    summary: req.summary,
-  };
-  const r = applySwitch(rawLines, decision, req.choice, env);
-  const changed = r.changed;
-  if (changed && !opts.dryRun) writeAtomic(req.transcript, r.lines.join('\n') + (eol ? '\n' : ''));
-  return { transcript: req.transcript, choice: req.choice, resume: r.resume, changed,
-    sessionId: req.sessionId, switchedFrom: decision.current, switchedTo: decision.incoming };
-}
-
 module.exports = {
   parsePolicy, loadPolicy, conflictsWith, MALFORMED_WARNING,
   // stubText is exported because the LIVE enactment (../injector/live-switch.js) stubs message
   // objects rather than JSONL lines, so it cannot go through exciseAt. Two spellings of the
   // tombstone wording would be two sources for one fact. [LAW:one-source-of-truth]
-  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS, stubText, toRawLines,
-  applyRequest, run,
+  craftMediumOf, findHits, decide, exciseAt, rewindTo, applySwitch, SWITCH_ACTIONS, stubText, toRawLines, run,
 };
 
 if (require.main === module) (function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
-  const applyAt = args.indexOf('--apply');
-  if (applyAt >= 0) {
-    const reqPath = args[applyAt + 1];
-    if (!reqPath) { process.stderr.write('usage: laws-excise.js --apply <request.json> [--dry-run]\n'); process.exit(2); }
-    process.stdout.write(JSON.stringify(applyRequest(reqPath, { dryRun })) + '\n');
-    return;
-  }
   const file = args.find((a) => !a.startsWith('--'));
   if (!file) { process.stderr.write('usage: laws-excise.js <transcript.jsonl> [--dry-run]\n'); process.exit(2); }
   const res = run(file, { dryRun });

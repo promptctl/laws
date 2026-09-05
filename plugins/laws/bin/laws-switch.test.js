@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Tests for bin/laws-switch — the in-session half of the craft switch.
 //
-// This CLI grew real branching: a live-vs-relaunch fork, a per-craft retire loop with two distinct
-// failure arms, and reason-specific messaging. None of that is exercisable by unit-testing a
-// function, because the behaviour under test IS the process — its stdout, its stderr, its exit code
-// and what it leaves on disk. So each case runs the real script as a subprocess against a stub
-// socket, exactly as a session would.
+// This CLI carries a per-craft retire loop with two distinct failure arms, reason-specific messaging
+// about whether the conversation may already have been mutated, and positional argument handling.
+// None of that is exercisable by unit-testing a function, because the behaviour under test IS the
+// process — its stdout, its stderr, its exit code and what it leaves on disk. So each case runs the
+// real script as a subprocess against a stub socket, exactly as a session would.
 //
 // It runs against a COPY of the plugin, never the working tree. Two cases deliberately break the
 // router (non-executable, and exiting non-zero) to reach the failure arms, and breaking a shipped
@@ -134,7 +134,6 @@ t('a live switch reports success, consumes the pending decision, and releases th
   // switch-request.test.js. What matters here is that the CLI does not remove it either: the offer
   // belongs to the process that applied the switch.
   assert.ok(fs.existsSync(path.join(dir, 'pending.json')), 'the CLI removed an offer it does not own');
-  assert.ok(!fs.existsSync(path.join(dir, 'request.json')), 'a relaunch request was written on the live path');
   assert.deepStrictEqual(fs.readdirSync(slot), [], 'the craft lock was not released');
 });
 
@@ -263,18 +262,35 @@ t('a refused switch leaves the pending decision in place to retry', async () => 
   assert.ok(fs.existsSync(path.join(dir, 'pending.json')));
 });
 
-// ---- the relaunch fallback ----------------------------------------------------------------------
+// ---- no hosted session --------------------------------------------------------------------------
 
-t('no hosted session falls back to recording a request for the launcher', async () => {
+t('no hosted session is a plain failure that changes nothing and keeps the offer', async () => {
+  // There is nothing to fall back TO. A switch is enacted by the session that owns the conversation,
+  // so a request that reaches no session did not happen — and the CLI must say exactly that rather
+  // than recording the decision somewhere for a reader that no longer exists. The offer stays on
+  // disk so the choice survives to be retried under a hosted session.
   const { dir, tmp } = bed();
-  const out = await run(['tombstone'], { dir, tmp, env: { BUN_INSPECT: '' } });
+  const out = await run(['tombstone'], { dir, tmp });
   assert.strictEqual(out.status, 1);
-  assert.match(out.stderr, /BUN_INSPECT is unset/);
-  const request = JSON.parse(fs.readFileSync(path.join(dir, 'request.json'), 'utf8'));
-  assert.deepStrictEqual(request, {
-    sessionId: SID, transcript: '/tmp/t.jsonl', incomingMedium: 'prompt', choice: 'tombstone',
-  });
-  assert.ok(!fs.existsSync(path.join(dir, 'pending.json')), 'the decision was recorded twice');
+  assert.match(out.stderr, /the switch was not applied/);
+  assert.match(out.stderr, /no-hosted-session-is-listening/);
+  // The one arm that may promise safety, and it is the arm that most needs to: nothing was ever
+  // delivered, so a user must not be sent to inspect a conversation that was never touched.
+  assert.match(out.stderr, /Nothing was changed/);
+  assert.ok(!/PART WAY/.test(out.stderr), 'warned about a mutation that provably never happened');
+  assert.ok(fs.existsSync(path.join(dir, 'pending.json')), 'the decision was consumed by a switch that never ran');
+  assert.deepStrictEqual(fs.readdirSync(dir), ['pending.json'], 'the failed switch left something behind');
+});
+
+t('an unhosted session says so before it reaches for a socket', async () => {
+  // LAWS_SWITCH_DIR unset is a different fact from a directory with no listener in it, and the
+  // difference is what the user has to act on: the first says "you did not start this session
+  // through the launcher", the second says "the launcher started it but the host is not answering".
+  const { dir, tmp } = bed();
+  const out = await run(['tombstone'], { dir, tmp, env: { LAWS_SWITCH_DIR: '' } });
+  assert.strictEqual(out.status, 1);
+  assert.match(out.stderr, /LAWS_SWITCH_DIR is unset/);
+  assert.match(out.stderr, /not hosted by the laws launcher/);
 });
 
 t('reject needs no session at all and changes nothing', async () => {
@@ -282,8 +298,7 @@ t('reject needs no session at all and changes nothing', async () => {
   const out = await run(['reject'], { dir, tmp });
   assert.strictEqual(out.status, 0, out.stderr);
   assert.match(out.stdout, /Staying in laws:code/);
-  assert.ok(!fs.existsSync(path.join(dir, 'request.json')));
-  assert.ok(!fs.existsSync(path.join(dir, 'pending.json')));
+  assert.deepStrictEqual(fs.readdirSync(dir), [], 'reject left a record of a decision it enacted itself');
 });
 
 // ---- the retire arm's own failures --------------------------------------------------------------
@@ -324,17 +339,27 @@ t('a router that cannot be launched at all still names a cause', async () => {
 
 // ---- argument handling --------------------------------------------------------------------------
 
-t('a relaunch that cannot end the session names why, and says the choice is recorded', async () => {
-  // The fallback arm's own failure path: the request is on disk, but the session could not be told
-  // to exit, so the user has to be told both halves.
+t('the choice is read by POSITION, so a --summary value is never mistaken for it', async () => {
+  // `--summary "some text"` puts a bare word in argv that is not a choice. A scan for the first
+  // non-flag token picks that word up and reports `unknown choice "some text"`, blaming the caller
+  // for the parser's mistake. The choice is args[0] or it is a usage error.
   const { dir, tmp } = bed();
-  const out = await run(['tombstone'], { dir, tmp, env: { BUN_INSPECT: 'ws://127.0.0.1:1/nope' } });
-  assert.strictEqual(out.status, 1);
-  assert.match(out.stderr, /could not end the session/);
-  assert.match(out.stderr, /Exit manually/);
-  assert.ok(!/session \(\)/.test(out.stderr), 'named no cause at all');
-  assert.ok(!/\(Error:/.test(out.stderr), 'the cause was the error object, not its message');
-  assert.ok(fs.existsSync(path.join(dir, 'request.json')), 'the choice was not recorded for the launcher');
+  const out = await run(['--summary', 'some text', 'rewind_summarize'], { dir, tmp });
+  assert.strictEqual(out.status, 2, 'the misordered invocation was accepted');
+  assert.ok(!/some text/.test(out.stderr), 'the summary value was taken for the choice: ' + out.stderr);
+  assert.match(out.stderr, /the choice comes first/);
+  assert.ok(fs.existsSync(path.join(dir, 'pending.json')), 'a failed parse consumed the pending decision');
+});
+
+t('the documented order resolves all the way to a request on the wire', async () => {
+  // The positive half of the case above: the choice and its summary reach the session as given.
+  const { dir, tmp } = bed();
+  lockSlot(tmp, ['code']);
+  const server = serve(dir, { ok: true, rewound: true, tombstoned: 0, changed: true, switchedFrom: ['code'], switchedTo: 'prompt' });
+  const out = await run(['rewind_summarize', '--summary', 'what I did'], { dir, tmp });
+  server.close();
+  assert.strictEqual(out.status, 0, out.stderr);
+  assert.deepStrictEqual(server.seen, [{ choice: 'rewind_summarize', summary: 'what I did' }]);
 });
 
 t('an unknown choice is refused before anything is touched', async () => {
