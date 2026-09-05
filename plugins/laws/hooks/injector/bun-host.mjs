@@ -20,6 +20,7 @@
 //   the graph asked for that this surface does not have.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 
 // The boot channel is a file descriptor passed in as a value, so this host is runnable by hand
@@ -54,6 +55,9 @@ const require_ = createRequire(import.meta.filename);
 const { readGraphFromFile } = require_('./bun-graph.js');
 const { createEmbeddedFs } = require_('./embedded-fs.js');
 const { createBunSurface } = require_('./bun-surface.js');
+const { resolveSeams, transformFor } = require_('./seam-plan.js');
+const { SEAMS, REGISTRAR } = require_('./seams.js');
+const { createSeamRegistry } = require_('./seam-registry.js');
 const { createModuleRuntime } = await import('./bun-runtime.mjs');
 
 const report = channel.report;
@@ -100,9 +104,76 @@ globalThis.Bun = createBunSurface({
 // asks for — and the absence, if one ever does, is recorded.
 const WS = { WebSocket: globalThis.WebSocket, default: globalThis.WebSocket };
 
+// ---------------------------------------------------------------------------------------------
+// The seams
+// ---------------------------------------------------------------------------------------------
+
+// Resolved against the whole graph BEFORE anything is compiled, so a release that moves an anchor is
+// caught while every outcome is still available. An unresolved seam is fatal here on purpose: the
+// launcher answers it by exec'ing stock claude with this reason logged, which costs the user the
+// hosted session and never a working one. Refusing later — after the app has started — would trade
+// that for a session that looks fine and silently cannot switch crafts. [LAW:no-silent-failure]
+const sources = new Map(graph.modules.map((m) => [m.name, m]));
+const plan = resolveSeams(sources, SEAMS);
+if (!plan.ok) {
+  report(`absent ${plan.reason} — seam ${plan.seam}${plan.detail ? ': ' + plan.detail : ''}`);
+  process.exit(EXIT_NOT_BOOTED);
+}
+
+// The injected source calls this global as each conversation controller is constructed. It is
+// installed before a single module is evaluated, which is why the seam can call it unguarded.
+const seams = createSeamRegistry();
+globalThis[REGISTRAR] = seams.registrar;
+
+// The channel `laws-switch` dials to enact a chosen switch on this live session. It exists only when
+// the launcher made a handoff directory, so a host run by hand simply has no switch channel — an
+// absent capability, not a degraded one. Every refusal it can produce is named by the modules it
+// composes and travels back to the caller unchanged.
+if (process.env.LAWS_SWITCH_DIR) {
+  const offerPath = path.join(process.env.LAWS_SWITCH_DIR, 'pending.json');
+  const net = require_('node:net');
+  const { createSwitchServer } = require_('./switch-channel.js');
+  const { enactSwitch } = require_('./switch-request.js');
+  const { decide, loadPolicy } = require_('../scripts/laws-excise.js');
+  createSwitchServer({
+    net,
+    dir: process.env.LAWS_SWITCH_DIR,
+    onRequest: (request) => enactSwitch({
+      request,
+      // The pending offer is read HERE, by the session, and never taken from the caller. It is what
+      // makes the channel's vocabulary actually be "the switch already pending" rather than "any
+      // transcript you name". A missing or unreadable offer is an absent offer, which the enactment
+      // refuses by name.
+      readOffer: () => {
+        try { return JSON.parse(fs.readFileSync(offerPath, 'utf8')); }
+        catch { return null; }
+      },
+      // An offer is for one switch. Removing it here — in the process that applied it — is what makes
+      // that true for every caller, not only for the one that goes through bin/laws-switch. ENOENT
+      // means it is already consumed; any other failure leaves a live offer against a conversation
+      // this switch has already cut, so it is reported rather than swallowed. [LAW:no-silent-failure]
+      consumeOffer: () => {
+        try { fs.unlinkSync(offerPath); }
+        catch (e) { if (e.code !== 'ENOENT') send(`switch-offer-not-consumed ${because(e)}`); }
+      },
+      registry: seams,
+      decide,
+      // Read per request rather than once: the policy file is the user's, and a session that has
+      // been open for hours should enact against the policy as it stands now.
+      conflictEdges: loadPolicy(),
+      readFile: (p) => fs.readFileSync(p, 'utf8'),
+      uuid: () => crypto.randomUUID(),
+      now: () => new Date().toISOString(),
+    }),
+    // A broken connection must never take down the session this listener lives inside.
+    onError: (e) => send(`switch-channel ${because(e)}`),
+  });
+}
+
 const runtime = createModuleRuntime({
   embedded,
-  sources: new Map(graph.modules.map((m) => [m.name, m])),
+  sources,
+  transform: transformFor(plan),
   provided: { ws: WS },
   substitute: {
     fs: (real) => embedded.substituteForFs(real),

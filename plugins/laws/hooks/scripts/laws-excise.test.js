@@ -210,11 +210,56 @@ const twoConflicts = () => [
   said('c2', 'B', 'work under prose'),
 ];
 
+t('toRawLines drops the split artifact and nothing else', () => {
+  // Three callers depend on splitting the same way — run(), applyRequest(), and the live path — and
+  // the line numbering decide() reports is only meaningful if they agree. The `if` here must not
+  // become a `while`: stripping ALL trailing blanks would shift every index for a transcript with a
+  // blank last line, silently moving what conflictIndices point at.
+  assert.deepStrictEqual(M.toRawLines('a\nb'), ['a', 'b'], 'no trailing newline');
+  assert.deepStrictEqual(M.toRawLines('a\nb\n'), ['a', 'b'], 'one trailing newline');
+  assert.deepStrictEqual(M.toRawLines('a\nb\n\n'), ['a', 'b', ''], 'a real blank line survives');
+  assert.deepStrictEqual(M.toRawLines('a\nb\n\n\n'), ['a', 'b', '', ''], 'only ONE artifact is dropped');
+});
+
+t('toRawLines keeps interior blanks and handles an empty transcript', () => {
+  assert.deepStrictEqual(M.toRawLines('a\n\nb\n'), ['a', '', 'b']);
+  assert.deepStrictEqual(M.toRawLines(''), []);
+  // One blank line AND a terminator: only the terminator's artifact is dropped, so a record remains.
+  assert.deepStrictEqual(M.toRawLines('\n'), ['']);
+  assert.deepStrictEqual(M.toRawLines('only'), ['only']);
+});
+
 t('two conflicting crafts engaged → BOTH are named, oldest first', () => {
   const d = M.decide(twoConflicts(), { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
   assert.strictEqual(d.trigger, true);
   assert.deepStrictEqual(d.current, ['code', 'prose']);
   assert.deepStrictEqual(d.conflictIndices, [1, 3]);
+});
+
+t('the conflicting set is ALSO named by uuid, for consumers that cannot use line numbers', () => {
+  // The live enactment (../injector/live-switch.js) works on an in-memory array that holds different
+  // records than the file does, in both directions — so a line index means nothing to it and uuid is
+  // the only naming that crosses.
+  const d = M.decide(twoConflicts(), { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
+  assert.deepStrictEqual(d.conflicts, [{ uuid: 'A', medium: 'code' }, { uuid: 'B', medium: 'prose' }]);
+});
+
+t('the two namings of the conflicting set can never disagree', () => {
+  // Both are derived from one ordered array; this is the assertion that fails if they ever stop
+  // being. [LAW:one-source-of-truth]
+  const lines = twoConflicts();
+  const d = M.decide(lines, { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
+  assert.strictEqual(d.conflicts.length, d.conflictIndices.length);
+  d.conflictIndices.forEach((lineIndex, i) => {
+    assert.strictEqual(JSON.parse(lines[lineIndex]).uuid, d.conflicts[i].uuid);
+    assert.strictEqual(d.conflicts[i].medium, d.current[i]);
+  });
+});
+
+t('the rewind anchor is the FIRST conflict named by uuid', () => {
+  // live-switch resolves the live conversation by this uuid, so the two must be the same message.
+  const d = M.decide(twoConflicts(), { conflictEdges: TWO_EDGES, incomingMedium: 'prompt' });
+  assert.strictEqual(d.rewind.summarizeTo, d.conflicts[0].uuid);
 });
 
 t('a compatible craft is never swept in with the conflicting ones', () => {
