@@ -26,8 +26,8 @@
 // [LAW:effects-at-boundaries] planLiveSwitch is pure — snapshot in, plan out — so every case above is
 //   testable against synthetic snapshots with no binary, no session and no terminal. applyLiveSwitch
 //   is the one unit that touches the running app.
-// [LAW:parse-dont-validate] a plan is proof that every uuid the decision named is present live; the
-//   applier takes message OBJECTS, never uuids, so it cannot be handed one that does not resolve.
+// [LAW:parse-dont-validate] a plan is proof that every uuid it PLACES is present live; the applier
+//   takes message OBJECTS, never uuids, so it cannot be handed one that does not resolve.
 
 'use strict';
 
@@ -143,7 +143,12 @@ function planLiveSwitch({ snapshot, decision, choice, summary, uuid, now }) {
   // until after the tombstones were built, a missing summary surfaced as `notStubbable` whenever the
   // anchor's shape was also unusual — telling the caller its message was malformed when what it
   // actually did was forget an argument. The most basic precondition reports first.
-  if (choice === 'rewind_summarize' && !summary) return unplannable(UNPLANNABLE.summaryMissing);
+  // Typed, not merely present. Anything truthy used to pass, and `summaryFrom` wrote it verbatim into
+  // `content` — so a caller reaching the socket could put an object where every other path in this
+  // file puts a string or an array of blocks. The type is the precondition. [LAW:parse-dont-validate]
+  if (choice === 'rewind_summarize' && (!summary || typeof summary !== 'string')) {
+    return unplannable(UNPLANNABLE.summaryMissing, typeof summary);
+  }
 
   // WHICH conflicts must survive the crossing depends on which of them the choice keeps, and that is
   // the same reasoning the discard arm above uses. `tombstone` keeps the whole conversation, so every
@@ -176,7 +181,13 @@ function planLiveSwitch({ snapshot, decision, choice, summary, uuid, now }) {
   if (!append) return unplannable(UNPLANNABLE.noTemplate);
   // A craft load that is the very last live message has nothing after it to drop, so there is no
   // rewind to do — only the tombstone and the summary. An empty value, not a special case.
-  const rewindAt = loadIndex + 1 < snapshot.length ? snapshot[loadIndex + 1] : null;
+  //
+  // The next REAL message, not the next slot: the store's array carries holes (seam-registry treats a
+  // null entry as the app's business), and a hole here would read as that same empty value — skipping
+  // the rewind while still appending a summary, which lands it after the messages it says it replaced.
+  let anchor = loadIndex + 1;
+  while (anchor < snapshot.length && !snapshot[anchor]) anchor++;
+  const rewindAt = anchor < snapshot.length ? snapshot[anchor] : null;
   return { ...empty, rewindAt, tombstones, append };
 }
 

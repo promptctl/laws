@@ -115,10 +115,41 @@ t('a craft load that is the last live message leaves nothing to rewind', () => {
   assert.strictEqual(p.tombstones.length, 1);
 });
 
+t('a HOLE after the craft load does not read as "nothing to rewind"', () => {
+  // The store's array carries nulls — seam-registry's suite pins that shape deliberately. Taking
+  // snapshot[loadIndex + 1] on faith turned a hole into rewindAt: null, which the applier cannot tell
+  // from the last-message case above: it skips the rewind, keeps every message that was supposed to
+  // go, and appends the summary AFTER them. Success reported, conversation not cut.
+  const survives = said('after', 'more');
+  const snapshot = [said('before', 'hi'), load('load-code', 'code'), null, survives];
+  const p = L.planLiveSwitch({ snapshot, decision: decision(), choice: 'rewind_summarize', summary: 's', uuid: 'u', now: 'N' });
+  assert.strictEqual(p.ok, true);
+  assert.strictEqual(p.rewindAt, survives, 'the hole was mistaken for the end of the conversation');
+});
+
+t('a hole with NOTHING real after it is still nothing to rewind', () => {
+  // The other side of the same skip: advancing past holes must not run off the end and index undefined.
+  const snapshot = [said('before', 'hi'), load('load-code', 'code'), null, null];
+  const p = L.planLiveSwitch({ snapshot, decision: decision(), choice: 'rewind_summarize', summary: 's', uuid: 'u', now: 'N' });
+  assert.strictEqual(p.ok, true);
+  assert.strictEqual(p.rewindAt, null);
+});
+
 t('rewind_summarize without a summary refuses instead of summarising nothing', () => {
   const p = plan({ choice: 'rewind_summarize' });
   assert.strictEqual(p.ok, false);
   assert.strictEqual(p.reason, L.UNPLANNABLE.summaryMissing);
+});
+
+t('a summary that is not a STRING refuses, however truthy it is', () => {
+  // `!summary` alone let an object through, and summaryFrom wrote it verbatim into `content` — a
+  // shape the app's own rendering never expects. Only the CLI passes argv; the socket takes JSON.
+  for (const bad of [{}, [], 42, true, ['text'], { type: 'text' }]) {
+    const p = plan({ choice: 'rewind_summarize', summary: bad });
+    assert.strictEqual(p.ok, false, `a ${typeof bad} summary was accepted`);
+    assert.strictEqual(p.reason, L.UNPLANNABLE.summaryMissing);
+    assert.strictEqual(p.detail, typeof bad, 'the refusal does not say what it was handed');
+  }
 });
 
 // ---- the crossing -------------------------------------------------------------------------------
