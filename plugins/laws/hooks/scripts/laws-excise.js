@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // laws-excise.js — the runtime gate for craft compatibility. When a session tries to engage
 // a craft skill INCOMPATIBLE with one already loaded, this offers a four-choice switch and
-// enacts it by editing the ON-DISK session transcript. Part A of the mechanism (Part B = an
-// injected self-resume that makes the running session re-read the edited file; this module is
-// the pure transcript surgery + decision logic it depends on).
+// enacts it. This module is the policy and the pure transcript surgery; the enactment against the
+// running session is hooks/injector/live-switch.js.
 //
 // A craft skill, when loaded via the Skill tool, lands as ONE transcript line:
 //   type:"user", isMeta:true, sourceToolUseID:<Skill tool_use id>,
@@ -215,10 +214,9 @@ function newest(hitList) {
 // not tombstone size. The rewind options move the leaf back, so they reprocess far less — 'discard'
 // is cheapest because nothing after the pre-craft point is new.
 //
-// THIS FILE'S FOUR ACTIONS ARE ON-DISK SURGERY, and they are no longer the only enactment. A second
-// path — hooks/injector/live-switch.js — applies the same four choices to the RUNNING session by
-// calling the app's own rewind, with no relaunch. Both are live; which one runs depends on whether a
-// hosted session is listening. [LAW:one-source-of-truth] SEAMS.md owns the record of both.
+// THIS FILE'S FOUR ACTIONS ARE ON-DISK SURGERY, and nothing enacts a switch through them any more:
+// hooks/injector/live-switch.js applies the same four choices to the RUNNING session by calling the
+// app's own rewind. Whether these still earn their keep is promptctl-injector-9wt.
 //
 // The edit is conversation-only and NEVER reverts code, so on-disk file deliverables survive EVERY
 // option, 'discard' included. The frontier is over conversation context + cache cost, not on-disk work.
@@ -410,11 +408,10 @@ function rewindTo(rawLines, anchorUuid, severUuid) {
 // answered here, agreeing with this one today only because every action happens to return a fresh
 // array exactly when it edited something. [LAW:one-source-of-truth]
 //
-// TIMING, and it is load-bearing: every action here edits the transcript of a session that must
-// ALREADY HAVE EXITED. A running Claude Code appends records as it works, so surgery against a live
-// file races the writer and can be overwritten wholesale. The in-session command records the INTENT
-// and triggers the exit; the launcher runs these actions afterwards, when nobody holds the file.
-// [LAW:no-ambient-temporal-coupling] the ordering is owned by the launcher, not left to luck.
+// TIMING: every action here edits the transcript of a session that must ALREADY HAVE EXITED. A
+// running Claude Code appends records as it works, so surgery against a live file races the writer
+// and can be overwritten wholesale. This is why the switch is enacted against the live store
+// instead — one writer, nothing to sequence.
 //
 // A summary record is appended as a CHILD of the rewind anchor rather than replacing it, which
 // works precisely because a resume follows a branch down to its tip: the anchor keeps the leaf

@@ -398,18 +398,17 @@ case "$HOOK_TYPE" in
     ;;
 
   retire-craft)
-    # The launcher's half of retiring a craft, and the reason a switch takes effect at all.
+    # The lock half of retiring a craft, and the reason a switch takes effect at all.
     #
     # Retiring a craft is ONE job with two halves: the transcript surgery removes the craft's
     # guidance, and this releases the engagement marker. Ship only the first and the resumed
-    # session refuses the very load the switch existed to permit - the transcript says the craft
-    # is gone while the lock still says it is engaged. A --resume keeps the same session_id
-    # (measured, 2.1.226), so the lock is the SAME slot the guard already refused from, and
-    # session-start deliberately preserves the set across resume. Both halves or neither.
+    # session refuses the very load the switch existed to permit - the conversation says the craft
+    # is gone while the lock still says it is engaged. The session never restarts, so the lock is
+    # the SAME slot the guard already refused from. Both halves or neither.
     # [LAW:composability] one complete job, no hidden strings - the same lesson rewindTo records.
     #
     # The lock layout (LOCK_ROOT, sanitize, slot_dir_for) lives in this file and only here, so
-    # the launcher asks for the release instead of rebuilding the path and drifting from it.
+    # laws-switch asks for the release instead of rebuilding the path and drifting from it.
     # [LAW:one-source-of-truth]
     #
     # It releases only; it never pre-claims the incoming craft. A marker means "this craft
