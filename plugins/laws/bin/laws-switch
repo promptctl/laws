@@ -49,8 +49,15 @@ if (!CHOICES.includes(choice)) die('unknown choice ' + JSON.stringify(choice) + 
 // The handoff directory named by LAWS_SWITCH_DIR holds the hosted session's channel; its absence
 // means this session has no host to enact anything. Say that plainly rather than proceeding toward
 // a socket path that cannot exist. [LAW:no-silent-failure]
+//
+// AND NAME THE LAUNCHER, because this is the one message a reader hits at the exact moment they
+// need to know how to become hosted. It used to say "start the session through the launcher" while
+// no launcher existed, then dropped the mention entirely while that was true; `bin/claude-laws` is
+// real again, so the sentence that tells you the switch is unavailable also tells you what makes it
+// available. The advice for THIS session is still "reject" — a launcher cannot host a session that
+// has already started.
 const dir = process.env.LAWS_SWITCH_DIR;
-if (!dir) die('LAWS_SWITCH_DIR is unset — this session has no host to enact a switch, so nothing can be applied. Pick "reject" and stay in the current craft.');
+if (!dir) die('LAWS_SWITCH_DIR is unset — this session has no host to enact a switch, so nothing can be applied. Pick "reject" and stay in the current craft. To get a session that CAN switch, start it with `claude-laws` instead of `claude`; if that is not on your PATH, run `install-launcher` once to put it there.');
 
 const pendingPath = path.join(dir, 'pending.json');
 if (!fs.existsSync(pendingPath)) die('no pending craft switch — the guard has not denied an incompatible load in this session.');
