@@ -188,6 +188,41 @@ fi
 
 # Same built directory as the no-node case, and for the same reason: "there is no claude on PATH"
 # has to be a fact this test creates, not one it hopes the host happens to have.
+# A DEPTH INHERITED FROM THE ENVIRONMENT IS PARSED, NOT EVALUATED. Bash arithmetic re-expands what
+# it is handed, so `a[$(...)]` runs the substitution inside the subscript and still evaluates to a
+# clean number — the command executes and the depth comes out right, which is why nothing looks
+# wrong afterwards. The sentinel is the assertion: a launch must not be able to run it.
+rm -f "$TMPDIR/pwned"
+STUB_STATE="$TMPDIR/state.inject"; export STUB_STATE; mkdir -p "$STUB_STATE"
+LAWS_LAUNCH_DEPTH='a[$(touch '"$TMPDIR"'/pwned)]' LAWS_CLAUDE_BIN="$STUB" "$LAUNCHER" >/dev/null 2>&1
+[ -e "$TMPDIR/pwned" ] && bad 'an inherited depth cannot execute a command' 'the payload ran' \
+                       || ok 'an inherited depth cannot execute a command'
+assert_match 'and a junk depth still starts a session' "$(recorded argv)" '--session-id'
+
+# A non-numeric depth counts as no depth rather than aborting the launch: the ceiling has to keep
+# working, and a corrupted counter has no partial value worth salvaging.
+STUB_STATE="$TMPDIR/state.junkdepth"; export STUB_STATE; mkdir -p "$STUB_STATE"
+out=$(LAWS_LAUNCH_DEPTH='not-a-number' LAWS_CLAUDE_BIN="$STUB" "$LAUNCHER" 2>&1 >/dev/null)
+assert_miss 'a junk depth is not mistaken for a deep nest' "$out" 'launchers deep'
+
+# THE LAST UNCOVERED DEGRADE. A launcher whose plugin tree has no launch.js cannot host, and the
+# user still asked for a session. Reached here by copying the launcher somewhere its plugin is not,
+# which is also what a mis-resolved PLUGIN_DIR would produce.
+ORPHAN="$TMPDIR/orphan"; mkdir -p "$ORPHAN/bin"
+cp "$LAUNCHER" "$ORPHAN/bin/claude-laws"; chmod +x "$ORPHAN/bin/claude-laws"
+STUB_STATE="$TMPDIR/state.nolaunch"; export STUB_STATE; mkdir -p "$STUB_STATE"
+out=$(LAWS_CLAUDE_BIN="$STUB" "$ORPHAN/bin/claude-laws" --model opus 2>&1 >/dev/null)
+assert_match 'a missing launch.js degrades to plain claude, loudly' "$out" 'launcher not found at'
+assert_eq    'and the session the user asked for still starts' "$(recorded argv)" '--model opus'
+assert_miss  'unhosted means unpinned' "$(recorded argv)" '--session-id'
+
+# `command -v` resolving a NAME is not the same as finding a FILE. An exported function named
+# claude resolves to the bare word, which readlink canonicalises against the cwd into a path that
+# does not exist — so an emptiness check passes and only executability catches it.
+out=$(claude() { :; }; export -f claude; env -u LAWS_CLAUDE_BIN "$LAUNCHER" 2>&1); rc=$?
+assert_eq    'a shell function named claude is refused, not exec-ed' "$rc" '127'
+assert_match 'and the message names the real cause' "$out" 'not an executable file'
+
 out=$(env PATH="$NODELESS" LAWS_CLAUDE_BIN= "$LAUNCHER" 2>&1); rc=$?
 assert_eq    'no claude anywhere exits 127' "$rc" '127'
 assert_match 'and says so' "$out" "no 'claude' on PATH"
@@ -225,11 +260,32 @@ assert_eq    'and an explicit directory works without HOME at all' "$rc" '0'
 # place. Without this case the probe can be deleted with every other test still green.
 BROKEN="$TMPDIR/brokenplugin"
 mkdir -p "$BROKEN"; cp -R "$HERE/.." "$BROKEN/laws"
-printf '#!/usr/bin/env bash\nexit 9\n' > "$BROKEN/laws/bin/claude-laws"
+# The marker definition stays: without it the installer refuses earlier, for a different and equally
+# correct reason, and this case would pass while testing something else entirely.
+printf "#!/usr/bin/env bash\nLAWS_LAUNCHER_SELF_MARKER='LAWS_LAUNCHER_SELF_MARKER'\nexit 9\n" \
+  > "$BROKEN/laws/bin/claude-laws"
 chmod +x "$BROKEN/laws/bin/claude-laws"
 out=$("$BROKEN/laws/bin/install-launcher" "$TMPDIR/bin2" 2>&1); rc=$?
 assert_eq    'an install whose launcher cannot run fails' "$rc" '1'
-assert_match 'and says the launcher it installed did not run' "$out" 'running it failed'
+assert_match 'and says the launcher it installed did not reach a session' "$out" 'did not reach a session'
+
+# A launcher with no marker definition cannot be stamped into a stub that the guard would recognise,
+# so the installer refuses rather than writing one that reintroduces the recursion it prevents.
+UNMARKED="$TMPDIR/unmarkedplugin"
+mkdir -p "$UNMARKED"; cp -R "$HERE/.." "$UNMARKED/laws"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$UNMARKED/laws/bin/claude-laws"
+chmod +x "$UNMARKED/laws/bin/claude-laws"
+out=$("$UNMARKED/laws/bin/install-launcher" "$TMPDIR/bin3" 2>&1); rc=$?
+assert_eq    'an installer that cannot find the marker refuses to write a stub' "$rc" '1'
+assert_match 'and says why that matters' "$out" 'not be recognised as a launcher'
+[ -e "$TMPDIR/bin3/claude-laws" ] && bad 'and writes no stub at all' 'one was written' \
+                                  || ok 'and writes no stub at all'
+
+# The token round-trips: whatever the launcher defines is what lands in the stub, so a rename in the
+# launcher carries into every stub without anyone editing the installer.
+TOKEN=$(sed -n "s/^LAWS_LAUNCHER_SELF_MARKER='\([^']*\)'.*/\1/p" "$LAUNCHER" | head -1)
+grep -qF "$TOKEN" "$BIN/claude-laws" && ok 'the stub carries the launcher-defined token' \
+                                     || bad 'the stub carries the launcher-defined token' "token [$TOKEN] absent"
 
 # Someone else's claude-laws is theirs. Replacing it silently is how an installer eats a file its
 # user cared about, so the marker — a fact about the file — is what authorises the overwrite.
