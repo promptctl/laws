@@ -56,7 +56,7 @@ const REWIND_SOURCE = 'message_selector';
 
 // DERIVED, never re-listed. bin/laws-switch already takes its accepted choices from this same
 // table, so a fifth action added there would be accepted by the CLI and refused here as
-// `unknownChoice` — the live path and the relaunch path silently disagreeing about what a switch is.
+// `unknownChoice` — the CLI and the enactment silently disagreeing about what a switch is.
 // [LAW:one-source-of-truth]
 const CHOICES = Object.keys(SWITCH_ACTIONS);
 
