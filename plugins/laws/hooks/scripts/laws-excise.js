@@ -515,8 +515,28 @@ function run(file, opts = {}) {
   return { file, changed, stubbed: stubbedAll };
 }
 
+// Every way an invocation can fail to name a transcript, by name.
+const REJECTED = {
+  unknownOption: 'unknown option',
+  noTranscript:  'no transcript given',
+};
+
+// The CLI's checkpoint: argv in, an invocation naming a transcript or a named refusal out — so
+// run() is reachable only from the ok arm and can never be handed a flag. An unrecognised --flag
+// is a STALE INVOCATION, not a positional: matching the first non-`--` token alone would take
+// `--apply request.json` — the handoff reader deleted with the relaunch — and report the
+// {"changed":false} that a clean transcript reports, which is a different fact wearing the same
+// shape. [LAW:parse-dont-validate] [LAW:no-silent-failure]
+function parseArgs(args) {
+  const unknown = args.filter((a) => a.startsWith('--') && a !== '--dry-run');
+  if (unknown.length) return { ok: false, reason: REJECTED.unknownOption, detail: unknown.join(' ') };
+  const file = args.find((a) => !a.startsWith('--'));
+  if (!file) return { ok: false, reason: REJECTED.noTranscript };
+  return { ok: true, file, dryRun: args.includes('--dry-run') };
+}
+
 module.exports = {
-  parsePolicy, loadPolicy, conflictsWith, MALFORMED_WARNING,
+  parsePolicy, loadPolicy, conflictsWith, MALFORMED_WARNING, parseArgs, REJECTED,
   // stubText is exported because the LIVE enactment (../injector/live-switch.js) stubs message
   // objects rather than JSONL lines, so it cannot go through exciseAt. Two spellings of the
   // tombstone wording would be two sources for one fact. [LAW:one-source-of-truth]
@@ -524,10 +544,11 @@ module.exports = {
 };
 
 if (require.main === module) (function main() {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes('--dry-run');
-  const file = args.find((a) => !a.startsWith('--'));
-  if (!file) { process.stderr.write('usage: laws-excise.js <transcript.jsonl> [--dry-run]\n'); process.exit(2); }
-  const res = run(file, { dryRun });
-  process.stdout.write(JSON.stringify(res) + '\n');
+  const inv = parseArgs(process.argv.slice(2));
+  if (!inv.ok) {
+    process.stderr.write(`laws-excise: ${inv.reason}${inv.detail ? `: ${inv.detail}` : ''}\n`
+      + 'usage: laws-excise.js <transcript.jsonl> [--dry-run]\n');
+    process.exit(2);
+  }
+  process.stdout.write(JSON.stringify(run(inv.file, { dryRun: inv.dryRun })) + '\n');
 })();

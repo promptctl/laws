@@ -617,5 +617,37 @@ t('no option ever removes a record from the transcript', () => {
   }
 });
 
+// ---- parseArgs(): the CLI checkpoint -------------------------------------------------------
+// The contract is that an invocation which does not name a transcript cannot reach run(). These
+// assert what argv MEANS, never how the scan is spelled.
+t('parseArgs names a transcript and carries --dry-run as a value', () => {
+  assert.deepStrictEqual(M.parseArgs(['t.jsonl']), { ok: true, file: 't.jsonl', dryRun: false });
+  assert.deepStrictEqual(M.parseArgs(['t.jsonl', '--dry-run']), { ok: true, file: 't.jsonl', dryRun: true });
+  assert.deepStrictEqual(M.parseArgs(['--dry-run', 't.jsonl']), { ok: true, file: 't.jsonl', dryRun: true });
+});
+
+t('parseArgs refuses an empty invocation rather than reporting a clean transcript', () => {
+  assert.deepStrictEqual(M.parseArgs([]), { ok: false, reason: M.REJECTED.noTranscript });
+  assert.deepStrictEqual(M.parseArgs(['--dry-run']), { ok: false, reason: M.REJECTED.noTranscript });
+});
+
+// The exact regression this checkpoint exists to close: `--apply` was the relaunch's handoff
+// reader, deleted with it. Matching the first non-`--` token alone would drop the flag and hand
+// run() the handoff FILE, which parses as a transcript with no craft loads and reports
+// {"changed":false} — a real answer's shape carrying "you gave me the wrong file".
+t('parseArgs refuses a retired flag instead of reinterpreting its value as the transcript', () => {
+  const r = M.parseArgs(['--apply', 'request.json']);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, M.REJECTED.unknownOption);
+  assert.strictEqual(r.detail, '--apply');
+  assert.strictEqual(r.file, undefined, 'request.json must not survive as the transcript');
+});
+
+t('parseArgs names every unknown option, not just the first', () => {
+  const r = M.parseArgs(['--apply', '--verbose', 't.jsonl']);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.detail, '--apply --verbose');
+});
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail === 0 ? 0 : 1);
