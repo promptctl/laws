@@ -17,9 +17,10 @@
 #
 # [seed-dir]     the seed bundle to start from. Defaults to horizon/seeds/macklebox,
 #                the reference seed.
-# [memento-ref]  git ref to pin memento and the /goal wording at, passed straight to
-#                pin-instrument.sh. Defaults to this repo's HEAD; a campaign pins it
-#                explicitly on every run.
+# [memento-ref]  git ref to pin memento at, resolved against the repository that OWNS
+#                memento (promptctl/memento) and passed straight to pin-instrument.sh.
+#                Defaults to that repo's default branch; a campaign pins it explicitly
+#                on every run. The /goal wording is pinned at this checkout's HEAD.
 #
 # THE CONFIG DIR IS AT A FIXED PATH AND THE WORK DIR IS NOT INSIDE IT. Claude Code keys
 # its stored credential to the config directory's PATH, so the config dir has to be the
