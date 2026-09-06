@@ -448,9 +448,8 @@ writer bolted alongside.
   `claude-laws` was the sole producer of `LAWS_SWITCH_SESSION` and `LAWS_SWITCH_DIR` — it minted the
   session id, pinned it with `--session-id`, and made the handoff directory — and nothing replaced it
   (`launch.js` passes `process.env` through unchanged; `bun-host.mjs`, `bin/laws-switch` and
-  `skill-router.sh` only read those two). For two days `skill-router.sh`'s gate could not be
-  satisfied by a session started any normal way, so the switch was never OFFERED at all — live path
-  or otherwise. Sequenced, not overlooked: restoring the relaunch would have re-added the
+  `skill-router.sh` only read those two). `skill-router.sh`'s gate could then not be satisfied by a
+  session started any normal way, so the switch was never OFFERED at all — live path or otherwise. Sequenced, not overlooked: restoring the relaunch would have re-added the
   `BUN_INSPECT` eval channel this epic exists to remove. CLOSED (2026-09-06) by
   `promptctl-injector-xy0.5`, which reclaims the name for a launcher that does the setup and none of
   the relaunching: `bin/claude-laws` mints and pins the session id, makes the handoff directory,

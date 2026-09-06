@@ -25,7 +25,16 @@ die()  { warn "$1"; exit 1; }
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
 LAUNCHER="$PLUGIN_DIR/bin/claude-laws"
-TARGET_DIR="${1:-$HOME/.local/bin}"
+# Only the DEFAULT needs HOME; an explicit argument does not. Both missing is the one combination
+# with no answer, and it is asked directly rather than inferred from the path that composing it
+# would have produced — a test against the literal "/.local/bin" would also fire on a caller who
+# passed that directory on purpose, which is a different situation with the same spelling.
+# [FRAMING:representation] check the fact, not a string that usually accompanies it.
+TARGET_DIR="${1:-}"
+if [ -z "$TARGET_DIR" ]; then
+  [ -n "${HOME:-}" ] || die "HOME is unset, so there is no default install directory; pass one: install-launcher <directory>"
+  TARGET_DIR="$HOME/.local/bin"
+fi
 TARGET="$TARGET_DIR/claude-laws"
 
 [ -x "$LAUNCHER" ] || die "no launcher at $LAUNCHER — this script must run from inside the laws plugin."
@@ -41,7 +50,15 @@ command -v node >/dev/null 2>&1 || die "node is required to host a session and i
 # hooks/injector/bun-runtime.mjs, which links Bun's module graph with them). Asking node whether it
 # HAS them answers the real question; asking its version number answers a proxy question with a
 # minimum somebody would have to guess and then maintain. [LAW:parse-dont-validate]
-if ! node --experimental-vm-modules --disable-warning=ExperimentalWarning \
+#
+# ONLY THE FLAGS THE PROBE IS ABOUT. `--disable-warning=ExperimentalWarning` was here to quiet the
+# experimental notice and had to go: node rejects an unknown option before running the script at
+# all (`node: bad option`, exit 9), and that flag postdates the capability being probed for. On a
+# node old enough to lack it but new enough to have vm.SourceTextModule, the probe reported the
+# exact opposite of the truth. The `2>/dev/null` below was already silencing the warning, so the
+# flag bought nothing it was not already getting. [LAW:no-silent-failure] a diagnostic that can be
+# confidently wrong is worse than none, and this one exists to be trusted at install time.
+if ! node --experimental-vm-modules \
        -e 'const vm=require("vm"); if(!vm.SourceTextModule||!vm.SyntheticModule) process.exit(1)' 2>/dev/null; then
   warn "this node ($(node --version)) has no vm.SourceTextModule; hosted sessions will fall back to stock claude."
   warn "the launcher will still install and still work — it just cannot host until node is newer."
