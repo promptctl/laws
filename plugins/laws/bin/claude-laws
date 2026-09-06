@@ -87,18 +87,29 @@ CLAUDE_BIN="${LAWS_CLAUDE_BIN:-$(command -v claude || true)}"
 [ -n "$CLAUDE_BIN" ] || { log "no 'claude' on PATH; nothing to launch"; exit 127; }
 CLAUDE_BIN="$(readlink -f "$CLAUDE_BIN")"
 # `command -v` answers "what does the name `claude` mean here", which is not the same question as
-# "which file is that". An exported shell FUNCTION named claude is the case that separates them: the
-# name resolves, but to the word `claude` rather than a path, and `readlink -f` then canonicalises
-# it against the current directory into a path that does not exist rather than failing. Measured —
-# a `-n` check would pass this, which is why the check is executability and not emptiness.
+# "which file is that". An exported shell FUNCTION named claude separates them: the name resolves,
+# but to the bare word `claude` rather than a path, and `readlink -f` on a bare word that names no
+# file exits 1 with empty output — so CLAUDE_BIN comes back EMPTY and the `exec` below would be a
+# bare one. Measured on macOS 26.3; an earlier note here claimed readlink canonicalised the word
+# into a non-existent path instead, which was an artifact of a stray /private/tmp/claude directory
+# on the measuring machine.
+#
+# EXECUTABILITY RATHER THAN EMPTINESS, because emptiness only covers the case above. LAWS_CLAUDE_BIN
+# is taken from the caller and never checked, so it can name a file that genuinely exists and still
+# cannot be run — a directory, or a claude that lost its +x bit. Both reach this line with a
+# non-empty path. `-x` alone is not enough for the directory: a directory is executable in the
+# permission sense (that is what makes it traversable), so the pair is "regular file AND executable"
+# — the actual shape of a thing exec can run. It subsumes the empty case, so there is one check here
+# and not two. [LAW:parse-dont-validate] past this line CLAUDE_BIN is a runnable regular file.
 #
 # Without it the bad path travels: nothing here objects, and the user's diagnosis arrives from
-# launch.js as `could not start /some/cwd/claude: ENOENT`, naming the wrong layer. Say it where the
-# fact is known. [LAW:parse-dont-validate] past this line CLAUDE_BIN is a runnable file.
-if [ ! -x "$CLAUDE_BIN" ]; then
+# launch.js as an ENOENT naming a path they never typed, pointed at the wrong layer. Say it where
+# the fact is known. [LAW:no-silent-failure]
+if [ ! -f "$CLAUDE_BIN" ] || [ ! -x "$CLAUDE_BIN" ]; then
   log "'claude' resolves to '$CLAUDE_BIN', which is not an executable file."
-  log "A shell function or alias named 'claude' does this: it is not something another process can run."
-  log "Point 'claude' at the real binary, or set LAWS_CLAUDE_BIN to its path."
+  log "A shell function or alias named 'claude' resolves to nothing runnable; so does a directory,"
+  log "or a binary that has lost its +x bit. Point 'claude' at the real binary, or set"
+  log "LAWS_CLAUDE_BIN to its path."
   exit 127
 fi
 

@@ -217,11 +217,25 @@ assert_eq    'and the session the user asked for still starts' "$(recorded argv)
 assert_miss  'unhosted means unpinned' "$(recorded argv)" '--session-id'
 
 # `command -v` resolving a NAME is not the same as finding a FILE. An exported function named
-# claude resolves to the bare word, which readlink canonicalises against the cwd into a path that
-# does not exist — so an emptiness check passes and only executability catches it.
+# claude resolves to the bare word, and `readlink -f` on a word that names no file exits 1 with
+# empty output, so the resolved path is empty and the exec below would be a bare one.
 out=$(claude() { :; }; export -f claude; env -u LAWS_CLAUDE_BIN "$LAUNCHER" 2>&1); rc=$?
 assert_eq    'a shell function named claude is refused, not exec-ed' "$rc" '127'
 assert_match 'and the message names the real cause' "$out" 'not an executable file'
+
+# THE TWO CASES EMPTINESS MISSES, which are why the check is "runnable regular file" and not `-n`.
+# LAWS_CLAUDE_BIN is taken from the caller and never checked, so it can name something that exists
+# and still cannot be run. Without these a `-n` check passes the whole suite.
+NOTEXEC="$TMPDIR/not-executable"; printf '#!/bin/sh\nexit 0\n' > "$NOTEXEC"; chmod -x "$NOTEXEC"
+out=$(LAWS_CLAUDE_BIN="$NOTEXEC" "$LAUNCHER" 2>&1); rc=$?
+assert_eq    'a claude that exists but is not executable is refused' "$rc" '127'
+assert_match 'and the message names the file it means' "$out" "$NOTEXEC"
+
+# A directory passes `-x` — that is what makes it traversable — so it is the case that separates
+# "executable" from "a thing exec can run".
+out=$(LAWS_CLAUDE_BIN="$TMPDIR" "$LAUNCHER" 2>&1); rc=$?
+assert_eq    'a claude that is a directory is refused' "$rc" '127'
+assert_match 'and says so the same way' "$out" 'not an executable file'
 
 out=$(env PATH="$NODELESS" LAWS_CLAUDE_BIN= "$LAUNCHER" 2>&1); rc=$?
 assert_eq    'no claude anywhere exits 127' "$rc" '127'
@@ -269,6 +283,19 @@ out=$("$BROKEN/laws/bin/install-launcher" "$TMPDIR/bin2" 2>&1); rc=$?
 assert_eq    'an install whose launcher cannot run fails' "$rc" '1'
 assert_match 'and says the launcher it installed did not reach a session' "$out" 'did not reach a session'
 
+# EXIT 0 IS NOT ARRIVAL. A launcher that returns cleanly without ever invoking the binary it was
+# handed is the case the exit code alone cannot see, and it is the reason the probe's stand-in
+# records being run rather than merely being pointed at. Without this the recording can be deleted
+# and the case above still passes on its exit code.
+SILENT="$TMPDIR/silentplugin"
+mkdir -p "$SILENT"; cp -R "$HERE/.." "$SILENT/laws"
+printf "#!/usr/bin/env bash\nLAWS_LAUNCHER_SELF_MARKER='LAWS_LAUNCHER_SELF_MARKER'\nexit 0\n" \
+  > "$SILENT/laws/bin/claude-laws"
+chmod +x "$SILENT/laws/bin/claude-laws"
+out=$("$SILENT/laws/bin/install-launcher" "$TMPDIR/bin4" 2>&1); rc=$?
+assert_eq    'an install whose launcher exits 0 without launching fails' "$rc" '1'
+assert_match 'and names what did not happen' "$out" 'never invoked the binary'
+
 # A launcher with no marker definition cannot be stamped into a stub that the guard would recognise,
 # so the installer refuses rather than writing one that reintroduces the recursion it prevents.
 UNMARKED="$TMPDIR/unmarkedplugin"
@@ -281,11 +308,21 @@ assert_match 'and says why that matters' "$out" 'not be recognised as a launcher
 [ -e "$TMPDIR/bin3/claude-laws" ] && bad 'and writes no stub at all' 'one was written' \
                                   || ok 'and writes no stub at all'
 
-# The token round-trips: whatever the launcher defines is what lands in the stub, so a rename in the
-# launcher carries into every stub without anyone editing the installer.
-TOKEN=$(sed -n "s/^LAWS_LAUNCHER_SELF_MARKER='\([^']*\)'.*/\1/p" "$LAUNCHER" | head -1)
-grep -qF "$TOKEN" "$BIN/claude-laws" && ok 'the stub carries the launcher-defined token' \
-                                     || bad 'the stub carries the launcher-defined token' "token [$TOKEN] absent"
+# THE TOKEN ROUND-TRIPS, tested with a token the installer cannot have been born knowing. Reading
+# the real launcher's token and finding it in the stub would pass just as well if the installer
+# spelled that same string itself, which is the drift this design exists to make unrepresentable —
+# so the launcher this case installs from has a RENAMED token, and only reading carries it through.
+RENAMED="$TMPDIR/renamedplugin"
+mkdir -p "$RENAMED"; cp -R "$HERE/.." "$RENAMED/laws"
+sed "s/^LAWS_LAUNCHER_SELF_MARKER='[^']*'/LAWS_LAUNCHER_SELF_MARKER='MARKER_RENAMED_BY_THE_TEST'/" \
+  "$LAUNCHER" > "$RENAMED/laws/bin/claude-laws"
+chmod +x "$RENAMED/laws/bin/claude-laws"
+out=$("$RENAMED/laws/bin/install-launcher" "$TMPDIR/bin5" 2>&1); rc=$?
+assert_eq 'an install from a launcher with a renamed token succeeds' "$rc" '0'
+grep -qF 'MARKER_RENAMED_BY_THE_TEST' "$TMPDIR/bin5/claude-laws" \
+  && ok 'and the stub carries the renamed token, so the installer never spells one' \
+  || bad 'and the stub carries the renamed token, so the installer never spells one' \
+        "stub says: $(cat "$TMPDIR/bin5/claude-laws" 2>/dev/null | head -3)"
 
 # Someone else's claude-laws is theirs. Replacing it silently is how an installer eats a file its
 # user cared about, so the marker — a fact about the file — is what authorises the overwrite.
