@@ -448,11 +448,15 @@ writer bolted alongside.
   `claude-laws` was the sole producer of `LAWS_SWITCH_SESSION` and `LAWS_SWITCH_DIR` — it minted the
   session id, pinned it with `--session-id`, and made the handoff directory — and nothing replaced it
   (`launch.js` passes `process.env` through unchanged; `bun-host.mjs`, `bin/laws-switch` and
-  `skill-router.sh` only read those two). `skill-router.sh`'s gate cannot be satisfied by a session
-  started any normal way, so on master today the switch is never OFFERED at all — live path or
-  otherwise — where the pre-PR relaunch path worked end to end. Sequenced, not overlooked: restoring
-  the relaunch would re-add the `BUN_INSPECT` eval channel this epic exists to remove, so
-  `promptctl-injector-xy0.5` closes the gap by putting a session-pinning launcher back on `PATH`.
+  `skill-router.sh` only read those two). For two days `skill-router.sh`'s gate could not be
+  satisfied by a session started any normal way, so the switch was never OFFERED at all — live path
+  or otherwise. Sequenced, not overlooked: restoring the relaunch would have re-added the
+  `BUN_INSPECT` eval channel this epic exists to remove. CLOSED (2026-09-06) by
+  `promptctl-injector-xy0.5`, which reclaims the name for a launcher that does the setup and none of
+  the relaunching: `bin/claude-laws` mints and pins the session id, makes the handoff directory,
+  and hands the resolved binary to `launch.js`. `bin/install-launcher` puts it on the user's shell
+  PATH, which is the one thing plugin installation cannot do — a plugin's `bin/` reaches the Bash
+  tool's PATH inside a session, and the launcher has to be runnable before there is one.
   The on-disk-files-survive invariant did not depend on any of it and still holds:
   `rewindTo`/`exciseAt` write nothing but the transcript, and the live path is handed no file writer
   at all.

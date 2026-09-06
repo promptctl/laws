@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# LAWS_LAUNCHER_SELF_MARKER — says "this file is a claude-laws launcher" to any launcher that is
+# deciding whether the `claude` it resolved is really claude. It is read from the FIRST 400 BYTES,
+# so it stays at the top; the check that reads it is further down, under "THE ONE FAILURE".
+#
+# claude-laws — the opt-in launcher that makes the craft-compatibility switch reachable.
+#
+# Stock `claude` is untouched; you opt in by running this instead. Everything about HOW a session
+# is hosted lives in hooks/injector/launch.js — the plan list, the boot deadline, the fall back to
+# stock claude. This file is the part that cannot live there: the setup a session needs before any
+# of it starts, and which only a process that owns the whole launch can establish.
+#
+# It does exactly three things, and each one exists because some other file reads its result:
+#
+#   1. LAWS_SWITCH_DIR — a handoff directory. `bun-host.mjs` opens the switch channel only when
+#      this is set, `skill-router.sh` records a pending decision only when the directory is there,
+#      and `bin/laws-switch` reads the decision back out of it.
+#   2. LAWS_SWITCH_SESSION — a freshly minted session id, pinned onto the launch with
+#      `--session-id` AND exported. The router's eligibility test is an equality check between the
+#      hook payload's session_id and this variable, which is what keeps a subagent or a nested
+#      `claude` from writing an offer into the hosting session's directory. See the scan below.
+#   3. Hand the resolved binary and the user's argv to launch.js, which owns the rest.
+#
+# Making `laws-switch` runnable is a FOURTH job this file deliberately does not do; see the note
+# above the handoff at the bottom for the measurement that removed it.
+#
+# [LAW:one-way-deps] setup flows downhill into the injector; nothing here reads back out of it, and
+#   no policy about which session wins lives in this file.
+# [LAW:no-silent-failure] every step that can fail is checked, and a failure degrades to a plain,
+#   working `claude` with a reason on stderr — never to a broken session and never silently.
+
+set -uo pipefail
+
+log() { printf 'claude-laws: %s\n' "$1" >&2; }
+
+# THE CIRCUIT BREAKER, and the reason it is separate from the marker check below. That check is a
+# judgement about a FILE — does what `claude` resolved to look like a launcher — and any judgement
+# can be wrong about a spelling nobody has met yet. Being wrong here does not cost a bad session; it
+# costs an unbounded fork bomb, because each launcher spawns a launcher. Measured, when the check
+# was disabled: 1,545 processes and a load average over 100.
+#
+# So the depth is counted as well, and the count is not a second opinion about the same question —
+# it is an absolute bound on the blast radius of the first one being wrong. A legitimate nested
+# `claude-laws` (an agent starting a session from inside a session) sits at 2 or 3, so a ceiling of
+# 8 is unreachable by honest use and turns the catastrophic failure into a loud one.
+# [LAW:no-silent-failure] the bound reports which failure it is rather than merely surviving it.
+LAWS_LAUNCH_DEPTH=$(( ${LAWS_LAUNCH_DEPTH:-0} + 1 ))
+export LAWS_LAUNCH_DEPTH
+if [ "$LAWS_LAUNCH_DEPTH" -gt 8 ]; then
+  log "nested $LAWS_LAUNCH_DEPTH launchers deep — 'claude' almost certainly resolves to a launcher"
+  log "that this build failed to recognise. Stopping instead of recursing. Point 'claude' at the real binary."
+  exit 78
+fi
+
+# Resolved through symlinks, because this file is normally reached by one. What `install-launcher`
+# puts on PATH is a stub that execs this path, but a user may equally symlink straight to it, and
+# then $0 is that link — whose dirname is wherever they dropped it, not the plugin. Resolving first
+# is what makes PLUGIN_DIR the plugin in both cases, and PLUGIN_DIR is the only thing SELF is for.
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+PLUGIN_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+LAUNCH="$PLUGIN_DIR/hooks/injector/launch.js"
+
+CLAUDE_BIN="${LAWS_CLAUDE_BIN:-$(command -v claude || true)}"
+[ -n "$CLAUDE_BIN" ] || { log "no 'claude' on PATH; nothing to launch"; exit 127; }
+CLAUDE_BIN="$(readlink -f "$CLAUDE_BIN")"
+
+# THE ONE FAILURE THAT CANNOT DEGRADE. Every other problem here ends with "run stock claude
+# instead", which is only an answer while stock claude is a different program. A user who points
+# `claude` at a launcher makes it the same program: launch.js's floor plan spawns that, which
+# resolves `claude` to a launcher again, forever. There is no fallback to reach for — the fallback
+# IS the bug — so this is the one path that stops rather than degrading.
+#
+# NOT MEASURED IN THEORY. Deleting this check and running the suite spawned 1,545 processes and put
+# the machine's load average over 100 before it was killed. It is the difference between an error
+# message and a fork bomb. [LAW:no-silent-failure]
+#
+# THE TEST IS "IS THIS A LAUNCHER", NOT "IS THIS ME", and the difference is the whole point. There
+# are two files that lead back here — this one, and the stub `install-launcher` generates, which is
+# a DIFFERENT file that execs this one. Comparing against "$SELF" catches an alias pointing at this
+# path and sails straight past an alias pointing at the stub, which recurses just as infinitely. So
+# both files carry the marker in their first lines, and the question asked is whether the resolved
+# binary has it.
+# One rule covering every spelling, rather than one arm per spelling somebody has thought of.
+# [LAW:types-are-the-program] the illegal state is "hosting a launcher", so that is what is named.
+#
+# It cannot false-positive on a legitimate nested `claude` started from inside a session: that
+# resolves to the real binary, which is a Mach-O with no marker in it. Reading a fixed 400 bytes
+# keeps the check the same cost against a 245MB binary as against a shell script.
+# LAWS_LAUNCHER_SELF_MARKER — the token this check greps for; see above before moving or renaming.
+if head -c 400 "$CLAUDE_BIN" 2>/dev/null | grep -q 'LAWS_LAUNCHER_SELF_MARKER'; then
+  log "'claude' on PATH resolves to a claude-laws launcher ($CLAUDE_BIN), not to claude itself,"
+  log "so there is no stock claude to host or to fall back to — hosting it would recurse forever."
+  log "Point 'claude' back at the real binary and run 'claude-laws' by name instead."
+  exit 78
+fi
+
+# Both degrades below exec, and both are deliberately ABOVE the handoff directory: nothing has been
+# allocated yet, so leaving by exec takes nothing with it and there is no cleanup to remember on a
+# path that replaces this shell. [LAW:polishing-by-subtraction] the ordering deletes the teardown.
+#
+# node's VERSION is deliberately not checked. launch.js already answers a node too old to link the
+# graph by falling back to stock claude, and a second check here would be a second enforcer of one
+# rule, free to disagree with it. `install-launcher` states the requirement once, at install time,
+# which is where a user can still act on it. [LAW:single-enforcer]
+if ! command -v node >/dev/null 2>&1; then
+  log "node not found; launching plain claude (craft switching disabled)"
+  exec "$CLAUDE_BIN" "$@"
+fi
+if [ ! -f "$LAUNCH" ]; then
+  log "launcher not found at $LAUNCH; launching plain claude (craft switching disabled)"
+  exec "$CLAUDE_BIN" "$@"
+fi
+
+LAWS_SWITCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/laws-switch.XXXXXX")" || {
+  log "could not create the switch directory; launching plain claude (craft switching disabled)"
+  exec "$CLAUDE_BIN" "$@"
+}
+# ONE owner for the directory's lifetime, and the reason this file runs launch.js as a CHILD rather
+# than exec'ing it: exec would replace this shell and the trap would never fire, leaving a directory
+# holding a live socket behind for every session ever started. Waiting costs one idle shell and
+# makes the cleanup unconditional. [LAW:no-ambient-temporal-coupling] the lifetime is owned, not
+# left to whatever happens to tidy /tmp.
+trap 'rm -rf "$LAWS_SWITCH_DIR"' EXIT
+export LAWS_SWITCH_DIR
+
+# WHY THE SWITCH MAY BE UNAVAILABLE, carried as a VALUE rather than a branch: one scan over the
+# user's argv yields the reason it cannot be offered, or empty when it can. Each case is then
+# enforced by the ABSENCE of the pin — the router offers nothing without LAWS_SWITCH_SESSION — so
+# there is one rule per exclusion instead of one code path per exclusion.
+# [LAW:dataflow-not-control-flow] a new exclusion is a new case arm setting a string.
+#
+#   -c/--continue/-r/--resume
+#                the user has already chosen which conversation to open, and claude REFUSES the pin
+#                alongside that choice: "--session-id can only be used with --continue or --resume
+#                if --fork-session is also specified" (re-measured against 2.1.259 for both the
+#                spaced and the `=` spelling of each flag). So pinning anyway does not degrade the
+#                switch, it breaks the launch outright. Adding --fork-session to make the pair legal
+#                is deliberately not done: it would silently turn the user's "continue" into a fork
+#                of their conversation, redefining the flag they handed us.
+#
+#   --session-id the user pinned their own id. Minting a second one would put two --session-id flags
+#                on one command line. Reusing THEIR id is deliberately not done either: the pin
+#                exists so "is this my session" is an equality test on an id this launcher alone
+#                minted, and adopting an id the user may also have handed to something else gives
+#                that test a second claimant.
+#
+# -p/--print USED TO BE HERE AND IS NOT AN OMISSION. It was excluded because a relaunch would
+# re-send the positional prompt and re-execute the user's whole request; there is no relaunch any
+# more, the switch is applied to the live session in place, and `claude --session-id <uuid> -p ...`
+# runs fine (measured, 2.1.259). The exclusion was about machinery that no longer exists.
+#
+# THE SCAN MATCHES THE FLAG NAME, NOT THE WHOLE TOKEN. claude accepts both spellings of a flag that
+# carries a value, so a scan over whole tokens would see `--session-id=<uuid>` as an unrecognised
+# positional and mint a SECOND --session-id onto the same command line: precisely the broken launch
+# this scan exists to prevent. Trimming at the first `=` puts both spellings of one flag on one arm.
+no_switch=""
+for arg in "$@"; do
+  case "${arg%%=*}" in
+    -c|--continue|-r|--resume)
+      no_switch="session selector ($arg): claude refuses --session-id alongside it, and the switch needs a pinned id"; break;;
+    --session-id)
+      no_switch="session id (--session-id): you pinned your own id, and the switch needs one this launcher minted"; break;;
+  esac
+done
+
+# node mints the id rather than uuidgen: node is already a hard requirement two checks above, and
+# borrowing it here is one fewer thing an install has to guarantee. [LAW:carrying-cost]
+SESSION_ARGS=()
+if [ -n "$no_switch" ]; then
+  log "craft switching disabled - $no_switch"
+elif ! LAWS_SWITCH_SESSION="$(node -e 'console.log(require("crypto").randomUUID())' 2>/dev/null)" \
+     || [ -z "$LAWS_SWITCH_SESSION" ]; then
+  log "could not mint a session id; launching without craft switching"
+else
+  export LAWS_SWITCH_SESSION
+  SESSION_ARGS=(--session-id "$LAWS_SWITCH_SESSION")
+fi
+
+# THIS DIRECTORY IS DELIBERATELY NOT PUT ON PATH, and that is a fix rather than an omission. The
+# deny message tells the agent to run `laws-switch`, so it has to be runnable — but Claude Code
+# already makes it so: a plugin's `bin/` is "added to the Bash tool's PATH while the plugin is
+# enabled" (documented, and measured inside a hosted session started by this file).
+#
+# Exporting it here as well was worse than redundant. It PREPENDS, so it wins, and it names the bin
+# beside THIS launcher rather than the bin of the enabled plugin — which are different directories
+# whenever the launcher on PATH is left pointing at an older install or a working copy. The session
+# would then run one version's `laws-switch` against another version's `pending.json`. Measured: with
+# the export, `command -v laws-switch` inside the session resolved to the launcher's own worktree;
+# without it, to the enabled plugin. [LAW:one-source-of-truth] the enabled plugin owns which
+# laws-switch is the real one, and this file must not shadow that answer with a second one.
+
+# The empty-array expansion is spelled the bash 3.2 way (`${a[@]+"${a[@]}"}`) because macOS still
+# ships 3.2 as /bin/bash, where a bare "${a[@]}" under `set -u` is an unbound-variable error.
+node "$LAUNCH" "$CLAUDE_BIN" ${SESSION_ARGS[@]+"${SESSION_ARGS[@]}"} "$@"
