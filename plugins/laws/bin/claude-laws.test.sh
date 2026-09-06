@@ -24,7 +24,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 pass=0
 fail=0
 ok()  { printf 'ok   - %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf 'FAIL - %s\n' "$1\n       %s\n" "${2:-}"; fail=$((fail+1)); }
+bad() { printf 'FAIL - %s\n       %s\n' "$1" "${2:-}"; fail=$((fail+1)); }
 
 assert_eq()    { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$3], got [$2]"; }
 assert_match() { case "$2" in *$3*) ok "$1";; *) bad "$1" "expected to contain [$3], got [$2]";; esac; }
@@ -114,10 +114,25 @@ assert_eq    "and still runs the user's one-shot" "$(recorded argv)" '-p say ok'
 # ---------------------------------------------------------------- the degrade paths
 
 # Nothing about a missing node is recoverable, but the user asked for a session and must still get
-# one. /usr/bin holds mktemp and readlink; node lives outside it, so this PATH is a real machine
-# without node rather than a mocked one.
+# one.
+#
+# THE ABSENCE IS BUILT, NOT BORROWED. This used to run with PATH=/usr/bin:/bin on the reasoning that
+# node lives elsewhere — true on macOS, false on any Debian/Ubuntu box where the distro `nodejs`
+# package puts it at /usr/bin/node. There the test would find a real node, take the normal path, and
+# fail on correct code: a false alarm caused by the host's layout rather than by a regression, which
+# is worse than not testing it. So the directory holds exactly the utilities the launcher needs and
+# nothing else, and "there is no node" becomes a property this test constructs.
+# `bash` is in the list because the launcher's shebang is `/usr/bin/env bash`, and env resolves the
+# interpreter through PATH — a directory without it fails before the script's first line, with
+# `env: bash: No such file or directory` rather than anything about node.
+NODELESS="$TMPDIR/nodeless"; mkdir -p "$NODELESS"
+for u in bash mktemp readlink head grep dirname basename cat rm mkdir sed; do
+  src=$(command -v "$u") && ln -sf "$src" "$NODELESS/$u"
+done
+[ -e "$NODELESS/node" ] && bad 'the nodeless PATH really has no node' 'a node symlink leaked in' \
+                        || ok 'the nodeless PATH really has no node'
 STUB_STATE="$TMPDIR/state.nonode"; export STUB_STATE; mkdir -p "$STUB_STATE"
-out=$(PATH=/usr/bin:/bin LAWS_CLAUDE_BIN="$STUB" "$LAUNCHER" --model opus 2>&1 >/dev/null)
+out=$(PATH="$NODELESS" LAWS_CLAUDE_BIN="$STUB" "$LAUNCHER" --model opus 2>&1 >/dev/null)
 assert_match 'no node degrades to plain claude, loudly' "$out" 'node not found'
 assert_eq    'no node still starts the session the user asked for' "$(recorded argv)" '--model opus'
 assert_miss  'no node means no pin, because nothing can host the switch' "$(recorded argv)" '--session-id'
@@ -171,7 +186,9 @@ if [ -n "${REAL_CLAUDE:=$(command -v claude || true)}" ]; then
   assert_eq 'the real claude binary carries no launcher marker' "$out" '0'
 fi
 
-out=$(env PATH=/usr/bin:/bin LAWS_CLAUDE_BIN= "$LAUNCHER" 2>&1); rc=$?
+# Same built directory as the no-node case, and for the same reason: "there is no claude on PATH"
+# has to be a fact this test creates, not one it hopes the host happens to have.
+out=$(env PATH="$NODELESS" LAWS_CLAUDE_BIN= "$LAUNCHER" 2>&1); rc=$?
 assert_eq    'no claude anywhere exits 127' "$rc" '127'
 assert_match 'and says so' "$out" "no 'claude' on PATH"
 
@@ -192,6 +209,15 @@ assert_match 'and carries the user flags' "$(recorded argv)" '--model opus'
 
 out=$("$INSTALLER" "$BIN" 2>&1); rc=$?
 assert_eq 'installing twice replaces our own stub rather than refusing' "$rc" '0'
+
+# The default target is built from $HOME, and under `set -u` an unset HOME would abort with bash's
+# own unbound-variable message — the one failure in this file that would arrive without a diagnosis,
+# in exactly the minimal container where it is most likely and least debuggable.
+out=$(env -u HOME "$INSTALLER" 2>&1); rc=$?
+assert_eq    'an unset HOME is diagnosed, not left to bash' "$rc" '1'
+assert_match 'and names the argument that fixes it' "$out" 'install-launcher <directory>'
+out=$(env -u HOME "$INSTALLER" "$TMPDIR/homeless" 2>&1); rc=$?
+assert_eq    'and an explicit directory works without HOME at all' "$rc" '0'
 
 # THE INSTALLER PROVES WHAT IT INSTALLED, rather than reporting success because a write returned 0.
 # A copy of the plugin whose launcher cannot run is the one situation where the write succeeds and
