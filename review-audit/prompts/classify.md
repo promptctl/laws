@@ -81,7 +81,7 @@ trailing commentary. Strings contain no raw newlines. Two record kinds:
  "premise": "correct" | "partly" | "wrong" | "uncertain",
  "response": "accepted_fix" | "accepted_premise_different_fix" | "pushed_back" | "already_fixed" | "no_response" | "mixed",
  "response_correct": "yes" | "no" | "uncertain",
- "should_have": "accepted_fix" | "accepted_premise_different_fix" | "pushed_back" | "already_fixed",
+ "should_have": "accepted_fix" | "accepted_premise_different_fix" | "pushed_back" | "already_fixed" | "mixed",
  "caused_by": "<repo>#<number>/F<j>" | null,
  "cause_kind": "incomplete_fix" | "regression_from_fix" | "comment_drift_from_fix" | "same_gap_other_instance" | "new_scope" | null,
  "law_cited_by_agent": ["<token>"],
@@ -108,7 +108,9 @@ Field meanings:
 - **response_correct** — was accept / different-fix / push-back the right call given the
   truth of the premise. Judge the *choice*, not how well the eventual fix was executed.
 - **should_have** — the response the agent should have given. Required on every record;
-  when `response_correct` is `yes` it equals `response`.
+  when `response_correct` is `yes` it equals `response`. `mixed` is legal here for the
+  same reason it is legal in `response`: a reviewer who bundles a real bug with a bad
+  suggestion has earned a split answer, and a split answer is the right one.
 - **caused_by / cause_kind** — fill these whenever this finding exists because of an
   earlier fix: on an ON-NAMED-FIX-COMMIT or ON-POST-REVIEW-COMMIT flag, and any time the
   text shows it regardless of flags. Name the earlier finding by id.
