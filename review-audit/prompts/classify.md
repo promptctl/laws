@@ -63,11 +63,23 @@ gh api repos/promptctl/<repo>/commits/<sha>        # the diff of one commit
 gh pr view <number> --repo promptctl/<repo> --json files,commits
 ```
 
+Whether a PR's commits resolve locally depends on how it was merged: a squash-merge
+leaves them unreachable, other strategies do not. Try `git cat-file -t <sha>` and fall
+back to `gh api` — do not assume either way.
+
 Do this for **every pushback** (the agent claiming the reviewer is wrong is a claim to
 check) and for **every finding flagged ON-NAMED-FIX-COMMIT** (you must see what the named
 fix commit actually changed to name the cause kind). Do not spend calls on findings whose
 thread text already settles the question — most accepted findings with a concrete fix
 description do.
+
+One pushback shape needs the check most and invites it least: *"I can't verify that from
+here."* That is a claim about the machine, and it is checkable like any other. Run
+`--version`, look in the installed types, read the binary's own help before you grade it
+`correct`. A real case: the agent declined a finding because "Bun's per-slot defaults are
+not something I can verify from anything on this machine", while bun and its type
+definitions were installed and carried all three defaults in `@default` tags — and the
+reviewer's proposed default was wrong too, so the fix would have shipped a bug.
 
 ## Output
 
@@ -120,7 +132,11 @@ Field meanings:
   new code. `same_gap_other_instance` = the same class of gap somewhere the fix did not
   sweep. `new_scope` = an unrelated new issue in the changed region.
   A flagged finding with `"caused_by": null` needs an `evidence` sentence saying why the
-  flag is a false positive here.
+  flag is a false positive here. The commonest false positive by far is code that only
+  *moved*: when a fix extracts or relocates a file, the next round flags every line in it,
+  and byte-for-byte pre-review logic reads as fix-caused. If the logic is unchanged from
+  before the review, that is `null` plus a sentence naming the relocation — not an
+  `incomplete_fix`.
 - **law_cited_by_agent** — every `[LAW:token]` the agent cited on this thread, tokens
   only, `[]` if none.
 - **law_citation_apt** — did the cited law actually apply, or was the token pasted onto a
