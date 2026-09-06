@@ -134,7 +134,7 @@ def read_session(path, project_dir):
             cwd = entry.get("cwd")
             if cwd and os.path.realpath(cwd) == want:
                 belongs = True
-            if entry.get("type") == "assistant":
+            if entry.get("type") == "assistant" and not entry.get("isSidechain"):
                 has_turn = True
 
             stamp = parse_time(entry.get("timestamp"))
@@ -222,8 +222,9 @@ def main():
         session["goal_issued"] = bool(issues)
         # The carry is only intact if the wording that arrived is the wording that was
         # pinned. "A /goal was issued" is the weaker claim that would pass while the
-        # agent paraphrased the condition into something else entirely.
-        session["goal_matches_pinned"] = any(a.strip() == pinned_goal for a in issues)
+        # agent paraphrased the condition into something else entirely. The LAST wording
+        # is the one in force, and the one goal_received shows, so both read the same line.
+        session["goal_matches_pinned"] = bool(issues) and issues[-1].strip() == pinned_goal
         # The wording that actually arrived, kept verbatim. A bare false says a carry
         # drifted; this says what it drifted INTO, which is the difference between a
         # human reading the bundle knowing something broke and knowing what broke.
@@ -235,11 +236,12 @@ def main():
     with_commits = [s for s in sessions if s["commits"]]
     # Sessions after the first are the ones the carry has to survive; session one was
     # issued its goal by the driver, so counting it would flatter the result. A successor
-    # is judged once it has taken a turn: the carried goal is announced several boot
-    # entries after the transcript first records its cwd, so a session still forming
-    # has nothing to be judged on yet, and a live poll landing in that window would
-    # otherwise read a healthy carry as a lost one.
-    successors = [s for s in sessions[1:] if s["has_turn"]]
+    # is judged once there is evidence either way - a turn, or a recorded goal: the
+    # carried goal is announced several boot entries after the transcript first records
+    # its cwd, so a session with neither is still forming, and a live poll landing in
+    # that window would otherwise read a healthy carry as a lost one. A session that
+    # received its goal and died before turning is judged on what it received.
+    successors = [s for s in sessions[1:] if s["has_turn"] or s["goal_issued"]]
     carried = [s for s in successors if s["goal_matches_pinned"]]
 
     json.dump(

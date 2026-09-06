@@ -63,8 +63,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # did not land is not a success. [LAW:no-silent-failure]
 end_run() {
   local status=$? config_dir="$1" work_dir="$2"
-  horizon_release_run_lock
-  horizon_capture_transcripts "$config_dir" "$work_dir"
+  # Each in a subshell, so a die in one cannot end the handler before the other runs;
+  # either failing is a failed run.
+  ( horizon_release_run_lock ) || status=1
+  ( horizon_capture_transcripts "$config_dir" "$work_dir" ) || status=1
   exit "$status"
 }
 
@@ -76,9 +78,8 @@ main() {
   horizon_need lit
   horizon_need python3
   horizon_need claude
-  # Reached only from the loop primitives in lib.sh, so declared here rather than in
-  # HORIZON_BASE_TOOLS: seeding and pinning do not drive a terminal, and making them
-  # require tmux would fail those scripts on a machine that never needed it.
+  # Loop primitives: declared by the scripts that reach them rather than in
+  # HORIZON_BASE_TOOLS, because seeding never does.
   horizon_need tmux
   horizon_need ps
   horizon_need basename
@@ -110,6 +111,14 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # shellcheck disable=SC2064
   trap "end_run '$config_dir' '$HORIZON_WORK_DIR'" EXIT
 
+  # Asserted before anything shared is touched, not after the session hangs: an
+  # unauthenticated config dir boots to a login prompt, which in an unattended run is
+  # indistinguishable from an agent thinking hard - and the remote must not be reset for
+  # a run that cannot launch. The credential is keyed to the config dir's path, so the
+  # pin's rebuild below keeps it.
+  horizon_log "checking the pinned config dir can authenticate"
+  horizon_assert_authenticated "$config_dir"
+
   mkdir -p "$HORIZON_WORK_DIR" || horizon_die "could not create the work dir $HORIZON_WORK_DIR"
   local instrument_dir="$HORIZON_WORK_DIR/instrument"
   local seed_out_dir="$HORIZON_WORK_DIR/seed"
@@ -133,12 +142,6 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # rather than by this line staying where it is.
   horizon_log "binding the run to $HORIZON_RUN_REPO"
   horizon_bind_remote "$project_dir"
-
-  # Asserted before the session exists, not after it hangs: an unauthenticated config dir
-  # boots to a login prompt, which in an unattended run is indistinguishable from an
-  # agent thinking hard.
-  horizon_log "checking the pinned config dir can authenticate"
-  horizon_assert_authenticated "$config_dir"
 
   horizon_log "recording unattended boot state"
   horizon_write_boot_state "$config_dir" "$project_dir"

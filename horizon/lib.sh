@@ -1214,6 +1214,19 @@ horizon_report() {
     || horizon_die "could not analyse the run's sessions"
 }
 
+# Usage: horizon_report_counts < report  -> "<consecutive committing sessions> <lost carries>"
+#
+# The one reader of the report's keys outside sessions.py. sessions.test.py runs it
+# against real sessions.py output, so the two sides cannot drift apart unnoticed.
+# [LAW:one-source-of-truth]
+horizon_report_counts() {
+  python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["consecutive_with_commits"], d["goal_carries_expected"] - d["goal_carries_intact"])
+' || horizon_die "could not read the run report"
+}
+
 # Usage: horizon_observe <config_dir> <project_dir> <goal_file> <target_sessions> <max_minutes>
 #
 # Watches until the run has produced <target_sessions> consecutive sessions of committed
@@ -1232,14 +1245,12 @@ horizon_observe() {
   local config_dir="$1" project_dir="$2" goal_file="$3"
   local target="$4" max_minutes="$5"
   local deadline=$((SECONDS + max_minutes * 60))
-  local report reached=0 last_seen=-1
+  local report counts reached=0 drifted last_seen=-1
 
   while [ "$SECONDS" -lt "$deadline" ]; do
     report="$(horizon_report "$config_dir" "$project_dir" "$goal_file")"
-    reached="$(printf '%s' "$report" | python3 -c '
-import json, sys
-print(json.load(sys.stdin)["consecutive_with_commits"])
-')" || horizon_die "could not read the run report"
+    counts="$(printf '%s' "$report" | horizon_report_counts)"
+    reached="${counts% *}" drifted="${counts#* }"
 
     if [ "$reached" != "$last_seen" ]; then
       horizon_log "sessions with committed work, consecutively: $reached/$target"
@@ -1253,12 +1264,6 @@ print(json.load(sys.stdin)["consecutive_with_commits"])
     # this whole design refuses. The driver still does not REPAIR a lost carry: memento's
     # goal-carry is the controlled variable under measurement, so this stops the run and
     # reports, and never re-issues. [LAW:no-silent-failure]
-    local drifted
-    drifted="$(printf '%s' "$report" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print(d["goal_carries_expected"] - d["goal_carries_intact"])
-')" || horizon_die "could not read the carry check from the run report"
     if [ "$drifted" -gt 0 ]; then
       printf '%s\n' "$report"
       horizon_die "the pinned goal did not survive $drifted session boundary/boundaries.

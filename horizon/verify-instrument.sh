@@ -148,7 +148,9 @@ if plugins[0]["enabled"] is not True:
   # rather than something that happens to occupy the same name. The pin has already
   # refused a snapshot whose skills were pointer stubs, so "same as the snapshot" is
   # the whole remaining question. [LAW:one-source-of-truth]
-  local snapshot_skills="$WORK/run1/pinned/$HORIZON_MEMENTO_PLUGIN_SUBDIR/skills"
+  # run2's: the second pinning rebuilt the shared config dir, so that is the snapshot
+  # the install in it came from.
+  local snapshot_skills="$WORK/run2/pinned/$HORIZON_MEMENTO_PLUGIN_SUBDIR/skills"
   local installed_skills="$install_path/skills" skill
   for skill in "${HORIZON_MEMENTO_SKILLS[@]}"; do
     [ -d "$installed_skills/$skill" ] || fail "installed memento is missing the '$skill' skill"

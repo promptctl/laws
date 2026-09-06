@@ -75,9 +75,10 @@ def carried_goal(text):
 
 def write_session(config_dir, slug, session_id, cwd, start, end,
                   goal_text=None, commands=(), goal_builder=None,
-                  bracket_type="assistant"):
+                  bracket_type="assistant", extra=()):
     """bracket_type is the type of the first and last entries: "assistant" is a session
-    that took a turn; a boot-time type is one still forming."""
+    that took a turn; a boot-time type is one still forming. extra entries are written
+    between them as given."""
     directory = os.path.join(config_dir, "projects", slug)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, "%s.jsonl" % session_id)
@@ -88,6 +89,8 @@ def write_session(config_dir, slug, session_id, cwd, start, end,
     for command_name, command_text in commands:
         lines.append(entry(session_id, cwd, start,
                            **slash_command(command_name, command_text)))
+    for fields in extra:
+        lines.append(entry(session_id, cwd, start, **fields))
     lines.append(entry(session_id, cwd, end, type=bracket_type))
     with open(path, "w") as handle:
         for line in lines:
@@ -183,6 +186,16 @@ def main():
               report["goal_carries_intact"] == 1,
               "got %s" % report["goal_carries_intact"])
 
+        # The driver reads two numbers out of this report through lib.sh. Fed the real
+        # output, so a key renamed on either side fails here and not mid-campaign.
+        counts = subprocess.run(
+            ["bash", "-c", '. "$1/lib.sh" && horizon_report_counts', "-", HERE],
+            input=json.dumps(report), capture_output=True, text=True,
+        )
+        check("lib.sh reads the report's counts the way sessions.py writes them",
+              counts.returncode == 0 and counts.stdout.split() == ["2", "2"],
+              "rc=%s out=%r err=%r" % (counts.returncode, counts.stdout, counts.stderr))
+
         # A commit outside every session window must be surfaced, not dropped: silently
         # discarding it would let a broken window calculation read as a clean run.
         report2 = run(config_dir, project_dir, goal_file,
@@ -255,6 +268,45 @@ def main():
               "got count=%s expected=%s intact=%s"
               % (forming["session_count"], forming["goal_carries_expected"],
                  forming["goal_carries_intact"]))
+
+    # Three successors that must be judged on evidence, not on list position or timing:
+    # one whose only assistant entry is a subagent's (not a turn of its own), one that
+    # received the carry and died before turning, and one that received the carry and
+    # then re-goaled itself with a paraphrase.
+    with tempfile.TemporaryDirectory() as tmp2:
+        cfg = os.path.join(tmp2, "config")
+        proj = os.path.join(tmp2, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp2, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+                      "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL)
+        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+                      "2026-01-01T02:00:01+00:00", bracket_type="file-history-snapshot",
+                      extra=[{"type": "assistant", "isSidechain": True}])
+        write_session(cfg, "p", "c", proj, "2026-01-01T03:00:00+00:00",
+                      "2026-01-01T03:00:01+00:00", bracket_type="file-history-snapshot",
+                      goal_text=PINNED_GOAL, goal_builder=carried_goal)
+        write_session(cfg, "p", "d", proj, "2026-01-01T04:00:00+00:00",
+                      "2026-01-01T05:00:00+00:00", goal_text=PINNED_GOAL,
+                      goal_builder=carried_goal,
+                      commands=[("/goal", "just keep going")])
+        judged = run(cfg, proj, gf, [])
+        by_id = {s["session_id"]: s for s in judged["sessions"]}
+        check("a subagent's assistant entry is not a turn of the session's own",
+              judged["goal_carries_expected"] == 2,
+              "got expected=%s" % judged["goal_carries_expected"])
+        check("a successor that received the carry and never turned is still judged",
+              by_id["c"]["goal_matches_pinned"] is True
+              and judged["goal_carries_intact"] == 1,
+              "got matches=%s intact=%s"
+              % (by_id["c"]["goal_matches_pinned"], judged["goal_carries_intact"]))
+        check("a session that re-goaled itself is judged on the wording in force",
+              by_id["d"]["goal_matches_pinned"] is False
+              and by_id["d"]["goal_received"] == "just keep going",
+              "got matches=%s received=%r"
+              % (by_id["d"]["goal_matches_pinned"], by_id["d"]["goal_received"]))
 
     # A goal containing a double quote must survive the carried spelling whole: a capture
     # that stops at the first quote reports a faithful carry as a paraphrase.
