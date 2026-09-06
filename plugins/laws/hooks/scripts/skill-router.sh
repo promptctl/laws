@@ -332,27 +332,27 @@ case "$HOOK_TYPE" in
         # Rendered once, for every message below: "laws:code" or "laws:code, laws:prose".
         conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
-        # The switch is an extra ROUTE OUT of the deny, offered only when the session was started
-        # by claude-laws (it is the launcher that can relaunch and enact the choice). Built as a
-        # VALUE - empty when unavailable - and always appended, so the deny path itself is the
-        # same code every time. [LAW:dataflow-not-control-flow]
+        # The switch is an extra ROUTE OUT of the deny, offered only to a HOSTED session - the only
+        # kind that can enact the choice against its own live conversation. Built as a VALUE - empty
+        # when unavailable - and always appended, so the deny path itself is the same code every
+        # time. [LAW:dataflow-not-control-flow]
         switch_offer=""
-        # ONLY THE SESSION THE LAUNCHER STARTED MAY BE OFFERED THE SWITCH, and the test is
-        # identity, not inference. The launcher pins its session id up front (claude --session-id)
-        # and exports it, so this compares ids rather than guessing from context.
+        # ONLY THE SESSION THESE VARS WERE PINNED FOR MAY BE OFFERED THE SWITCH, and the test is
+        # identity, not inference - hosting a session means minting its id and exporting it here.
         #
-        # Everything else that reaches this code inherits LAWS_SWITCH_DIR and BUN_INSPECT from the
-        # launcher's environment and would otherwise look eligible:
+        # Everything else that reaches this code inherits LAWS_SWITCH_DIR from that environment
+        # and would otherwise look eligible:
         #   - a dispatched SUBAGENT shares the owning session_id and is told apart only by
         #     agent_id, which is why the id check alone is not enough;
         #   - a NESTED `claude` started from a Bash call is its own top-level session - own
         #     session_id, no agent_id at all - so an "am I not a subagent" test lets it straight
         #     through.
-        # Either one writing pending.json would hand the launcher a decision naming a conversation
-        # it does not own, and either one running laws-switch would drive /exit down the launcher's
-        # inspector and kill the session that started it. The subagent escape hatch this very deny
-        # recommends would destroy its own caller.
-        # [LAW:composability] the dependence on being the launcher's own session is checked, never
+        # Either one writing pending.json overwrites the HOSTING session's offer, and the host reads
+        # the offer rather than the request - so it would recompute the switch from a transcript that
+        # is not its own and then apply the result to its own live conversation. The subagent escape
+        # hatch this very deny recommends would rewind its own caller to a point that never existed
+        # there.
+        # [LAW:composability] the dependence on being the host's own session is checked, never
         # assumed from the ambient environment.
         if [ -n "${LAWS_SWITCH_SESSION:-}" ] && [ "$sid" = "${LAWS_SWITCH_SESSION:-}" ] \
            && [ -z "$aid" ] && [ -n "${LAWS_SWITCH_DIR:-}" ] && [ -d "${LAWS_SWITCH_DIR:-}" ]; then
@@ -363,9 +363,9 @@ case "$HOOK_TYPE" in
           # advertising one backed by a corrupt pending.json. [LAW:parse-dont-validate] the check
           # yields a path known to resolve, not a promise that it does.
           if [ -f "$transcript" ]; then
-            # `current` carries the whole conflicting set, comma-joined - the same wire format the
-            # launcher reads back from the gate. Craft names are media slugs, so ',' cannot occur
-            # inside one.
+            # `current` carries the whole conflicting set, comma-joined. `bin/laws-switch` is its
+            # only reader - it splits it back for the reject message, while the session recomputes
+            # its own from the transcript. Craft names are media slugs, so ',' cannot occur in one.
             if printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
                  "$(json_escape "$sid")" "$(json_escape "$transcript")" \
                  "$(json_escape "$conflicts")" "$(json_escape "$craft")" \
@@ -380,8 +380,8 @@ case "$HOOK_TYPE" in
               echo "laws skill-router guard: could not record the pending craft switch in $LAWS_SWITCH_DIR; denying without a switch offer" >&2
             fi
           else
-            # A withheld offer has two very different causes that look identical from outside: the
-            # launcher legitimately not offering one (subagent, nested claude, unpinned session),
+            # A withheld offer has two very different causes that look identical from outside: this
+            # gate legitimately not offering one (subagent, nested claude, unpinned session),
             # and THIS - a transcript_path that did not survive extraction, which the header's own
             # example of a path truncated at an embedded quote produces. Falling through silently
             # collapses a parsing failure onto the shape of a deliberate decision, so the reader
@@ -397,18 +397,17 @@ case "$HOOK_TYPE" in
     ;;
 
   retire-craft)
-    # The launcher's half of retiring a craft, and the reason a switch takes effect at all.
+    # The lock half of retiring a craft, and the reason a switch takes effect at all.
     #
     # Retiring a craft is ONE job with two halves: the transcript surgery removes the craft's
     # guidance, and this releases the engagement marker. Ship only the first and the resumed
-    # session refuses the very load the switch existed to permit - the transcript says the craft
-    # is gone while the lock still says it is engaged. A --resume keeps the same session_id
-    # (measured, 2.1.226), so the lock is the SAME slot the guard already refused from, and
-    # session-start deliberately preserves the set across resume. Both halves or neither.
+    # session refuses the very load the switch existed to permit - the conversation says the craft
+    # is gone while the lock still says it is engaged. The session never restarts, so the lock is
+    # the SAME slot the guard already refused from. Both halves or neither.
     # [LAW:composability] one complete job, no hidden strings - the same lesson rewindTo records.
     #
     # The lock layout (LOCK_ROOT, sanitize, slot_dir_for) lives in this file and only here, so
-    # the launcher asks for the release instead of rebuilding the path and drifting from it.
+    # laws-switch asks for the release instead of rebuilding the path and drifting from it.
     # [LAW:one-source-of-truth]
     #
     # It releases only; it never pre-claims the incoming craft. A marker means "this craft
