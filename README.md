@@ -156,7 +156,7 @@ it - read it before editing any skill body here.
 /plugin uninstall laws@promptctl
 ```
 
-The hooks are stateless - they write nothing, and there is nothing of theirs to clean
-up. If you ran `install-launcher`, delete the file it wrote: `rm ~/.local/bin/claude-laws`,
-or wherever you pointed it. That installer is the only thing here that ever writes a
-file, and only if you ran it yourself.
+The hooks write only under your temp directory, and only for the session at hand - a
+`pending.json` when a craft switch is offered, and lock directories. Nothing of theirs
+persists, so there is nothing of theirs to clean up. If you ran `install-launcher`,
+delete the file it wrote: `rm ~/.local/bin/claude-laws`, or wherever you pointed it.

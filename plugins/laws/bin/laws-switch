@@ -57,7 +57,7 @@ if (!CHOICES.includes(choice)) die('unknown choice ' + JSON.stringify(choice) + 
 // available. The advice for THIS session is still "reject" — a launcher cannot host a session that
 // has already started.
 const dir = process.env.LAWS_SWITCH_DIR;
-if (!dir) die('LAWS_SWITCH_DIR is unset — this session has no host to enact a switch, so nothing can be applied. Pick "reject" and stay in the current craft. To get a session that CAN switch, start it with `claude-laws` instead of `claude`; if that is not on your PATH, run `install-launcher` once to put it there.');
+if (!dir) die('LAWS_SWITCH_DIR is unset — this session has no host to enact a switch, so nothing can be applied. Pick "reject" and stay in the current craft. To get a session that CAN switch, start it with `claude-laws` instead of `claude`; if that is not on your PATH, run `install-launcher` once — it installs the launcher and prints the export line to add if the install directory is not already on PATH.');
 
 const pendingPath = path.join(dir, 'pending.json');
 if (!fs.existsSync(pendingPath)) die('no pending craft switch — the guard has not denied an incompatible load in this session.');
