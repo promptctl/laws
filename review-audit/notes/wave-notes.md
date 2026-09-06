@@ -310,3 +310,80 @@ sides' recollection.
   agent classifying it calls this the batch's clearest evidence that "accept the finding
   and patch" is the wrong default when the finding is a false denial in your own guard.
   Worth quoting in the analysis as the positive case.
+
+## Documentation is a first-class source of avoidable rounds
+
+`comment_drift_from_fix` is 14% of all caused findings, and at least one PR is entirely
+this shape: the code finding closed in one exchange, and both extra rounds came from
+README.md entering the diff for the first time as part of a fix. Docs are not the cheap
+part of a fix; they are where the next round comes from.
+
+- `batch-132-memento` — memento#1: 100% of the avoidable rounds were
+  documentation-consistency work. F3 is a `regression_from_fix` off F2 and F4 a
+  `same_gap_other_instance` off the same F2, both in prose.
+
+## Branch protection on promptctl/.github does not require a reviewer
+
+Found independently by two agents in two PRs (`batch-079-laws` laws#43/F1 and
+`batch-132-memento` memento#1/F1), and verified by the orchestrator against the live API:
+
+    enforce_admins: true, allow_force_pushes: false, required_approving_review_count: 0
+
+Both agents graded the agent's "PR-only is a compensating control" pushback as correct on
+the protection existing, and both noted it does not guarantee a second reader. Outside
+this ticket's scope but worth the owner's attention.
+
+## A performance fix that silently drops a semantic property
+
+Named shape worth its own line in the analysis, because the rewrite looks equivalent and
+the reviewer had already approved the finding it answers.
+
+- `batch-142-promptctl` — promptctl#25/F25, a genuine `regression_from_fix`. The F5
+  performance rewrite replaced `targets.includes(index)` — evaluated once per step — with
+  an iteration over `targets`, evaluated once per occurrence. Duplicate handling that the
+  pre-fix code had right was lost. Twelve review rounds on this PR, the most in the corpus
+  so far, and 11 of its 31 findings are fix-caused.
+
+Guidance shape: when a fix changes the shape of a loop or a lookup for speed, name the
+property the old form guaranteed and show the new form still holds it.
+
+## `reply_hint` mislabels in both directions — third sighting
+
+- `batch-142-promptctl` — `accept` on three `mixed` responses (F10, F11, F22). With
+  `batch-080-laws`'s three `pushback` hints on replies opening "Valid.", the hint is
+  wrong often enough that nothing downstream should key on it. classify.md already says
+  so; the analysis should state the measured rate.
+
+## `avoidable_rounds` is not comparable across batches — compute it instead
+
+Two agents used two different definitions and both said so in their replies:
+
+- strict, as classify.md specifies ("rounds after the first that would not have happened
+  if the earlier fixes had been complete"): `batch-079-laws` scored laws#44 as 0
+  avoidable rounds across 5 rounds, despite 6 of its 13 findings being fix-caused.
+- loose ("rounds containing at least one fix-caused finding"): `batch-138-promptctl`
+  scored 2/0/3 and warned that the strict reading "would erase the signal".
+
+Agents who did not narrate their reading are unknowable. Summing the field across
+batches is therefore not sound.
+
+Resolution, and it is the move the pipeline already made for the flag: stop asking an
+agent for arithmetic the data can do. Every finding carries `round` in
+`derived/findings.jsonl` and `caused_by` is judged per finding, so
+"rounds containing at least one fix-caused finding" is derivable in report.py,
+consistent by construction across all 172 batches. Judged `avoidable_rounds` keeps its
+narrow strict meaning and is reported as a floor, clearly labelled.
+
+TODO (code, after the wave drains): add the derived metric to report.py; add one line to
+classify.md making the strict reading explicit and saying the softer quantity is
+computed, so an agent does not feel it is erasing signal by following the definition.
+
+## Flag recall failure, now with named cases
+
+- `batch-138-promptctl` — all 40 flags in the batch are file-level false positives
+  (each named commit checked with `gh api`, none touched the file the next round
+  flagged), and 2 of the 6 real causal links had no flag pointing at them at all:
+  `#1/F1→F10` (the commit named as F1's doc fix also re-branded `tmux:pane-processes`
+  in `env.d.ts` without touching the handler) and `#1/F3→F9` (F3's fix made
+  `watchSession` start throwing). Both were found by reading the fix commits, not the
+  flags.
