@@ -284,13 +284,32 @@ t('no hosted session is a plain failure that changes nothing and keeps the offer
 
 t('an unhosted session says so before it reaches for a socket', async () => {
   // LAWS_SWITCH_DIR unset is a different fact from a directory with no listener in it, and the
-  // difference is what the user has to act on: the first says "you did not start this session
-  // through the launcher", the second says "the launcher started it but the host is not answering".
+  // difference is what the user has to act on: the first says this session has no host at all, the
+  // second says a host was started but is not answering.
   const { dir, tmp } = bed();
   const out = await run(['tombstone'], { dir, tmp, env: { LAWS_SWITCH_DIR: '' } });
   assert.strictEqual(out.status, 1);
   assert.match(out.stderr, /LAWS_SWITCH_DIR is unset/);
-  assert.match(out.stderr, /not hosted by the laws launcher/);
+  assert.match(out.stderr, /no host to enact a switch/);
+});
+
+// A refusal that is untouched AND has spent the offer. `mutated: false` proves only that THIS
+// request changed nothing; it says nothing about whether the decision survived, and for this one
+// reason it did not - the session found the offer gone or half-written, which a concurrent
+// laws-switch that won the race produces. Telling that caller to retry points it at a decision
+// another call may already have enacted.
+t('a refusal that spent the offer is never told the decision is still there to retry', async () => {
+  const { dir, tmp } = bed();
+  const server = serve(dir, { ok: false, reason: 'no-switch-is-pending-in-this-session', detail: 'transcript', mutated: false });
+  const out = await run(['tombstone'], { dir, tmp });
+  server.close();
+  assert.strictEqual(out.status, 1);
+  assert.match(out.stderr, /no-switch-is-pending-in-this-session/);
+  assert.match(out.stderr, /no switch is pending any more/);
+  assert.ok(!/still there to retry/.test(out.stderr), 'promised a retry of a decision that is gone');
+  // Still the untouched arm: it must not scare the caller into auditing a conversation this
+  // request provably did not touch.
+  assert.ok(!/PART WAY/.test(out.stderr), 'warned about a mutation that provably never happened');
 });
 
 t('reject needs no session at all and changes nothing', async () => {
