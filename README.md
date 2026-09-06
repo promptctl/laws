@@ -104,9 +104,11 @@ From then on you opt in per session by running `claude-laws` instead of `claude`
 takes all the same arguments. Stock `claude` is untouched - the launcher never replaces
 or shadows it.
 
-The launcher, and only the launcher, needs `node` on your PATH, new enough to have
-`vm.SourceTextModule`. If node is missing or too old, the launcher starts plain claude
-and says so on stderr. It never leaves you without a session.
+The plugin never needs `node`. The launcher needs it at both ends. `install-launcher`
+looks for `node` on your PATH and refuses to install without it. At startup the launcher
+wants a `node` new enough to have `vm.SourceTextModule`; if it is missing or too old,
+the launcher starts plain claude and says so on stderr, so a `node` problem there costs
+you the switch, not the session.
 
 The cost of opting in is startup time: about 1.5 seconds more than stock claude -
 roughly 800ms to link ~1,640 JavaScript modules, plus about 700ms to the first frame.
