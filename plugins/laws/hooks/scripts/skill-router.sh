@@ -363,9 +363,9 @@ case "$HOOK_TYPE" in
           # advertising one backed by a corrupt pending.json. [LAW:parse-dont-validate] the check
           # yields a path known to resolve, not a promise that it does.
           if [ -f "$transcript" ]; then
-            # `current` carries the whole conflicting set, comma-joined - the same wire format the
-            # host reads back from the gate. Craft names are media slugs, so ',' cannot occur
-            # inside one.
+            # `current` carries the whole conflicting set, comma-joined. `bin/laws-switch` is its
+            # only reader - it splits it back for the reject message, while the session recomputes
+            # its own from the transcript. Craft names are media slugs, so ',' cannot occur in one.
             if printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
                  "$(json_escape "$sid")" "$(json_escape "$transcript")" \
                  "$(json_escape "$conflicts")" "$(json_escape "$craft")" \
