@@ -74,18 +74,21 @@ def carried_goal(text):
 
 
 def write_session(config_dir, slug, session_id, cwd, start, end,
-                  goal_text=None, commands=(), goal_builder=None):
+                  goal_text=None, commands=(), goal_builder=None,
+                  bracket_type="assistant"):
+    """bracket_type is the type of the first and last entries: "assistant" is a session
+    that took a turn; a boot-time type is one still forming."""
     directory = os.path.join(config_dir, "projects", slug)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, "%s.jsonl" % session_id)
-    lines = [entry(session_id, cwd, start, type="assistant")]
+    lines = [entry(session_id, cwd, start, type=bracket_type)]
     if goal_text is not None:
         build = goal_builder or (lambda text: slash_command("/goal", text))
         lines.append(entry(session_id, cwd, start, **build(goal_text)))
     for command_name, command_text in commands:
         lines.append(entry(session_id, cwd, start,
                            **slash_command(command_name, command_text)))
-    lines.append(entry(session_id, cwd, end, type="assistant"))
+    lines.append(entry(session_id, cwd, end, type=bracket_type))
     with open(path, "w") as handle:
         for line in lines:
             handle.write(json.dumps(line) + "\n")
@@ -229,6 +232,50 @@ def main():
                   seen["goal_carries_intact"] == 1,
                   "goal_carries_intact=%s goal_received=%r"
                   % (seen["goal_carries_intact"], seen["sessions"][1]["goal_received"]))
+
+    # A successor whose transcript exists but holds no turn yet is still booting: the
+    # carried goal is announced several entries in, so judging it now would read a carry
+    # that has not happened yet as one that failed - and stop a healthy run.
+    with tempfile.TemporaryDirectory() as tmp2:
+        cfg = os.path.join(tmp2, "config")
+        proj = os.path.join(tmp2, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp2, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+                      "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL)
+        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+                      "2026-01-01T02:00:01+00:00", bracket_type="file-history-snapshot")
+        forming = run(cfg, proj, gf, [])
+        check("a successor with no turn yet is not judged for its carry",
+              forming["session_count"] == 2
+              and forming["goal_carries_expected"] == 0
+              and forming["goal_carries_intact"] == 0,
+              "got count=%s expected=%s intact=%s"
+              % (forming["session_count"], forming["goal_carries_expected"],
+                 forming["goal_carries_intact"]))
+
+    # A goal containing a double quote must survive the carried spelling whole: a capture
+    # that stops at the first quote reports a faithful carry as a paraphrase.
+    quoted = 'Ship the "macklebox" seed.\n\nThen say "done".'
+    with tempfile.TemporaryDirectory() as tmp2:
+        cfg = os.path.join(tmp2, "config")
+        proj = os.path.join(tmp2, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp2, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(quoted + "\n")
+        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+                      "2026-01-01T01:00:00+00:00", goal_text=quoted)
+        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+                      "2026-01-01T03:00:00+00:00", goal_text=quoted,
+                      goal_builder=carried_goal)
+        seen = run(cfg, proj, gf, [])
+        check("a carried goal containing a double quote is read whole",
+              seen["goal_carries_intact"] == 1
+              and seen["sessions"][1]["goal_received"] == quoted,
+              "goal_received=%r" % seen["sessions"][1]["goal_received"])
 
     # The drift this eval exists to catch: a carry that ARRIVES but has been paraphrased.
     # "A goal was carried" must not be the claim being tested - the wording is.

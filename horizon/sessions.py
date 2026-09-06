@@ -46,9 +46,11 @@ RAW_GOAL_RE = re.compile(r"\A\s*/goal\s+(?P<goal>.+)\Z", re.DOTALL)
 # /goal installs a session-scoped Stop hook and the successor is told its condition. No
 # /goal message appears in that transcript at all, so this is the ONLY spelling that can
 # evidence a carry - a reader without it can never see one, and reports a healthy carry
-# and a dead one identically.
+# and a dead one identically. Anchored on the template's closing phrase rather than on
+# the next quote character: the goal is prose, and prose contains quotes.
 STOP_HOOK_GOAL_RE = re.compile(
-    r"Stop hook is now active with condition:\s*\"(?P<goal>.*?)\"", re.DOTALL
+    r"Stop hook is now active with condition:\s*\"(?P<goal>.*)\"\.\s*Briefly acknowledge",
+    re.DOTALL,
 )
 
 
@@ -117,6 +119,7 @@ def read_session(path, project_dir):
     want = os.path.realpath(project_dir)
     session_id = os.path.splitext(os.path.basename(path))[0]
     belongs = False
+    has_turn = False
     first_time = None
     last_time = None
     goal_args = []
@@ -131,6 +134,8 @@ def read_session(path, project_dir):
             cwd = entry.get("cwd")
             if cwd and os.path.realpath(cwd) == want:
                 belongs = True
+            if entry.get("type") == "assistant":
+                has_turn = True
 
             stamp = parse_time(entry.get("timestamp"))
             if stamp is not None:
@@ -155,6 +160,7 @@ def read_session(path, project_dir):
         "ended": last_time.isoformat() if last_time else None,
         "_start": first_time,
         "_end": last_time,
+        "has_turn": has_turn,
         "goal_issues": goal_args,
     }
 
@@ -228,8 +234,13 @@ def main():
 
     with_commits = [s for s in sessions if s["commits"]]
     # Sessions after the first are the ones the carry has to survive; session one was
-    # issued its goal by the driver, so counting it would flatter the result.
-    carried = [s for s in sessions[1:] if s["goal_matches_pinned"]]
+    # issued its goal by the driver, so counting it would flatter the result. A successor
+    # is judged once it has taken a turn: the carried goal is announced several boot
+    # entries after the transcript first records its cwd, so a session still forming
+    # has nothing to be judged on yet, and a live poll landing in that window would
+    # otherwise read a healthy carry as a lost one.
+    successors = [s for s in sessions[1:] if s["has_turn"]]
+    carried = [s for s in successors if s["goal_matches_pinned"]]
 
     json.dump(
         {
@@ -238,7 +249,7 @@ def main():
             "sessions_with_commits": len(with_commits),
             "consecutive_with_commits": consecutive_run(sessions),
             "goal_carries_intact": len(carried),
-            "goal_carries_expected": max(len(sessions) - 1, 0),
+            "goal_carries_expected": len(successors),
             "unattributed_commits": unattributed,
         },
         sys.stdout,
