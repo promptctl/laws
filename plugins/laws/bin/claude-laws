@@ -144,10 +144,18 @@ export LAWS_SWITCH_DIR
 #                minted, and adopting an id the user may also have handed to something else gives
 #                that test a second claimant.
 #
-# -p/--print USED TO BE HERE AND IS NOT AN OMISSION. It was excluded because a relaunch would
-# re-send the positional prompt and re-execute the user's whole request; there is no relaunch any
-# more, the switch is applied to the live session in place, and `claude --session-id <uuid> -p ...`
-# runs fine (measured, 2.1.259). The exclusion was about machinery that no longer exists.
+#   -p/--print   a one-shot session can be OFFERED a switch it can never enact, which is worse than
+#                not offering one. The old reason for this arm — a relaunch would re-send the
+#                positional prompt — died with the relaunch, and `claude --session-id <uuid> -p ...`
+#                does run fine, so the arm was briefly deleted. Measuring the thing the sentence is
+#                actually about put it back: under `-p` the app never constructs the class that owns
+#                a conversation, so the seam in its field initializer never fires and `laws-switch`
+#                fails with `no-seam-ever-announced-a-conversation` — the offer already made and the
+#                pending decision already spent. The same steps in a real PTY switch live and
+#                report "this session was not restarted" (both measured on 2.1.259).
+#                The flag PARSES fine and the switch cannot be ENACTED; only the second question
+#                decides this arm. [LAW:no-silent-failure] withhold the offer rather than promise
+#                an enactment that has nowhere to happen.
 #
 # THE SCAN MATCHES THE FLAG NAME, NOT THE WHOLE TOKEN. claude accepts both spellings of a flag that
 # carries a value, so a scan over whole tokens would see `--session-id=<uuid>` as an unrecognised
@@ -156,6 +164,8 @@ export LAWS_SWITCH_DIR
 no_switch=""
 for arg in "$@"; do
   case "${arg%%=*}" in
+    -p|--print)
+      no_switch="one-shot session (-p): the app builds no conversation controller, so a switch could be offered but never enacted"; break;;
     -c|--continue|-r|--resume)
       no_switch="session selector ($arg): claude refuses --session-id alongside it, and the switch needs a pinned id"; break;;
     --session-id)

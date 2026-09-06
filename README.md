@@ -112,9 +112,11 @@ The cost of opting in is startup time: about 1.5 seconds more than stock claude 
 roughly 800ms to link ~1,640 JavaScript modules, plus about 700ms to the first frame.
 Stock claude has essentially no such delay.
 
-Two cases get a normal session without the switch, and the launcher says so on stderr
+Three cases get a normal session without the switch, and the launcher says so on stderr
 when it happens: a session selector (`-c`, `--continue`, `-r`, `--resume`), because
-claude refuses a pinned session id alongside one, and your own `--session-id`.
+claude refuses a pinned session id alongside one; your own `--session-id`; and
+`-p`/`--print`, because a one-shot run has no live conversation for the switch to act
+on.
 
 Plugin installs are version-stamped by Claude Code, so after a plugin update the
 installed `claude-laws` may point at the old plugin directory. It tells you exactly

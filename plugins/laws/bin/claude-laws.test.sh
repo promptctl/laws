@@ -99,12 +99,17 @@ run ownid --session-id=deadbeef
 assert_miss "the user's own --session-id is not doubled" "$(recorded argv)" '--session-id deadbeef'
 assert_eq   "the user's own --session-id is passed through" "$(recorded argv)" '--session-id=deadbeef'
 
-# REGRESSION. -p used to be excluded because a relaunch would re-send the prompt; there is no
-# relaunch any more and `claude --session-id <uuid> -p ...` runs fine, so a one-shot session gets
-# the switch like any other. A future edit that reinstates the exclusion fails here.
+# -p IS EXCLUDED, AND THE REASON MATTERS BECAUSE IT IS NOT THE OLD ONE. The original arm was about
+# a relaunch re-sending the prompt, and it died with the relaunch — `claude --session-id <uuid> -p`
+# parses fine. What keeps the arm is a different fact, measured on 2.1.259: under -p the app never
+# constructs the class that owns a conversation, so the seam never fires and laws-switch fails with
+# no-seam-ever-announced-a-conversation, having already spent the pending decision. The identical
+# steps in a real PTY switch live. Offering there is a promise with nowhere to land.
 run oneshot -p 'say ok'
-assert_match 'a -p session is still pinned' "$(recorded argv)" '--session-id'
-assert_miss  'a -p session is not called degraded' "$out" 'craft switching disabled'
+assert_miss  'a -p session is not pinned, because it could never enact a switch' "$(recorded argv)" '--session-id'
+assert_match 'and says the switch is unavailable' "$out" 'craft switching disabled'
+assert_match 'naming enactment, not flag parsing, as the reason' "$out" 'never enacted'
+assert_eq    "and still runs the user's one-shot" "$(recorded argv)" '-p say ok'
 
 # ---------------------------------------------------------------- the degrade paths
 
