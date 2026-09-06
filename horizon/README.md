@@ -242,7 +242,8 @@ which is the fragility capture exists to remove.
 
 ### Two paths, opposite lifetimes, one login
 
-A run touches two directories, and they are deliberately not nested:
+A run touches two directories and one tmux session; the directories are deliberately
+not nested:
 
 - `~/.horizon/config` (override `HORIZON_CONFIG_DIR`) — the `CLAUDE_CONFIG_DIR` every
   run launches against. **Permanent, and its exact path is load-bearing.** Claude Code
@@ -253,6 +254,17 @@ A run touches two directories, and they are deliberately not nested:
   when a run starts**, so the last run's transcripts and commits can never be mistaken
   for this one's. The finished run is copied to wherever runs are being kept, then
   removed.
+- The tmux session `horizon-run` (not overridable) — the lock. `run-loop.sh` creates it
+  before it creates the work dir, rebuilds the config dir, or resets the shared remote,
+  and tmux refuses a duplicate session name atomically, so a second invocation dies at
+  once and leaves nothing behind. **Held for the run's whole life:** claude is launched
+  into that session's pane, and the driver's exit handler kills the session on every exit
+  path — success, a failed assertion, the wall-clock ceiling — before it moves the
+  transcripts out of the config dir, so after `run-loop.sh` exits nothing is still
+  running and the next run starts against an idle machine. A driver killed without
+  exiting (`kill -9`, a crashed terminal) leaves the session behind, and the next run
+  refuses to start until `tmux kill-session -t horizon-run` clears it — only do that
+  when no run is actually live.
 
 Nesting them is a mistake this code made once: with the config dir living inside the run
 dir, the work dir's freshness guard had to refuse the very directory the credential was

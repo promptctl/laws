@@ -92,7 +92,7 @@ horizon_need() {
 # function, and the five drifting per-script copies this replaced are the worse failure.
 # cat/tar/base64 stay with pin-instrument.sh only because they are reached from nothing
 # else at all.
-HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp rm sort tr)
+HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tr wc)
 
 horizon_need_base() {
   local tool
@@ -274,7 +274,10 @@ horizon_provision_config_dir() {
   local config_dir="$1" snapshot_dir="$2"
   # A config dir a live session is running out of is not rebuilt underneath it: the
   # session would keep its process and lose its plugin cache, and nothing would say so.
-  [ "$(horizon_live_run_config_dir)" != "$config_dir" ] \
+  # Assigned before it is compared: a die inside `[ "$(...)" ]` is invisible to errexit.
+  local live
+  live="$(horizon_live_run_config_dir)"
+  [ "$live" != "$config_dir" ] \
     || horizon_die "a live run (tmux session $HORIZON_TMUX_SESSION) is using $config_dir; refusing to rebuild it"
   rm -rf "$config_dir"
   mkdir -p "$config_dir"
@@ -738,7 +741,6 @@ horizon_bind_remote() {
   # [LAW:no-silent-failure]
   local prs branches
   prs="$(horizon_remote_open_prs "$repo")"
-  branches="$(horizon_remote_branches "$repo")"
 
   # Closing a PR with --delete-branch retires the pull request and its head branch in one
   # call, so the two cannot come apart and leave a branch whose PR is gone.
@@ -749,6 +751,9 @@ horizon_bind_remote() {
       || horizon_die "could not close leftover PR #$pr in $repo"
   done
 
+  # Listed after the PRs are closed, so this is what survived --delete-branch rather
+  # than a list that names branches the loop above already removed.
+  branches="$(horizon_remote_branches "$repo")"
   # Branches an agent pushed without ever opening a PR are left behind by the loop above.
   # master is skipped rather than attempted-and-forgiven: GitHub refuses to delete a
   # default branch, and letting that refusal pass would be indistinguishable from a real
@@ -976,42 +981,67 @@ merge(settings_path, bypass)
 PY
 }
 
-# Usage: horizon_launch_session <config_dir> <project_dir>
-#
-# The ONE write that starts a run. claude is launched inside a detached tmux session
-# because that single choice decides whether the run stays isolated - see
-# horizon_assert_transport, which is how that claim gets checked instead of assumed.
-#
-# CLAUDE_CONFIG_DIR is passed with tmux's own `-e` rather than exported into the
-# environment: a tmux session created on an ALREADY-RUNNING server inherits the
-# server's environment, not the caller's, so an exported value would silently not
-# arrive and the run would read the operator's real config. [LAW:no-silent-failure]
-horizon_launch_session() {
-  local config_dir="$1" project_dir="$2"
-  # No kill-session first: a session by this name is a live run, and tmux refusing the
-  # duplicate is the right outcome. run-loop.sh checks the same fact up front, before
-  # anything shared has been touched, so this line is not where a second run is caught.
-  tmux new-session -d -s "$HORIZON_TMUX_SESSION" -x 200 -y 50 -c "$project_dir" \
-    -e CLAUDE_CONFIG_DIR="$config_dir" \
-    "claude --dangerously-skip-permissions" \
-    || horizon_die "could not launch the run session in tmux"
-}
-
-# Usage: horizon_live_run_config_dir  -> the CLAUDE_CONFIG_DIR of the live run, or nothing
+# Usage: horizon_take_run_lock
 #
 # THE LOCK. Every resource a run holds is a machine-wide singleton - the config dir at its
-# fixed path, the tmux session name, the shared remote - and the one thing they have in
-# common is that a live run is a live tmux session by this name. So the session IS the
-# lock: it exists exactly while a run does, it disappears with the process on any kind of
-# death, and there is no lock file to go stale. The config dir comes back with it because
-# it is the resource callers other than run-loop.sh need to check against.
-# [LAW:no-ambient-temporal-coupling] the "is another run live" fact has one owner.
+# fixed path, the tmux session name, the shared remote - so the run is serialized by ONE
+# thing all of them share: the tmux session it will live in. Creating it is the lock -
+# tmux refuses a duplicate name atomically, so two drivers cannot both pass - and it is
+# taken before anything shared is touched, then held until horizon_release_run_lock. The
+# session starts on the default shell; horizon_launch_session replaces that with claude.
+# It disappears with the server on any kind of death, so there is no lock file to go
+# stale. [LAW:single-enforcer] one checkpoint for "one run at a time".
+horizon_take_run_lock() {
+  tmux new-session -d -s "$HORIZON_TMUX_SESSION" -x 200 -y 50 \
+    || horizon_die "a run is live in tmux session $HORIZON_TMUX_SESSION, or a killed driver left it.
+One run at a time; \`tmux kill-session -t $HORIZON_TMUX_SESSION\` clears a session no run is using."
+}
+
+# Usage: horizon_release_run_lock
+#
+# A session that already died released the lock itself; that is not a failure here.
+horizon_release_run_lock() {
+  tmux has-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null || return 0
+  tmux kill-session -t "$HORIZON_TMUX_SESSION" \
+    || horizon_die "could not end the run session $HORIZON_TMUX_SESSION"
+}
+
+# Usage: horizon_launch_session <config_dir> <project_dir>
+#
+# The ONE write that starts a run: claude replaces the placeholder shell in the locked
+# session's pane. Inside tmux because that single choice decides whether the run stays
+# isolated - see horizon_assert_transport, which is how that claim gets checked instead
+# of assumed.
+#
+# CLAUDE_CONFIG_DIR is set in the SESSION's environment rather than exported: a pane
+# spawned on an already-running tmux server inherits the server's environment, not the
+# caller's, so an exported value would silently not arrive and the run would read the
+# operator's real config. [LAW:no-silent-failure] Bound here rather than when the lock is
+# taken, because it is also how horizon_live_run_config_dir tells a launched run from a
+# reservation still being set up.
+horizon_launch_session() {
+  local config_dir="$1" project_dir="$2"
+  tmux set-environment -t "$HORIZON_TMUX_SESSION" CLAUDE_CONFIG_DIR "$config_dir" \
+    || horizon_die "could not bind CLAUDE_CONFIG_DIR into the run session"
+  tmux respawn-pane -k -t "$HORIZON_TMUX_SESSION" -c "$project_dir" \
+    "claude --dangerously-skip-permissions" \
+    || horizon_die "could not launch claude in the run session"
+}
+
+# Usage: horizon_live_run_config_dir  -> the CLAUDE_CONFIG_DIR of the launched run, or nothing
+#
+# The config dir a session is running out of, for callers that must not rebuild it. Empty
+# while the session is only a reservation (see horizon_launch_session), which is what
+# lets the driver's own pin proceed under its own lock. A session that cannot be read is
+# an error, not an idle machine. [LAW:no-silent-failure]
 horizon_live_run_config_dir() {
   # has-session reports absence on stderr and by exit status; absence is the answer here,
   # not an error. [LAW:no-silent-failure] exception: the status is read, the text is noise.
   tmux has-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null || return 0
-  tmux show-environment -t "$HORIZON_TMUX_SESSION" CLAUDE_CONFIG_DIR \
-    | sed -n 's/^CLAUDE_CONFIG_DIR=//p'
+  local env
+  env="$(tmux show-environment -t "$HORIZON_TMUX_SESSION")" \
+    || horizon_die "tmux session $HORIZON_TMUX_SESSION exists but its environment could not be read"
+  printf '%s\n' "$env" | sed -n 's/^CLAUDE_CONFIG_DIR=//p'
 }
 
 # Usage: horizon_pane  -> the run session's pane contents
@@ -1043,26 +1073,26 @@ The pane was showing:
 $(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
 }
 
-# Usage: horizon_send <text_file>
+# Usage: horizon_send <text>
 #
-# Pastes a file's contents into the session's input box and submits it. Delivered through
-# a tmux buffer rather than `send-keys <text>`, so no shell or tmux metacharacter in the
-# text can be interpreted on the way in - the pinned goal wording is prose, and prose
+# Pastes text into the session's input box and submits it. Delivered through a tmux
+# buffer rather than `send-keys <text>`, so no shell or tmux metacharacter in the text
+# can be interpreted on the way in - the pinned goal wording is prose, and prose
 # contains quotes.
 #
 # Enter is pressed when the input box SHOWS the paste, not after a pause. Claude Code
 # collapses a bracketed multi-line paste into `[Pasted text #n +<lines> lines]`, where
 # <lines> is the pasted text's newline count (probed on 2.1.259), so that placeholder
-# with this file's own count is the proof the whole text arrived - a submit that raced
+# with this text's own count is the proof the whole text arrived - a submit that raced
 # it would issue a truncated goal and be read downstream as a failed carry.
 # [LAW:no-ambient-temporal-coupling]
 horizon_send() {
-  local text_file="$1"
-  [ -f "$text_file" ] || horizon_die "horizon_send: no such file: $text_file"
+  local text="$1"
+  [ -n "$text" ] || horizon_die "horizon_send: nothing to send"
   local lines landed
-  lines="$(wc -l < "$text_file" | tr -d ' ')"
+  lines="$(printf '%s' "$text" | wc -l | tr -d ' ')"
   landed="\[Pasted text #[0-9]+ \+${lines} lines\]"
-  tmux load-buffer -b horizon-send "$text_file" \
+  printf '%s' "$text" | tmux load-buffer -b horizon-send - \
     || horizon_die "could not load the text to send into a tmux buffer"
   tmux paste-buffer -d -b horizon-send -t "$HORIZON_TMUX_SESSION" -p \
     || horizon_die "could not paste into the run session"
@@ -1118,7 +1148,7 @@ for line in sys.stdin:
     name[int(pid)] = comm.strip()
 
 # A claude that REACHES the pane is one finalize-session will find by the same walk -
-# and reaching it includes BEING it. `tmux new-session <cmd>` execs the command as the
+# and reaching it includes BEING it. `tmux respawn-pane <cmd>` execs the command as the
 # pane process itself rather than under a shell, so on the ordinary launch the pid of
 # claude IS pane_pid. A test that walked only strict ancestors rejected exactly the
 # arrangement it exists to confirm. (No apostrophes in here: this whole program is a
@@ -1143,23 +1173,25 @@ if not any(reaches_pane(p) for p in claudes):
 
 # Usage: horizon_capture_transcripts <config_dir> <work_dir>
 #
-# Copies the run's session transcripts into the run's own output directory.
+# Moves the run's session transcripts into the run's own output directory.
 #
 # WHY THIS IS NOT OPTIONAL. Transcripts are the primary record of a run - the thing a
 # human reads to judge what happened - and Claude Code writes them inside the CONFIG dir,
 # which is a fixed path shared by every run and which horizon_provision_config_dir wipes
 # on the way in. So a finished run's record survives only until the next run starts, and
 # nothing anywhere would report that it had gone. The record is moved to where the rest of
-# the run's output already lives, which is also the directory that gets archived.
+# the run's output already lives, which is also the directory that gets archived. Moved,
+# not copied: the config dir then holds no transcripts between runs, so what a later run
+# finds there is only ever its own.
 #
 # Called from an exit handler rather than at the end of a successful run: a run that died
 # is the one whose transcripts are most worth reading, and it never reaches its own last
-# line. [LAW:no-silent-failure]
+# line. After the session is ended, so the record is final when it moves.
+# [LAW:no-silent-failure]
 horizon_capture_transcripts() {
   local config_dir="$1" work_dir="$2" source="$1/projects" target="$2/transcripts"
   [ -d "$source" ] || return 0
-  mkdir -p "$target" || horizon_die "could not create $target"
-  cp -R "$source/." "$target/" || horizon_die "could not capture transcripts into $target"
+  mv "$source" "$target" || horizon_die "could not capture transcripts into $target"
   horizon_log "transcripts captured: $target"
 }
 

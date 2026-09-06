@@ -31,8 +31,9 @@
 # Produces, under the work dir:
 #   instrument/   pin-instrument.sh's output (pinned/, manifest.json)
 #   seed/         seed-run.sh's output (the project, backlog-shape.json, seed-manifest.json)
+#   goal.md       the /goal wording this run issued, as read from the pinned commit
 #   loop.json     what this run observed: sessions, their commits, and how it ended
-#   transcripts/  the session transcripts, copied out of the config dir - which is a fixed
+#   transcripts/  the session transcripts, moved out of the config dir - which is a fixed
 #                 path the NEXT run wipes, so this is the only copy that outlives the run
 #
 # The two halves get their own subdirectories because pin-instrument.sh and seed-run.sh
@@ -52,6 +53,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # rather than as a process nobody remembers starting. [LAW:no-silent-failure]
 : "${HORIZON_MAX_MINUTES:=480}"
 
+# Usage: end_run <config_dir> <work_dir>  - the ONE exit handler
+#
+# Every exit path - success, a failed assertion, a dead session, the wall-clock ceiling -
+# leaves the same state behind: the session ended, so the agent cannot keep working after
+# loop.json is the final record, and then the transcripts moved out of the config dir.
+# The status is the one the script was exiting with; a capture that fails replaces it
+# with failure on purpose, because the transcripts are the record and a run whose record
+# did not land is not a success. [LAW:no-silent-failure]
+end_run() {
+  local status=$? config_dir="$1" work_dir="$2"
+  horizon_release_run_lock
+  horizon_capture_transcripts "$config_dir" "$work_dir"
+  exit "$status"
+}
+
 main() {
   local seed_dir="${1:-$SCRIPT_DIR/seeds/macklebox}" memento_ref="${2:-}"
 
@@ -65,7 +81,6 @@ main() {
   # require tmux would fail those scripts on a machine that never needed it.
   horizon_need tmux
   horizon_need ps
-  horizon_need grep
   horizon_need basename
   # Reached from horizon_bind_remote.
   horizon_need gh
@@ -73,42 +88,32 @@ main() {
   [ -d "$seed_dir" ] || horizon_die "no such seed bundle: $seed_dir"
   seed_dir="$(cd "$seed_dir" && pwd)"
 
+  # Absolute before it is baked into the exit handler; the directory does not exist yet.
+  [[ "$HORIZON_WORK_DIR" = /* ]] || HORIZON_WORK_DIR="$PWD/$HORIZON_WORK_DIR"
   # A stale run is refused rather than merged into or silently cleared: its transcripts
   # and commits are the only record of whatever happened last time, and this script
   # cannot know whether they have been archived yet.
-  # Plain mkdir, not -p: it fails if the directory exists, so the check and the creation
-  # are one atomic step and two invocations cannot both pass it.
-  mkdir "$HORIZON_WORK_DIR" \
-    || horizon_die "work dir already holds a run (or cannot be created): $HORIZON_WORK_DIR
+  [ ! -e "$HORIZON_WORK_DIR" ] \
+    || horizon_die "work dir already holds a run: $HORIZON_WORK_DIR
 Archive it (copy it wherever you are keeping runs) and remove it, then start this one."
-  HORIZON_WORK_DIR="$(cd "$HORIZON_WORK_DIR" && pwd)"
 
-  # Before anything shared is touched. Everything below the pin - the config dir wipe, the
-  # remote reset, the launch - would land on top of a run that is still going, and the
+  # THE LOCK, before anything shared is touched and before anything is created: a refused
+  # invocation leaves nothing behind. Everything below - the config dir wipe, the remote
+  # reset, the launch - would otherwise land on top of a run that is still going, and the
   # only record of that would be the run stopping. [LAW:no-ambient-temporal-coupling]
-  [ -z "$(horizon_live_run_config_dir)" ] \
-    || horizon_die "a run is already live in tmux session $HORIZON_TMUX_SESSION; one run at a time"
+  horizon_take_run_lock
+  local config_dir="$HORIZON_CONFIG_DIR"
+  # The handler is installed the moment there is a lock to release; it is the only
+  # `trap ... EXIT` in this script, because a second one anywhere below would silently
+  # replace it rather than add to it. Arguments are baked in now: a handler cannot read
+  # a function-scoped variable at exit time.
+  # shellcheck disable=SC2064
+  trap "end_run '$config_dir' '$HORIZON_WORK_DIR'" EXIT
 
+  mkdir -p "$HORIZON_WORK_DIR" || horizon_die "could not create the work dir $HORIZON_WORK_DIR"
   local instrument_dir="$HORIZON_WORK_DIR/instrument"
   local seed_out_dir="$HORIZON_WORK_DIR/seed"
-  local config_dir="$HORIZON_CONFIG_DIR"
-
-  # Created before the trap that retires them, so there is no moment at which the trap
-  # can fire on names that do not exist yet. Globals, not locals: a handler cannot read
-  # a function-scoped variable at exit time.
-  HORIZON_GOAL_FILE="$(mktemp)" || horizon_die "could not create a temp file for the goal wording"
-  HORIZON_ISSUE_FILE="$(mktemp)" || horizon_die "could not create a temp file for the goal"
-
-  # ONE exit handler, installed the moment there is a work dir to write into, because
-  # every later exit path - success, a failed assertion, a dead session, the wall-clock
-  # ceiling - has to leave the same record behind. Registering it here rather than at the
-  # end is the difference between "the run's transcripts are kept" and "the transcripts of
-  # runs that happened to finish are kept". The temp files are retired by the same handler
-  # so there is only ever one EXIT trap to reason about; a second `trap ... EXIT` anywhere
-  # below would silently replace this one rather than adding to it.
-  # shellcheck disable=SC2064
-  trap "horizon_capture_transcripts '$config_dir' '$HORIZON_WORK_DIR'
-        rm -f \"\$HORIZON_GOAL_FILE\" \"\$HORIZON_ISSUE_FILE\"" EXIT
+  local goal_file="$HORIZON_WORK_DIR/goal.md"
 
   horizon_log "pinning the instrument"
   "$SCRIPT_DIR/pin-instrument.sh" "$instrument_dir" ${memento_ref:+"$memento_ref"} \
@@ -152,15 +157,13 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   local repo_root goal_sha
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
   goal_sha="$(horizon_manifest_ref "$instrument_dir/manifest.json" goal_wording)"
-  horizon_goal_wording_file "$repo_root" "$goal_sha" "$HORIZON_GOAL_FILE"
-  { printf '/goal '; cat "$HORIZON_GOAL_FILE"; } > "$HORIZON_ISSUE_FILE" \
-    || horizon_die "could not assemble the goal to issue"
+  horizon_goal_wording_file "$repo_root" "$goal_sha" "$goal_file"
 
   horizon_log "issuing the pinned /goal wording"
-  horizon_send "$HORIZON_ISSUE_FILE"
+  horizon_send "/goal $(<"$goal_file")"
 
   horizon_log "run is live; observing until ${HORIZON_TARGET_SESSIONS} sessions of committed work"
-  horizon_observe "$config_dir" "$project_dir" "$HORIZON_GOAL_FILE" \
+  horizon_observe "$config_dir" "$project_dir" "$goal_file" \
     "$HORIZON_TARGET_SESSIONS" "$HORIZON_MAX_MINUTES" \
     > "$HORIZON_WORK_DIR/loop.json"
 
