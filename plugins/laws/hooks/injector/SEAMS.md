@@ -457,6 +457,21 @@ writer bolted alongside.
   and hands the resolved binary to `launch.js`. `bin/install-launcher` puts it on the user's shell
   PATH, which is the one thing plugin installation cannot do — a plugin's `bin/` reaches the Bash
   tool's PATH inside a session, and the launcher has to be runnable before there is one.
+
+  VERIFIED END TO END on 2.1.259, in a real PTY under tmux: the launcher boots the hosted graph,
+  loading `laws:code` then `laws:prompt` produces the deny with `OR SWITCH:`, and `laws-switch
+  tombstone` answers *"Switched to laws:prompt, live — this session was not restarted"*. That is the
+  epic's claim, observed rather than assembled from its parts.
+
+  AND ONE FINDING THAT CHANGED THE LAUNCHER. The same steps under `-p` reach the offer and then fail
+  at `laws-switch` with `no-seam-ever-announced-a-conversation`: a one-shot run never constructs the
+  class the SEAM 2b field initializer lives on, so the registrar is never called. The seam is
+  resolved and installed (an unresolved one is fatal at boot, and the switch channel answered), so
+  this is about which classes the app builds in headless mode, not about the seam. `-p` is therefore
+  excluded from the pin again — the offer is withheld rather than made and then broken. Note the
+  exclusion's REASON is new: the original was about a relaunch re-sending the prompt, and
+  `--session-id` alongside `-p` parses fine. Whether the flag parses and whether a switch can be
+  enacted are different questions, and only the second one governs here.
   The on-disk-files-survive invariant did not depend on any of it and still holds:
   `rewindTo`/`exciseAt` write nothing but the transcript, and the live path is handed no file writer
   at all.
