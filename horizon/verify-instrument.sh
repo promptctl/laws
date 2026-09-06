@@ -155,7 +155,10 @@ if plugins[0]["enabled"] is not True:
     diff -r "$snapshot_skills/$skill" "$installed_skills/$skill" >/dev/null \
       || fail "installed '$skill' differs from the pinned snapshot it came from"
   done
-  pass "installed memento carries the pinned skills, byte for byte"
+  # diff compares bytes, not mode bits; the relaunch binary has to be runnable as installed.
+  [ -x "$install_path/$HORIZON_MEMENTO_RELAUNCH_REL_PATH" ] \
+    || fail "installed memento's finalize-session is not executable: $install_path/$HORIZON_MEMENTO_RELAUNCH_REL_PATH"
+  pass "installed memento carries the pinned skills, byte for byte, with the relaunch binary executable"
 
   local recorded_lit_sha256 actual_lit_sha256
   recorded_lit_sha256="$(manifest_value "$WORK/run1/manifest.json" lit sha256)" \

@@ -35,15 +35,17 @@ main() {
 
   # Created if it does not exist yet: the credential is bound to this path, so it has to
   # be logged in BEFORE the first run rather than discovered missing halfway through one.
+  # Used as the literal string lib.sh defines, with no normalisation: the credential is
+  # keyed to the exact path claude is handed, and run-loop.sh hands it this same string.
   local config_dir="$HORIZON_CONFIG_DIR"
   mkdir -p "$config_dir" || horizon_die "could not create $config_dir"
-  config_dir="$(cd "$config_dir" && pwd)"
 
   horizon_log "authenticating the horizon run config dir:"
   horizon_log "  $config_dir"
 
-  if CLAUDE_CONFIG_DIR="$config_dir" claude auth status 2>/dev/null \
-      | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("loggedIn") is True else 1)'; then
+  local state
+  state="$(horizon_auth_state "$config_dir")"
+  if [ "$state" = logged-in ]; then
     horizon_log "already authenticated - nothing to do"
     return 0
   fi

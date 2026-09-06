@@ -76,16 +76,28 @@ main() {
   # A stale run is refused rather than merged into or silently cleared: its transcripts
   # and commits are the only record of whatever happened last time, and this script
   # cannot know whether they have been archived yet.
-  [ -e "$HORIZON_WORK_DIR" ] \
-    && horizon_die "work dir already holds a run: $HORIZON_WORK_DIR
+  # Plain mkdir, not -p: it fails if the directory exists, so the check and the creation
+  # are one atomic step and two invocations cannot both pass it.
+  mkdir "$HORIZON_WORK_DIR" \
+    || horizon_die "work dir already holds a run (or cannot be created): $HORIZON_WORK_DIR
 Archive it (copy it wherever you are keeping runs) and remove it, then start this one."
-
-  mkdir -p "$HORIZON_WORK_DIR" || horizon_die "could not create work dir: $HORIZON_WORK_DIR"
   HORIZON_WORK_DIR="$(cd "$HORIZON_WORK_DIR" && pwd)"
+
+  # Before anything shared is touched. Everything below the pin - the config dir wipe, the
+  # remote reset, the launch - would land on top of a run that is still going, and the
+  # only record of that would be the run stopping. [LAW:no-ambient-temporal-coupling]
+  [ -z "$(horizon_live_run_config_dir)" ] \
+    || horizon_die "a run is already live in tmux session $HORIZON_TMUX_SESSION; one run at a time"
 
   local instrument_dir="$HORIZON_WORK_DIR/instrument"
   local seed_out_dir="$HORIZON_WORK_DIR/seed"
   local config_dir="$HORIZON_CONFIG_DIR"
+
+  # Created before the trap that retires them, so there is no moment at which the trap
+  # can fire on names that do not exist yet. Globals, not locals: a handler cannot read
+  # a function-scoped variable at exit time.
+  HORIZON_GOAL_FILE="$(mktemp)" || horizon_die "could not create a temp file for the goal wording"
+  HORIZON_ISSUE_FILE="$(mktemp)" || horizon_die "could not create a temp file for the goal"
 
   # ONE exit handler, installed the moment there is a work dir to write into, because
   # every later exit path - success, a failed assertion, a dead session, the wall-clock
@@ -137,14 +149,10 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # here and never read from the working tree. manifest.json records goal_wording.sha256
   # at that commit; taking the bytes from anywhere else would let a run report a
   # controlled variable it did not actually use. [LAW:one-source-of-truth]
-  # Globals, not locals, and no trap of their own: the single EXIT handler installed above
-  # retires them, and a handler cannot read a function-scoped variable at exit time.
-  local repo_root memento_sha
+  local repo_root goal_sha
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
-  memento_sha="$(horizon_manifest_memento_ref "$instrument_dir/manifest.json")"
-  HORIZON_GOAL_FILE="$(mktemp)" || horizon_die "could not create a temp file for the goal wording"
-  HORIZON_ISSUE_FILE="$(mktemp)" || horizon_die "could not create a temp file for the goal"
-  horizon_goal_wording_file "$repo_root" "$memento_sha" "$HORIZON_GOAL_FILE"
+  goal_sha="$(horizon_manifest_ref "$instrument_dir/manifest.json" goal_wording)"
+  horizon_goal_wording_file "$repo_root" "$goal_sha" "$HORIZON_GOAL_FILE"
   { printf '/goal '; cat "$HORIZON_GOAL_FILE"; } > "$HORIZON_ISSUE_FILE" \
     || horizon_die "could not assemble the goal to issue"
 

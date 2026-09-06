@@ -25,9 +25,6 @@ Builds `<run-dir>` from nothing:
   plugin that ships it, so archiving the plugin directory alone extracts dangling
   links. Snapshotting the closure is what makes the pin self-contained - `claude
   plugin install` then materialises those links into real files in its cache.
-- `config/` - a fresh `CLAUDE_CONFIG_DIR`, provisioned through the real `claude
-  plugin` CLI, with memento installed and enabled and no other plugin even
-  installable - the pinned marketplace never lists one.
 - `manifest.json` - canonical JSON (`schema_version: 2`, sorted keys, no timestamps)
   recording every pinned identity: memento's repository URL, commit and tree sha; the
   sha256 of the `lit` binary currently on `PATH` and of the `/next` procedure that
@@ -52,6 +49,11 @@ Builds `<run-dir>` from nothing:
   `reviewer.resolved_from` records whether this run resolved the tag live
   (`tag`) or was handed the sha (`override`), so the manifest never implies a check
   that did not happen.
+
+And, at `$HORIZON_CONFIG_DIR` - outside `<run-dir>`, at one fixed path, because Claude
+Code keys the stored credential to that path - it rebuilds the run's `CLAUDE_CONFIG_DIR`
+through the real `claude plugin` CLI, with memento installed and enabled and no other
+plugin even installable: the pinned marketplace never lists one.
 
 A session launched with `CLAUDE_CONFIG_DIR=$HORIZON_CONFIG_DIR` sees memento's skills and
 nothing of the owner's live laws plugin, `CLAUDE.md`, or memory. Two distinct

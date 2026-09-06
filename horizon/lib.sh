@@ -171,6 +171,9 @@ HORIZON_MEMENTO_PLUGIN_SUBDIR="memento"
 # definition of "the plugin is fit for the loop"; the pin checks the snapshot against
 # it and the verifier checks the install against it, both reading this one list.
 HORIZON_MEMENTO_SKILLS=(address-pr-reviews message-in-a-bottle)
+# The binary the session boundary is made of, relative to the plugin directory. Named
+# once: the pin checks it in the snapshot and verify-instrument checks it as installed.
+HORIZON_MEMENTO_RELAUNCH_REL_PATH="skills/message-in-a-bottle/bin/finalize-session"
 # A moved skill leaves this heading behind - it is how memento's own `next` pointer is
 # written, the one pointer left in this ecosystem. Checking it is a convention check,
 # not proof that a body contains a procedure; it earns its place because a pointer
@@ -246,7 +249,7 @@ horizon_build_memento_snapshot() {
   # missing it boots, works one session, and then never hands off - a run does not
   # notice for hours; it just stops committing and burns its wall-clock ceiling.
   # [LAW:no-silent-failure]
-  local relaunch="$plugin_dir/skills/message-in-a-bottle/bin/finalize-session"
+  local relaunch="$plugin_dir/$HORIZON_MEMENTO_RELAUNCH_REL_PATH"
   [ -x "$relaunch" ] \
     || horizon_die "memento at $commit_sha carries no executable finalize-session at $relaunch.
 The session boundary IS that binary, so this instrument could never cross one."
@@ -269,6 +272,10 @@ EOF
 # Usage: horizon_provision_config_dir <config_dir> <snapshot_dir>
 horizon_provision_config_dir() {
   local config_dir="$1" snapshot_dir="$2"
+  # A config dir a live session is running out of is not rebuilt underneath it: the
+  # session would keep its process and lose its plugin cache, and nothing would say so.
+  [ "$(horizon_live_run_config_dir)" != "$config_dir" ] \
+    || horizon_die "a live run (tmux session $HORIZON_TMUX_SESSION) is using $config_dir; refusing to rebuild it"
   rm -rf "$config_dir"
   mkdir -p "$config_dir"
   CLAUDE_CONFIG_DIR="$config_dir" claude plugin marketplace add "$snapshot_dir" \
@@ -457,20 +464,25 @@ horizon_goal_wording_file() {
   [ -s "$out" ] || horizon_die "${HORIZON_GOAL_PROMPT_REL_PATH} is empty at ${commit_sha}"
 }
 
-# Usage: horizon_manifest_memento_ref <manifest_file>  -> the commit the run pinned
+# Usage: horizon_manifest_ref <manifest_file> <section>  -> the commit that section pinned
 #
-# Read back from the manifest rather than re-resolved, so the wording issued into the run
-# and the wording the manifest describes cannot come from two different commits.
-horizon_manifest_memento_ref() {
-  local manifest="$1"
+# Read back from the manifest rather than re-resolved, so what is issued into the run and
+# what the manifest describes cannot come from two different commits. The section is an
+# argument because the manifest pins more than one repository: `memento` is a commit of
+# promptctl/memento and `goal_wording` a commit of this repo, and a reader hardwired to
+# one of them handed the wrong repository's sha to the other's lookup.
+# [LAW:composability]
+horizon_manifest_ref() {
+  local manifest="$1" section="$2"
   [ -f "$manifest" ] || horizon_die "no manifest at $manifest"
   python3 -c '
 import json, sys
-ref = json.load(open(sys.argv[1])).get("memento", {}).get("ref")
+section = sys.argv[2]
+ref = json.load(open(sys.argv[1])).get(section, {}).get("ref")
 if not ref:
-    sys.exit("manifest records no memento.ref")
+    sys.exit("manifest records no %s.ref" % section)
 print(ref)
-' "$manifest" || horizon_die "could not read memento.ref from $manifest"
+' "$manifest" "$section" || horizon_die "could not read ${section}.ref from $manifest"
 }
 
 # ══ SEEDING: appspec + fresh repo + lit init (promptctl-horizon-7ry.2) ═════════════
@@ -721,10 +733,17 @@ horizon_bind_remote() {
   local project_dir="$1" repo="$HORIZON_RUN_REPO"
   [ -d "$project_dir" ] || horizon_die "horizon_bind_remote: no project at $project_dir"
 
+  # Listed into a variable first: a command substitution feeding a `for` never trips
+  # errexit, so an unchecked listing that failed would clean up nothing and say nothing.
+  # [LAW:no-silent-failure]
+  local prs branches
+  prs="$(horizon_remote_open_prs "$repo")"
+  branches="$(horizon_remote_branches "$repo")"
+
   # Closing a PR with --delete-branch retires the pull request and its head branch in one
   # call, so the two cannot come apart and leave a branch whose PR is gone.
   local pr
-  for pr in $(gh pr list --repo "$repo" --state open --json number --jq '.[].number'); do
+  for pr in $prs; do
     horizon_log "closing leftover PR #$pr"
     gh pr close "$pr" --repo "$repo" --delete-branch \
       || horizon_die "could not close leftover PR #$pr in $repo"
@@ -735,7 +754,7 @@ horizon_bind_remote() {
   # default branch, and letting that refusal pass would be indistinguishable from a real
   # permission failure going unnoticed. [LAW:no-silent-failure]
   local branch
-  for branch in $(gh api "repos/$repo/branches" --jq '.[].name'); do
+  for branch in $branches; do
     [ "$branch" = "master" ] && continue
     horizon_log "deleting leftover branch $branch"
     gh api -X DELETE "repos/$repo/git/refs/heads/$branch" \
@@ -780,16 +799,31 @@ horizon_assert_remote_at_time_zero() {
     || horizon_die "$repo has default branch '$default_branch', not master - the run agent's PRs would target a branch the work is not on"
 
   local open_prs
-  open_prs="$(gh pr list --repo "$repo" --state open --json number --jq 'length')" \
-    || horizon_die "could not count open PRs in $repo"
-  [ "$open_prs" = "0" ] \
-    || horizon_die "$repo still has $open_prs open PR(s) - the run would inherit a previous run's work as its own"
+  open_prs="$(horizon_remote_open_prs "$repo")"
+  [ -z "$open_prs" ] \
+    || horizon_die "$repo still has open PR(s) #${open_prs//$'\n'/, #} - the run would inherit a previous run's work as its own"
 
   local extra_branches
-  extra_branches="$(gh api "repos/$repo/branches" --jq '[.[].name | select(. != "master")] | join(", ")')" \
-    || horizon_die "could not list branches in $repo"
+  extra_branches="$(horizon_remote_branches "$repo" | sed '/^master$/d')"
   [ -z "$extra_branches" ] \
-    || horizon_die "$repo still carries branches from a previous run: $extra_branches"
+    || horizon_die "$repo still carries branches from a previous run: ${extra_branches//$'\n'/, }"
+}
+
+# Usage: horizon_remote_open_prs <repo>  -> open PR numbers, one per line
+# Usage: horizon_remote_branches <repo>  -> branch names, one per line
+#
+# Paginated, so "every open PR" and "every branch" mean what they say past the API's
+# default page; the reset and the time-zero assertion both read through these, so they
+# cannot disagree about what the remote holds. [LAW:one-source-of-truth]
+horizon_remote_open_prs() {
+  local repo="$1"
+  gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].number' \
+    || horizon_die "could not list open PRs in $repo"
+}
+horizon_remote_branches() {
+  local repo="$1"
+  gh api --paginate "repos/$repo/branches?per_page=100" --jq '.[].name' \
+    || horizon_die "could not list branches in $repo"
 }
 
 # ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═
@@ -823,11 +857,17 @@ HORIZON_POLL_SECONDS=2
 # is named from a hash of it), so authentication is a property of WHERE the config dir
 # is, not of what is inside it: wiping the directory keeps the login, moving it loses
 # the login. That is why a run is built at a fixed working path - see run-loop.sh.
-horizon_assert_authenticated() {
+# Usage: horizon_auth_state <config_dir>  -> `logged-in` or `logged-out`
+#
+# The one reader of `claude auth status`. It answers with a word rather than an exit
+# code, so callers under `set -e` can branch on the answer without the shell treating
+# "logged out" as a crashed command; the two failures that are not answers - no output,
+# not JSON - die here with their own message. [LAW:parse-dont-validate]
+horizon_auth_state() {
   # Not named `status`: that is a read-only special variable in zsh, so the name would
   # make this library unsourceable outside bash for no benefit at all.
   local config_dir="$1" auth_json=""
-  [ -n "$config_dir" ] || horizon_die "horizon_assert_authenticated: no config dir given"
+  [ -n "$config_dir" ] || horizon_die "horizon_auth_state: no config dir given"
 
   # `claude auth status` EXITS 1 WHEN SIMPLY LOGGED OUT, while still printing a complete
   # JSON answer. So its exit status does not mean "the command failed" and must not be
@@ -842,34 +882,35 @@ horizon_assert_authenticated() {
     || horizon_die "'claude auth status' produced no output for $config_dir"
 
   # Parsed rather than grepped: `loggedIn` is a JSON boolean, and a grep for the word
-  # would match the field name just as happily in a false response. Each cause exits
-  # with its own code so the caller can tell them apart, rather than one nonzero
-  # standing for two different things.
+  # would match the field name just as happily in a false response.
   printf '%s' "$auth_json" | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
 except ValueError:
-    sys.exit(3)
-sys.exit(0 if d.get("loggedIn") is True else 4)
-'
-  case "$?" in
-    0) return 0 ;;
-    3) horizon_die "'claude auth status' did not return JSON for $config_dir:
-$auth_json" ;;
-    4) horizon_die "the run's config dir is not logged in: $config_dir
+    sys.exit(1)
+print("logged-in" if d.get("loggedIn") is True else "logged-out")
+' || horizon_die "'claude auth status' did not return JSON for $config_dir:
+$auth_json"
+}
+
+horizon_assert_authenticated() {
+  local config_dir="$1" state
+  # Assigned, then compared: a reader that dies inside `[ "$(...)" ]` is not seen by
+  # errexit, and its message would be followed by this one, which would be wrong.
+  state="$(horizon_auth_state "$config_dir")"
+  [ "$state" = logged-in ] \
+    || horizon_die "the run's config dir is not logged in: $config_dir
 Run horizon/login.sh once (it needs a browser); every run after that is unattended.
-Note the credential is bound to this PATH, so logging in somewhere else will not help." ;;
-    *) horizon_die "could not determine whether $config_dir is authenticated" ;;
-  esac
+Note the credential is bound to this PATH, so logging in somewhere else will not help."
 }
 
 # Usage: horizon_write_boot_state <config_dir> <project_dir>
 #
 # A freshly provisioned config dir stops at interactive gates that no unattended run can
-# answer: the workspace trust dialog, first-run onboarding, the custom-API-key prompt, and
-# the bypass-permissions disclaimer. Each is recorded as a settled fact here, so the
-# session boots straight to a ready input box.
+# answer: first-run onboarding, the workspace trust dialog, and the bypass-permissions
+# disclaimer. Each is recorded as a settled fact here, so the session boots straight to a
+# ready input box.
 #
 # These are the CLI's own keys, not a private format: its error text for an untrusted
 # workspace names `projects[<dir>].hasTrustDialogAccepted: true` in this exact file as
@@ -947,11 +988,30 @@ PY
 # arrive and the run would read the operator's real config. [LAW:no-silent-failure]
 horizon_launch_session() {
   local config_dir="$1" project_dir="$2"
-  tmux kill-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null || true
+  # No kill-session first: a session by this name is a live run, and tmux refusing the
+  # duplicate is the right outcome. run-loop.sh checks the same fact up front, before
+  # anything shared has been touched, so this line is not where a second run is caught.
   tmux new-session -d -s "$HORIZON_TMUX_SESSION" -x 200 -y 50 -c "$project_dir" \
     -e CLAUDE_CONFIG_DIR="$config_dir" \
     "claude --dangerously-skip-permissions" \
     || horizon_die "could not launch the run session in tmux"
+}
+
+# Usage: horizon_live_run_config_dir  -> the CLAUDE_CONFIG_DIR of the live run, or nothing
+#
+# THE LOCK. Every resource a run holds is a machine-wide singleton - the config dir at its
+# fixed path, the tmux session name, the shared remote - and the one thing they have in
+# common is that a live run is a live tmux session by this name. So the session IS the
+# lock: it exists exactly while a run does, it disappears with the process on any kind of
+# death, and there is no lock file to go stale. The config dir comes back with it because
+# it is the resource callers other than run-loop.sh need to check against.
+# [LAW:no-ambient-temporal-coupling] the "is another run live" fact has one owner.
+horizon_live_run_config_dir() {
+  # has-session reports absence on stderr and by exit status; absence is the answer here,
+  # not an error. [LAW:no-silent-failure] exception: the status is read, the text is noise.
+  tmux has-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null || return 0
+  tmux show-environment -t "$HORIZON_TMUX_SESSION" CLAUDE_CONFIG_DIR \
+    | sed -n 's/^CLAUDE_CONFIG_DIR=//p'
 }
 
 # Usage: horizon_pane  -> the run session's pane contents
@@ -985,18 +1045,36 @@ $(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
 
 # Usage: horizon_send <text_file>
 #
-# Types a file's contents into the session's input box and submits it. Delivered through
+# Pastes a file's contents into the session's input box and submits it. Delivered through
 # a tmux buffer rather than `send-keys <text>`, so no shell or tmux metacharacter in the
 # text can be interpreted on the way in - the pinned goal wording is prose, and prose
 # contains quotes.
+#
+# Enter is pressed when the input box SHOWS the paste, not after a pause. Claude Code
+# collapses a bracketed multi-line paste into `[Pasted text #n +<lines> lines]`, where
+# <lines> is the pasted text's newline count (probed on 2.1.259), so that placeholder
+# with this file's own count is the proof the whole text arrived - a submit that raced
+# it would issue a truncated goal and be read downstream as a failed carry.
+# [LAW:no-ambient-temporal-coupling]
 horizon_send() {
   local text_file="$1"
   [ -f "$text_file" ] || horizon_die "horizon_send: no such file: $text_file"
+  local lines landed
+  lines="$(wc -l < "$text_file" | tr -d ' ')"
+  landed="\[Pasted text #[0-9]+ \+${lines} lines\]"
   tmux load-buffer -b horizon-send "$text_file" \
     || horizon_die "could not load the text to send into a tmux buffer"
   tmux paste-buffer -d -b horizon-send -t "$HORIZON_TMUX_SESSION" -p \
     || horizon_die "could not paste into the run session"
-  sleep 0.5
+  local waited=0
+  until horizon_pane | grep -qE "$landed"; do
+    [ "$waited" -lt "$HORIZON_BOOT_TIMEOUT_SECONDS" ] \
+      || horizon_die "the pasted text never appeared in the input box (${lines} lines).
+The pane was showing:
+$(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
+    sleep "$HORIZON_POLL_SECONDS"
+    waited=$((waited + HORIZON_POLL_SECONDS))
+  done
   tmux send-keys -t "$HORIZON_TMUX_SESSION" Enter \
     || horizon_die "could not submit into the run session"
 }
