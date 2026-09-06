@@ -95,6 +95,10 @@ done
 # second --session-id onto the same command line — the exact broken launch the scan prevents.
 run eqform --resume=abc123
 assert_miss 'the = spelling of a selector is not pinned' "$(recorded argv)" '--session-id'
+# Both halves, matching what the --session-id case below already asserts for its arm. Trimming the
+# token and then forwarding the TRIMMED form would suppress the pin correctly and still break the
+# user's session, and the negative assertion alone cannot see that.
+assert_eq   'and the = spelling itself is passed through unchanged' "$(recorded argv)" '--resume=abc123'
 run ownid --session-id=deadbeef
 assert_miss "the user's own --session-id is not doubled" "$(recorded argv)" '--session-id deadbeef'
 assert_eq   "the user's own --session-id is passed through" "$(recorded argv)" '--session-id=deadbeef'
@@ -204,6 +208,46 @@ assert_match 'and a junk depth still starts a session' "$(recorded argv)" '--ses
 STUB_STATE="$TMPDIR/state.junkdepth"; export STUB_STATE; mkdir -p "$STUB_STATE"
 out=$(LAWS_LAUNCH_DEPTH='not-a-number' LAWS_CLAUDE_BIN="$STUB" "$LAUNCHER" 2>&1 >/dev/null)
 assert_miss 'a junk depth is not mistaken for a deep nest' "$out" 'launchers deep'
+
+# THE DIGIT STRINGS A CHARACTER TEST ADMITS, each of which broke the ceiling a different way before
+# the parse produced a canonical integer instead of approving one. Enumerated rather than sampled,
+# because they fail differently and a fix for one is not a fix for another.
+#
+#   2^64 wrapped to 1, so the ceiling never fired at all — the bypass itself.
+#   A 25-digit string wrapped to 1590897978359414784 and REFUSED a legitimate launch.
+#   08 is all digits and octal to bash: "value too great for base", a raw shell error to the user.
+for d in 18446744073709551616 9999999999999999999999999 08 007 0000000009; do
+  STUB_STATE="$TMPDIR/state.depth$d"; export STUB_STATE; mkdir -p "$STUB_STATE"
+  out=$(LAWS_LAUNCH_DEPTH="$d" LAWS_CLAUDE_BIN="$STUB" "$LAUNCHER" --model opus 2>&1 >/dev/null)
+  assert_miss "a depth of $d cannot pose as a deep nest"   "$out" 'launchers deep'
+  assert_miss "a depth of $d raises no shell arithmetic error" "$out" 'value too great'
+  # match, not equality: an accepted depth is a legitimate launch, so the argv also carries the pin
+  assert_match "and a depth of $d still starts the session" "$(recorded argv)" '--model opus'
+  assert_match "and a depth of $d is still a hosted launch" "$(recorded argv)" '--session-id'
+done
+
+# The ceiling must still fire on the honest spellings, or the parse above bought safety by breaking
+# the thing it protects.
+out=$(LAWS_LAUNCH_DEPTH=99 LAWS_CLAUDE_BIN="$STUB" "$LAUNCHER" 2>&1); rc=$?
+assert_eq 'a two-digit depth is a real depth and still hits the ceiling' "$rc" '78'
+
+# THE MINTED ID IS PARSED TOO. node's stdout can be reached before console.log by a NODE_OPTIONS
+# preload or an injected agent, and a garbled id is passed to claude as --session-id and fails the
+# launch outright — the one failure this file has no degrade for. Only the mint call is polluted, so
+# the rest of the launch is unchanged and the case isolates the value under test.
+POLLUTED="$TMPDIR/pollutednode"; mkdir -p "$POLLUTED"
+REALNODE=$(command -v node)
+cat > "$POLLUTED/node" <<EOS
+#!/bin/bash
+if [ "\$1" = "-e" ]; then printf 'apm-injector: instrumentation attached\n'; fi
+exec "$REALNODE" "\$@"
+EOS
+chmod +x "$POLLUTED/node"
+STUB_STATE="$TMPDIR/state.polluted"; export STUB_STATE; mkdir -p "$STUB_STATE"
+out=$(PATH="$POLLUTED:$PATH" LAWS_CLAUDE_BIN="$STUB" "$LAUNCHER" --model opus 2>&1 >/dev/null)
+assert_match 'a polluted mint degrades instead of pinning garbage' "$out" 'could not mint a session id'
+assert_miss  'and nothing is pinned'                    "$(recorded argv)" '--session-id'
+assert_eq    'and the session the user asked for still starts' "$(recorded argv)" '--model opus'
 
 # THE LAST UNCOVERED DEGRADE. A launcher whose plugin tree has no launch.js cannot host, and the
 # user still asked for a session. Reached here by copying the launcher somewhere its plugin is not,
@@ -323,6 +367,34 @@ grep -qF 'MARKER_RENAMED_BY_THE_TEST' "$TMPDIR/bin5/claude-laws" \
   && ok 'and the stub carries the renamed token, so the installer never spells one' \
   || bad 'and the stub carries the renamed token, so the installer never spells one' \
         "stub says: $(cat "$TMPDIR/bin5/claude-laws" 2>/dev/null | head -3)"
+
+# A FAILED INSTALL MUST NOT COST THE USER A WORKING ONE. Re-running the installer after a plugin
+# update is the flow the README tells people to take, so the case where the replacement turns out to
+# be broken is a normal one, not an exotic one. The old shape wrote the stub at the destination and
+# probed afterwards, which meant a failed probe had already destroyed what it was checking against.
+GOOD="$TMPDIR/bin6"; "$INSTALLER" "$GOOD" >/dev/null 2>&1
+before=$(cat "$GOOD/claude-laws")
+out=$("$BROKEN/laws/bin/install-launcher" "$GOOD" 2>&1); rc=$?
+assert_eq 'installing a broken launcher over a good one fails'  "$rc" '1'
+assert_eq 'and the working launcher is exactly as it was'       "$(cat "$GOOD/claude-laws")" "$before"
+assert_match 'and the failure says nothing was changed'         "$out" 'nothing was changed'
+# The staging directory is an implementation detail the user must never meet, so no exit path may
+# leave one behind — including the failing one just exercised.
+leftovers=$(find "$GOOD" -maxdepth 1 -name '.claude-laws-install.*' | wc -l | tr -d ' ')
+assert_eq 'and no staging directory is left in the target directory' "$leftovers" '0'
+
+# OWNERSHIP IS THE TOKEN, NOT THE SENTENCE. A stub written by a version of this installer whose
+# marker line was worded differently is still our own work, and must not be diagnosed as a foreign
+# file the user has to move aside — that would block the upgrade path on nothing but a reworded
+# comment. This stub carries the token under wording no version of the installer has ever used.
+REWORDED="$TMPDIR/bin7"; mkdir -p "$REWORDED"
+TOKEN=$(sed -n "s/^LAWS_LAUNCHER_SELF_MARKER='\([^']*\)'.*/\1/p" "$LAUNCHER" | head -1)
+printf '#!/usr/bin/env bash\n# %s :: emitted by some future wording of install-launcher\nexit 0\n' \
+  "$TOKEN" > "$REWORDED/claude-laws"
+chmod +x "$REWORDED/claude-laws"
+out=$("$INSTALLER" "$REWORDED" 2>&1); rc=$?
+assert_eq    'a stub whose marker line is worded differently is still recognised as ours' "$rc" '0'
+assert_match 'and it is replaced rather than refused' "$(cat "$REWORDED/claude-laws")" 'LAUNCHER='
 
 # Someone else's claude-laws is theirs. Replacing it silently is how an installer eats a file its
 # user cared about, so the marker — a fact about the file — is what authorises the overwrite.

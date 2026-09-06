@@ -53,19 +53,31 @@ log() { printf 'claude-laws: %s\n' "$1" >&2; }
 # 8 is unreachable by honest use and turns the catastrophic failure into a loud one.
 # [LAW:no-silent-failure] the bound reports which failure it is rather than merely surviving it.
 # THE VALUE IS PARSED BEFORE IT IS COUNTED, because it arrives from the environment and bash's
-# arithmetic expansion is not a calculator — it re-expands what it is given. An inherited
-# LAWS_LAUNCH_DEPTH of `a[$(...)]` runs the substitution inside the subscript and then evaluates to
-# a clean number, so the command executes and the depth still comes out right: nothing looks wrong
-# afterwards. Measured on bash 5.3.9, including an indirect form where the value names another
-# variable holding the payload.
+# arithmetic expansion is not a calculator — it re-expands what it is given, and it reads what is
+# left in more than one base. Three inherited values break the ceiling in three different ways, all
+# measured on bash 5.3.9:
 #
-# Anything that is not a plain run of digits is therefore not a depth, and is replaced by one rather
-# than repaired — a corrupted counter has no partial meaning worth recovering, and the ceiling below
-# is what has to keep working. [LAW:parse-dont-validate] the arithmetic only ever sees digits, so
-# there is nothing left for it to expand.
+#   a[$(cmd)]              runs cmd inside the subscript and then evaluates to a clean number, so
+#                          the command executes and the depth still comes out right
+#   18446744073709551616   wraps to 1 — the ceiling never fires, which is the bypass itself
+#   08                     is all digits and is read as OCTAL: "value too great for base", a raw
+#                          bash error reaching the user from the file that avoids those everywhere
+#
+# An earlier version of this check accepted any run of digits, which stops the first and neither of
+# the others. The mistake was checking the CHARACTERS and then handing the original string on: the
+# arithmetic was still free to reinterpret it. A parse has to produce a value the next stage cannot
+# misread, not merely approve of the one it was given.
+#
+# So what is accepted is a canonical small integer — one digit, or two with no leading zero. That
+# admits every honest depth, rejects octal by construction, and caps the value at 99, so `+ 1`
+# cannot overflow. One description of what a depth is, rather than a character test with a
+# magnitude test bolted beside it. Anything else is not a depth and is replaced by one rather than
+# repaired: a corrupted counter has no partial meaning worth recovering, and the ceiling below is
+# what has to keep working. [LAW:parse-dont-validate] [LAW:single-enforcer]
 inherited_depth="${LAWS_LAUNCH_DEPTH:-0}"
 case "$inherited_depth" in
-  ''|*[!0-9]*) inherited_depth=0 ;;
+  [0-9]|[1-9][0-9]) : ;;
+  *) inherited_depth=0 ;;
 esac
 LAWS_LAUNCH_DEPTH=$(( inherited_depth + 1 ))
 export LAWS_LAUNCH_DEPTH
@@ -226,8 +238,17 @@ done
 SESSION_ARGS=()
 if [ -n "$no_switch" ]; then
   log "craft switching disabled - $no_switch"
+# THE MINTED ID IS PARSED TOO, for the same reason the inherited depth is: it comes from a producer
+# this file does not control. `node -e` writes to a stdout that a NODE_OPTIONS preload, an APM
+# injector or a corporate node wrapper can reach first, and a banner arrives alongside the UUID.
+#
+# What makes that worth checking is not how often it happens but what it does. Every other checked
+# failure here degrades to a clean session and says why; a garbled id degrades to nothing — it is
+# handed to both plans as `--session-id`, claude rejects it, and the launch fails outright, which is
+# the one outcome this file exists to prevent. The shape test also subsumes the emptiness test, so
+# it replaces it rather than joining it. [LAW:parse-dont-validate] [LAW:single-enforcer]
 elif ! LAWS_SWITCH_SESSION="$(node -e 'console.log(require("crypto").randomUUID())' 2>/dev/null)" \
-     || [ -z "$LAWS_SWITCH_SESSION" ]; then
+     || [[ ! $LAWS_SWITCH_SESSION =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
   log "could not mint a session id; launching without craft switching"
 else
   export LAWS_SWITCH_SESSION
