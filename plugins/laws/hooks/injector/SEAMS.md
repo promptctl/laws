@@ -448,11 +448,29 @@ writer bolted alongside.
   `claude-laws` was the sole producer of `LAWS_SWITCH_SESSION` and `LAWS_SWITCH_DIR` — it minted the
   session id, pinned it with `--session-id`, and made the handoff directory — and nothing replaced it
   (`launch.js` passes `process.env` through unchanged; `bun-host.mjs`, `bin/laws-switch` and
-  `skill-router.sh` only read those two). `skill-router.sh`'s gate cannot be satisfied by a session
-  started any normal way, so on master today the switch is never OFFERED at all — live path or
-  otherwise — where the pre-PR relaunch path worked end to end. Sequenced, not overlooked: restoring
-  the relaunch would re-add the `BUN_INSPECT` eval channel this epic exists to remove, so
-  `promptctl-injector-xy0.5` closes the gap by putting a session-pinning launcher back on `PATH`.
+  `skill-router.sh` only read those two). `skill-router.sh`'s gate could then not be satisfied by a
+  session started any normal way, so the switch was never OFFERED at all — live path or otherwise. Sequenced, not overlooked: restoring the relaunch would have re-added the
+  `BUN_INSPECT` eval channel this epic exists to remove. CLOSED (2026-09-06) by
+  `promptctl-injector-xy0.5`, which reclaims the name for a launcher that does the setup and none of
+  the relaunching: `bin/claude-laws` mints and pins the session id, makes the handoff directory,
+  and hands the resolved binary to `launch.js`. `bin/install-launcher` puts it on the user's shell
+  PATH, which is the one thing plugin installation cannot do — a plugin's `bin/` reaches the Bash
+  tool's PATH inside a session, and the launcher has to be runnable before there is one.
+
+  VERIFIED END TO END on 2.1.259, in a real PTY under tmux: the launcher boots the hosted graph,
+  loading `laws:code` then `laws:prompt` produces the deny with `OR SWITCH:`, and `laws-switch
+  tombstone` answers *"Switched to laws:prompt, live — this session was not restarted"*. That is the
+  epic's claim, observed rather than assembled from its parts.
+
+  AND ONE FINDING THAT CHANGED THE LAUNCHER. The same steps under `-p` reach the offer and then fail
+  at `laws-switch` with `no-seam-ever-announced-a-conversation`: a one-shot run never constructs the
+  class the SEAM 2b field initializer lives on, so the registrar is never called. The seam is
+  resolved and installed (an unresolved one is fatal at boot, and the switch channel answered), so
+  this is about which classes the app builds in headless mode, not about the seam. `-p` is therefore
+  excluded from the pin again — the offer is withheld rather than made and then broken. Note the
+  exclusion's REASON is new: the original was about a relaunch re-sending the prompt, and
+  `--session-id` alongside `-p` parses fine. Whether the flag parses and whether a switch can be
+  enacted are different questions, and only the second one governs here.
   The on-disk-files-survive invariant did not depend on any of it and still holds:
   `rewindTo`/`exciseAt` write nothing but the transcript, and the live path is handed no file writer
   at all.

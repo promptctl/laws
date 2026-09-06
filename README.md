@@ -78,7 +78,51 @@ the point of the plugin. It's what keeps the point from eating itself.
 /plugin install laws@promptctl
 ```
 
-The hook is pure bash - no dependencies, nothing to configure.
+That gives you the skills and the craft-compatibility hooks. The hooks are pure bash -
+no dependencies, nothing to configure. Nothing else is required, and most people want
+only this.
+
+### Optional: the `claude-laws` launcher
+
+When you ask for a craft skill that conflicts with the one already loaded - `laws:prompt`
+on top of `laws:code`, say - the hook refuses it. Under plain `claude` that refusal is
+the end of it. A session started through the `claude-laws` launcher can switch to the
+new craft in place instead.
+
+Install it once, from a Claude Code session with the plugin enabled - the plugin's
+`bin/` is on the Bash tool's PATH there, so the command resolves:
+
+```
+install-launcher
+```
+
+That puts `claude-laws` in `~/.local/bin`. Pass a different directory as its one
+argument - `install-launcher ~/bin` - and if that directory isn't on your PATH, the
+installer says so and prints the export line to add.
+
+From then on you opt in per session by running `claude-laws` instead of `claude`. It
+takes all the same arguments. Stock `claude` is untouched - the launcher never replaces
+or shadows it.
+
+The plugin never needs `node`. The launcher needs it at both ends. `install-launcher`
+looks for `node` on your PATH and refuses to install without it. At startup the launcher
+wants a `node` new enough to have `vm.SourceTextModule`; if it is missing or too old,
+the launcher starts plain claude and says so on stderr, so a `node` problem there costs
+you the switch, not the session.
+
+The cost of opting in is startup time: about 1.5 seconds more than stock claude -
+roughly 800ms to link ~1,640 JavaScript modules, plus about 700ms to the first frame.
+Stock claude has essentially no such delay.
+
+Three cases get a normal session without the switch, and the launcher says so on stderr
+when it happens: a session selector (`-c`, `--continue`, `-r`, `--resume`), because
+claude refuses a pinned session id alongside one; your own `--session-id`; and
+`-p`/`--print`, because a one-shot run has no live conversation for the switch to act
+on.
+
+Plugin installs are version-stamped by Claude Code, so after a plugin update the
+installed `claude-laws` may point at the old plugin directory. It tells you exactly
+that and asks you to re-run `install-launcher`.
 
 ## Looking for memento?
 
@@ -112,4 +156,7 @@ it - read it before editing any skill body here.
 /plugin uninstall laws@promptctl
 ```
 
-The hooks are stateless - nothing written, nothing to clean up.
+The hooks write only under your temp directory, and only for the session at hand - a
+`pending.json` when a craft switch is offered, and lock directories. Nothing of theirs
+persists, so there is nothing of theirs to clean up. If you ran `install-launcher`,
+delete the file it wrote: `rm ~/.local/bin/claude-laws`, or wherever you pointed it.
