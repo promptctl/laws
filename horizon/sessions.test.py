@@ -8,9 +8,9 @@ the analysis reaches those numbers. [LAW:behavior-not-structure]
 Every check here is written so that breaking the thing it guards makes it FAIL. The
 repo has twice shipped a check that passed against a fixture already broken for some
 other reason, so a case that could pass while its subject is deleted is worse than no
-case at all: run `sessions.test.py --mutate` to see each guard die on demand.
+case at all.
 
-Run: python3 horizon/sessions.test.py [--mutate]
+Run: python3 horizon/sessions.test.py
 """
 
 import json
@@ -252,6 +252,24 @@ def main():
         check("the drifted wording is reported, not just the fact of drift",
               drift["sessions"][1]["goal_received"] == paraphrase,
               "goal_received=%r" % drift["sessions"][1]["goal_received"])
+
+    # A session whose lines carry no readable timestamp at all. parse_time tolerates a
+    # malformed stamp per line, so the whole report has to tolerate a session made only
+    # of them: one such transcript must not take down the analysis of every other.
+    with tempfile.TemporaryDirectory() as tmp3:
+        cfg = os.path.join(tmp3, "config")
+        proj = os.path.join(tmp3, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp3, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(cfg, "p", "timed", proj,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00")
+        write_session(cfg, "p", "untimed", proj, "not-a-time", "not-a-time")
+        report4 = run(cfg, proj, gf, [])
+        ids4 = [s["session_id"] for s in report4["sessions"]]
+        check("a session with no readable timestamp is kept, and sorts after the timed ones",
+              ids4 == ["timed", "untimed"], "got %s" % ids4)
 
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))

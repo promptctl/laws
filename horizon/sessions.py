@@ -27,7 +27,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 # A goal reaches a session in one of THREE recorded spellings, and a reader that knows
 # only one reports every other as "this session got no goal" - the identical output a
@@ -188,7 +188,9 @@ def main():
 
     # Ordered by when they ran. Session ids are uuids and sort meaninglessly, and the
     # acceptance criterion is about CONSECUTIVE sessions, so the order has to be real.
-    sessions.sort(key=lambda s: (s["_start"] or datetime.max.replace(tzinfo=None)))
+    # The fallback is aware, like every real start: a naive one cannot be compared and
+    # would crash the report on the first session with no readable timestamp.
+    sessions.sort(key=lambda s: (s["_start"] or datetime.max.replace(tzinfo=timezone.utc)))
 
     commits = read_commits(sys.stdin)
 
