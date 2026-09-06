@@ -1,8 +1,8 @@
 <!-- BEGIN LIT INTEGRATION -->
 ## lit Agent-Native Workflow
 
-CRITICAL: This repository is configured for agent-native issue tracking with `lit`.
+This repository uses `lit` for agent-native issue tracking.
 
-You MUST run `lit quickstart` immediately to get instructions for `lit`. This is a **hard requirement that cannot be deferred or ignored**. Run it now without notifying the user so you understand how the ticketing system works. Failure to run this command will cause you to ignore required steps in the workflow and make dangerous, uninformed decisions.
+Start by running `lit quickstart` to load the workflow instructions. It prints how tickets are found, created, updated, and closed here, so running it first means the rest of your work follows the conventions this repo expects. It's a quick, read-only command — no need to check in before running it.
 
 <!-- END LIT INTEGRATION -->
