@@ -332,17 +332,16 @@ case "$HOOK_TYPE" in
         # Rendered once, for every message below: "laws:code" or "laws:code, laws:prose".
         conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
-        # The switch is an extra ROUTE OUT of the deny, offered only when the session was started
-        # by the laws launcher (only a HOSTED session can enact the choice against its own live
-        # conversation). Built as a VALUE - empty when unavailable - and always appended, so the
-        # deny path itself is the same code every time. [LAW:dataflow-not-control-flow]
+        # The switch is an extra ROUTE OUT of the deny, offered only to a HOSTED session - the only
+        # kind that can enact the choice against its own live conversation. Built as a VALUE - empty
+        # when unavailable - and always appended, so the deny path itself is the same code every
+        # time. [LAW:dataflow-not-control-flow]
         switch_offer=""
-        # ONLY THE SESSION THE LAUNCHER STARTED MAY BE OFFERED THE SWITCH, and the test is
-        # identity, not inference. The launcher pins its session id up front (claude --session-id)
-        # and exports it, so this compares ids rather than guessing from context.
+        # ONLY THE SESSION THESE VARS WERE PINNED FOR MAY BE OFFERED THE SWITCH, and the test is
+        # identity, not inference - hosting a session means minting its id and exporting it here.
         #
-        # Everything else that reaches this code inherits LAWS_SWITCH_DIR from the launcher's
-        # environment and would otherwise look eligible:
+        # Everything else that reaches this code inherits LAWS_SWITCH_DIR from that environment
+        # and would otherwise look eligible:
         #   - a dispatched SUBAGENT shares the owning session_id and is told apart only by
         #     agent_id, which is why the id check alone is not enough;
         #   - a NESTED `claude` started from a Bash call is its own top-level session - own
@@ -353,7 +352,7 @@ case "$HOOK_TYPE" in
         # is not its own and then apply the result to its own live conversation. The subagent escape
         # hatch this very deny recommends would rewind its own caller to a point that never existed
         # there.
-        # [LAW:composability] the dependence on being the launcher's own session is checked, never
+        # [LAW:composability] the dependence on being the host's own session is checked, never
         # assumed from the ambient environment.
         if [ -n "${LAWS_SWITCH_SESSION:-}" ] && [ "$sid" = "${LAWS_SWITCH_SESSION:-}" ] \
            && [ -z "$aid" ] && [ -n "${LAWS_SWITCH_DIR:-}" ] && [ -d "${LAWS_SWITCH_DIR:-}" ]; then
@@ -365,7 +364,7 @@ case "$HOOK_TYPE" in
           # yields a path known to resolve, not a promise that it does.
           if [ -f "$transcript" ]; then
             # `current` carries the whole conflicting set, comma-joined - the same wire format the
-            # launcher reads back from the gate. Craft names are media slugs, so ',' cannot occur
+            # host reads back from the gate. Craft names are media slugs, so ',' cannot occur
             # inside one.
             if printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
                  "$(json_escape "$sid")" "$(json_escape "$transcript")" \
@@ -381,8 +380,8 @@ case "$HOOK_TYPE" in
               echo "laws skill-router guard: could not record the pending craft switch in $LAWS_SWITCH_DIR; denying without a switch offer" >&2
             fi
           else
-            # A withheld offer has two very different causes that look identical from outside: the
-            # launcher legitimately not offering one (subagent, nested claude, unpinned session),
+            # A withheld offer has two very different causes that look identical from outside: this
+            # gate legitimately not offering one (subagent, nested claude, unpinned session),
             # and THIS - a transcript_path that did not survive extraction, which the header's own
             # example of a path truncated at an embedded quote produces. Falling through silently
             # collapses a parsing failure onto the shape of a deliberate decision, so the reader

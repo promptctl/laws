@@ -249,11 +249,10 @@ const estimateTokens = (chars) => Math.round(chars / 4);  // rough; errs high �
 //   incomingMedium given  → pre-load gate (injected Skill-call intercept): the transcript holds the
 //                           engaged crafts; the incoming one is not yet on disk.
 //   incomingMedium absent → post-hoc: loads already present; the newest is the incoming one.
-// How a transcript's TEXT becomes its records, in one place. Three callers split this string — the
-// two on-disk paths below and the live enactment in ../injector/switch-request.js — and the line
-// numbering `decide()` reports is only meaningful if all three agree. Copies of the rule would drift
-// the first time it has to learn about CRLF or a BOM, and the live path's uuids would then refer to
-// different records than the disk path's indices. [LAW:one-source-of-truth]
+// How a transcript's TEXT becomes its records, in one place — shared with the live enactment in
+// ../injector/switch-request.js, whose uuids must name the same records the line numbering
+// `decide()` reports. A second copy would drift the first time it learns about CRLF or a BOM.
+// [LAW:one-source-of-truth]
 function toRawLines(text) {
   const lines = text.split('\n');
   // The trailing '' a final newline produces is an artefact of splitting, not a record.
