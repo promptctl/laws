@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# LAWS_LAUNCHER_SELF_MARKER — says "this file is a claude-laws launcher" to any launcher that is
-# deciding whether the `claude` it resolved is really claude. It is read from the FIRST 400 BYTES,
-# so it stays at the top; the check that reads it is further down, under "THE ONE FAILURE".
+LAWS_LAUNCHER_SELF_MARKER='LAWS_LAUNCHER_SELF_MARKER'
+# THE LINE ABOVE PLAYS BOTH OF THE MARKER'S PARTS, which is why it is authored once and sits first.
+# Its VALUE is the token this file greps for in whatever `claude` resolved to; its TEXT is the token
+# that marks THIS file for any other launcher grepping it. The string a launcher looks for and the
+# string it is found by are therefore the same characters and cannot drift. [LAW:one-source-of-truth]
+#
+# It must be CONTAINED, never sourced: what gets read is the first 400 bytes of a file at a path, so
+# a launcher that loaded its token from elsewhere would not itself be recognisable — and it must
+# stay near the top for the same reason, ahead of any prose. `install-launcher` reads this line to
+# stamp the stubs it writes rather than spelling the token again, so renaming it here carries
+# everywhere. The check that consumes it is below, under "THE ONE FAILURE".
 #
 # claude-laws — the opt-in launcher that makes the craft-compatibility switch reachable.
 #
@@ -44,7 +52,22 @@ log() { printf 'claude-laws: %s\n' "$1" >&2; }
 # `claude-laws` (an agent starting a session from inside a session) sits at 2 or 3, so a ceiling of
 # 8 is unreachable by honest use and turns the catastrophic failure into a loud one.
 # [LAW:no-silent-failure] the bound reports which failure it is rather than merely surviving it.
-LAWS_LAUNCH_DEPTH=$(( ${LAWS_LAUNCH_DEPTH:-0} + 1 ))
+# THE VALUE IS PARSED BEFORE IT IS COUNTED, because it arrives from the environment and bash's
+# arithmetic expansion is not a calculator — it re-expands what it is given. An inherited
+# LAWS_LAUNCH_DEPTH of `a[$(...)]` runs the substitution inside the subscript and then evaluates to
+# a clean number, so the command executes and the depth still comes out right: nothing looks wrong
+# afterwards. Measured on bash 5.3.9, including an indirect form where the value names another
+# variable holding the payload.
+#
+# Anything that is not a plain run of digits is therefore not a depth, and is replaced by one rather
+# than repaired — a corrupted counter has no partial meaning worth recovering, and the ceiling below
+# is what has to keep working. [LAW:parse-dont-validate] the arithmetic only ever sees digits, so
+# there is nothing left for it to expand.
+inherited_depth="${LAWS_LAUNCH_DEPTH:-0}"
+case "$inherited_depth" in
+  ''|*[!0-9]*) inherited_depth=0 ;;
+esac
+LAWS_LAUNCH_DEPTH=$(( inherited_depth + 1 ))
 export LAWS_LAUNCH_DEPTH
 if [ "$LAWS_LAUNCH_DEPTH" -gt 8 ]; then
   log "nested $LAWS_LAUNCH_DEPTH launchers deep — 'claude' almost certainly resolves to a launcher"
@@ -63,6 +86,21 @@ LAUNCH="$PLUGIN_DIR/hooks/injector/launch.js"
 CLAUDE_BIN="${LAWS_CLAUDE_BIN:-$(command -v claude || true)}"
 [ -n "$CLAUDE_BIN" ] || { log "no 'claude' on PATH; nothing to launch"; exit 127; }
 CLAUDE_BIN="$(readlink -f "$CLAUDE_BIN")"
+# `command -v` answers "what does the name `claude` mean here", which is not the same question as
+# "which file is that". An exported shell FUNCTION named claude is the case that separates them: the
+# name resolves, but to the word `claude` rather than a path, and `readlink -f` then canonicalises
+# it against the current directory into a path that does not exist rather than failing. Measured —
+# a `-n` check would pass this, which is why the check is executability and not emptiness.
+#
+# Without it the bad path travels: nothing here objects, and the user's diagnosis arrives from
+# launch.js as `could not start /some/cwd/claude: ENOENT`, naming the wrong layer. Say it where the
+# fact is known. [LAW:parse-dont-validate] past this line CLAUDE_BIN is a runnable file.
+if [ ! -x "$CLAUDE_BIN" ]; then
+  log "'claude' resolves to '$CLAUDE_BIN', which is not an executable file."
+  log "A shell function or alias named 'claude' does this: it is not something another process can run."
+  log "Point 'claude' at the real binary, or set LAWS_CLAUDE_BIN to its path."
+  exit 127
+fi
 
 # THE ONE FAILURE THAT CANNOT DEGRADE. Every other problem here ends with "run stock claude
 # instead", which is only an answer while stock claude is a different program. A user who points
@@ -86,8 +124,7 @@ CLAUDE_BIN="$(readlink -f "$CLAUDE_BIN")"
 # It cannot false-positive on a legitimate nested `claude` started from inside a session: that
 # resolves to the real binary, which is a Mach-O with no marker in it. Reading a fixed 400 bytes
 # keeps the check the same cost against a 245MB binary as against a shell script.
-# LAWS_LAUNCHER_SELF_MARKER — the token this check greps for; see above before moving or renaming.
-if head -c 400 "$CLAUDE_BIN" 2>/dev/null | grep -q 'LAWS_LAUNCHER_SELF_MARKER'; then
+if head -c 400 "$CLAUDE_BIN" 2>/dev/null | grep -qF "$LAWS_LAUNCHER_SELF_MARKER"; then
   log "'claude' on PATH resolves to a claude-laws launcher ($CLAUDE_BIN), not to claude itself,"
   log "so there is no stock claude to host or to fall back to — hosting it would recurse forever."
   log "Point 'claude' back at the real binary and run 'claude-laws' by name instead."
