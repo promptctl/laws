@@ -291,6 +291,10 @@ t('an unhosted session says so before it reaches for a socket', async () => {
   assert.strictEqual(out.status, 1);
   assert.match(out.stderr, /LAWS_SWITCH_DIR is unset/);
   assert.match(out.stderr, /no host to enact a switch/);
+  // Naming the launcher is the actionable half. Saying only "you have no host" leaves a reader who
+  // wants one with nowhere to go, which is what this message did while no launcher existed.
+  assert.match(out.stderr, /claude-laws/);
+  assert.match(out.stderr, /install-launcher/);
 });
 
 // A refusal that is untouched AND has spent the offer. `mutated: false` proves only that THIS

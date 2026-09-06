@@ -338,7 +338,10 @@ case "$HOOK_TYPE" in
         # time. [LAW:dataflow-not-control-flow]
         switch_offer=""
         # ONLY THE SESSION THESE VARS WERE PINNED FOR MAY BE OFFERED THE SWITCH, and the test is
-        # identity, not inference - hosting a session means minting its id and exporting it here.
+        # identity, not inference. `bin/claude-laws` is what sets both: it mints the session id,
+        # pins it onto the launch with --session-id so claude reports that exact id back in this
+        # payload, and exports it alongside the handoff directory. A session started any other way
+        # has neither, and correctly gets no offer.
         #
         # Everything else that reaches this code inherits LAWS_SWITCH_DIR from that environment
         # and would otherwise look eligible:
