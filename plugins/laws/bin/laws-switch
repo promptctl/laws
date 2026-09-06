@@ -19,6 +19,9 @@ const fs = require('fs');
 const path = require('path');
 const M = require(path.join(__dirname, '..', 'hooks', 'scripts', 'laws-excise.js'));
 const { requestSwitch, PROVABLY_NOT_DELIVERED } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-channel.js'));
+// The refusal vocabulary has ONE home and this reads it rather than spelling a reason out; a copy
+// of the string here would drift from the arm it names. [LAW:one-source-of-truth]
+const { REFUSED } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-request.js'));
 const { spawnSync } = require('child_process');
 // The router owns the engaged-craft lock's layout; this is the only sanctioned way to release one.
 const ROUTER = path.join(__dirname, '..', 'hooks', 'scripts', 'skill-router.sh');
@@ -43,11 +46,11 @@ if (!choice) die('usage: laws-switch <' + CHOICES.join('|') + '> [--summary <tex
 if (choice.startsWith('--')) die('the choice comes first: laws-switch <' + CHOICES.join('|') + '> [--summary <text>] — flags follow it, and a flag\'s value is never read as the choice.', 2);
 if (!CHOICES.includes(choice)) die('unknown choice ' + JSON.stringify(choice) + '; expected one of ' + CHOICES.join(', '), 2);
 
-// The launcher owns this directory, and the hosted session's channel lives inside it; its absence
+// The handoff directory named by LAWS_SWITCH_DIR holds the hosted session's channel; its absence
 // means this session has no host to enact anything. Say that plainly rather than proceeding toward
 // a socket path that cannot exist. [LAW:no-silent-failure]
 const dir = process.env.LAWS_SWITCH_DIR;
-if (!dir) die('LAWS_SWITCH_DIR is unset — this session is not hosted by the laws launcher, so there is nothing that can enact a switch. Start the session through the launcher to use the switch, or pick "reject" and stay in the current craft.');
+if (!dir) die('LAWS_SWITCH_DIR is unset — this session has no host to enact a switch, so nothing can be applied. Pick "reject" and stay in the current craft.');
 
 const pendingPath = path.join(dir, 'pending.json');
 if (!fs.existsSync(pendingPath)) die('no pending craft switch — the guard has not denied an incompatible load in this session.');
@@ -136,9 +139,15 @@ const liveRequest = { choice, summary };
   // quiet — leaves it genuinely unknown, and unknown gets the warning. An omission can then only
   // make the message more cautious, never turn it into a false reassurance. [LAW:no-silent-failure]
   const untouched = live.mutated === false || PROVABLY_NOT_DELIVERED.includes(live.reason);
-  const what = untouched
-    ? 'Nothing was changed, and the pending decision is still there to retry.'
-    : 'The switch may have run PART WAY. Your conversation may already have been rewound; check it before retrying.';
+  // `noOffer` is the one untouched arm that cannot promise a retry, and it is untouched for a reason
+  // that has already spent the offer: the session found it gone or half-written when it read it, so
+  // a concurrent laws-switch may have enacted the decision this call would retry. Telling that
+  // caller to retry is the false reassurance the paragraph above promises never to produce.
+  const what = live.reason === REFUSED.noOffer
+    ? 'Nothing was changed by this call, but no switch is pending any more - another call may already have enacted it. Check the conversation before asking for a new one.'
+    : untouched
+      ? 'Nothing was changed, and the pending decision is still there to retry.'
+      : 'The switch may have run PART WAY. Your conversation may already have been rewound; check it before retrying.';
   // "was not applied", never "the session refused": a refusal is only one of the ways this ends, and
   // the reason string is what says which one. Naming the commonest arm in the fixed part of the
   // sentence would make the message wrong for every other arm — including the one where there was no
