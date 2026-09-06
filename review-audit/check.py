@@ -21,7 +21,7 @@ ENUMS = {
     "premise": {"correct", "partly", "wrong", "uncertain"},
     "response": {"accepted_fix", "accepted_premise_different_fix", "pushed_back", "already_fixed", "no_response", "mixed"},
     "response_correct": {"yes", "no", "uncertain"},
-    "should_have": {"accepted_fix", "accepted_premise_different_fix", "pushed_back", "already_fixed", None},
+    "should_have": {"accepted_fix", "accepted_premise_different_fix", "pushed_back", "already_fixed", "mixed", None},
     "cause_kind": {"incomplete_fix", "regression_from_fix", "comment_drift_from_fix", "same_gap_other_instance", "new_scope", None},
     "law_citation_apt": {"yes", "no", "n/a"},
 }
