@@ -444,9 +444,18 @@ writer bolted alongside.
   cases. Live in-place enactment made the relaunch's only job disappear, so the launcher,
   `laws-switch`'s relaunch arm (`request.json`, `BUN_INSPECT`, driving `/exit`) and
   `laws-excise.js`'s `applyRequest()` / `--apply` reader of the handoff file were all deleted
-  (`promptctl-injector-xy0.4`). The on-disk-files-survive invariant did not depend on any of it and
-  still holds: `rewindTo`/`exciseAt` write nothing but the transcript, and the live path is handed no
-  file writer at all.
+  (`promptctl-injector-xy0.4`). Deleting the launcher also removed the switch's only entry point:
+  `claude-laws` was the sole producer of `LAWS_SWITCH_SESSION` and `LAWS_SWITCH_DIR` — it minted the
+  session id, pinned it with `--session-id`, and made the handoff directory — and nothing replaced it
+  (`launch.js` passes `process.env` through unchanged; `bun-host.mjs`, `bin/laws-switch` and
+  `skill-router.sh` only read those two). `skill-router.sh`'s gate cannot be satisfied by a session
+  started any normal way, so on master today the switch is never OFFERED at all — live path or
+  otherwise — where the pre-PR relaunch path worked end to end. Sequenced, not overlooked: restoring
+  the relaunch would re-add the `BUN_INSPECT` eval channel this epic exists to remove, so
+  `promptctl-injector-xy0.5` closes the gap by putting a session-pinning launcher back on `PATH`.
+  The on-disk-files-survive invariant did not depend on any of it and still holds:
+  `rewindTo`/`exciseAt` write nothing but the transcript, and the live path is handed no file writer
+  at all.
 - DONE (2026-08-16): SEAM 1 is unnecessary, confirmed by probe — the PreToolUse payload carries
   `transcript_path` alongside `tool_input.skill`, so detection + `decide()` run in the hook off
   public surfaces. With SEAM 1 and SEAM 2a both retired, **detection and the disk surgery carry no
