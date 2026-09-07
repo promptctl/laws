@@ -20,12 +20,45 @@
 
 set -o pipefail
 
+# Where this library lives, so it can reach the helpers that ship beside it without
+# depending on the caller's CWD or on which script sourced it.
+HORIZON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ── Pinned identity of the reviewer (data, not a mode) ─────────────────────────────
 : "${REVIEWER_REPO:=promptctl/copirate-code-review-agent}"
 : "${REVIEWER_TAG:=v1}"
 : "${REVIEWER_PROMPT_PATH:=review-agent/instructions.md}"
 HORIZON_MARKETPLACE_NAME="promptctl-horizon"
 HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
+# THE ONE REPOSITORY EVERY RUN DRIVES. It already exists, and this eval never creates or
+# deletes a repository - which is why nothing here needs a credential capable of
+# destroying one. Public, because the reviewer is a GitHub Action and Actions minutes are
+# unmetered on public repositories.
+#
+# It is scratch space, not a record. A run's PRs and review threads are captured onto disk
+# as part of the run bundle (promptctl-horizon-7ry.4); leaving them to live in a GitHub
+# repo would make the bundle depend on that repo surviving untouched forever, which is
+# exactly the fragility capture exists to remove.
+HORIZON_RUN_REPO="promptctl/horizon-eval"
+
+# ── Where a run lives on this machine ──────────────────────────────────────────────
+# Two paths, deliberately NOT nested, because they have opposite lifetimes.
+#
+# HORIZON_CONFIG_DIR is PERSISTENT, and its exact path is load-bearing: Claude Code
+# names the OS keychain entry holding the run's credential after a hash of this path, so
+# "is this authenticated" is a question about WHERE the directory is, not what is in it.
+# Wiping it keeps the login; building it somewhere else loses it. login.sh authenticates
+# it once, and every run afterwards rebuilds it in place.
+#
+# HORIZON_WORK_DIR holds ONE RUN'S OUTPUT and must not exist when a run starts, so a
+# previous run's transcripts and commits can never be mistaken for this one's.
+#
+# Nesting the first inside the second is how this went wrong before: the run dir's
+# freshness guard then had to refuse the very directory the credential is bound to, and
+# no run could start after a login had happened. Separate paths make the guard correct
+# by construction rather than by a special case. [LAW:decomposition]
+: "${HORIZON_CONFIG_DIR:=$HOME/.horizon/config}"
+: "${HORIZON_WORK_DIR:=$HOME/.horizon/run}"
 
 # ── Seeding: the shape of a seed bundle, and the fixed identity its commits carry ──
 # A seed is a directory of exactly two parts: the tree that becomes the project repo,
@@ -59,7 +92,7 @@ horizon_need() {
 # function, and the five drifting per-script copies this replaced are the worse failure.
 # cat/tar/base64 stay with pin-instrument.sh only because they are reached from nothing
 # else at all.
-HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp rm sort tr)
+HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tr wc)
 
 horizon_need_base() {
   local tool
@@ -138,6 +171,9 @@ HORIZON_MEMENTO_PLUGIN_SUBDIR="memento"
 # definition of "the plugin is fit for the loop"; the pin checks the snapshot against
 # it and the verifier checks the install against it, both reading this one list.
 HORIZON_MEMENTO_SKILLS=(address-pr-reviews message-in-a-bottle)
+# The binary the session boundary is made of, relative to the plugin directory. Named
+# once: the pin checks it in the snapshot and verify-instrument checks it as installed.
+HORIZON_MEMENTO_RELAUNCH_REL_PATH="skills/message-in-a-bottle/bin/finalize-session"
 # A moved skill leaves this heading behind - it is how memento's own `next` pointer is
 # written, the one pointer left in this ecosystem. Checking it is a convention check,
 # not proof that a body contains a procedure; it earns its place because a pointer
@@ -208,6 +244,15 @@ horizon_build_memento_snapshot() {
     ! grep -q "$HORIZON_MOVED_SKILL_HEADING" "$skill_file" \
       || horizon_die "memento at $commit_sha ships '$skill' as a pointer stub, not a procedure"
   done
+  # The relaunch binary itself, executable. The skill check above proves the procedure
+  # is there; this proves the thing the session boundary is MADE of is there. A snapshot
+  # missing it boots, works one session, and then never hands off - a run does not
+  # notice for hours; it just stops committing and burns its wall-clock ceiling.
+  # [LAW:no-silent-failure]
+  local relaunch="$plugin_dir/$HORIZON_MEMENTO_RELAUNCH_REL_PATH"
+  [ -x "$relaunch" ] \
+    || horizon_die "memento at $commit_sha carries no executable finalize-session at $relaunch.
+The session boundary IS that binary, so this instrument could never cross one."
   mkdir -p "$snapshot_dir/.claude-plugin"
   cat > "$snapshot_dir/.claude-plugin/marketplace.json" <<EOF
 {
@@ -398,6 +443,42 @@ horizon_goal_wording_sha256() {
     || { rm -f "$tmp"; horizon_die "could not hash ${HORIZON_GOAL_PROMPT_REL_PATH} at ${commit_sha}"; }
   rm -f "$tmp"
   printf '%s\n' "$hash"
+}
+
+# Usage: horizon_goal_wording_file <repo_root> <commit_sha> <out_file>
+#
+# Writes the pinned /goal wording, taken from the same commit horizon_goal_wording_sha256
+# hashes, to <out_file>. The driver issues THIS file rather than the one in the working
+# tree: manifest.json records the wording's sha256 at the pinned commit, so a run that
+# issued an uncommitted local edit would report a controlled variable it did not use -
+# and it would look identical in the manifest. Same commit for the hash and the issue,
+# by construction. [LAW:one-source-of-truth]
+horizon_goal_wording_file() {
+  local repo_root="$1" commit_sha="$2" out="$3"
+  git -C "$repo_root" show "${commit_sha}:${HORIZON_GOAL_PROMPT_REL_PATH}" > "$out" 2>/dev/null \
+    || horizon_die "missing ${HORIZON_GOAL_PROMPT_REL_PATH} at ${commit_sha}"
+  [ -s "$out" ] || horizon_die "${HORIZON_GOAL_PROMPT_REL_PATH} is empty at ${commit_sha}"
+}
+
+# Usage: horizon_manifest_field <manifest_file> <section> <key>  -> that recorded value
+#
+# THE reader of both manifests (manifest.json and seed-manifest.json share one shape:
+# sections of scalar fields). Read back rather than re-derived, so what a run acts on and
+# what its manifest describes cannot come from two computations - the pinned commit a
+# goal is issued from, the project name a seed was written under. Section and key are
+# values, not a reader per field: a reader hardwired to one section once handed the
+# wrong repository's sha to the other's lookup. [LAW:one-source-of-truth] [LAW:composability]
+horizon_manifest_field() {
+  local manifest="$1" section="$2" key="$3"
+  [ -f "$manifest" ] || horizon_die "no manifest at $manifest"
+  python3 -c '
+import json, sys
+section, key = sys.argv[2], sys.argv[3]
+value = json.load(open(sys.argv[1])).get(section, {}).get(key)
+if not value:
+    sys.exit("manifest records no %s.%s" % (section, key))
+print(value)
+' "$manifest" "$section" "$key" || horizon_die "could not read ${section}.${key} from $manifest"
 }
 
 # ══ SEEDING: appspec + fresh repo + lit init (promptctl-horizon-7ry.2) ═════════════
@@ -615,4 +696,578 @@ horizon_lit_import() {
   local project_dir="$1" docs="$2"
   ( cd "$project_dir" && lit import --path "$docs" ) >/dev/null \
     || horizon_die "lit import failed in $project_dir (from $docs)"
+}
+
+# Usage: horizon_bind_remote <project_dir>
+#
+# Makes $HORIZON_RUN_REPO this run's origin, holding exactly the seeded history and
+# nothing else. That is the whole job: the remote's time zero.
+#
+# WHY A SHARED, PRE-EXISTING REPO. The alternative - one new repo per run - has to answer
+# "when is it safe to create this?", and every answer is a claim about a moment in the
+# driver's execution order rather than a fact about the domain. Create it before the
+# session boots and each boot failure mints a repo no run ever used; create it after the
+# goal is issued and the agent racing to its first push decides whether origin exists.
+# Landing between them works only for as long as nobody reorders the lines, and it leaves
+# the eval wanting a credential that can delete repositories to clean up after itself.
+# A repository that simply always exists has no such moment to get wrong.
+# [LAW:no-ambient-temporal-coupling] correctness stops depending on call position.
+#
+# RESET AT THE START, NOT AT THE END. A run that crashes never reaches its own cleanup, so
+# tidying afterwards leaves the next run to start from wreckage - and "usually clean"
+# is not a time zero. Doing it here makes the state a run begins from a function of this
+# call alone, whatever the last run did or how it died.
+#
+# WHAT SURVIVES A RESET, stated because it is a real divergence rather than an oversight:
+# pull requests can be closed but never deleted, so closed PRs accumulate and PR numbers
+# keep climbing across runs. Run five does not start at #1. Nothing else carries over.
+#
+# The remote's identity is not recorded anywhere by this function - the project's own git
+# config holds it, and a second copy in the run's output could only ever disagree with it.
+# [LAW:one-source-of-truth]
+horizon_bind_remote() {
+  local project_dir="$1" repo="$HORIZON_RUN_REPO"
+  [ -d "$project_dir" ] || horizon_die "horizon_bind_remote: no project at $project_dir"
+
+  # Listed into a variable first: a command substitution feeding a `for` never trips
+  # errexit, so an unchecked listing that failed would clean up nothing and say nothing.
+  # [LAW:no-silent-failure]
+  local prs branches
+  prs="$(horizon_remote_open_prs "$repo")"
+
+  # Closing a PR with --delete-branch retires the pull request and its head branch in one
+  # call, so the two cannot come apart and leave a branch whose PR is gone.
+  local pr
+  for pr in $prs; do
+    horizon_log "closing leftover PR #$pr"
+    gh pr close "$pr" --repo "$repo" --delete-branch \
+      || horizon_die "could not close leftover PR #$pr in $repo"
+  done
+
+  # Listed after the PRs are closed, so this is what survived --delete-branch rather
+  # than a list that names branches the loop above already removed.
+  branches="$(horizon_remote_branches "$repo")"
+  # Branches an agent pushed without ever opening a PR are left behind by the loop above.
+  # master is skipped rather than attempted-and-forgiven: GitHub refuses to delete a
+  # default branch, and letting that refusal pass would be indistinguishable from a real
+  # permission failure going unnoticed. [LAW:no-silent-failure]
+  local branch
+  for branch in $branches; do
+    [ "$branch" = "master" ] && continue
+    horizon_log "deleting leftover branch $branch"
+    gh api -X DELETE "repos/$repo/git/refs/heads/$branch" \
+      || horizon_die "could not delete leftover branch $branch in $repo"
+  done
+
+  horizon_project_git "$project_dir" remote add origin "git@github.com:${repo}.git" \
+    || horizon_die "could not point $project_dir at $repo"
+  # Force, because the seed is a fresh history unrelated to whatever the last run left on
+  # master. This is the line that makes the shared repo equivalent to a new one.
+  horizon_project_git "$project_dir" push --force --quiet origin master \
+    || horizon_die "could not push the seeded history to $repo"
+
+  horizon_assert_remote_at_time_zero "$project_dir" "$repo"
+}
+
+# Usage: horizon_assert_remote_at_time_zero <project_dir> <repo>
+#
+# The four things that must be true of the remote before a run starts, checked against
+# GitHub rather than inferred from the commands that just ran - each of those reported
+# success, and success at the API is not the same fact as the state being right.
+#
+# `default_branch` is in here because it silently decides where pull requests go: the run
+# agent calls `gh pr create` with no --base, which resolves to the default branch, so a
+# repo whose default names something other than the branch the work is on produces a first
+# unit of work that cannot be proposed. [LAW:verifiable-goals] this is the shape of "the
+# remote is ready", written down where it can be run.
+horizon_assert_remote_at_time_zero() {
+  local project_dir="$1" repo="$2"
+
+  local pushed head
+  pushed="$(horizon_project_git "$project_dir" rev-parse refs/remotes/origin/master)" \
+    || horizon_die "origin/master does not exist in $repo - nothing was pushed"
+  head="$(horizon_project_head "$project_dir")"
+  [ "$pushed" = "$head" ] \
+    || horizon_die "origin/master ($pushed) is not the seeded HEAD ($head)"
+
+  local default_branch
+  default_branch="$(gh api "repos/$repo" --jq .default_branch)" \
+    || horizon_die "could not read the default branch of $repo"
+  [ "$default_branch" = "master" ] \
+    || horizon_die "$repo has default branch '$default_branch', not master - the run agent's PRs would target a branch the work is not on"
+
+  local open_prs
+  open_prs="$(horizon_remote_open_prs "$repo")"
+  [ -z "$open_prs" ] \
+    || horizon_die "$repo still has open PR(s) #${open_prs//$'\n'/, #} - the run would inherit a previous run's work as its own"
+
+  local extra_branches
+  extra_branches="$(horizon_remote_branches "$repo" | sed '/^master$/d')"
+  [ -z "$extra_branches" ] \
+    || horizon_die "$repo still carries branches from a previous run: ${extra_branches//$'\n'/, }"
+}
+
+# Usage: horizon_remote_open_prs <repo>  -> open PR numbers, one per line
+# Usage: horizon_remote_branches <repo>  -> branch names, one per line
+#
+# Paginated, so "every open PR" and "every branch" mean what they say past the API's
+# default page; the reset and the time-zero assertion both read through these, so they
+# cannot disagree about what the remote holds. [LAW:one-source-of-truth]
+horizon_remote_open_prs() {
+  local repo="$1"
+  gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].number' \
+    || horizon_die "could not list open PRs in $repo"
+}
+horizon_remote_branches() {
+  local repo="$1"
+  gh api --paginate "repos/$repo/branches?per_page=100" --jq '.[].name' \
+    || horizon_die "could not list branches in $repo"
+}
+
+# ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═
+#
+# THE MODEL: the driver builds time zero, launches the FIRST session, and from then on
+# only OBSERVES. Every later session is produced by memento's own relaunch, which this
+# eval measures rather than provides - a driver that re-issued the goal itself, or
+# restarted a stalled session, would be measuring the driver instead of the workflow.
+# So the primitives below divide cleanly into two kinds, and the division is the point:
+# a few that WRITE (provision boot state, launch session one) and the rest that only
+# READ (is it authenticated, is it ready, which transport, what happened).
+# [LAW:effects-at-boundaries]
+
+# The tmux session the run lives in. A run is launched INSIDE tmux deliberately - see
+# horizon_assert_transport for why that single fact decides whether the run is isolated.
+HORIZON_TMUX_SESSION="horizon-run"
+# Every readiness probe in finalize-session greps the pane for this, so the driver holds
+# itself to the same test rather than inventing a second notion of "up".
+# [LAW:one-source-of-truth] Verified still matching at Claude Code v2.1.226.
+HORIZON_BANNER_RE='Claude Code v[0-9]'
+HORIZON_BOOT_TIMEOUT_SECONDS=120
+HORIZON_POLL_SECONDS=2
+
+# Usage: horizon_assert_authenticated <config_dir>
+#
+# Asserted BEFORE any session is launched, because an unauthenticated config dir does
+# not fail loudly at launch - it boots to a login prompt and waits forever, which in an
+# unattended run is indistinguishable from an agent thinking hard. [LAW:no-silent-failure]
+#
+# Claude Code keys its stored credential to the config dir's PATH (the OS keychain entry
+# is named from a hash of it), so authentication is a property of WHERE the config dir
+# is, not of what is inside it: wiping the directory keeps the login, moving it loses
+# the login. That is why a run is built at a fixed working path - see run-loop.sh.
+# Usage: horizon_auth_state <config_dir>  -> `logged-in` or `logged-out`
+#
+# The one reader of `claude auth status`. It answers with a word rather than an exit
+# code, so callers under `set -e` can branch on the answer without the shell treating
+# "logged out" as a crashed command; the two failures that are not answers - no output,
+# not JSON - die here with their own message. [LAW:parse-dont-validate]
+horizon_auth_state() {
+  # Not named `status`: that is a read-only special variable in zsh, so the name would
+  # make this library unsourceable outside bash for no benefit at all.
+  local config_dir="$1" auth_json=""
+  [ -n "$config_dir" ] || horizon_die "horizon_auth_state: no config dir given"
+
+  # `claude auth status` EXITS 1 WHEN SIMPLY LOGGED OUT, while still printing a complete
+  # JSON answer. So its exit status does not mean "the command failed" and must not be
+  # branched on: doing so reports a missing login as an unreadable command, sending the
+  # operator to look for a broken CLI instead of running login.sh. The payload is the
+  # answer; whether it arrived at all is checked below, where an empty or unparseable
+  # response is a genuinely different failure with its own message. Not suppressed with
+  # 2>/dev/null either - stderr still reaches the operator.
+  auth_json="$(CLAUDE_CONFIG_DIR="$config_dir" claude auth status)" || true
+
+  [ -n "$auth_json" ] \
+    || horizon_die "'claude auth status' produced no output for $config_dir"
+
+  # Parsed rather than grepped: `loggedIn` is a JSON boolean, and a grep for the word
+  # would match the field name just as happily in a false response.
+  printf '%s' "$auth_json" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+print("logged-in" if d.get("loggedIn") is True else "logged-out")
+' || horizon_die "'claude auth status' did not return JSON for $config_dir:
+$auth_json"
+}
+
+horizon_assert_authenticated() {
+  local config_dir="$1" state
+  # Assigned, then compared: a reader that dies inside `[ "$(...)" ]` is not seen by
+  # errexit, and its message would be followed by this one, which would be wrong.
+  state="$(horizon_auth_state "$config_dir")"
+  [ "$state" = logged-in ] \
+    || horizon_die "the run's config dir is not logged in: $config_dir
+Run horizon/login.sh once (it needs a browser); every run after that is unattended.
+Note the credential is bound to this PATH, so logging in somewhere else will not help."
+}
+
+# Usage: horizon_write_boot_state <config_dir> <project_dir>
+#
+# A freshly provisioned config dir stops at interactive gates that no unattended run can
+# answer: first-run onboarding, the workspace trust dialog, and the bypass-permissions
+# disclaimer. Each is recorded as a settled fact here, so the session boots straight to a
+# ready input box.
+#
+# These are the CLI's own keys, not a private format: its error text for an untrusted
+# workspace names `projects[<dir>].hasTrustDialogAccepted: true` in this exact file as
+# the supported alternative to clicking the dialog.
+#
+# The gates live in TWO files, because the CLI moved one of them. Up to 2.1.226 the
+# bypass-permissions acceptance was `bypassPermissionsModeAccepted` in .claude.json; by
+# 2.1.252 a migration relocates it to settings.json as `skipDangerousModePermissionPrompt`
+# and DELETES the original key. That migration only fires if the old key is present when
+# it runs - and it runs during horizon_provision_config_dir, before this function writes
+# anything. Writing the old key afterwards therefore lands in a slot whose migration has
+# already gone by: the value sits in the file looking correct, is never migrated, and the
+# startup dialog does not honour it. The run then stops at a disclaimer no unattended
+# session can answer, while the config file reads as fully settled.
+#
+# So the acceptance is written where THIS version reads it, and the superseded key is not
+# written at all - two spellings of one fact are two things that can disagree, and the
+# dead one is the one that looks right. [LAW:one-source-of-truth] Verified on 2.1.252 by
+# removing the legacy key entirely and confirming the session still boots to a live input
+# box; if a future version moves it again, this is the seam that has to move with it.
+#
+# Written AFTER horizon_provision_config_dir, which rm -rf's the directory - order that
+# matters, so it is stated where it can be seen rather than left to the caller to
+# remember. Both files are MERGED into rather than replaced: provisioning leaves real
+# state in each (settings.json carries the pinned marketplace and the enabled plugin),
+# and clobbering either would make this a second writer of a file the CLI owns.
+horizon_write_boot_state() {
+  local config_dir="$1" project_dir="$2"
+  [ -d "$config_dir" ] || horizon_die "horizon_write_boot_state: no config dir at $config_dir"
+  [ -d "$project_dir" ] || horizon_die "horizon_write_boot_state: no project dir at $project_dir"
+  python3 - "$config_dir/.claude.json" "$config_dir/settings.json" "$project_dir" <<'PY' \
+    || horizon_die "could not write unattended boot state into $config_dir"
+import json, os, sys
+
+config_path, settings_path, project = sys.argv[1:]
+
+
+def merge(path, apply):
+    existing = {}
+    if os.path.exists(path):
+        with open(path) as f:
+            existing = json.load(f)
+    apply(existing)
+    with open(path, "w") as f:
+        json.dump(existing, f, indent=2)
+        f.write("\n")
+
+
+def gates(config):
+    config["hasCompletedOnboarding"] = True
+    config["theme"] = "dark"
+    entry = config.setdefault("projects", {}).setdefault(project, {})
+    entry["hasTrustDialogAccepted"] = True
+    entry["hasCompletedProjectOnboarding"] = True
+
+
+def bypass(settings):
+    settings["skipDangerousModePermissionPrompt"] = True
+
+
+merge(config_path, gates)
+merge(settings_path, bypass)
+PY
+}
+
+# Usage: horizon_take_run_lock
+#
+# THE LOCK. Every resource a run holds is a machine-wide singleton - the config dir at its
+# fixed path, the tmux session name, the shared remote - so the run is serialized by ONE
+# thing all of them share: the tmux session it will live in. Creating it is the lock -
+# tmux refuses a duplicate name atomically, so two drivers cannot both pass - and it is
+# taken before anything shared is touched, then held until horizon_release_run_lock. The
+# session starts on the default shell; horizon_launch_session replaces that with claude.
+# It disappears with the server on any kind of death, so there is no lock file to go
+# stale. [LAW:single-enforcer] one checkpoint for "one run at a time".
+horizon_take_run_lock() {
+  tmux new-session -d -s "$HORIZON_TMUX_SESSION" -x 200 -y 50 \
+    || horizon_die "a run is live in tmux session $HORIZON_TMUX_SESSION, or a killed driver left it.
+One run at a time; \`tmux kill-session -t $HORIZON_TMUX_SESSION\` clears a session no run is using."
+}
+
+# Usage: horizon_release_run_lock
+#
+# Judged on the postcondition, not on the kill: a session that already died released the
+# lock itself, whichever side of the kill it died on. A session that outlives a failed
+# kill is the failure, reported with tmux's own reason. [LAW:no-silent-failure]
+horizon_release_run_lock() {
+  local err
+  err="$(tmux kill-session -t "$HORIZON_TMUX_SESSION" 2>&1)" && return 0
+  # has-session reports absence on stderr and by exit status; absence is the answer here.
+  # [LAW:no-silent-failure] exception: the status is read, the text is noise.
+  ! tmux has-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null \
+    || horizon_die "could not end the run session $HORIZON_TMUX_SESSION: $err"
+}
+
+# Usage: horizon_launch_session <config_dir> <project_dir>
+#
+# The ONE write that starts a run: claude replaces the placeholder shell in the locked
+# session's pane. Inside tmux because that single choice decides whether the run stays
+# isolated - see horizon_assert_transport, which is how that claim gets checked instead
+# of assumed.
+#
+# CLAUDE_CONFIG_DIR is set in the SESSION's environment rather than exported: a pane
+# spawned on an already-running tmux server inherits the server's environment, not the
+# caller's, so an exported value would silently not arrive and the run would read the
+# operator's real config. [LAW:no-silent-failure]
+horizon_launch_session() {
+  local config_dir="$1" project_dir="$2"
+  tmux set-environment -t "$HORIZON_TMUX_SESSION" CLAUDE_CONFIG_DIR "$config_dir" \
+    || horizon_die "could not bind CLAUDE_CONFIG_DIR into the run session"
+  tmux respawn-pane -k -t "$HORIZON_TMUX_SESSION" -c "$project_dir" \
+    "claude --dangerously-skip-permissions" \
+    || horizon_die "could not launch claude in the run session"
+}
+
+# Usage: horizon_pane  -> the run session's pane contents
+horizon_pane() {
+  tmux capture-pane -t "$HORIZON_TMUX_SESSION" -p \
+    || horizon_die "could not read the run session's pane (is it still alive?)"
+}
+
+# Usage: horizon_wait_ready
+#
+# Waits for the banner rather than for a fixed sleep: readiness is a state the pane
+# reports, not a duration to bet on. [LAW:no-ambient-temporal-coupling]
+horizon_wait_ready() {
+  local waited=0
+  while [ "$waited" -lt "$HORIZON_BOOT_TIMEOUT_SECONDS" ]; do
+    if horizon_pane 2>/dev/null | grep -qE "$HORIZON_BANNER_RE"; then
+      return 0
+    fi
+    sleep "$HORIZON_POLL_SECONDS"
+    waited=$((waited + HORIZON_POLL_SECONDS))
+  done
+  # The pane goes in the message. What stops a boot is almost always something the pane is
+  # displaying and waiting on - an interactive gate the boot state did not settle, a login
+  # prompt, a crash - and a bare "did not become ready" sends the reader to go find that
+  # out by hand, at which point the session may already have been cleaned up. An error
+  # should say where to look; this one can simply say what it saw. [LAW:no-silent-failure]
+  horizon_die "session did not reach a ready input box within ${HORIZON_BOOT_TIMEOUT_SECONDS}s.
+The pane was showing:
+$(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
+}
+
+# Usage: horizon_send <text>
+#
+# Pastes text into the session's input box and submits it. Delivered through a tmux
+# buffer rather than `send-keys <text>`, so no shell or tmux metacharacter in the text
+# can be interpreted on the way in - the pinned goal wording is prose, and prose
+# contains quotes.
+#
+# Enter is pressed when the input box SHOWS the paste, not after a pause. Claude Code
+# collapses a bracketed multi-line paste into `[Pasted text #n +<lines> lines]`, where
+# <lines> is the pasted text's newline count (probed on 2.1.259), so that placeholder
+# with this text's own count is the proof the whole text arrived - a submit that raced
+# it would issue a truncated goal and be read downstream as a failed carry.
+# [LAW:no-ambient-temporal-coupling]
+horizon_send() {
+  local text="$1"
+  [ -n "$text" ] || horizon_die "horizon_send: nothing to send"
+  local lines landed
+  lines="$(printf '%s' "$text" | wc -l | tr -d ' ')"
+  landed="\[Pasted text #[0-9]+ \+${lines} lines\]"
+  printf '%s' "$text" | tmux load-buffer -b horizon-send - \
+    || horizon_die "could not load the text to send into a tmux buffer"
+  tmux paste-buffer -d -b horizon-send -t "$HORIZON_TMUX_SESSION" -p \
+    || horizon_die "could not paste into the run session"
+  local waited=0
+  until horizon_pane | grep -qE "$landed"; do
+    [ "$waited" -lt "$HORIZON_BOOT_TIMEOUT_SECONDS" ] \
+      || horizon_die "the pasted text never appeared in the input box (${lines} lines).
+The pane was showing:
+$(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
+    sleep "$HORIZON_POLL_SECONDS"
+    waited=$((waited + HORIZON_POLL_SECONDS))
+  done
+  tmux send-keys -t "$HORIZON_TMUX_SESSION" Enter \
+    || horizon_die "could not submit into the run session"
+}
+
+# Usage: horizon_assert_transport
+#
+# THE ISOLATION CHECK. finalize-session chooses how to hand off by walking its own
+# process ancestry for a live tmux pane. When it finds one it resets THIS process in
+# place, and the run keeps the CLAUDE_CONFIG_DIR, PATH and flags it was launched with
+# because nothing is relaunched. When it does not, it spawns a fresh tmux session
+# instead - and a session created on an already-running server inherits the SERVER's
+# environment, so the successor reads the operator's real config while every log line
+# still reports success. That is the whole isolation guarantee of the instrument turning
+# off, with nothing raised. [LAW:no-silent-failure]
+#
+# The precondition for the good path is exactly "claude runs under a live pane of our
+# session", so that is what gets asserted - before the run is trusted, not after it has
+# produced a contaminated bundle. Checked from the outside, by ancestry, rather than by
+# asking the agent to run a dry-run: an assertion that costs a turn is one a long
+# campaign will be tempted to skip. [LAW:parse-dont-validate]
+horizon_assert_transport() {
+  local pane_pid
+  pane_pid="$(tmux display-message -p -t "$HORIZON_TMUX_SESSION" '#{pane_pid}')" \
+    || horizon_die "could not read the run session's pane pid"
+  [ -n "$pane_pid" ] || horizon_die "run session reported an empty pane pid"
+  # ps output is parsed once, in one place, rather than re-shelled per ancestry hop.
+  ps -eo pid=,ppid=,comm= | python3 -c '
+import sys
+
+pane_pid = int(sys.argv[1])
+parent, name = {}, {}
+for line in sys.stdin:
+    parts = line.split(None, 2)
+    if len(parts) < 3:
+        continue
+    pid, ppid, comm = parts
+    try:
+        parent[int(pid)] = int(ppid)
+    except ValueError:
+        continue
+    name[int(pid)] = comm.strip()
+
+# A claude that REACHES the pane is one finalize-session will find by the same walk -
+# and reaching it includes BEING it. `tmux respawn-pane <cmd>` execs the command as the
+# pane process itself rather than under a shell, so on the ordinary launch the pid of
+# claude IS pane_pid. A test that walked only strict ancestors rejected exactly the
+# arrangement it exists to confirm. (No apostrophes in here: this whole program is a
+# single-quoted shell string, and one would end it.)
+# Bounded so a cycle in a mangled ps snapshot cannot spin.
+def reaches_pane(pid):
+    for _ in range(32):
+        if pid == pane_pid:
+            return True
+        pid = parent.get(pid)
+        if pid is None or pid == 0:
+            return False
+    return False
+
+claudes = [p for p, n in name.items() if n.rsplit("/", 1)[-1] == "claude"]
+if not any(reaches_pane(p) for p in claudes):
+    sys.exit("no claude process runs under the run pane (pid %d); finalize-session "
+             "would relaunch instead of resetting in place, losing CLAUDE_CONFIG_DIR"
+             % pane_pid)
+' "$pane_pid" || horizon_die "run session will not hand off through the in-place transport"
+}
+
+# Usage: horizon_capture_transcripts <config_dir> <work_dir>
+#
+# Moves the run's session transcripts into the run's own output directory.
+#
+# WHY THIS IS NOT OPTIONAL. Transcripts are the primary record of a run - the thing a
+# human reads to judge what happened - and Claude Code writes them inside the CONFIG dir,
+# which is a fixed path shared by every run and which horizon_provision_config_dir wipes
+# on the way in. So a finished run's record survives only until the next run starts, and
+# nothing anywhere would report that it had gone. The record is moved to where the rest of
+# the run's output already lives, which is also the directory that gets archived. Moved,
+# not copied: the config dir then holds no transcripts between runs, so what a later run
+# finds there is only ever its own.
+#
+# Called from an exit handler rather than at the end of a successful run: a run that died
+# is the one whose transcripts are most worth reading, and it never reaches its own last
+# line. After the session is ended, so the record is final when it moves.
+# [LAW:no-silent-failure]
+horizon_capture_transcripts() {
+  local work_dir="$2" source="$1/projects" target="$2/transcripts"
+  [ -d "$source" ] || return 0
+  # The handler that calls this is installed before the work dir is created, and a run
+  # that died in between still has transcripts worth keeping.
+  mkdir -p "$work_dir" || horizon_die "could not create $work_dir to capture transcripts into"
+  mv "$source" "$target" || horizon_die "could not capture transcripts into $target"
+  horizon_log "transcripts captured: $target"
+}
+
+# Usage: horizon_report <config_dir> <project_dir> <goal_file>  -> the run's JSON report
+#
+# The project's commits are gathered here and handed to sessions.py, which reads the
+# transcripts and does the analysis. The split is deliberate: this side is the effect
+# (ask git what exists right now), that side is a pure function of what it is given, so
+# the same verdict can be recomputed from an archived run with nothing running.
+# [LAW:effects-at-boundaries]
+#
+# %cI is strict ISO-8601 and %H the full sha - a fixed, machine-oriented format rather
+# than whatever the operator's log.date or format.pretty config would otherwise impose.
+horizon_report() {
+  local config_dir="$1" project_dir="$2" goal_file="$3" commits
+  commits="$(horizon_project_git "$project_dir" log --reverse --format='%H%x09%cI')" \
+    || horizon_die "could not read the project's commit log in $project_dir"
+  printf '%s\n' "$commits" \
+    | python3 "$HORIZON_LIB_DIR/sessions.py" "$config_dir" "$project_dir" "$goal_file" \
+    || horizon_die "could not analyse the run's sessions"
+}
+
+# Usage: horizon_report_counts < report  -> "<consecutive committing sessions> <lost carries>"
+#
+# The one reader of the report's keys outside sessions.py. sessions.test.py runs it
+# against real sessions.py output, so the two sides cannot drift apart unnoticed.
+# [LAW:one-source-of-truth]
+horizon_report_counts() {
+  python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["consecutive_with_commits"], d["goal_carries_expected"] - d["goal_carries_intact"])
+' || horizon_die "could not read the run report"
+}
+
+# Usage: horizon_observe <config_dir> <project_dir> <goal_file> <target_sessions> <max_minutes>
+#
+# Watches until the run has produced <target_sessions> consecutive sessions of committed
+# work, or the wall-clock ceiling stops it. Prints the final report to stdout.
+#
+# The two limits are arguments rather than globals the caller happens to have set: a
+# function that silently reads its caller's variables only works for that one caller,
+# and reads whatever a later one leaves lying around. [LAW:composability]
+#
+# It only ever READS. A driver that nudged a quiet session, or re-issued a goal that
+# failed to carry, would be repairing the very mechanism this eval is measuring - the
+# run would then look healthiest exactly where the instrument is broken. So the two ways
+# this ends are "the target was reached" and "it stopped short, and here is the record",
+# and the second is a loud failure rather than a partial success. [LAW:no-silent-failure]
+horizon_observe() {
+  local config_dir="$1" project_dir="$2" goal_file="$3"
+  local target="$4" max_minutes="$5"
+  local deadline=$((SECONDS + max_minutes * 60))
+  local report counts reached=0 drifted last_seen=-1
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    report="$(horizon_report "$config_dir" "$project_dir" "$goal_file")"
+    counts="$(printf '%s' "$report" | horizon_report_counts)"
+    reached="${counts% *}" drifted="${counts#* }"
+
+    if [ "$reached" != "$last_seen" ]; then
+      horizon_log "sessions with committed work, consecutively: $reached/$target"
+      last_seen="$reached"
+    fi
+
+    # THE CARRY IS CHECKED, NOT JUST COUNTED. sessions.py already computed whether every
+    # boundary handed the successor the pinned wording; reading only the commit count
+    # would let a run report success while the goal degraded across each reset - the
+    # instrument looking healthiest exactly where it is broken, which is the one outcome
+    # this whole design refuses. The driver still does not REPAIR a lost carry: memento's
+    # goal-carry is the controlled variable under measurement, so this stops the run and
+    # reports, and never re-issues. [LAW:no-silent-failure]
+    if [ "$drifted" -gt 0 ]; then
+      printf '%s\n' "$report"
+      horizon_die "the pinned goal did not survive $drifted session boundary/boundaries.
+finalize-session takes the goal from whatever the agent passes to --goal, so a paraphrase
+there silently becomes the successor's whole instruction. The wording each session
+actually received is in goal_received above."
+    fi
+    if [ "$reached" -ge "$target" ]; then
+      printf '%s\n' "$report"
+      return 0
+    fi
+    # The session dying is not the same fact as the target being met, and only one of
+    # them is success. Checked every pass so a crashed run ends in minutes rather than
+    # burning the whole ceiling in silence.
+    tmux has-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null || {
+      printf '%s\n' "$report"
+      horizon_die "the run session died after $reached consecutive committing session(s)"
+    }
+    sleep 30
+  done
+
+  printf '%s\n' "$report"
+  horizon_die "run hit its ${max_minutes}-minute ceiling with $reached/$target consecutive committing sessions"
 }

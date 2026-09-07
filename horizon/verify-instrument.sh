@@ -52,15 +52,6 @@ trap 'rm -rf "$WORK"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
-# Usage: manifest_value <manifest_path> <section> <key>
-#
-# Returns nonzero and leaves the reporting to the caller rather than calling `fail`
-# itself: inside the command substitution every caller uses, a `fail` would exit only
-# the subshell and hand back an empty string as if it were the value.
-manifest_value() {
-  python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]][sys.argv[3]])' "$@"
-}
-
 main() {
   local repo_root ref reviewer_sha goal_ref
   # memento's default branch is a moving ref, exactly like the reviewer's `v1` tag:
@@ -90,7 +81,13 @@ main() {
     fail "manifests diverged between two invocations with unchanged inputs"
   fi
 
-  local config_dir="$WORK/run1/config"
+  # A THROWAWAY config dir under $WORK, never the machine's real, authenticated one: a
+  # verification must not wipe the directory a run launches against. Built from run 2's
+  # snapshot, which is also the one the installed skills are compared against below.
+  local config_dir="$WORK/config" snapshot_dir="$WORK/run2/pinned"
+  horizon_log "provisioning a throwaway config dir from run 2's snapshot"
+  horizon_provision_config_dir "$config_dir" "$snapshot_dir"
+
   local plugin_list
   plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" claude plugin list --json)" \
     || fail "could not read claude plugin list --json from the isolated config dir"
@@ -142,17 +139,20 @@ if plugins[0]["enabled"] is not True:
   # rather than something that happens to occupy the same name. The pin has already
   # refused a snapshot whose skills were pointer stubs, so "same as the snapshot" is
   # the whole remaining question. [LAW:one-source-of-truth]
-  local snapshot_skills="$WORK/run1/pinned/$HORIZON_MEMENTO_PLUGIN_SUBDIR/skills"
+  local snapshot_skills="$snapshot_dir/$HORIZON_MEMENTO_PLUGIN_SUBDIR/skills"
   local installed_skills="$install_path/skills" skill
   for skill in "${HORIZON_MEMENTO_SKILLS[@]}"; do
     [ -d "$installed_skills/$skill" ] || fail "installed memento is missing the '$skill' skill"
     diff -r "$snapshot_skills/$skill" "$installed_skills/$skill" >/dev/null \
       || fail "installed '$skill' differs from the pinned snapshot it came from"
   done
-  pass "installed memento carries the pinned skills, byte for byte"
+  # diff compares bytes, not mode bits; the relaunch binary has to be runnable as installed.
+  [ -x "$install_path/$HORIZON_MEMENTO_RELAUNCH_REL_PATH" ] \
+    || fail "installed memento's finalize-session is not executable: $install_path/$HORIZON_MEMENTO_RELAUNCH_REL_PATH"
+  pass "installed memento carries the pinned skills, byte for byte, with the relaunch binary executable"
 
   local recorded_lit_sha256 actual_lit_sha256
-  recorded_lit_sha256="$(manifest_value "$WORK/run1/manifest.json" lit sha256)" \
+  recorded_lit_sha256="$(horizon_manifest_field "$WORK/run1/manifest.json" lit sha256)" \
     || fail "could not read lit.sha256 from run1/manifest.json"
   actual_lit_sha256="$(horizon_lit_sha256)"
   [ "$recorded_lit_sha256" = "$actual_lit_sha256" ] \
@@ -164,7 +164,7 @@ if plugins[0]["enabled"] is not True:
   # and read what it produced. A lit too old to write it fails inside this call, before
   # any comparison, with the upgrade to run. [LAW:verifiable-goals]
   local recorded_next_sha256 actual_next_sha256
-  recorded_next_sha256="$(manifest_value "$WORK/run1/manifest.json" lit next_skill_sha256)" \
+  recorded_next_sha256="$(horizon_manifest_field "$WORK/run1/manifest.json" lit next_skill_sha256)" \
     || fail "could not read lit.next_skill_sha256 from run1/manifest.json"
   actual_next_sha256="$(horizon_lit_next_skill_sha256 "$WORK/lit-next-probe")"
   [ "$recorded_next_sha256" = "$actual_next_sha256" ] \

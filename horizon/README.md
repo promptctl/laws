@@ -25,9 +25,6 @@ Builds `<run-dir>` from nothing:
   plugin that ships it, so archiving the plugin directory alone extracts dangling
   links. Snapshotting the closure is what makes the pin self-contained - `claude
   plugin install` then materialises those links into real files in its cache.
-- `config/` - a fresh `CLAUDE_CONFIG_DIR`, provisioned through the real `claude
-  plugin` CLI, with memento installed and enabled and no other plugin even
-  installable - the pinned marketplace never lists one.
 - `manifest.json` - canonical JSON (`schema_version: 2`, sorted keys, no timestamps)
   recording every pinned identity: memento's repository URL, commit and tree sha; the
   sha256 of the `lit` binary currently on `PATH` and of the `/next` procedure that
@@ -53,7 +50,17 @@ Builds `<run-dir>` from nothing:
   (`tag`) or was handed the sha (`override`), so the manifest never implies a check
   that did not happen.
 
-A session launched with `CLAUDE_CONFIG_DIR=<run-dir>/config` sees memento's skills and
+`pin-instrument.sh` touches nothing outside `<run-dir>`: `pinned/` and `manifest.json`
+are all it produces, and because it shares no state with anything, two pins can run at
+the same time safely. The run's `CLAUDE_CONFIG_DIR` lives at `$HORIZON_CONFIG_DIR` -
+outside `<run-dir>`, at one fixed path, because Claude Code keys the stored credential to
+that path. `run-loop.sh` rebuilds it right after the pin, while it holds the run lock,
+through `horizon_provision_config_dir` and the real `claude plugin` CLI, from the pin's
+`pinned/` snapshot. The result has memento installed and enabled and no other plugin
+even installable: the pinned marketplace never lists one. The path is not recorded in
+`manifest.json`; it is a property of the machine, not of the pinned instrument.
+
+A session launched with `CLAUDE_CONFIG_DIR=$HORIZON_CONFIG_DIR` sees memento's skills and
 nothing of the owner's live laws plugin, `CLAUDE.md`, or memory. Two distinct
 mechanisms produce that, and they are worth keeping straight: no *plugin* but memento
 can be installed because the pinned marketplace never declares one - controlled
@@ -96,15 +103,22 @@ and this checkout's own `HEAD` - and hands the same shas to both `pin-instrument
 runs, so a push, a tag move, or a commit landing here between the two calls cannot turn
 into test flakiness, then checks the manifests are byte-identical.
 
-It then checks the isolated config dir has exactly memento installed and enabled,
-carries no `CLAUDE.md` and no memory content under `projects/*/memory/`, and exposes
-memento's skills at its actual installed location (verified to fall under the config
-dir, not merely to exist somewhere) with contents equal, byte for byte, to the snapshot
-they were pinned from. Equality rather than existence, because existence is what let
-this verifier once go green against an instrument whose skills were all pointer stubs:
-the directories were there, holding nothing an agent could follow. The pin now refuses
-such a snapshot outright, so "the same bytes the snapshot carried" is the whole
-remaining question.
+It then builds a config dir of its own from the second run's `pinned/` snapshot, through
+`horizon_provision_config_dir`, at a throwaway path under its scratch dir; the machine's
+real, authenticated `$HORIZON_CONFIG_DIR` is never touched. That dir must have exactly
+memento installed and enabled, carry no `CLAUDE.md` and no memory content under
+`projects/*/memory/`, and expose memento's skills at their actual installed location
+(verified to fall under the config dir, not merely to exist somewhere) with contents
+equal, byte for byte, to the snapshot they were pinned from. Equality rather than
+existence, because existence is what let this verifier once go green against an
+instrument whose skills were all pointer stubs: the directories were there, holding
+nothing an agent could follow. The pin now refuses such a snapshot outright, so "the
+same bytes the snapshot carried" is the whole remaining question.
+
+One more check follows the byte comparison: the installed `finalize-session`, memento's
+relaunch binary, must be executable. `diff` compares bytes, not mode bits, and `claude
+plugin install` materialises symlinked files into real ones, which can drop the
+executable bit; a relaunch binary without it breaks the session handoff silently.
 
 Finally it checks both halves of `lit`'s recorded identity: the binary on `PATH`
 against the manifest's hash of it, and the `/next` procedure that binary writes - run
@@ -185,8 +199,155 @@ rather than merely to fail. Finally it seeds under an operator global config who
 `core.hooksPath` points at a hostile `post-commit`, and requires that seeding succeed
 while the hook never fires: no hook of the operator's runs against a seed commit.
 
+## Driving a run unattended
+
+```sh
+horizon/run-loop.sh [seed-dir] [memento-ref]
+```
+
+Builds time zero with the two commands above, issues the pinned `/goal` wording once,
+and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`. Every session
+after the first is produced by memento's own relaunch.
+
+The driver does not repair, and that is the central design point. memento's goal-carry
+and its in-place relaunch are the controlled variables this eval measures. A driver that
+re-issued a lost goal, or restarted a dead session, would be measuring itself: the run
+would look healthiest exactly where the instrument is broken. So a lost carry stops the
+run, loudly.
+
+### The shared run repository
+
+Every run drives one repository that already exists: **`promptctl/horizon-eval`**. The
+driver never creates a repository and never deletes one, so nothing in this eval needs a
+credential that could destroy either. At the start of a run it resets that repo to the
+seed — closes every open PR, deletes every branch but `master`, force-pushes the seeded
+history — and points the project's `origin` at it.
+
+The goal wording drives the agent to carry every unit of work to a merged PR, so it needs
+somewhere to push and a place for the reviewer Action to run. Public, not private:
+Actions minutes are unmetered on public repositories.
+
+**Why shared rather than one repo per run.** A per-run repo has to answer "when is it
+safe to create this?", and every answer is a claim about a moment in the driver's
+execution order rather than a fact about the domain — create it before the session boots
+and each boot failure mints a repo no run ever used; create it after the goal is issued
+and the agent racing to its first push decides whether `origin` exists. A position
+between the two works only until someone reorders the lines, and it leaves the eval
+wanting the power to delete repositories to clean up after itself. A repository that
+always exists has no such moment to get wrong.
+
+**Why the reset runs at the start and not at the end.** A run that crashes never reaches
+its own cleanup, so tidying afterwards leaves the next run to begin from wreckage — and
+"usually clean" is not a time zero. Resetting on the way in makes the starting state a
+function of that one call, whatever the previous run did or how it died.
+
+**What survives a reset**, stated because it is a real divergence rather than an
+oversight: pull requests can be closed but never deleted, so closed PRs accumulate and PR
+numbers keep climbing. Run five does not start at `#1`. Nothing else carries over, and
+`horizon_assert_remote_at_time_zero` checks the rest against GitHub rather than trusting
+the commands that just ran.
+
+**The repo is scratch space, not a record.** A run's PRs and review threads are captured
+onto disk as part of the run bundle (`promptctl-horizon-7ry.4`). Leaving them to live in
+a GitHub repo would make the bundle depend on that repo surviving untouched forever,
+which is the fragility capture exists to remove.
+
+### Two paths, opposite lifetimes, one login
+
+A run touches two directories and one tmux session; the directories are deliberately
+not nested:
+
+- `~/.horizon/config` (override `HORIZON_CONFIG_DIR`) — the `CLAUDE_CONFIG_DIR` every
+  run launches against. **Permanent, and its exact path is load-bearing.** Claude Code
+  keys its stored credential to that path, so wiping the directory keeps the login while
+  building it somewhere new loses it — established empirically. Each run rebuilds it in
+  place; only a move would break it.
+- `~/.horizon/run` (override `HORIZON_WORK_DIR`) — one run's output. **Must not exist
+  when a run starts**, so the last run's transcripts and commits can never be mistaken
+  for this one's. Archiving it is the operator's job: copy the finished run wherever runs
+  are kept, then remove it. `run-loop.sh` refuses to start while the directory exists,
+  and its error message says exactly that.
+- The tmux session `horizon-run` (not overridable) — the lock. `run-loop.sh` creates it
+  before it creates the work dir, rebuilds the config dir, or resets the shared remote,
+  and tmux refuses a duplicate session name atomically, so a second invocation dies at
+  once and leaves nothing behind. **Held for the run's whole life:** claude is launched
+  into that session's pane, and the driver's exit handler kills the session on every exit
+  path — success, a failed assertion, the wall-clock ceiling — before it moves the
+  transcripts out of the config dir, so after `run-loop.sh` exits nothing is still
+  running and the next run starts against an idle machine. A driver killed without
+  exiting (`kill -9`, a crashed terminal) leaves the session behind, and the next run
+  refuses to start until `tmux kill-session -t horizon-run` clears it — only do that
+  when no run is actually live.
+
+Nesting them is a mistake this code made once: with the config dir living inside the run
+dir, the work dir's freshness guard had to refuse the very directory the credential was
+bound to, and no run could start after a login had happened.
+
+Which is why the login is its own command, run once:
+
+```sh
+horizon/login.sh
+```
+
+A human with a browser does that once; every run afterwards is unattended. An
+unauthenticated config dir does not fail loudly on its own. It boots to a login prompt
+and waits forever, which in an unattended run is indistinguishable from an agent
+thinking hard, so `run-loop.sh` refuses to launch until login has happened.
+
+`login.sh` takes the same `horizon-run` tmux session as its lock for as long as the login
+lasts, so a login cannot rotate the credential underneath a live run; while one is live
+it refuses with the same "a run is live" message `run-loop.sh` gives.
+
+### Why the run lives in tmux
+
+The run is launched inside a detached tmux session, and that single fact decides whether
+the run stays isolated. finalize-session chooses its handoff transport by walking process
+ancestry: under a live tmux pane it resets *that* process in place, so
+`CLAUDE_CONFIG_DIR`, `PATH` and flags survive, because nothing is relaunched. Launched
+any other way it spawns a *new* tmux session, which inherits the tmux server's
+environment rather than the caller's — the successor would silently read the operator's
+real config while every log line still reported success. `run-loop.sh` asserts this
+precondition before trusting a run.
+
+The `/goal` wording is issued from the commit `manifest.json` names, never from the
+working tree, so the bytes a run used and the `goal_wording.sha256` it reports cannot
+diverge.
+
+The work dir holds two subdirectories, `instrument/` and `seed/`, because
+`pin-instrument.sh` and `seed-run.sh` each refuse a run-dir that already exists — a guard
+worth keeping, so each gets its own directory rather than being loosened to share.
+
+### What the run leaves behind
+
+The work dir keeps `transcripts/`, `goal.md`, and `loop.json` beside `instrument/` and
+`seed/`. `transcripts/` holds the session transcripts, moved rather than copied out of
+the config dir by the driver's exit handler on every exit path - success, a failed
+assertion, a dead session, the wall-clock ceiling. The config dir is a fixed path the
+next run wipes, so this is the only copy that outlives the run. `goal.md` is the exact
+`/goal` wording the run issued, read from the commit `manifest.json` names.
+
+The run's record is `loop.json`, produced by `sessions.py`. That program is pure
+analysis over inputs it is handed — transcripts as files, commits on stdin — so the same
+verdict can be recomputed from an archived run months later with nothing running.
+
+Per session it reports the session id, its time window, whether a `/goal` was issued,
+whether that goal matches the pinned wording rather than merely being some goal, and
+which commits fall in its window. It also reports the longest run of *consecutive*
+sessions that each committed something. Consecutive matters: three committing sessions
+with a dead one between them is a loop that stalled and was restarted.
+
+Two top-level fields count the carry. `goal_carries_expected` is the number of successor
+sessions: those after the first that have shown evidence either way, a turn taken or a
+goal recorded. Session one is excluded because the driver issued its goal directly, and
+counting it would flatter the result. `goal_carries_intact` is how many of those
+successors received the pinned wording exactly - their `goal_matches_pinned` is true.
+`horizon_observe` in lib.sh reads both through `horizon_report_counts` and stops the run,
+loudly, the moment they differ; that is the mechanism by which a lost carry stops the run.
+
+Tests: `horizon/sessions.test.py`.
+
 ## What this does not do
 
-Driving the unattended multi-session loop and capturing the run bundle are separate
-tickets (`promptctl-horizon-7ry.3/.4`). This directory pins the environment and builds
-the starting state those later pieces run inside.
+Capturing the run bundle is a separate ticket (`promptctl-horizon-7ry.4`). This directory
+pins the environment, builds the starting state, and drives the run that later piece
+records.
