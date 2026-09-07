@@ -293,6 +293,9 @@ A human with a browser does that once; every run afterwards is unattended. An
 unauthenticated config dir does not fail loudly on its own. It boots to a login prompt
 and waits forever, which in an unattended run is indistinguishable from an agent
 thinking hard, so `run-loop.sh` refuses to launch until login has happened.
+That refusal rests on a real request, not on a read of the stored credential: a refresh
+token the server has retired still reads as logged in until a session tries to use it,
+so after a long gap between runs `login.sh` can be needed again with nothing moved.
 
 `login.sh` takes the same `horizon-run` tmux session as its lock for as long as the login
 lasts, so a login cannot rotate the credential underneath a live run; while one is live
