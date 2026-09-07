@@ -15,7 +15,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from report import finding_ids, load_jsonl
+from report import batch_judged, finding_ids, judged_prs, load_jsonl, load_verdicts
 
 ENUMS = {
     "premise": {"correct", "partly", "wrong", "uncertain"},
@@ -27,10 +27,9 @@ ENUMS = {
 }
 
 
-def check_file(path: Path, expected_by_pr: dict[str, set[str]]) -> list[str]:
-    """Problems with one verdict file; empty when it is whole."""
+def check_rows(rows: list[dict], expected_by_pr: dict[str, set[str]]) -> list[str]:
+    """Problems with one verdict file's rows; empty when it is whole. Pure."""
     problems: list[str] = []
-    rows = load_jsonl(path)
     prs = [r["pr"] for r in rows if "pr" in r]
     findings = Counter(r["finding"] for r in rows if "finding" in r)
     for pr in prs:
@@ -72,18 +71,31 @@ def main(argv: list[str]) -> int:
     for fid in finding_ids(load_jsonl(args.derived / "findings.jsonl")):
         expected_by_pr[fid.rsplit("/", 1)[0]].add(fid)
 
-    judged_prs: set[str] = set()
+    by_file = load_verdicts(args.verdicts)
     failed = 0
-    for path in sorted(args.verdicts.glob("*.jsonl")):
-        problems = check_file(path, expected_by_pr)
-        judged_prs.update(r["pr"] for r in load_jsonl(path) if "pr" in r)
+    for path, rows in by_file.items():
+        problems = check_rows(rows, expected_by_pr)
         status = "ok" if not problems else f"FAIL ({len(problems)}): " + "; ".join(problems[:4])
         failed += bool(problems)
         print(f"{path.name}: {status}")
 
+    # [LAW:no-silent-failure] a finding judged by two files is a duplicate no per-file
+    # check can see, and it double-counts in every report.py table. Batch ids renumber
+    # on a re-bundle, so a PR can land in a differently-named batch and be judged twice.
+    owners: dict[str, set[str]] = defaultdict(set)
+    for path, rows in by_file.items():
+        for r in rows:
+            if "finding" in r:
+                owners[r["finding"]].add(path.name)
+    for fid, names in sorted(owners.items()):
+        if len(names) > 1:
+            failed += 1
+            print(f"{fid}: judged by {len(names)} files: {' '.join(sorted(names))}")
+
+    judged = judged_prs(r for rows in by_file.values() for r in rows)
     batches = json.loads(args.batches.read_text())
-    pending = [b["id"] for b in batches if any(f"{b['repo']}#{n}" not in judged_prs for n in b["prs"])]
-    print(f"\n{len(batches) - len(pending)} of {len(batches)} batches fully judged; {len(judged_prs)} PRs; {failed} files failed", file=sys.stderr)
+    pending = [b["id"] for b in batches if not batch_judged(b, judged)]
+    print(f"\n{len(batches) - len(pending)} of {len(batches)} batches fully judged; {len(judged)} PRs; {failed} problems", file=sys.stderr)
     print("pending: " + " ".join(pending) if pending else "pending: none", file=sys.stderr)
     return 1 if failed else 0
 
