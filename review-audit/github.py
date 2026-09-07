@@ -1,40 +1,33 @@
 #!/usr/bin/env python3
-"""Fetch every pull request in a GitHub org, with its reviews, review threads,
-thread comments, issue comments, commits and files, into one JSON file per PR.
+"""Everything that talks to GitHub, and nothing that talks to disk.
 
-Re-runnable and deterministic: a PR is re-fetched only when GitHub's `updatedAt`
-differs from the cached copy, and the file content is a pure function of the PR's
-GitHub state (sorted keys, explicit node ordering, no fetch timestamps).
+Every function here is an effect at the system's edge [LAW:effects-at-boundaries]: it
+shells out to an authenticated `gh` and returns plain data. Any GraphQL error, any null
+on a path the query asked for, and any pagination contradiction aborts loudly - the bank
+makes resuming free, so there is never a reason to return a partial answer as if it were
+whole. [LAW:no-silent-failure]
 
-    review-audit/fetch.py --org promptctl --out review-audit/data [--refresh] [--repo NAME ...]
-
-Requires an authenticated `gh` (the only effect in this module is the `gh api
-graphql` shell-out). Any GraphQL error, null on a requested path, or pagination
-contradiction aborts loudly - the cache makes resuming free.
+The returned objects are ordered deterministically here rather than at the storage layer,
+so the same GitHub state always produces the same bytes downstream.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
-import os
+import re
 import subprocess
-import sys
-from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# The one effect: a GraphQL call through gh.  [LAW:effects-at-boundaries]
-# ---------------------------------------------------------------------------
+HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 
 
 def graphql(query: str, **variables: object) -> dict:
     """One GraphQL shell-out. [LAW:single-enforcer]
 
     [LAW:dataflow-not-control-flow] the variable's Python type picks the flag: `gh -F`
-    type-infers its value (an all-digit cursor or node id would become a number),
-    so strings go through `-f` and ints through `-F`. A None cursor is omitted, not
-    sent empty - an undeclared nullable variable is null to GraphQL, whereas
-    `-f cursor=` is the empty string, which is not a valid cursor.
+    type-infers its value (an all-digit cursor or node id would become a number), so
+    strings go through `-f` and ints through `-F`. A None cursor is omitted, not sent
+    empty - an undeclared nullable variable is null to GraphQL, whereas `-f cursor=` is
+    the empty string, which is not a valid cursor.
     """
     args = ["gh", "api", "graphql", "-f", f"query={query}"]
     for key, value in variables.items():
@@ -53,9 +46,9 @@ def graphql(query: str, **variables: object) -> dict:
 def path_of(data: object, *path: str, subject: str) -> dict:
     """Walk the response path a query asked for, or name the field that failed.
 
-    [LAW:parse-dont-validate] every null along the path comes back with HTTP 200;
-    this is the one place that turns "missing or inaccessible" into an error instead
-    of a `NoneType` crash somewhere downstream. [LAW:no-silent-failure]
+    [LAW:parse-dont-validate] every null along the path comes back with HTTP 200; this is
+    the one place that turns "missing or inaccessible" into an error instead of a
+    `NoneType` crash somewhere downstream.
     """
     node = data
     for depth, field in enumerate(path):
@@ -73,8 +66,8 @@ def next_cursor(block: dict, *, subject: str) -> str | None:
     """The cursor naming the page after this one, or None when this page is last.
 
     [LAW:no-silent-failure] `hasNextPage` true with no `endCursor` is a contradiction:
-    another page is promised and nothing names it. Looping on a null cursor would
-    re-read page one forever; stopping would return a partial set as if whole.
+    another page is promised and nothing names it. Looping on a null cursor would re-read
+    page one forever; stopping would return a partial set as if whole.
     """
     info = block["pageInfo"]
     if not info["hasNextPage"]:
@@ -85,10 +78,8 @@ def next_cursor(block: dict, *, subject: str) -> str | None:
     return cursor
 
 
-# ---------------------------------------------------------------------------
-# Query text.  Selections are data: one table drives both the first-page fetch
-# and the generic overflow drain.  [LAW:one-source-of-truth]
-# ---------------------------------------------------------------------------
+# --- query text: selections are data, one table drives both the first page and the
+# --- generic overflow drain. [LAW:one-source-of-truth]
 
 PAGE = "pageInfo{ hasNextPage endCursor } totalCount"
 
@@ -164,11 +155,6 @@ PR_LIST_QUERY = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Paging.  One drain for every connection; the table says what to drain.
-# ---------------------------------------------------------------------------
-
-
 def drain(name: str, node_id: str, block: dict, *, subject: str) -> list[dict]:
     """The complete node list of one connection, starting from its fetched first page."""
     nodes = list(block["nodes"])
@@ -195,11 +181,36 @@ def paged(query: str, path: tuple[str, ...], *, subject: str, **variables: objec
             return nodes
 
 
-def fetch_pr(owner: str, repo: str, number: int) -> dict:
-    """One PR with every connection fully drained. Node order is by creation,
-    which GitHub returns stably; the sort below pins it in case it does not."""
-    subject = f"{owner}/{repo}#{number}"
-    pr = path_of(graphql(PR_QUERY, owner=owner, repo=repo, num=number), "data", "repository", "pullRequest", subject=subject)
+# --- the four things a caller can ask for -------------------------------------
+
+
+def repositories(org: str) -> list[dict]:
+    """Every repository of an org, name-ascending."""
+    return paged(REPOS_QUERY, ("data", "organization", "repositories"), subject=f"repos of {org}", org=org)
+
+
+def pull_request_versions(org: str, repo: str, *, total: int) -> list[dict]:
+    """`{number, updatedAt}` for every PR of a repo - the cheap listing that says what
+    needs fetching without fetching it.
+
+    A PR opened while listing appends to the CREATED_AT-ascending page walk, so the count
+    may exceed the total taken earlier; fewer, or a repeated number, means the walk lost
+    or duplicated a page. [LAW:no-silent-failure]
+    """
+    prs = paged(PR_LIST_QUERY, ("data", "repository", "pullRequests"), subject=f"PRs of {org}/{repo}", owner=org, repo=repo)
+    numbers = [pr["number"] for pr in prs]
+    if len(set(numbers)) != len(numbers) or len(numbers) < total:
+        raise RuntimeError(
+            f"{repo}: listed {len(numbers)} PRs ({len(set(numbers))} distinct) but totalCount was {total}"
+        )
+    return prs
+
+
+def pull_request(org: str, repo: str, number: int) -> dict:
+    """One PR with every connection fully drained. Node order is by creation, which
+    GitHub returns stably; the sorts below pin it in case it does not."""
+    subject = f"{org}/{repo}#{number}"
+    pr = path_of(graphql(PR_QUERY, owner=org, repo=repo, num=number), "data", "repository", "pullRequest", subject=subject)
     for name, (typename, field, _, _) in CONNECTIONS.items():
         if typename != "PullRequest":
             continue
@@ -215,73 +226,22 @@ def fetch_pr(owner: str, repo: str, number: int) -> dict:
     return pr
 
 
-# ---------------------------------------------------------------------------
-# Cache on disk: data/<repo>/<number>.json, keyed on updatedAt.
-# ---------------------------------------------------------------------------
+def hunk_ranges(patch: str) -> list[list[int]]:
+    """New-side (start, length) of every hunk in a unified diff. Pure."""
+    return [[int(s), int(n) if n else 1] for s, n in HUNK.findall(patch)]
 
 
-def cached_updated_at(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    return json.loads(path.read_text())["updatedAt"]
+def commit(org: str, repo: str, oid: str) -> dict:
+    """One commit's diff, per file: `{path: {"ranges": [[start, len]], "patch": str}}`.
 
-
-def write_json(path: Path, value: object) -> None:
-    """Write via a sibling temp file, then rename over the target.
-
-    [LAW:types-are-the-program] a truncating write leaves a half-written file on any
-    kill, and `cached_updated_at` then reads unparseable JSON on every later run -
-    one interrupted write wedges the cache until a human deletes that file. The
-    rename makes the partial state unrepresentable: a reader sees the whole old
-    content or the whole new one. The temp file is a sibling because `os.replace`
-    is only atomic within one filesystem, and its `.json.tmp` name is outside the
-    `*/*.json` glob the other tools read the cache with.
+    REST, because GraphQL serves no patches. A file GitHub returns without a patch
+    (binary, rename-only, too large) gets an empty patch and no ranges - a real fact
+    about that file, not a failure.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(value, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
-    os.replace(tmp, path)
-
-
-def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--org", required=True)
-    ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--repo", action="append", help="limit to these repos (repeatable); default is every repo in the org")
-    ap.add_argument("--refresh", action="store_true", help="re-fetch every PR even when updatedAt is unchanged")
-    args = ap.parse_args(argv)
-
-    repos = paged(REPOS_QUERY, ("data", "organization", "repositories"), subject=f"repos of {args.org}", org=args.org)
-    if args.repo:
-        wanted = set(args.repo)
-        missing = wanted - {r["name"] for r in repos}
-        if missing:
-            raise SystemExit(f"repos not in {args.org}: {sorted(missing)}")
-        repos = [r for r in repos if r["name"] in wanted]
-
-    inventory = []
-    for repo in repos:
-        name = repo["name"]
-        prs = paged(PR_LIST_QUERY, ("data", "repository", "pullRequests"), subject=f"PRs of {args.org}/{name}", owner=args.org, repo=name)
-        # A PR opened while listing appends to the CREATED_AT-ascending list, so the
-        # count may exceed the one taken earlier; fewer, or a repeated number, means
-        # the cursor walk lost or duplicated a page.  [LAW:no-silent-failure]
-        numbers = [pr["number"] for pr in prs]
-        if len(set(numbers)) != len(numbers) or len(numbers) < repo["pullRequests"]["totalCount"]:
-            raise RuntimeError(f"{name}: listed {len(numbers)} PRs ({len(set(numbers))} distinct) but totalCount was {repo['pullRequests']['totalCount']}")
-        fetched = 0
-        for pr in prs:
-            path = args.out / name / f"{pr['number']}.json"
-            if not args.refresh and cached_updated_at(path) == pr["updatedAt"]:
-                continue
-            write_json(path, fetch_pr(args.org, name, pr["number"]))
-            fetched += 1
-        inventory.append({"repo": name, "prs": len(prs), "isArchived": repo["isArchived"], "isFork": repo["isFork"]})
-        print(f"{name}: {len(prs)} PRs, {fetched} fetched", file=sys.stderr)
-
-    write_json(args.out / "inventory.json", inventory)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    proc = subprocess.run(["gh", "api", f"repos/{org}/{repo}/commits/{oid}"], text=True, capture_output=True)
+    if proc.returncode != 0:  # [LAW:no-silent-failure]
+        raise RuntimeError(f"gh api commits/{oid} in {org}/{repo} failed ({proc.returncode}):\n{proc.stderr}")
+    data = json.loads(proc.stdout)
+    if "files" not in data:
+        raise RuntimeError(f"{org}/{repo}@{oid}: response has no files: {json.dumps(data)[:300]}")
+    return {f["filename"]: {"ranges": hunk_ranges(f.get("patch", "")), "patch": f.get("patch", "")} for f in data["files"]}

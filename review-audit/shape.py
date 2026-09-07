@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Derive one row per reviewer finding (and one per PR) from the raw PR JSON that
-fetch.py writes. Pure: every fact here is a function of the PR file alone.
+the bank holds. Pure: every fact here is a function of the banked PR and its commits.
 
-    review-audit/shape.py --data review-audit/data --out review-audit/derived
+    review-audit/shape.py --bank review-audit/data --out review-audit/derived
 
 Facts derived per finding: which review round raised it, the commit it was raised
 against, whether that commit landed after the first review (so the finding is on a
@@ -19,6 +19,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+from store import Bank, commit_ref
 
 SEVERITY = re.compile(r"\*\*\[S([1-5])\]\*\*")
 LAW = re.compile(r"\[LAW:([a-z-]+)\]")
@@ -51,15 +53,31 @@ def resolve_sha(short: str, commits: list[dict]) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def derive(repo: str, pr: dict) -> tuple[dict, list[dict]]:
+def banked_patches(bank: Bank, repo: str, pr: dict) -> dict[str, dict[str, str]]:
+    """The diff of each of this PR's commits that the bank holds, keyed by oid then path.
+
+    A commit the bank does not hold is simply absent: only reviewed PRs have their commits
+    banked, and that scope rule is bank.py's. Nothing here needs to know why one is
+    missing, only that the mapping says so. [LAW:one-source-of-truth]
+    """
+    stored = {}
+    for commit in pr["commits"]:
+        oid = commit["commit"]["oid"]
+        ref = commit_ref(repo, oid)
+        if bank.version_of(ref) is not None:
+            stored[oid] = {path: file["patch"] for path, file in bank.get(ref).items()}
+    return stored
+
+
+def derive(repo: str, pr: dict, patches_of: dict[str, dict[str, str]]) -> tuple[dict, list[dict]]:
     author = (pr["author"] or {}).get("login") or "ghost"
     commits = pr["commits"]
     oid_index = {c["commit"]["oid"]: i for i, c in enumerate(commits)}
     committed_at = {c["commit"]["oid"]: c["commit"]["committedDate"] for c in commits}
-    # The diff each walked commit made, per file, from fetch_commits.py. Only PRs
-    # carrying review threads are walked, so a commit outside that set offers nothing -
-    # the same shape as a commit that changed no files. [LAW:dataflow-not-control-flow]
-    patches_of = {c["commit"]["oid"]: {p: v["patch"] for p, v in c["files"].items()} for c in commits if "files" in c}
+    # `patches_of` is passed in - the diffs live in the bank's commit store, and reading
+    # it is the caller's job. [LAW:effects-at-boundaries] Only reviewed PRs have their
+    # commits banked, so a commit outside that set offers nothing here - the same shape as
+    # a commit that changed no files. [LAW:dataflow-not-control-flow]
 
     # A round is one review submission by anyone other than the PR author.
     # The author's own COMMENTED reviews are only the containers GitHub wraps
@@ -183,18 +201,20 @@ def derive(repo: str, pr: dict) -> tuple[dict, list[dict]]:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", type=Path, required=True)
+    ap.add_argument("--bank", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
 
+    bank = Bank(args.bank)
     pr_rows: list[dict] = []
     finding_rows: list[dict] = []
-    for path in sorted(args.data.glob("*/*.json")):
-        pr_row, findings = derive(path.parent.name, json.loads(path.read_text()))
+    for ref in bank.refs("prs"):
+        pr = bank.get(ref)
+        pr_row, findings = derive(ref.repo, pr, banked_patches(bank, ref.repo, pr))
         pr_rows.append(pr_row)
         finding_rows.extend(findings)
     if not pr_rows:  # [LAW:no-silent-failure]
-        raise SystemExit(f"no PR files under {args.data}")
+        raise SystemExit(f"no PRs in the bank at {args.bank}; run bank.py sync")
 
     args.out.mkdir(parents=True, exist_ok=True)
     for name, rows in (("prs.jsonl", pr_rows), ("findings.jsonl", finding_rows)):
