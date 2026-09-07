@@ -91,14 +91,8 @@ main() {
   # point every check below at a directory that is not the project. The two manifests
   # were just proven identical, so run1's answer is the answer. [LAW:one-source-of-truth]
   local project_name run1_project run2_project
-  project_name="$(python3 - "$WORK/run1/seed-manifest.json" <<'PY'
-import json, sys
-name = json.load(open(sys.argv[1]))["project"]["name"]
-if not name or "/" in name or name in (".", ".."):
-    sys.exit(f"manifest records an unusable project name: {name!r}")
-print(name)
-PY
-)" || fail "could not read the project name from seed-manifest.json"
+  project_name="$(horizon_manifest_field "$WORK/run1/seed-manifest.json" project name)" \
+    || fail "could not read the project name from seed-manifest.json"
   run1_project="$WORK/run1/$project_name"
   run2_project="$WORK/run2/$project_name"
 

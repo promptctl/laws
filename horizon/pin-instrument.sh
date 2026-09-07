@@ -35,9 +35,13 @@
 #
 # Produces, under <run-dir>:
 #   pinned/                 the memento git-archive snapshot + its marketplace.json
-#   config/                 the fresh CLAUDE_CONFIG_DIR (memento installed, nothing else)
 #   manifest.json           every pinned identity, canonical JSON, no timestamps -
 #                           so two invocations with unchanged inputs are byte-identical
+#
+# Nothing outside <run-dir> is touched. The config dir a run launches against is a
+# machine-wide singleton, rebuilt from pinned/ by the caller that holds the run lock
+# (run-loop.sh) - so two pins can run at once, and nothing here needs a lock.
+# [LAW:decomposition]
 
 set -euo pipefail
 
@@ -54,7 +58,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 horizon_need_base
 horizon_need git
 horizon_need gh
-horizon_need claude
 horizon_need python3
 horizon_need lit
 horizon_need cat
@@ -97,9 +100,6 @@ main() {
 
   horizon_log "building pinned memento snapshot"
   horizon_build_memento_snapshot "$WORK/memento.git" "$memento_sha" "$run_dir/pinned"
-
-  horizon_log "provisioning isolated CLAUDE_CONFIG_DIR"
-  horizon_provision_config_dir "$run_dir/config" "$run_dir/pinned"
 
   horizon_log "recording lit's binary identity"
   local lit_path lit_sha256
