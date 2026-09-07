@@ -29,8 +29,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib.sh"
 
 main() {
+  horizon_need_base
   horizon_need claude
-  horizon_need mkdir
   horizon_need python3
   horizon_need tmux
 
