@@ -15,6 +15,7 @@ import argparse
 import json
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 
 
@@ -28,6 +29,26 @@ def load_jsonl(path: Path) -> list[dict]:
         except json.JSONDecodeError as e:  # [LAW:no-silent-failure]
             raise SystemExit(f"{path}:{n}: not JSON: {e}\n{line[:200]}")
     return rows
+
+
+def load_verdicts(verdicts: Path) -> dict[Path, list[dict]]:
+    """Every verdict file's rows, by path. [LAW:effects-at-boundaries] the one read of
+    the verdicts directory; everything below this line is pure over its result."""
+    return {p: load_jsonl(p) for p in sorted(verdicts.glob("*.jsonl"))}
+
+
+def judged_prs(rows: Iterable[dict]) -> set[str]:
+    """Every `<repo>#<number>` a verdict record names. [LAW:one-source-of-truth] this is
+    the definition of judged, and the only one: a PR is judged when some verdict record
+    claims it, whatever the file carrying it is called. Batch ids are positional, so a
+    re-bundle renames every batch after the first one that changes size - but the PRs a
+    file judged do not move, and neither do the finding ids inside it."""
+    return {r["pr"] for r in rows if "pr" in r}
+
+
+def batch_judged(batch: dict, judged: set[str]) -> bool:
+    """A batch is done when every PR in it is."""
+    return all(f"{batch['repo']}#{n}" in judged for n in batch["prs"])
 
 
 def finding_ids(findings: list[dict]) -> dict[str, dict]:

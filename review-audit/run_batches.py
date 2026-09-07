@@ -10,9 +10,12 @@ packet is the whole world it can see: the same batch judged twice consults the s
 bytes, and nothing here spends a GitHub call. Everything the classifier used to fetch
 live now rides in the packet - see `bundle.py`.
 
-Re-runnable: a batch whose verdict file already exists is skipped, so an interrupted
-run resumes by being run again. `check.py` is the judge of whether a verdict file is
-good; this script runs it once at the end and reports what it says.
+Re-runnable: a batch whose PRs are all judged already is skipped, so an interrupted run
+resumes by being run again. Judged means a verdict record names the PR - never that a
+file of a particular name exists. Batch ids are positional, so re-bundling renames them
+and a name says nothing about what was judged. `report.judged_prs` is the one definition
+and `check.py` is the judge of whether a verdict file is good; this script runs it once
+at the end and reports what it says.
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from report import batch_judged, judged_prs, load_verdicts
 
 # The agent reads packets and writes one verdict file. It gets no shell and no network:
 # determinism enforced by the harness, not requested in prose. Verified against the CLI -
@@ -46,8 +51,6 @@ def run_one(batch: dict, prompt: Path, bundles: Path, verdicts: Path, model: str
     """Judge one batch. Returns (batch id, "" if it produced a parseable file else why not)."""
     bid = batch["id"]
     out = verdicts / f"{bid}.jsonl"
-    if out.exists():
-        return bid, ""
     packets = [bundles / batch["repo"] / f"{n}.md" for n in batch["prs"]]
     missing = [str(p) for p in packets if not p.exists()]
     if missing:  # [LAW:no-silent-failure] a packet gone means bundle.py has not been re-run
@@ -94,7 +97,10 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     index = json.loads((args.bundles / "batches.json").read_text())
-    unjudged = [b for b in index if not (args.verdicts / f"{b['id']}.jsonl").exists()]
+    # [LAW:one-source-of-truth] check.py answers "is this judged" the same way, from the
+    # same function. A filename answered it differently, and the two clocks disagreed.
+    judged = judged_prs(r for rows in load_verdicts(args.verdicts).values() for r in rows)
+    unjudged = [b for b in index if not batch_judged(b, judged)]
 
     if args.list:
         rows = [b for b in unjudged if args.repo in (None, b["repo"])]
@@ -109,7 +115,21 @@ def main(argv: list[str]) -> int:
     unknown = [b for b in args.batches if b not in by_id]
     if unknown:  # [LAW:parse-dont-validate] every id resolves before any agent starts
         raise SystemExit(f"no such batch in {args.bundles / 'batches.json'}: {unknown}")
-    wanted = [by_id[b] for b in args.batches]
+    wanted, done = [], []
+    for b in (by_id[i] for i in args.batches):
+        (done if batch_judged(b, judged) else wanted).append(b)
+    if done:  # skipping is fine; skipping silently is not
+        print(f"already judged, not re-running: {' '.join(b['id'] for b in done)}", file=sys.stderr)
+
+    # [LAW:no-silent-failure] the batch is unjudged and its output name is already taken,
+    # which means a re-bundle handed a new batch an old one's positional id. Writing there
+    # would destroy judged verdicts, so refuse before spending anything.
+    taken = [b["id"] for b in wanted if (args.verdicts / f"{b['id']}.jsonl").exists()]
+    if taken:
+        raise SystemExit(
+            f"verdict files exist for unjudged batches, so their ids have been reused by a "
+            f"re-bundle: {' '.join(taken)}. Rename or remove those files before running."
+        )
 
     prompt = args.prompt.resolve()
     if not prompt.exists():
