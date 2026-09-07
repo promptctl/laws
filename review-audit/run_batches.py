@@ -27,7 +27,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from report import batch_judged, judged_prs, load_verdicts
+from report import batch_judged, judged_prs, load_jsonl, load_verdicts
 
 # The agent reads packets and writes one verdict file. It gets no shell and no network:
 # determinism enforced by the harness, not requested in prose. Verified against the CLI -
@@ -121,14 +121,29 @@ def main(argv: list[str]) -> int:
     if done:  # skipping is fine; skipping silently is not
         print(f"already judged, not re-running: {' '.join(b['id'] for b in done)}", file=sys.stderr)
 
-    # [LAW:no-silent-failure] the batch is unjudged and its output name is already taken,
-    # which means a re-bundle handed a new batch an old one's positional id. Writing there
-    # would destroy judged verdicts, so refuse before spending anything.
-    taken = [b["id"] for b in wanted if (args.verdicts / f"{b['id']}.jsonl").exists()]
+    # [LAW:no-silent-failure] the batch is not fully judged and its output name is already
+    # taken. Writing there would destroy judged verdicts, so refuse before spending
+    # anything - and say which of the two causes it is, because the remedies differ.
+    taken = []
+    for b in wanted:
+        path = args.verdicts / f"{b['id']}.jsonl"
+        if not path.exists():
+            continue
+        covered = {r["pr"] for r in load_jsonl(path) if "pr" in r}
+        mine = {f"{b['repo']}#{n}" for n in b["prs"]}
+        stray = len(covered - mine)
+        taken.append(
+            f"  {b['id']}: {path.name} judges {len(covered & mine)} of this batch's {len(mine)} PRs"
+            + (f", plus {stray} that are not in it" if stray else "")
+            + f"; missing here: {sorted(mine - covered)}"
+        )
     if taken:
         raise SystemExit(
-            f"verdict files exist for unjudged batches, so their ids have been reused by a "
-            f"re-bundle: {' '.join(taken)}. Rename or remove those files before running."
+            "verdict files already occupy the output path of batches that are not fully judged:\n"
+            + "\n".join(taken)
+            + "\n\nEither the batch grew since its file was written (new PRs arrived), or a "
+            "re-bundle gave a different batch this positional id. Judge the missing PRs into "
+            "the existing file, or move that file aside to redo the batch whole."
         )
 
     prompt = args.prompt.resolve()
