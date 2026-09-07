@@ -845,6 +845,60 @@ HORIZON_BANNER_RE='Claude Code v[0-9]'
 HORIZON_BOOT_TIMEOUT_SECONDS=120
 HORIZON_POLL_SECONDS=2
 
+# Usage: horizon_auth_state <config_dir>  -> `logged-in` or `logged-out`
+#
+# The one reader of whether a config dir can authenticate, and it asks the only party
+# that knows, by making a request. `claude auth status` answers from the stored
+# credential's presence, and a refresh token the server has already retired reads as
+# logged in right up to the moment a session boots, fails to refresh, and stops at a
+# login prompt - which is how the first acceptance run spent its only turn (2026-09-07).
+# Status is a map of the credential; the request is the territory.
+# [FRAMING:representation] Price: one one-turn haiku request per check.
+#
+# The probe is kept from doing anything but authenticate: no tools and one turn, so it
+# cannot act; an empty working directory, so no CLAUDE.md of the caller's reaches it;
+# no session persistence, so no transcript lands in <config>/projects for the capture
+# to mistake for a session of the run. Print mode does not stop at the workspace-trust
+# dialog (verified: every probe ran from a directory no config dir had ever seen), so
+# the fresh directory needs no boot state. Not --bare: that skips the stored credential
+# too, and reports every config dir logged out.
+#
+# It answers with a word rather than an exit code, so callers under `set -e` can branch
+# on the answer without the shell treating "logged out" as a crashed command. The
+# refusal exits 1, the same exit a crash gives, so the answer is read from the result
+# envelope instead: `is_error` false is logged in; `is_error` true whose `result` is the
+# authentication refusal is logged out - the CLI carries no code for that case, only
+# the message, so the text is the discriminator and a rewording fails loudly below,
+# never silently; anything else is not an answer. [LAW:parse-dont-validate]
+horizon_auth_state() {
+  local config_dir="$1" probe_dir envelope state rc=0
+  [ -n "$config_dir" ] || horizon_die "horizon_auth_state: no config dir given"
+  probe_dir="$(mktemp -d)" || horizon_die "horizon_auth_state: could not create a probe dir"
+  envelope="$(cd "$probe_dir" && CLAUDE_CONFIG_DIR="$config_dir" claude -p 'Reply with the single word ok' \
+    --output-format json --model haiku --max-turns 1 --tools "" --no-session-persistence 2>&1)" || true
+  rm -rf "$probe_dir"
+  state="$(printf '%s' "$envelope" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+if d.get("type") == "result" and d.get("is_error") is False:
+    print("logged-in")
+elif d.get("is_error") is True and str(d.get("result", "")).startswith("Failed to authenticate"):
+    print("logged-out")
+else:
+    sys.exit(2)
+')" || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$state" ;;
+    2) horizon_die "the auth probe against $config_dir was refused for a reason other than login:
+$envelope" ;;
+    *) horizon_die "the auth probe against $config_dir produced no result envelope:
+$envelope" ;;
+  esac
+}
+
 # Usage: horizon_assert_authenticated <config_dir>
 #
 # Asserted BEFORE any session is launched, because an unauthenticated config dir does
@@ -855,51 +909,15 @@ HORIZON_POLL_SECONDS=2
 # is named from a hash of it), so authentication is a property of WHERE the config dir
 # is, not of what is inside it: wiping the directory keeps the login, moving it loses
 # the login. That is why a run is built at a fixed working path - see run-loop.sh.
-# Usage: horizon_auth_state <config_dir>  -> `logged-in` or `logged-out`
-#
-# The one reader of `claude auth status`. It answers with a word rather than an exit
-# code, so callers under `set -e` can branch on the answer without the shell treating
-# "logged out" as a crashed command; the two failures that are not answers - no output,
-# not JSON - die here with their own message. [LAW:parse-dont-validate]
-horizon_auth_state() {
-  # Not named `status`: that is a read-only special variable in zsh, so the name would
-  # make this library unsourceable outside bash for no benefit at all.
-  local config_dir="$1" auth_json=""
-  [ -n "$config_dir" ] || horizon_die "horizon_auth_state: no config dir given"
-
-  # `claude auth status` EXITS 1 WHEN SIMPLY LOGGED OUT, while still printing a complete
-  # JSON answer. So its exit status does not mean "the command failed" and must not be
-  # branched on: doing so reports a missing login as an unreadable command, sending the
-  # operator to look for a broken CLI instead of running login.sh. The payload is the
-  # answer; whether it arrived at all is checked below, where an empty or unparseable
-  # response is a genuinely different failure with its own message. Not suppressed with
-  # 2>/dev/null either - stderr still reaches the operator.
-  auth_json="$(CLAUDE_CONFIG_DIR="$config_dir" claude auth status)" || true
-
-  [ -n "$auth_json" ] \
-    || horizon_die "'claude auth status' produced no output for $config_dir"
-
-  # Parsed rather than grepped: `loggedIn` is a JSON boolean, and a grep for the word
-  # would match the field name just as happily in a false response.
-  printf '%s' "$auth_json" | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except ValueError:
-    sys.exit(1)
-print("logged-in" if d.get("loggedIn") is True else "logged-out")
-' || horizon_die "'claude auth status' did not return JSON for $config_dir:
-$auth_json"
-}
-
 horizon_assert_authenticated() {
   local config_dir="$1" state
   # Assigned, then compared: a reader that dies inside `[ "$(...)" ]` is not seen by
   # errexit, and its message would be followed by this one, which would be wrong.
   state="$(horizon_auth_state "$config_dir")"
   [ "$state" = logged-in ] \
-    || horizon_die "the run's config dir is not logged in: $config_dir
-Run horizon/login.sh once (it needs a browser); every run after that is unattended.
+    || horizon_die "the run's config dir cannot authenticate: $config_dir
+Run horizon/login.sh (it needs a browser); runs are unattended from then until the
+credential is retired server-side, which a long gap between runs can do on its own.
 Note the credential is bound to this PATH, so logging in somewhere else will not help."
 }
 
