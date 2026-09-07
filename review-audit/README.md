@@ -7,12 +7,14 @@ the next. The output feeds guidance changes to `laws:code` and `address-pr-revie
 
 ## Pipeline
 
-Each stage is a pure function of the previous stage's files; only `fetch.py` talks
+Each stage is a pure function of the previous stage's files; only `bank.py` talks
 to GitHub.
 
 ```
-fetch.py   GitHub GraphQL  ->  data/<repo>/<number>.json     one file per PR, cached on updatedAt
-shape.py   data/           ->  derived/{prs,findings}.jsonl  one row per PR and per reviewer finding
+bank.py    GitHub          ->  data/prs/<repo>/<number>.json      one PR, versioned on updatedAt
+                               data/commits/<repo>/<oid>.json     one commit's diff, immutable
+                               data/manifest.json                 the index: version + sha256 per object
+shape.py   data/ (bank)    ->  derived/{prs,findings}.jsonl  one row per PR and per reviewer finding
 bundle.py  derived/        ->  bundles/<repo>/<number>.md    one markdown packet per PR + batches.json
            (reviewing agents read a batch under prompts/classify.md and write verdicts/<batch>.jsonl)
 report.py  derived/ + verdicts/  ->  aggregate tables + derived/joined.jsonl
@@ -20,15 +22,25 @@ render.py  derived/ + verdicts/  ->  rendered/index.md + rendered/<repo>/<number
 ```
 
 ```sh
-review-audit/fetch.py  --org promptctl --out review-audit/data
-review-audit/shape.py  --data review-audit/data --out review-audit/derived
+review-audit/bank.py   sync --org promptctl --bank review-audit/data
+review-audit/bank.py   verify --bank review-audit/data
+review-audit/shape.py  --bank review-audit/data --out review-audit/derived
 review-audit/bundle.py --derived review-audit/derived --out review-audit/bundles
 review-audit/report.py --derived review-audit/derived --verdicts review-audit/verdicts
 review-audit/render.py --derived review-audit/derived --verdicts review-audit/verdicts --out review-audit/rendered
 ```
 
-`data/`, `derived/`, `bundles/` and `rendered/` are gitignored: large and reproducible from the stage before them; `verdicts/` is the hand-made input and is committed. Re-running `fetch.py` refetches
-only PRs whose `updatedAt` changed; `--refresh` refetches everything.
+`data/`, `derived/`, `bundles/` and `rendered/` are gitignored: large and reproducible from the stage before them; `verdicts/` is the hand-made input and is committed.
+
+`bank.py sync` is idempotent, resumable and incremental. It lists what GitHub has, compares
+it against `manifest.json`, and fetches only the difference: a PR whose `updatedAt` moved,
+and any commit never seen before. A commit is immutable - its oid is its content - so once
+banked it is never fetched again. Every object is written through a rename and indexed with
+its sha256, so a killed run leaves no half-written file and re-running resumes where it
+stopped. `bank.py verify` re-hashes the whole bank offline and reports anything that changed
+since it was fetched, plus any commit a stored PR references but the bank lacks. `--refresh`
+refetches every PR regardless of `updatedAt`, which is the escape hatch for the fact that
+`updatedAt` is GitHub's freshness signal, not ours.
 
 ## What a finding row carries
 
