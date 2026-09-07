@@ -24,13 +24,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Literal
 
 MANIFEST_VERSION = 1
 
-Kind = Literal["prs", "commits"]
+Kind = Literal["prs", "commits", "runs"]
 
 
 def encode(payload: object) -> bytes:
@@ -62,7 +63,7 @@ class Ref:
         downstream ever splits a key string again."""
         kind, _, rest = key.partition("/")
         repo, _, name = rest.partition("/")
-        if kind not in ("prs", "commits") or not repo or not name:
+        if kind not in ("prs", "commits", "runs") or not repo or not name:
             raise ValueError(f"not a bank key: {key!r}")
         return Ref(kind, repo, name)
 
@@ -73,6 +74,17 @@ def pr_ref(repo: str, number: int) -> Ref:
 
 def commit_ref(repo: str, oid: str) -> Ref:
     return Ref("commits", repo, oid)
+
+
+def run_ref(repo: str, run_id: int) -> Ref:
+    return Ref("runs", repo, str(run_id))
+
+
+def transcript_path(root: Path, repo: str, run_id: int) -> Path:
+    """Where one review run's archived transcript zip lives. It is not a manifest object:
+    the run record beside it is, and that record says whether this file should exist.
+    [LAW:one-source-of-truth] one place answers "is there a transcript"."""
+    return root / "transcripts" / repo / f"{run_id}.zip"
 
 
 class Bank:
@@ -161,3 +173,58 @@ class Bank:
             if key not in self.entries:
                 problems.append(f"{key}: on disk, not in the manifest - an interrupted write; sync will replace it")
         return problems
+
+
+# ---------------------------------------------------------------------------
+# The repository itself: what the code looked like at a commit. This answers what
+# the REVIEWED RECORD cannot - the reviewer had the whole codebase, not just a diff,
+# so judging whether it was right needs the same access. It never overwrites the
+# reviewed record; GitHub's rendering of a diff is the evidence and stays untouched.
+# ---------------------------------------------------------------------------
+
+# [LAW:no-shared-mutable-globals] the user's gitconfig is ambient input that would
+# otherwise reach into every rendered file - one `diff.algorithm = histogram` in
+# ~/.gitconfig and every answer quietly changes. Reads are isolated and every option
+# that shapes output is pinned here, in one place. The network path in github.py
+# deliberately does NOT isolate: the credential helper lives in that same config.
+GIT_ENV = {
+    **os.environ,
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+
+
+def git_dir(root: Path, repo: str) -> Path:
+    return root / "git" / f"{repo}.git"
+
+
+def git(root: Path, repo: str, *args: str) -> str:
+    """One read of a banked repository. [LAW:no-silent-failure] a git failure raises rather
+    than returning empty output that reads exactly like a commit which changed nothing."""
+    proc = subprocess.run(["git", "--git-dir", str(git_dir(root, repo)), *args],
+                          text=True, capture_output=True, env=GIT_ENV)
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)[:60]} in {repo} failed ({proc.returncode}):\n{proc.stderr[:400]}")
+    return proc.stdout
+
+
+def has_commits(root: Path, repo: str, oids: list[str]) -> set[str]:
+    """Which of these oids the banked repository holds. One call for the batch, because
+    asking per oid costs a process each."""
+    if not oids or not git_dir(root, repo).exists():
+        return set()
+    proc = subprocess.run(
+        ["git", "--git-dir", str(git_dir(root, repo)), "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        input="\n".join(oids), text=True, capture_output=True, env=GIT_ENV)
+    return {line.split()[0] for line in proc.stdout.splitlines() if line.strip().endswith(" commit")}
+
+
+def file_at(root: Path, repo: str, oid: str, path: str) -> str:
+    """One file's whole content as of one commit - the context the reviewer had and the
+    review record does not carry. Empty when the path did not exist at that commit."""
+    try:
+        return git(root, repo, "show", f"{oid}:{path}")
+    except RuntimeError:
+        return ""
