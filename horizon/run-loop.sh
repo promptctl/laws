@@ -107,15 +107,18 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # The handler is installed the moment there is a lock to release; it is the only
   # `trap ... EXIT` in this script, because a second one anywhere below would silently
   # replace it rather than add to it. Arguments are baked in now: a handler cannot read
-  # a function-scoped variable at exit time.
+  # a function-scoped variable at exit time. %q, not hand-placed quotes: both paths are
+  # operator-overridable, and a quote inside one would break the handler itself.
+  local trap_cmd
+  printf -v trap_cmd 'end_run %q %q' "$config_dir" "$HORIZON_WORK_DIR"
   # shellcheck disable=SC2064
-  trap "end_run '$config_dir' '$HORIZON_WORK_DIR'" EXIT
+  trap "$trap_cmd" EXIT
 
   # Asserted before anything shared is touched, not after the session hangs: an
   # unauthenticated config dir boots to a login prompt, which in an unattended run is
   # indistinguishable from an agent thinking hard - and the remote must not be reset for
   # a run that cannot launch. The credential is keyed to the config dir's path, so the
-  # pin's rebuild below keeps it.
+  # rebuild below keeps it.
   horizon_log "checking the pinned config dir can authenticate"
   horizon_assert_authenticated "$config_dir"
 
@@ -127,6 +130,11 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_log "pinning the instrument"
   "$SCRIPT_DIR/pin-instrument.sh" "$instrument_dir" ${memento_ref:+"$memento_ref"} \
     || horizon_die "pin-instrument.sh failed"
+
+  # Here, under the lock, and not inside the pin: this is the one shared thing the pin
+  # would otherwise touch, and the lock is what makes wiping it safe. [LAW:single-enforcer]
+  horizon_log "rebuilding the config dir from the pinned snapshot"
+  horizon_provision_config_dir "$config_dir" "$instrument_dir/pinned"
 
   horizon_log "seeding time zero from $(basename "$seed_dir")"
   "$SCRIPT_DIR/seed-run.sh" "$seed_out_dir" "$seed_dir" \

@@ -38,12 +38,10 @@
 #   manifest.json           every pinned identity, canonical JSON, no timestamps -
 #                           so two invocations with unchanged inputs are byte-identical
 #
-# And, at $HORIZON_CONFIG_DIR (outside <run-dir> - see lib.sh for why that separation is
-# load-bearing rather than tidiness), rebuilds the CLAUDE_CONFIG_DIR the run launches
-# against: memento installed, nothing else. The path is NOT recorded in the manifest,
-# because it is a property of the machine rather than of the pinned instrument, and
-# writing it there would make two otherwise-identical pinnings produce different
-# manifests.
+# Nothing outside <run-dir> is touched. The config dir a run launches against is a
+# machine-wide singleton, rebuilt from pinned/ by the caller that holds the run lock
+# (run-loop.sh) - so two pins can run at once, and nothing here needs a lock.
+# [LAW:decomposition]
 
 set -euo pipefail
 
@@ -60,12 +58,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 horizon_need_base
 horizon_need git
 horizon_need gh
-horizon_need claude
 horizon_need python3
 horizon_need lit
 horizon_need cat
-# Reached through the config dir's live-run guard.
-horizon_need tmux
 # Reached from inside lib.sh pipelines - git archive | tar, and the reviewer prompt
 # decode. Absent, pipefail would blame the tool at the head of the pipe instead of
 # the one that is actually missing.
@@ -105,13 +100,6 @@ main() {
 
   horizon_log "building pinned memento snapshot"
   horizon_build_memento_snapshot "$WORK/memento.git" "$memento_sha" "$run_dir/pinned"
-
-  # Rebuilt at HORIZON_CONFIG_DIR, which lives OUTSIDE run-dir on purpose: Claude Code
-  # keys the run's stored credential to this path, so a config dir created fresh inside
-  # each run-dir would be a config dir that has never been logged in. Rebuilding in place
-  # is safe - the credential survives the directory being wiped, only a move loses it.
-  horizon_log "provisioning isolated CLAUDE_CONFIG_DIR at $HORIZON_CONFIG_DIR"
-  horizon_provision_config_dir "$HORIZON_CONFIG_DIR" "$run_dir/pinned"
 
   horizon_log "recording lit's binary identity"
   local lit_path lit_sha256

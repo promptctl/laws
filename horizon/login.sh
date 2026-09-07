@@ -32,6 +32,12 @@ main() {
   horizon_need claude
   horizon_need mkdir
   horizon_need python3
+  horizon_need tmux
+
+  # The lock every writer of this directory takes: a login that rotated the credential
+  # under a live run would break the run with nothing saying so. [LAW:single-enforcer]
+  horizon_take_run_lock
+  trap horizon_release_run_lock EXIT
 
   # Created if it does not exist yet: the credential is bound to this path, so it has to
   # be logged in BEFORE the first run rather than discovered missing halfway through one.
@@ -57,7 +63,7 @@ main() {
   # Asserted through the same function run-loop.sh gates on, so "login.sh said it worked"
   # and "run-loop.sh agrees" cannot come apart. [LAW:single-enforcer]
   horizon_assert_authenticated "$config_dir"
-  horizon_log "authenticated; runs at this work dir can now start unattended"
+  horizon_log "authenticated; runs against this config dir can now start unattended"
 }
 
 main "$@"

@@ -272,13 +272,6 @@ EOF
 # Usage: horizon_provision_config_dir <config_dir> <snapshot_dir>
 horizon_provision_config_dir() {
   local config_dir="$1" snapshot_dir="$2"
-  # A config dir a live session is running out of is not rebuilt underneath it: the
-  # session would keep its process and lose its plugin cache, and nothing would say so.
-  # Assigned before it is compared: a die inside `[ "$(...)" ]` is invisible to errexit.
-  local live
-  live="$(horizon_live_run_config_dir)"
-  [ "$live" != "$config_dir" ] \
-    || horizon_die "a live run (tmux session $HORIZON_TMUX_SESSION) is using $config_dir; refusing to rebuild it"
   rm -rf "$config_dir"
   mkdir -p "$config_dir"
   CLAUDE_CONFIG_DIR="$config_dir" claude plugin marketplace add "$snapshot_dir" \
@@ -999,11 +992,16 @@ One run at a time; \`tmux kill-session -t $HORIZON_TMUX_SESSION\` clears a sessi
 
 # Usage: horizon_release_run_lock
 #
-# A session that already died released the lock itself; that is not a failure here.
+# Judged on the postcondition, not on the kill: a session that already died released the
+# lock itself, whichever side of the kill it died on. A session that outlives a failed
+# kill is the failure, reported with tmux's own reason. [LAW:no-silent-failure]
 horizon_release_run_lock() {
-  tmux has-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null || return 0
-  tmux kill-session -t "$HORIZON_TMUX_SESSION" \
-    || horizon_die "could not end the run session $HORIZON_TMUX_SESSION"
+  local err
+  err="$(tmux kill-session -t "$HORIZON_TMUX_SESSION" 2>&1)" && return 0
+  # has-session reports absence on stderr and by exit status; absence is the answer here.
+  # [LAW:no-silent-failure] exception: the status is read, the text is noise.
+  ! tmux has-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null \
+    || horizon_die "could not end the run session $HORIZON_TMUX_SESSION: $err"
 }
 
 # Usage: horizon_launch_session <config_dir> <project_dir>
@@ -1016,9 +1014,7 @@ horizon_release_run_lock() {
 # CLAUDE_CONFIG_DIR is set in the SESSION's environment rather than exported: a pane
 # spawned on an already-running tmux server inherits the server's environment, not the
 # caller's, so an exported value would silently not arrive and the run would read the
-# operator's real config. [LAW:no-silent-failure] Bound here rather than when the lock is
-# taken, because it is also how horizon_live_run_config_dir tells a launched run from a
-# reservation still being set up.
+# operator's real config. [LAW:no-silent-failure]
 horizon_launch_session() {
   local config_dir="$1" project_dir="$2"
   tmux set-environment -t "$HORIZON_TMUX_SESSION" CLAUDE_CONFIG_DIR "$config_dir" \
@@ -1026,22 +1022,6 @@ horizon_launch_session() {
   tmux respawn-pane -k -t "$HORIZON_TMUX_SESSION" -c "$project_dir" \
     "claude --dangerously-skip-permissions" \
     || horizon_die "could not launch claude in the run session"
-}
-
-# Usage: horizon_live_run_config_dir  -> the CLAUDE_CONFIG_DIR of the launched run, or nothing
-#
-# The config dir a session is running out of, for callers that must not rebuild it. Empty
-# while the session is only a reservation (see horizon_launch_session), which is what
-# lets the driver's own pin proceed under its own lock. A session that cannot be read is
-# an error, not an idle machine. [LAW:no-silent-failure]
-horizon_live_run_config_dir() {
-  # has-session reports absence on stderr and by exit status; absence is the answer here,
-  # not an error. [LAW:no-silent-failure] exception: the status is read, the text is noise.
-  tmux has-session -t "$HORIZON_TMUX_SESSION" 2>/dev/null || return 0
-  local env
-  env="$(tmux show-environment -t "$HORIZON_TMUX_SESSION")" \
-    || horizon_die "tmux session $HORIZON_TMUX_SESSION exists but its environment could not be read"
-  printf '%s\n' "$env" | sed -n 's/^CLAUDE_CONFIG_DIR=//p'
 }
 
 # Usage: horizon_pane  -> the run session's pane contents
@@ -1189,8 +1169,11 @@ if not any(reaches_pane(p) for p in claudes):
 # line. After the session is ended, so the record is final when it moves.
 # [LAW:no-silent-failure]
 horizon_capture_transcripts() {
-  local config_dir="$1" work_dir="$2" source="$1/projects" target="$2/transcripts"
+  local work_dir="$2" source="$1/projects" target="$2/transcripts"
   [ -d "$source" ] || return 0
+  # The handler that calls this is installed before the work dir is created, and a run
+  # that died in between still has transcripts worth keeping.
+  mkdir -p "$work_dir" || horizon_die "could not create $work_dir to capture transcripts into"
   mv "$source" "$target" || horizon_die "could not capture transcripts into $target"
   horizon_log "transcripts captured: $target"
 }

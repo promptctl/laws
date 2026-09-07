@@ -78,17 +78,10 @@ main() {
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
   goal_ref="$(horizon_resolve_commit "$repo_root" "HEAD")"
 
-  # Both pinnings are pointed at a THROWAWAY config dir under $WORK. Left at its default
-  # they would rebuild the machine's real, authenticated run config dir - wiping and
-  # reinstalling the directory a live run is about to launch against, as a side effect of
-  # a verification. Passed per invocation rather than exported, so it is visible here
-  # that this is where the two runs are being sent.
-  local config_dir="$WORK/config"
-
   horizon_log "run 1: pinning at $ref"
-  HORIZON_CONFIG_DIR="$config_dir" "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run1" "$ref" "$reviewer_sha" "$goal_ref"
+  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run1" "$ref" "$reviewer_sha" "$goal_ref"
   horizon_log "run 2: pinning at $ref"
-  HORIZON_CONFIG_DIR="$config_dir" "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run2" "$ref" "$reviewer_sha" "$goal_ref"
+  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run2" "$ref" "$reviewer_sha" "$goal_ref"
 
   if diff -u "$WORK/run1/manifest.json" "$WORK/run2/manifest.json" >/dev/null; then
     pass "two invocations produced byte-identical manifest.json"
@@ -96,6 +89,13 @@ main() {
     diff -u "$WORK/run1/manifest.json" "$WORK/run2/manifest.json" >&2 || true
     fail "manifests diverged between two invocations with unchanged inputs"
   fi
+
+  # A THROWAWAY config dir under $WORK, never the machine's real, authenticated one: a
+  # verification must not wipe the directory a run launches against. Built from run 2's
+  # snapshot, which is also the one the installed skills are compared against below.
+  local config_dir="$WORK/config" snapshot_dir="$WORK/run2/pinned"
+  horizon_log "provisioning a throwaway config dir from run 2's snapshot"
+  horizon_provision_config_dir "$config_dir" "$snapshot_dir"
 
   local plugin_list
   plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" claude plugin list --json)" \
@@ -148,9 +148,7 @@ if plugins[0]["enabled"] is not True:
   # rather than something that happens to occupy the same name. The pin has already
   # refused a snapshot whose skills were pointer stubs, so "same as the snapshot" is
   # the whole remaining question. [LAW:one-source-of-truth]
-  # run2's: the second pinning rebuilt the shared config dir, so that is the snapshot
-  # the install in it came from.
-  local snapshot_skills="$WORK/run2/pinned/$HORIZON_MEMENTO_PLUGIN_SUBDIR/skills"
+  local snapshot_skills="$snapshot_dir/$HORIZON_MEMENTO_PLUGIN_SUBDIR/skills"
   local installed_skills="$install_path/skills" skill
   for skill in "${HORIZON_MEMENTO_SKILLS[@]}"; do
     [ -d "$installed_skills/$skill" ] || fail "installed memento is missing the '$skill' skill"

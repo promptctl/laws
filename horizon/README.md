@@ -50,10 +50,15 @@ Builds `<run-dir>` from nothing:
   (`tag`) or was handed the sha (`override`), so the manifest never implies a check
   that did not happen.
 
-And, at `$HORIZON_CONFIG_DIR` - outside `<run-dir>`, at one fixed path, because Claude
-Code keys the stored credential to that path - it rebuilds the run's `CLAUDE_CONFIG_DIR`
-through the real `claude plugin` CLI, with memento installed and enabled and no other
-plugin even installable: the pinned marketplace never lists one.
+`pin-instrument.sh` touches nothing outside `<run-dir>`: `pinned/` and `manifest.json`
+are all it produces, and because it shares no state with anything, two pins can run at
+the same time safely. The run's `CLAUDE_CONFIG_DIR` lives at `$HORIZON_CONFIG_DIR` -
+outside `<run-dir>`, at one fixed path, because Claude Code keys the stored credential to
+that path. `run-loop.sh` rebuilds it right after the pin, while it holds the run lock,
+through `horizon_provision_config_dir` and the real `claude plugin` CLI, from the pin's
+`pinned/` snapshot. The result has memento installed and enabled and no other plugin
+even installable: the pinned marketplace never lists one. The path is not recorded in
+`manifest.json`; it is a property of the machine, not of the pinned instrument.
 
 A session launched with `CLAUDE_CONFIG_DIR=$HORIZON_CONFIG_DIR` sees memento's skills and
 nothing of the owner's live laws plugin, `CLAUDE.md`, or memory. Two distinct
@@ -98,15 +103,22 @@ and this checkout's own `HEAD` - and hands the same shas to both `pin-instrument
 runs, so a push, a tag move, or a commit landing here between the two calls cannot turn
 into test flakiness, then checks the manifests are byte-identical.
 
-It then checks the isolated config dir has exactly memento installed and enabled,
-carries no `CLAUDE.md` and no memory content under `projects/*/memory/`, and exposes
-memento's skills at its actual installed location (verified to fall under the config
-dir, not merely to exist somewhere) with contents equal, byte for byte, to the snapshot
-they were pinned from. Equality rather than existence, because existence is what let
-this verifier once go green against an instrument whose skills were all pointer stubs:
-the directories were there, holding nothing an agent could follow. The pin now refuses
-such a snapshot outright, so "the same bytes the snapshot carried" is the whole
-remaining question.
+It then builds a config dir of its own from the second run's `pinned/` snapshot, through
+`horizon_provision_config_dir`, at a throwaway path under its scratch dir; the machine's
+real, authenticated `$HORIZON_CONFIG_DIR` is never touched. That dir must have exactly
+memento installed and enabled, carry no `CLAUDE.md` and no memory content under
+`projects/*/memory/`, and expose memento's skills at their actual installed location
+(verified to fall under the config dir, not merely to exist somewhere) with contents
+equal, byte for byte, to the snapshot they were pinned from. Equality rather than
+existence, because existence is what let this verifier once go green against an
+instrument whose skills were all pointer stubs: the directories were there, holding
+nothing an agent could follow. The pin now refuses such a snapshot outright, so "the
+same bytes the snapshot carried" is the whole remaining question.
+
+One more check follows the byte comparison: the installed `finalize-session`, memento's
+relaunch binary, must be executable. `diff` compares bytes, not mode bits, and `claude
+plugin install` materialises symlinked files into real ones, which can drop the
+executable bit; a relaunch binary without it breaks the session handoff silently.
 
 Finally it checks both halves of `lit`'s recorded identity: the binary on `PATH`
 against the manifest's hash of it, and the `/next` procedure that binary writes - run
@@ -252,8 +264,9 @@ not nested:
   place; only a move would break it.
 - `~/.horizon/run` (override `HORIZON_WORK_DIR`) — one run's output. **Must not exist
   when a run starts**, so the last run's transcripts and commits can never be mistaken
-  for this one's. The finished run is copied to wherever runs are being kept, then
-  removed.
+  for this one's. Archiving it is the operator's job: copy the finished run wherever runs
+  are kept, then remove it. `run-loop.sh` refuses to start while the directory exists,
+  and its error message says exactly that.
 - The tmux session `horizon-run` (not overridable) — the lock. `run-loop.sh` creates it
   before it creates the work dir, rebuilds the config dir, or resets the shared remote,
   and tmux refuses a duplicate session name atomically, so a second invocation dies at
@@ -281,6 +294,10 @@ unauthenticated config dir does not fail loudly on its own. It boots to a login 
 and waits forever, which in an unattended run is indistinguishable from an agent
 thinking hard, so `run-loop.sh` refuses to launch until login has happened.
 
+`login.sh` takes the same `horizon-run` tmux session as its lock for as long as the login
+lasts, so a login cannot rotate the credential underneath a live run; while one is live
+it refuses with the same "a run is live" message `run-loop.sh` gives.
+
 ### Why the run lives in tmux
 
 The run is launched inside a detached tmux session, and that single fact decides whether
@@ -302,16 +319,30 @@ worth keeping, so each gets its own directory rather than being loosened to shar
 
 ### What the run leaves behind
 
-The run's record is `loop.json` in the work dir, produced by `sessions.py`. That program
-is pure analysis over inputs it is handed — transcripts as files, commits on stdin — so
-the same verdict can be recomputed from an archived run months later with nothing
-running.
+The work dir keeps `transcripts/`, `goal.md`, and `loop.json` beside `instrument/` and
+`seed/`. `transcripts/` holds the session transcripts, moved rather than copied out of
+the config dir by the driver's exit handler on every exit path - success, a failed
+assertion, a dead session, the wall-clock ceiling. The config dir is a fixed path the
+next run wipes, so this is the only copy that outlives the run. `goal.md` is the exact
+`/goal` wording the run issued, read from the commit `manifest.json` names.
+
+The run's record is `loop.json`, produced by `sessions.py`. That program is pure
+analysis over inputs it is handed — transcripts as files, commits on stdin — so the same
+verdict can be recomputed from an archived run months later with nothing running.
 
 Per session it reports the session id, its time window, whether a `/goal` was issued,
 whether that goal matches the pinned wording rather than merely being some goal, and
 which commits fall in its window. It also reports the longest run of *consecutive*
 sessions that each committed something. Consecutive matters: three committing sessions
 with a dead one between them is a loop that stalled and was restarted.
+
+Two top-level fields count the carry. `goal_carries_expected` is the number of successor
+sessions: those after the first that have shown evidence either way, a turn taken or a
+goal recorded. Session one is excluded because the driver issued its goal directly, and
+counting it would flatter the result. `goal_carries_intact` is how many of those
+successors received the pinned wording exactly - their `goal_matches_pinned` is true.
+`horizon_observe` in lib.sh reads both through `horizon_report_counts` and stops the run,
+loudly, the moment they differ; that is the mechanism by which a lost carry stops the run.
 
 Tests: `horizon/sessions.test.py`.
 
