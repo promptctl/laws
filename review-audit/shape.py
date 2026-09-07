@@ -56,6 +56,10 @@ def derive(repo: str, pr: dict) -> tuple[dict, list[dict]]:
     commits = pr["commits"]
     oid_index = {c["commit"]["oid"]: i for i, c in enumerate(commits)}
     committed_at = {c["commit"]["oid"]: c["commit"]["committedDate"] for c in commits}
+    # The diff each walked commit made, per file, from fetch_commits.py. Only PRs
+    # carrying review threads are walked, so a commit outside that set offers nothing -
+    # the same shape as a commit that changed no files. [LAW:dataflow-not-control-flow]
+    patches_of = {c["commit"]["oid"]: {p: v["patch"] for p, v in c["files"].items()} for c in commits if "files" in c}
 
     # A round is one review submission by anyone other than the PR author.
     # The author's own COMMENTED reviews are only the containers GitHub wraps
@@ -163,6 +167,16 @@ def derive(repo: str, pr: dict) -> tuple[dict, list[dict]]:
         "n_findings_on_named_fixes": sum(f["on_named_fix_commit"] for f in findings),
         "response_hints": {cls: sum(f["response_hint"] == cls for f in findings) for cls, _ in RESPONSE_HINTS + (("unclear", ()), ("none", ()))},
         "issue_comments": [{"author": (c["author"] or {}).get("login") or "ghost", "createdAt": c["createdAt"], "body": c["body"]} for c in pr["comments"]],
+        # The whole diff of every commit a finding was raised against once review had
+        # begun. Deciding whether a finding exists because an earlier fix was wrong means
+        # reading that fix, so the packet carries it and no reviewing agent asks GitHub.
+        # Keyed by commit, not copied onto each finding: findings share commits, and one
+        # fact belongs in one place. [LAW:one-source-of-truth]
+        "fix_commit_patches": {
+            oid: patches_of[oid]
+            for oid in sorted({f["original_commit"] for f in findings if f["on_post_review_commit"] or f["on_named_fix_commit"]})
+            if oid in patches_of
+        },
     }
     return pr_row, findings
 
