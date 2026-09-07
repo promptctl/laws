@@ -109,6 +109,22 @@ def message_text(entry):
     return ""
 
 
+def transcript_entries(handle):
+    """The JSON objects in a transcript, one per line; every other line is skipped.
+
+    The one place a transcript line becomes an entry, so nothing downstream re-checks
+    what it was handed. Skipped rather than raised, for the reason parse_time gives: one
+    malformed line - a torn write, a bare scalar - must not take down a campaign's report.
+    """
+    for line in handle:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict):
+            yield entry
+
+
 def read_session(path, project_dir):
     """One transcript reduced to the facts the acceptance criterion asks about.
 
@@ -125,12 +141,7 @@ def read_session(path, project_dir):
     goal_args = []
 
     with open(path, errors="replace") as handle:
-        for line in handle:
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-
+        for entry in transcript_entries(handle):
             cwd = entry.get("cwd")
             if cwd and os.path.realpath(cwd) == want:
                 belongs = True

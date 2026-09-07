@@ -370,6 +370,31 @@ def main():
         check("a session with no readable timestamp is kept, and sorts after the timed ones",
               ids4 == ["timed", "untimed"], "got %s" % ids4)
 
+    # Lines that are not JSON objects at all: a torn write, a bare scalar, an array. The
+    # session they sit in is still read, and so is every other.
+    with tempfile.TemporaryDirectory() as tmp4:
+        cfg = os.path.join(tmp4, "config")
+        proj = os.path.join(tmp4, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp4, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        path = write_session(cfg, "p", "torn", proj,
+                             "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00")
+        with open(path) as handle:
+            lines = handle.readlines()
+        with open(path, "w") as handle:
+            handle.write(lines[0])
+            handle.write('{"sessionId": "torn", "cwd": "%s", "ti\n' % proj)
+            handle.write("42\n")
+            handle.write("[1, 2]\n")
+            handle.write("".join(lines[1:]))
+        report5 = run(cfg, proj, gf, [])
+        check("a transcript with non-object lines is still read, and has its turn",
+              [s["session_id"] for s in report5["sessions"]] == ["torn"]
+              and report5["sessions"][0]["has_turn"],
+              "got %s" % report5["sessions"])
+
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))
         return 1

@@ -140,8 +140,9 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   "$SCRIPT_DIR/seed-run.sh" "$seed_out_dir" "$seed_dir" \
     || horizon_die "seed-run.sh failed"
 
+  # The name seed-run.sh recorded, not basename re-derived here. [LAW:one-source-of-truth]
   local project_dir
-  project_dir="$seed_out_dir/$(basename "$seed_dir")"
+  project_dir="$seed_out_dir/$(horizon_manifest_field "$seed_out_dir/seed-manifest.json" project name)"
   [ -d "$project_dir" ] || horizon_die "seeding produced no project at $project_dir"
 
   # After seeding, because `lit init` adopts a backlog from any remote it finds - a
@@ -167,7 +168,7 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # controlled variable it did not actually use. [LAW:one-source-of-truth]
   local repo_root goal_sha
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
-  goal_sha="$(horizon_manifest_ref "$instrument_dir/manifest.json" goal_wording)"
+  goal_sha="$(horizon_manifest_field "$instrument_dir/manifest.json" goal_wording ref)"
   horizon_goal_wording_file "$repo_root" "$goal_sha" "$goal_file"
 
   horizon_log "issuing the pinned /goal wording"

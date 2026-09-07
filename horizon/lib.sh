@@ -460,25 +460,25 @@ horizon_goal_wording_file() {
   [ -s "$out" ] || horizon_die "${HORIZON_GOAL_PROMPT_REL_PATH} is empty at ${commit_sha}"
 }
 
-# Usage: horizon_manifest_ref <manifest_file> <section>  -> the commit that section pinned
+# Usage: horizon_manifest_field <manifest_file> <section> <key>  -> that recorded value
 #
-# Read back from the manifest rather than re-resolved, so what is issued into the run and
-# what the manifest describes cannot come from two different commits. The section is an
-# argument because the manifest pins more than one repository: `memento` is a commit of
-# promptctl/memento and `goal_wording` a commit of this repo, and a reader hardwired to
-# one of them handed the wrong repository's sha to the other's lookup.
-# [LAW:composability]
-horizon_manifest_ref() {
-  local manifest="$1" section="$2"
+# THE reader of both manifests (manifest.json and seed-manifest.json share one shape:
+# sections of scalar fields). Read back rather than re-derived, so what a run acts on and
+# what its manifest describes cannot come from two computations - the pinned commit a
+# goal is issued from, the project name a seed was written under. Section and key are
+# values, not a reader per field: a reader hardwired to one section once handed the
+# wrong repository's sha to the other's lookup. [LAW:one-source-of-truth] [LAW:composability]
+horizon_manifest_field() {
+  local manifest="$1" section="$2" key="$3"
   [ -f "$manifest" ] || horizon_die "no manifest at $manifest"
   python3 -c '
 import json, sys
-section = sys.argv[2]
-ref = json.load(open(sys.argv[1])).get(section, {}).get("ref")
-if not ref:
-    sys.exit("manifest records no %s.ref" % section)
-print(ref)
-' "$manifest" "$section" || horizon_die "could not read ${section}.ref from $manifest"
+section, key = sys.argv[2], sys.argv[3]
+value = json.load(open(sys.argv[1])).get(section, {}).get(key)
+if not value:
+    sys.exit("manifest records no %s.%s" % (section, key))
+print(value)
+' "$manifest" "$section" "$key" || horizon_die "could not read ${section}.${key} from $manifest"
 }
 
 # ══ SEEDING: appspec + fresh repo + lit init (promptctl-horizon-7ry.2) ═════════════

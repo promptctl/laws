@@ -52,15 +52,6 @@ trap 'rm -rf "$WORK"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
-# Usage: manifest_value <manifest_path> <section> <key>
-#
-# Returns nonzero and leaves the reporting to the caller rather than calling `fail`
-# itself: inside the command substitution every caller uses, a `fail` would exit only
-# the subshell and hand back an empty string as if it were the value.
-manifest_value() {
-  python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]][sys.argv[3]])' "$@"
-}
-
 main() {
   local repo_root ref reviewer_sha goal_ref
   # memento's default branch is a moving ref, exactly like the reviewer's `v1` tag:
@@ -161,7 +152,7 @@ if plugins[0]["enabled"] is not True:
   pass "installed memento carries the pinned skills, byte for byte, with the relaunch binary executable"
 
   local recorded_lit_sha256 actual_lit_sha256
-  recorded_lit_sha256="$(manifest_value "$WORK/run1/manifest.json" lit sha256)" \
+  recorded_lit_sha256="$(horizon_manifest_field "$WORK/run1/manifest.json" lit sha256)" \
     || fail "could not read lit.sha256 from run1/manifest.json"
   actual_lit_sha256="$(horizon_lit_sha256)"
   [ "$recorded_lit_sha256" = "$actual_lit_sha256" ] \
@@ -173,7 +164,7 @@ if plugins[0]["enabled"] is not True:
   # and read what it produced. A lit too old to write it fails inside this call, before
   # any comparison, with the upgrade to run. [LAW:verifiable-goals]
   local recorded_next_sha256 actual_next_sha256
-  recorded_next_sha256="$(manifest_value "$WORK/run1/manifest.json" lit next_skill_sha256)" \
+  recorded_next_sha256="$(horizon_manifest_field "$WORK/run1/manifest.json" lit next_skill_sha256)" \
     || fail "could not read lit.next_skill_sha256 from run1/manifest.json"
   actual_next_sha256="$(horizon_lit_next_skill_sha256 "$WORK/lit-next-probe")"
   [ "$recorded_next_sha256" = "$actual_next_sha256" ] \
