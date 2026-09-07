@@ -858,26 +858,44 @@ HORIZON_POLL_SECONDS=2
 # The probe is kept from doing anything but authenticate: no tools and one turn, so it
 # cannot act; an empty working directory, so no CLAUDE.md of the caller's reaches it;
 # no session persistence, so no transcript lands in <config>/projects for the capture
-# to mistake for a session of the run. Not --bare: that skips the stored credential
+# to mistake for a session of the run. Print mode does not stop at the workspace-trust
+# dialog (verified: every probe ran from a directory no config dir had ever seen), so
+# the fresh directory needs no boot state. Not --bare: that skips the stored credential
 # too, and reports every config dir logged out.
 #
 # It answers with a word rather than an exit code, so callers under `set -e` can branch
 # on the answer without the shell treating "logged out" as a crashed command. The
-# refusal exits 1 AND says so on stdout - the exit a broken CLI or a dead network gives
-# as well - so the text is what separates "logged out" from "the probe could not run",
-# and only the second one dies here. [LAW:parse-dont-validate]
+# refusal exits 1, the same exit a crash gives, so the answer is read from the result
+# envelope instead: `is_error` false is logged in; `is_error` true whose `result` is the
+# authentication refusal is logged out - the CLI carries no code for that case, only
+# the message, so the text is the discriminator and a rewording fails loudly below,
+# never silently; anything else is not an answer. [LAW:parse-dont-validate]
 horizon_auth_state() {
-  local config_dir="$1" probe_dir out rc=0
+  local config_dir="$1" probe_dir envelope state rc=0
   [ -n "$config_dir" ] || horizon_die "horizon_auth_state: no config dir given"
   probe_dir="$(mktemp -d)" || horizon_die "horizon_auth_state: could not create a probe dir"
-  out="$(cd "$probe_dir" && CLAUDE_CONFIG_DIR="$config_dir" claude -p 'Reply with the single word ok' \
-    --model haiku --max-turns 1 --tools "" --no-session-persistence 2>&1)" || rc=$?
+  envelope="$(cd "$probe_dir" && CLAUDE_CONFIG_DIR="$config_dir" claude -p 'Reply with the single word ok' \
+    --output-format json --model haiku --max-turns 1 --tools "" --no-session-persistence 2>&1)" || true
   rm -rf "$probe_dir"
-  case "$rc:$out" in
-    0:*) printf 'logged-in\n' ;;
-    *:"Failed to authenticate"*) printf 'logged-out\n' ;;
-    *) horizon_die "the auth probe against $config_dir failed for a reason other than login (exit $rc):
-$out" ;;
+  state="$(printf '%s' "$envelope" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+if d.get("type") == "result" and d.get("is_error") is False:
+    print("logged-in")
+elif d.get("is_error") is True and str(d.get("result", "")).startswith("Failed to authenticate"):
+    print("logged-out")
+else:
+    sys.exit(2)
+')" || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$state" ;;
+    2) horizon_die "the auth probe against $config_dir was refused for a reason other than login:
+$envelope" ;;
+    *) horizon_die "the auth probe against $config_dir produced no result envelope:
+$envelope" ;;
   esac
 }
 
