@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Add to every commit of every fetched PR the line ranges it changed, per file, so
-shape.py can tell a finding on code changed during review from a finding the
-reviewer merely reached late.
+"""Add to every commit of every fetched PR the diff it made, per file, so a packet
+carries what judging a finding raised on a fix requires and no reviewing agent has to
+reach back to GitHub for it.
 
     review-audit/fetch_commits.py --data review-audit/data [--workers 3]
 
 For each `data/<repo>/<number>.json` whose PR has at least one review thread, each
-commit lacking a `changes` key gets one: `{path: [[new_start, new_len], ...]}` parsed
-from the hunk headers of GitHub's per-commit patch (REST; GraphQL has no patches).
-A file GitHub returns without a patch (binary, rename-only, too large) gets `[]`.
-Idempotent: a commit that already carries `changes` is not refetched.
+commit lacking a `files` key gets one: `{path: {"ranges": [[new_start, new_len], ...],
+"patch": "<unified diff>"}}`, from GitHub's per-commit patch (REST; GraphQL has no
+patches). A file GitHub returns without a patch (binary, rename-only, too large) gets
+an empty patch and no ranges. Idempotent: a commit that already carries `files` is not
+refetched.
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from fetch import write_json  # [LAW:one-source-of-truth] one on-disk format, one writer
+
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 
 
@@ -30,16 +33,27 @@ def ranges(patch: str) -> list[list[int]]:
     return [[int(s), int(n) if n else 1] for s, n in HUNK.findall(patch)]
 
 
-def commit_changes(owner: str, repo: str, sha: str) -> dict[str, list[list[int]]]:
-    """The one effect: GET the commit and keep only what shape.py needs.
-    [LAW:effects-at-boundaries] [LAW:no-silent-failure] any gh failure raises."""
+def file_change(patch: str) -> dict:
+    """One file's change: the diff itself, and the new-side hunk ranges derived from it."""
+    return {"ranges": ranges(patch), "patch": patch}
+
+
+def commit_files(owner: str, repo: str, sha: str) -> dict[str, dict]:
+    """The one effect: GET the commit and keep the diff it made, per file.
+
+    [LAW:effects-at-boundaries] [LAW:no-silent-failure] any gh failure raises.
+    [LAW:one-source-of-truth] the patch text is kept and not just the ranges derived
+    from it, because the agent judging a finding raised on this commit has to read the
+    change. Deriving it live, per agent per run, is the same fact fetched from a second
+    place - and one that can answer differently tomorrow.
+    """
     proc = subprocess.run(["gh", "api", f"repos/{owner}/{repo}/commits/{sha}"], text=True, capture_output=True)
     if proc.returncode != 0:
         raise RuntimeError(f"gh api commits/{sha} in {owner}/{repo} failed ({proc.returncode}):\n{proc.stderr}")
     data = json.loads(proc.stdout)
     if "files" not in data:
         raise RuntimeError(f"{owner}/{repo}@{sha}: response has no files: {json.dumps(data)[:300]}")
-    return {f["filename"]: ranges(f.get("patch", "")) for f in data["files"]}
+    return {f["filename"]: file_change(f.get("patch", "")) for f in data["files"]}
 
 
 def fill(path: Path, owner: str) -> int:
@@ -48,11 +62,12 @@ def fill(path: Path, owner: str) -> int:
     if not pr["reviewThreads"]:
         return 0
     repo = path.parent.name
-    todo = [c for c in pr["commits"] if "changes" not in c]
+    todo = [c for c in pr["commits"] if "files" not in c]
     for c in todo:
-        c["changes"] = commit_changes(owner, repo, c["commit"]["oid"])
+        c.pop("changes", None)  # the ranges-only key this replaced; no reader ever had it
+        c["files"] = commit_files(owner, repo, c["commit"]["oid"])
     if todo:
-        path.write_text(json.dumps(pr, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+        write_json(path, pr)
     return len(todo)
 
 

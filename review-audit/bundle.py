@@ -51,6 +51,15 @@ def render(pr: dict, findings: list[dict]) -> str:
             body = body[:ROUND_BODY_CHARS] + (" …[trimmed]" if len(body) > ROUND_BODY_CHARS else "")
             out.append(f"<details><summary>round {r['index']} summary by {r['author']} ({r['state']}, {r['submitted_at']})</summary>\n\n{body}\n\n</details>")
             out.append("")
+    if pr["fix_commit_patches"]:
+        out.append("## What the reviewed-against commits changed")
+        out.append("")
+        out.append("Every commit that landed after review began and had a finding raised against it, in full. A finding flagged ON-NAMED-FIX-COMMIT or ON-POST-REVIEW-COMMIT points at one of these; this is the change to read when deciding whether the finding exists because that fix was wrong.")
+        out.append("")
+        for oid, files in pr["fix_commit_patches"].items():
+            for path, patch in files.items():
+                out.append(f"<details><summary><code>{oid[:7]}</code> — <code>{path}</code></summary>\n\n```diff\n{patch}\n```\n\n</details>")
+        out.append("")
     out.append("## Findings")
     out.append("")
     for i, f in enumerate(findings, 1):
