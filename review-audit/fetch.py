@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -226,8 +227,20 @@ def cached_updated_at(path: Path) -> str | None:
 
 
 def write_json(path: Path, value: object) -> None:
+    """Write via a sibling temp file, then rename over the target.
+
+    [LAW:types-are-the-program] a truncating write leaves a half-written file on any
+    kill, and `cached_updated_at` then reads unparseable JSON on every later run -
+    one interrupted write wedges the cache until a human deletes that file. The
+    rename makes the partial state unrepresentable: a reader sees the whole old
+    content or the whole new one. The temp file is a sibling because `os.replace`
+    is only atomic within one filesystem, and its `.json.tmp` name is outside the
+    `*/*.json` glob the other tools read the cache with.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(value, indent=1, sort_keys=True, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
 
 
 def main(argv: list[str]) -> int:
