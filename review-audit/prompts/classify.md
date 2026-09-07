@@ -33,6 +33,9 @@ You are given a batch id and a list of packet files. Each packet is one PR:
   reviewers.
 - `## Review rounds` — a table of round index, reviewer, review state, commit sha, inline
   comment count, findings count; then each round's summary body in a `<details>` block.
+- `## What the reviewed-against commits changed` — the full diff of every commit that
+  landed after review began and had a finding raised against it, one `<details>` block per
+  commit per file. Present whenever the PR has such commits.
 - `## Findings` — one `### <repo>#<number>/F<i>` section per reviewer finding. Each carries:
   round, severity (S1 lowest … S5 ships a defect; Copilot-era findings have no severity),
   `path:line`, thread id, resolved/outdated flags, a `reply-hint`, the reviewer's finding
@@ -54,36 +57,36 @@ you that.
 
 ## Verifying against the code
 
-You have `gh`. Use it when the packet alone cannot settle whether a premise or a response
-was correct:
+The packet is the whole world. You have no network; there is nothing to fetch and nothing
+to look up. The evidence you reason from is all in the file in front of you: the finding
+text, the collapsed diff hunk, the full reply thread, and
+`## What the reviewed-against commits changed`.
 
-```
-gh pr diff <number> --repo promptctl/<repo>
-gh api repos/promptctl/<repo>/commits/<sha>        # the diff of one commit
-gh pr view <number> --repo promptctl/<repo> --json files,commits
-```
+That fixes where the evidence comes from; it does not lower the bar. The reviewer's
+premise is a claim, and the agent's confident pushback is a claim too. Check both against
+the packet rather than taking either on trust — **every pushback** earns that check,
+because "the reviewer is wrong" is exactly the assertion the packet is there to test.
 
-Whether a PR's commits resolve locally depends on how it was merged: a squash-merge
-leaves them unreachable, other strategies do not. Try `git cat-file -t <sha>` and fall
-back to `gh api` — do not assume either way.
-
-Do this for **every pushback** (the agent claiming the reviewer is wrong is a claim to
-check) and for **every finding flagged ON-NAMED-FIX-COMMIT** (you must see what the named
-fix commit actually changed to name the cause kind). Do not spend calls on findings whose
-thread text already settles the question — most accepted findings with a concrete fix
-description do.
+A finding flagged **ON-NAMED-FIX-COMMIT** is judged by reading that commit's diff under
+`## What the reviewed-against commits changed` — you must see what the named fix commit
+actually changed to name the cause kind. A review comment is anchored to the PR's head
+commit at the moment it was written, so the commit a finding was raised against often does
+not touch that finding's own file. That section is keyed by commit and lists every file
+the commit changed: read the whole commit, not just the slice matching the finding's path.
 
 One pushback shape needs the check most and invites it least: *"I can't verify that from
-here."* That is a claim about the machine, and it is checkable like any other. Run
-`--version`, look in the installed types, read the binary's own help before you grade it
-`correct`. A real case: the agent declined a finding because "Bun's per-slot defaults are
-not something I can verify from anything on this machine", while bun and its type
-definitions were installed and carried all three defaults in `@default` tags — and the
-reviewer's proposed default was wrong too, so the fix would have shipped a bug.
+here."* That is a claim about the world, and it is checkable like any other. A real case:
+the agent declined a finding because "Bun's per-slot defaults are not something I can
+verify from anything on this machine", while the defaults sat in the installed type
+definitions' `@default` tags — and the reviewer's proposed default was wrong too, so the
+fix would have shipped a bug.
+
+Where the packet does not settle a question, that is the answer, not a detour: write
+`uncertain` and say in `evidence` what the packet does not show.
 
 ## Output
 
-Write exactly one file: `/Users/bmf/code/promptctl_laws/.claude/worktrees/review-audit/review-audit/verdicts/<batch-id>.jsonl`
+Write exactly one file: the verdict file at the path you were given with this batch.
 
 JSONL — one JSON object per line, nothing else in the file. No prose, no header, no
 trailing commentary. Strings contain no raw newlines. Two record kinds:
