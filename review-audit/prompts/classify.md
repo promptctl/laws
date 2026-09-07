@@ -189,17 +189,15 @@ whether it was true.
 ## Before you finish
 
 Count. The finding headings in a packet match `^### <repo>#<number>/F<i>` (other `###`
-lines inside quoted review summaries do not count). Their total must equal the number of
-finding records in your file, and the number of packets must equal the number of PR records:
+lines inside quoted review summaries do not count). Search the batch's packets for that
+pattern and total the matches; search your verdict file for `"finding":` and for `"pr":`.
+The heading total must equal the finding-record count, and the packet count must equal the
+PR-record count. A mismatch is not a rounding error — the file is wrong, and the missing,
+duplicated, or malformed record is corrected before you finish.
 
-```
-grep -hEc '^### [A-Za-z0-9._-]+#[0-9]+/F[0-9]+' <packet>... | paste -sd+ - | bc
-grep -c '"finding":' /Users/bmf/code/promptctl_laws/.claude/worktrees/review-audit/review-audit/verdicts/<batch-id>.jsonl
-grep -c '"pr":' /Users/bmf/code/promptctl_laws/.claude/worktrees/review-audit/review-audit/verdicts/<batch-id>.jsonl
-```
-
-Every finding id in the batch appears exactly once, in packet order. Then confirm the file
-parses: every line is valid JSON on its own.
+Then read the verdict file back. Every finding id in the batch appears exactly once, in
+packet order, and every line parses as JSON on its own. Anything off there is the same
+kind of defect: fix the file, then finish.
 
 Your chat reply at the end is short: the batch id, the count per `response` value, the
 count of findings with a non-null `caused_by`, and anything that blocked you. Nothing else
