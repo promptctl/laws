@@ -14,8 +14,10 @@ so the same GitHub state always produces the same bytes downstream.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+from pathlib import Path
 
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
 
@@ -245,3 +247,111 @@ def commit(org: str, repo: str, oid: str) -> dict:
     if "files" not in data:
         raise RuntimeError(f"{org}/{repo}@{oid}: response has no files: {json.dumps(data)[:300]}")
     return {f["filename"]: {"ranges": hunk_ranges(f.get("patch", "")), "patch": f.get("patch", "")} for f in data["files"]}
+
+
+# --- the review runs, and what the reviewer actually did ----------------------
+
+
+def rest(path: str) -> dict | list:
+    """One REST GET through gh. [LAW:no-silent-failure] a failure raises rather than
+    returning an empty page that reads exactly like a repo with no runs."""
+    proc = subprocess.run(["gh", "api", path], capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"gh api {path} failed ({proc.returncode}):\n{proc.stderr.decode()[:400]}")
+    return json.loads(proc.stdout)
+
+
+def rest_pages(path: str, key: str, *, cap: int = 40) -> list[dict]:
+    """Every item of a paged REST collection."""
+    out: list[dict] = []
+    for page in range(1, cap + 1):
+        sep = "&" if "?" in path else "?"
+        block = rest(f"{path}{sep}per_page=100&page={page}")
+        items = block.get(key) if isinstance(block, dict) else block
+        if not items:
+            return out
+        out += items
+    raise RuntimeError(f"{path}: more than {cap} pages; raise the cap rather than truncating")
+
+
+def review_runs(org: str, repo: str) -> list[dict]:
+    """Every run of the repo's generated code-review workflow.
+
+    Keyed off the workflow's PATH, not its name: the display name has changed over the
+    corpus ("AI Code Review" now) while `.github/workflows/code-review.yml` has not.
+    """
+    workflows = rest(f"/repos/{org}/{repo}/actions/workflows")["workflows"]
+    runs: list[dict] = []
+    for wf in workflows:
+        if wf["path"].endswith("code-review.yml"):
+            runs += rest_pages(f"/repos/{org}/{repo}/actions/workflows/{wf['id']}/runs", "workflow_runs")
+    return runs
+
+
+def transcript_artifacts(org: str, repo: str) -> dict[int, dict]:
+    """The `review-session-transcript` artifact of each run that has one, by run id.
+
+    Expired artifacts are returned too, still carrying `expired: true`. Filtering them here
+    would erase the difference between "this run's transcript aged out" and "this run never
+    archived one" - and that difference is the whole point of recording a run we cannot
+    fetch. [LAW:no-silent-failure] the caller classifies; this only reports.
+
+    One listing for the repo rather than one call per run: 2737 runs across the org would
+    otherwise be 2737 calls to learn what a few can say.
+    """
+    return {
+        a["workflow_run"]["id"]: a
+        for a in rest_pages(f"/repos/{org}/{repo}/actions/artifacts", "artifacts")
+        if a["name"] == "review-session-transcript"
+    }
+
+
+
+
+
+def download_artifact(org: str, repo: str, artifact_id: int, dest: Path) -> None:
+    """Pull one artifact's zip to `dest`. Artifacts expire 90 days after their run, so this
+    is the only copy that will exist a quarter from now. [LAW:effects-at-boundaries]"""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    proc = subprocess.run(
+        ["gh", "api", f"/repos/{org}/{repo}/actions/artifacts/{artifact_id}/zip"],
+        capture_output=True,
+    )
+    if proc.returncode != 0 or not proc.stdout[:2] == b"PK":  # [LAW:no-silent-failure]
+        raise RuntimeError(
+            f"artifact {artifact_id} of {org}/{repo} did not download as a zip "
+            f"({proc.returncode}): {proc.stderr.decode()[:200]}"
+        )
+    tmp.write_bytes(proc.stdout)
+    os.replace(tmp, dest)
+
+
+def sync_clone(org: str, repo: str, gitdir: Path) -> None:
+    """Bring the banked bare repository level with GitHub, pull-request refs included.
+
+    `refs/pull/*/head` is why this works at all. A merged PR's branch is usually deleted, so
+    its commits are unreachable from any branch and a plain clone does not carry them -
+    measured at 3 of 23 needed commits on one repo, and 58 of 58 once these refs are fetched.
+
+    Never prunes, and disables automatic gc: a finding anchors to whatever was HEAD when it
+    was written, and a force-push makes that commit unreachable. Pruning it would delete the
+    corpus this audit exists to read. [LAW:no-silent-failure]
+
+    Unlike store.py's read path this runs with the ordinary environment, because the
+    credential helper that authenticates the fetch lives in the user's git config.
+    """
+    def run(args: list[str], what: str) -> None:
+        proc = subprocess.run(args, text=True, capture_output=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f"{what} failed ({proc.returncode}):\n{proc.stderr[:400]}")
+
+    if not gitdir.exists():
+        gitdir.parent.mkdir(parents=True, exist_ok=True)
+        run(["git", "clone", "--bare", "--quiet", f"https://github.com/{org}/{repo}.git", str(gitdir)],
+            f"clone {org}/{repo}")
+        for key, value in (("gc.auto", "0"), ("gc.pruneExpire", "never")):
+            run(["git", "--git-dir", str(gitdir), "config", key, value], f"config {key}")
+    run(["git", "--git-dir", str(gitdir), "fetch", "--quiet", "origin",
+         "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+refs/pull/*/head:refs/pull/*/head"],
+        f"fetch {org}/{repo}")
