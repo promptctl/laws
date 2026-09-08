@@ -75,10 +75,12 @@ def carried_goal(text):
 
 def write_session(config_dir, slug, session_id, cwd, start, end,
                   goal_text=None, commands=(), goal_builder=None,
-                  bracket_type="assistant", extra=()):
+                  bracket_type="assistant", extra=(), entrypoint="cli"):
     """bracket_type is the type of the first and last entries: "assistant" is a session
     that took a turn; a boot-time type is one still forming. extra entries are written
-    between them as given."""
+    between them as given. entrypoint is stamped on every user and assistant entry the
+    way Claude Code v2.1.263 records it: "cli" for an interactive session, "sdk-cli" for
+    a headless `claude -p`; None writes entries with no entrypoint at all."""
     directory = os.path.join(config_dir, "projects", slug)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, "%s.jsonl" % session_id)
@@ -92,6 +94,9 @@ def write_session(config_dir, slug, session_id, cwd, start, end,
     for fields in extra:
         lines.append(entry(session_id, cwd, start, **fields))
     lines.append(entry(session_id, cwd, end, type=bracket_type))
+    for line in lines:
+        if line.get("type") in ("user", "assistant") and entrypoint is not None:
+            line["entrypoint"] = entrypoint
     with open(path, "w") as handle:
         for line in lines:
             handle.write(json.dumps(line) + "\n")
@@ -139,6 +144,15 @@ def build(tmp):
     # A session of a DIFFERENT project, sharing the same config dir.
     write_session(config_dir, "other", "s9", other_dir,
                   "2026-01-01T00:30:00+00:00", "2026-01-01T00:45:00+00:00")
+    # A headless `claude -p` a tool inside s2 spawned - the address-pr-reviews adversarial
+    # provider runs its reviewer this way - with the SAME config dir and cwd as the run.
+    # It takes turns and carries no goal, so read as a session it is a lost carry that
+    # stops a healthy run (acceptance attempt 2, 2026-09-08). Its user entries say what
+    # it is: entrypoint "sdk-cli", where the run's own sessions record "cli".
+    write_session(config_dir, "proj", "r1", project_dir,
+                  "2026-01-01T02:10:00+00:00", "2026-01-01T02:20:00+00:00",
+                  entrypoint="sdk-cli",
+                  extra=[user_text("# Adversarial code review\n\nYou are a hostile reviewer.")])
 
     commits = [
         ("aaa1", "2026-01-01T00:30:00+00:00"),   # inside s1
@@ -156,6 +170,8 @@ def main():
 
         check("a session belonging to another project is excluded",
               "s9" not in ids, "got %s" % ids)
+        check("a headless claude spawned by a tool inside a session is not a session of the run",
+              "r1" not in ids, "got %s" % ids)
         check("sessions are ordered by when they ran",
               ids == ["s1", "s2", "s3", "s4"], "got %s" % ids)
         check("commits are attributed to the session that was live",
@@ -394,6 +410,28 @@ def main():
               [s["session_id"] for s in report5["sessions"]] == ["torn"]
               and report5["sessions"][0]["has_turn"],
               "got %s" % report5["sessions"])
+
+    # A transcript that took turns but records no entrypoint anywhere is a harness this
+    # reader cannot tell from a headless subprocess. Counting it would revive the exact
+    # misreading above on the next Claude Code version that renames the field; the
+    # report refuses instead, and horizon_report turns that refusal into a stopped run.
+    with tempfile.TemporaryDirectory() as tmp5:
+        cfg = os.path.join(tmp5, "config")
+        proj = os.path.join(tmp5, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp5, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(cfg, "p", "unlabelled", proj, "2026-01-01T00:00:00+00:00",
+                      "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL, entrypoint=None)
+        result = subprocess.run(
+            [sys.executable, SESSIONS, cfg, proj, gf],
+            input="", capture_output=True, text=True,
+        )
+        check("a transcript with turns but no entrypoint is refused, naming the transcript",
+              result.returncode != 0 and "unlabelled" in result.stderr
+              and "entrypoint" in result.stderr,
+              "rc=%s stderr=%r" % (result.returncode, result.stderr))
 
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))

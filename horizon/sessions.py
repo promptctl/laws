@@ -125,17 +125,46 @@ def transcript_entries(handle):
             yield entry
 
 
+# The entrypoint every entry of an interactive claude records. A tool inside a session can
+# spawn `claude -p` with the same config dir and cwd - the address-pr-reviews adversarial
+# provider runs its reviewer that way - and that process writes its own transcript into
+# the same projects/<slug>/ directory, stamped "sdk-cli". Acceptance attempt 2 (2026-09-08,
+# v2.1.263) counted one as a session with no goal and stopped a healthy run as a lost
+# carry. The stamp is the discriminator; cwd alone cannot tell the two apart.
+INTERACTIVE_ENTRYPOINT = "cli"
+
+
+def is_run_session(session_id, entrypoints, has_turn):
+    """Whether a transcript recorded in the project's cwd is one of the run's own sessions.
+
+    entrypoints is the set of `entrypoint` values the transcript's entries carry:
+      empty        still booting - boot entries carry none - so a session, not yet judged
+      {"cli"}      the interactive claude the driver launched, or memento reset in place
+      anything else a process some tool spawned; it shares the directory, not the run
+    A transcript that has taken turns and records no entrypoint at all is a harness this
+    reader cannot classify. It refuses rather than counting it, because counting it is
+    precisely the misreading above, and horizon_report turns the refusal into a stopped
+    run. [LAW:no-silent-failure] [LAW:parse-dont-validate]
+    """
+    if has_turn and not entrypoints:
+        sys.exit("transcript %s took turns but records no entrypoint; this Claude Code "
+                 "version cannot be told from a headless subprocess" % session_id)
+    return entrypoints <= {INTERACTIVE_ENTRYPOINT}
+
+
 def read_session(path, project_dir):
     """One transcript reduced to the facts the acceptance criterion asks about.
 
-    Returns None when the transcript belongs to a different project, so the caller never
-    has to re-derive Claude Code's directory-naming rule: the cwd recorded inside the
-    file is the authority on what it belongs to.
+    Returns None when the transcript is not one of the run's sessions: another project's
+    (the cwd recorded inside the file is the authority on what it belongs to, so the
+    caller never re-derives Claude Code's directory-naming rule), or a headless claude
+    some tool spawned inside a session (see is_run_session).
     """
     want = os.path.realpath(project_dir)
     session_id = os.path.splitext(os.path.basename(path))[0]
     belongs = False
     has_turn = False
+    entrypoints = set()
     first_time = None
     last_time = None
     goal_args = []
@@ -145,6 +174,8 @@ def read_session(path, project_dir):
             cwd = entry.get("cwd")
             if cwd and os.path.realpath(cwd) == want:
                 belongs = True
+            if "entrypoint" in entry:
+                entrypoints.add(entry["entrypoint"])
             if entry.get("type") == "assistant" and not entry.get("isSidechain"):
                 has_turn = True
 
@@ -162,7 +193,7 @@ def read_session(path, project_dir):
             if found is not None:
                 goal_args.append(found)
 
-    if not belongs:
+    if not (belongs and is_run_session(session_id, entrypoints, has_turn)):
         return None
 
     return {
