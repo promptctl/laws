@@ -1,62 +1,71 @@
 # Round-trip evals for the crafts
 
-A craft (`plugins/laws/skills/<medium>/references/craft.md`) is the active form of a
-writing standard: it steers an agent that holds it in context. Its spec is the
-inactive form: the same rules stated once, plainly, with strength, condition and
-exceptions, and nothing else. The `distill` skill turns a craft into a spec;
-`laws:prompt` turns a spec back into a craft. This directory tests how much survives
-the trip.
+A craft is the active form of a writing standard: it steers an agent that holds it in
+context. Its spec is the inactive form: the same rules stated once, plainly, with
+strength, condition and exceptions, and nothing else. The `distill` skill turns a craft
+into a spec. `laws:prompt` turns a spec back into a craft. These evals test how much
+survives the trip, on one small single-shot task per medium.
 
-## Per craft
+## Layout
 
-`evals/roundtrip/<medium>/` holds:
+Each medium has a directory, such as `prose/` or `code/`, holding:
 
-- `spec.md` - the craft distilled by a fresh session holding only `distill`.
-- `craft-roundtrip.md` - the spec recompiled by a fresh session holding only
-  `laws:prompt`, which never saw the original craft.
-- `task.md` - one small single-shot goal in the medium. Fixed facts, named readers,
-  nothing to invent, so a judge can check the output against the spec.
-- `outputs/control.md` - the task with no guidance.
-- `outputs/current.md` - the task with the current craft pasted as guidance.
-- `outputs/roundtrip.md` - the task with `craft-roundtrip.md` pasted as guidance.
-- `judge.md` - an LLM judge's verdict: each spec requirement marked met, not met, or
-  not applicable for each output, with the outputs presented blind in a shuffled
-  order. `judge-key.md` holds the letter-to-arm mapping the judge never saw.
-- `spec-roundtrip.md` - `craft-roundtrip.md` distilled again, by a session that never
-  saw `spec.md`. Diffing it against `spec.md` measures the trip as a description.
+- `meta.json` - the path of the current guidance, the output extension, the reader
+  the recompiled craft is written for, and for code the command a judge may run.
+- `task.md` - one small single-shot task. It gives fixed facts, names a reader, and
+  says what a response may not add, so a judge can score fidelity.
+- `spec.md` - the current guidance distilled by a fresh session holding only `distill`.
+- `craft-roundtrip.md` - `spec.md` recompiled by a fresh session holding only
+  `laws:prompt`, which never saw the current guidance.
+- `outputs/control.*`, `outputs/current.*`, `outputs/roundtrip.*` - the task done with
+  no guidance, with the current guidance, and with the recompiled craft.
+- `judge-spec.md` and `judge-guidance.md` - two blind verdicts, one using the spec as
+  rubric and one using the current guidance. `judge-key.md` decodes their letters.
+
+`prose/pilot/` holds the first run, made before these templates existed. Its
+`results.md` explains why the protocol looks the way it does.
 
 ## Protocol
 
-1. Distill: fresh subagent, `distill` only, craft to `spec.md`.
-2. Recompile: fresh subagent, `laws:prompt` only, `spec.md` to `craft-roundtrip.md`.
-   It must not read the original craft. It may harden a rule with a rehearsed
-   temptation only where the spec gives that rule a failure clause, and it adds no
-   permission, method or clause the spec lacks. The prose pilot's compile prompt left
-   temptations to the compiler, and `prose/pilot/spec-diff.md` shows the spec growing by
-   about a third as a result.
-3. Run the three arms as fresh subagents from one prompt template that differs only
-   in the guidance block. Arms load no skills.
-4. Judge: fresh subagent, no skills, given `task.md`, `spec.md`, and the three
-   outputs copied as `A.md`, `B.md`, `C.md` in a random order into a scratch directory
-   outside the repo. No path or file the judge reads may name an arm or the experiment:
-   `outputs/control.md` unblinds it whatever the letters say, and a directory called
-   `roundtrip` tells it what is being tested. It scores each requirement per output
-   and ranks the three. The verdict is copied back as `judge.md`; decode it with
-   `judge-key.md`.
+Every step is a fresh subagent on one model. `distill` and `laws:prompt` are inverse
+standards, so no session holds both, and an arm that has seen a craft is no longer a
+control. `stage.py` renders each subagent's prompt from `templates/` into a scratch
+directory outside the repository; the orchestrating session dispatches them.
 
-All arms and the judge run on one model, recorded in `judge-key.md`. Outputs from an
-earlier model are kept under `outputs/<model>/` and are not judged against the
-current set.
+```sh
+S=<scratch dir outside the repo>
+python3 evals/roundtrip/stage.py distill MEDIUM --scratch $S   # then dispatch it
+python3 evals/roundtrip/stage.py adopt   MEDIUM --scratch $S
+python3 evals/roundtrip/stage.py compile MEDIUM --scratch $S   # then dispatch it
+python3 evals/roundtrip/stage.py arms    MEDIUM --scratch $S   # then dispatch three
+python3 evals/roundtrip/stage.py judges  MEDIUM --scratch $S   # then dispatch two
+python3 evals/roundtrip/stage.py collect MEDIUM --scratch $S
+```
 
-Every step is a fresh subagent because `distill` and `laws:prompt` are inverse
-standards and a session that has held one cannot do the other, and because an arm
-that has seen a craft is no longer a control.
+The control and current arms need no spec, so `arms --arm control --arm current` can
+run before the recompile exists.
 
-## What the numbers mean
+Rules the templates and script enforce:
 
-Two results per craft. The spec-level diff between `spec.md` and a distillation of
-`craft-roundtrip.md` says how lossless the trip is as a description. The judge's
-table says how much of the craft's steering power the recompiled version kept, with
-the control arm as the floor. A large gap between current and roundtrip on a rule
-means the spec under-specifies it, usually a missing condition or a lost observed
-failure.
+- **The recompile adds nothing.** It may harden a rule with a rehearsed temptation only
+  where the spec gives that rule a failure clause, and it adds no permission, method or
+  clause the spec lacks. In the pilot the compiler chose its own temptations, and the
+  spec grew by a third on the trip back.
+- **Arms differ only in guidance.** `stage.py` fails if two arm prompts differ anywhere
+  else.
+- **Judges are blind.** Outputs are copied as `A`, `B`, `C` in an independent random
+  order per judge into a scratch directory. The script fails if a judge prompt names
+  an arm or the experiment, or if a response mentions it.
+- **Fidelity is scored.** Each judge counts missing, misstated and added facts against
+  the task. In the pilot, a judge that scored only the rubric ranked the arm with the
+  most inventions first.
+- **Two rubrics.** The recompiled craft was built from the spec, so a spec rubric can
+  favour it. The second judge uses the current guidance instead.
+
+## Reading the results
+
+Compare the arms per medium. Control is the floor. A gap between current and roundtrip
+on a rule or on fidelity means the spec lost something the craft carried, usually a
+condition or a failure the craft had rehearsed. One output per arm cannot separate a
+craft's effect from run-to-run variance, so treat a one-rule gap as noise until it
+repeats.

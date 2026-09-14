@@ -1,0 +1,1 @@
+{"guidance": "plugins/laws/skills/ticket/references/craft.md", "ext": "md", "reader": "an LLM agent writing a ticket that another agent will implement", "note": "the ticket skill is disabled (DISABLED_SKILL.md); its craft reference is still evaluated"}
