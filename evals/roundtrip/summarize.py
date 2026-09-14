@@ -84,7 +84,7 @@ def main() -> None:
                 fail(f"{medium.name}: judge-key.md has no complete mapping for judge-{judge}")
             order, counts = parse_verdict(verdict.read_text(), keys[judge], f"{medium.name}/judge-{judge}.md")
             rows.append((medium.name, judge, order, counts))
-    print("| Medium | Rubric | 1st | 2nd | 3rd | Added: control / current / roundtrip | Not met: control / current / roundtrip |")
+    print("| Medium | Rubric | 1st | 2nd | 3rd | Added or misstated: control / current / roundtrip | Not met: control / current / roundtrip |")
     print("|---|---|---|---|---|---|---|")
     for name, judge, order, counts in rows:
         added = " / ".join(str(counts[a]["added"] + counts[a]["misstated"]) for a in ARMS)
