@@ -1,11 +1,17 @@
 {
   "name": "laws",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Universal architectural laws for code work, medium-scoped quality skills (code / prose / prompt), and skill-router hooks that route to the right one at session start, re-engage the laws on every message, and refuse a second medium skill in one session.",
   "author": {
     "name": "Brandon Fryslie"
   },
   "repository": "https://github.com/promptctl/laws",
   "license": "MIT",
-  "keywords": ["architecture", "code-quality", "guidance", "skills", "prompting"]
+  "keywords": [
+    "architecture",
+    "code-quality",
+    "guidance",
+    "skills",
+    "prompting"
+  ]
 }
