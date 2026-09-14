@@ -60,7 +60,8 @@ Rules the templates and script enforce:
 - **Judges are blind.** Outputs are copied as `A`, `B`, `C` in an independent random
   order per judge into its own temporary directory, apart from the scratch directory
   that holds the judge key. The script fails if a judge prompt names
-  an arm or the experiment, or if a response mentions it.
+  an arm or the experiment, or if some responses mention the experiment and the rest do
+  not (a word all three use cannot tell the arms apart).
 - **Fidelity is scored.** Each judge counts missing, misstated and added facts against
   the task. In the pilot, a judge that scored only the rubric ranked the arm with the
   most inventions first.
