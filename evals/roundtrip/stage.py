@@ -78,8 +78,19 @@ def adopt(medium: Path, meta: dict, scratch: Path, arm_names: tuple[str, ...]) -
 
 
 def compile_(medium: Path, meta: dict, scratch: Path, arm_names: tuple[str, ...]) -> None:
+    original = REPO / meta["guidance"]
+    # When the medium's guidance is the compiler's own craft, the compiler must read it,
+    # so this one recompile cannot be blind.
+    blindness = (
+        f"The specification was distilled from {original}, which is also the craft you apply, so you "
+        "will read it. Use it only as the craft; write every rule from the specification, and copy no "
+        "passage from the craft."
+        if meta.get("guidance_is_compiler") else
+        f"Do not read {original}: this is a blind recompile, and reading the current version would "
+        "contaminate it."
+    )
     write(scratch / "prompts" / f"compile-{medium.name}.md", fill("compile.md", {
-        "ORIGINAL": str(REPO / meta["guidance"]),
+        "BLINDNESS": blindness,
         "SPEC": str(require(medium / "spec.md")),
         "OUT": str(medium / "craft-roundtrip.md"),
         "READER": meta["reader"],
@@ -131,11 +142,13 @@ def judges(medium: Path, meta: dict, scratch: Path, arm_names: tuple[str, ...]) 
         for word in PROMPT_LEAKS:
             if word in text.lower():
                 sys.exit(f"judge prompt for {name} leaks {word!r}")
-        for letter in "ABC":
-            body = (staging / f"{letter}.{ext}").read_text().lower()
-            for word in BODY_LEAKS:
-                if word in body:
-                    sys.exit(f"response {letter} for {name} contains {word!r}")
+        # A word every response uses cannot tell the judge which arm is which ("round-trip
+        # tests" in all three backlogs); one that only some responses use can.
+        bodies = {letter: (staging / f"{letter}.{ext}").read_text().lower() for letter in "ABC"}
+        for word in BODY_LEAKS:
+            holders = sorted(letter for letter, body in bodies.items() if word in body)
+            if holders and len(holders) < 3:
+                sys.exit(f"responses {holders} for {name} contain {word!r} and the rest do not; inspect before judging")
         write(scratch / "prompts" / f"judge-{medium.name}-{name}.md", text)
         key[name] = {"staging": str(staging), "letters": letters}
     (scratch / f"judge-key-{medium.name}.json").write_text(json.dumps(key, indent=2))

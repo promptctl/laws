@@ -12,7 +12,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 ARMS = ("control", "current", "roundtrip")
 JUDGES = ("spec", "guidance")
-COUNT = re.compile(r"(missing|misstated|added|invented|not met|met|n/a)\D{0,3}(\d+)")
+LABELS = {"missing": "missing", "misstated": "misstated", "added": "added", "invented": "added",
+          "not met": "not met", "met": "met", "n/a": "n/a"}
+
+
+def counts_in(line: str) -> dict[str, int]:
+    """Read 'label N' or 'N label' counts; judges write both ("met 17", "13 met")."""
+    found: dict[str, int] = {}
+    for label, key in LABELS.items():
+        plain = re.escape(label) if label != "met" else r"(?<!not )met"
+        number_first = re.search(rf"(\d+)\s+{plain}\b", line)
+        label_first = re.search(rf"(?<![\w/]){plain}\s*:?\s*(\d+)", line)
+        match = number_first or label_first
+        if match:
+            found[key] = int(match.group(1))
+    return found
 
 
 def fail(message: str) -> None:
@@ -47,11 +61,14 @@ def parse_verdict(text: str, letters: dict[str, str], where: str) -> tuple[list[
         line = re.search(rf"^\W*{letter}\b.*$", totals, re.M)
         if not line:
             fail(f"{where}: no totals line for {letter}")
-        found = {("added" if k == "invented" else k): int(v) for k, v in COUNT.findall(line.group(0))}
+        found = counts_in(line.group(0))
         for needed in ("missing", "misstated", "added", "met", "not met"):
             if needed not in found:
                 fail(f"{where}: totals line for {letter} has no '{needed}' count: {line.group(0)!r}")
         counts[letters[letter]] = found
+    rubric_sizes = {arm: c["met"] + c["not met"] + c.get("n/a", 0) for arm, c in counts.items()}
+    if len(set(rubric_sizes.values())) != 1:
+        fail(f"{where}: met + not met + n/a differs between responses {rubric_sizes}; totals misread")
     return [letters[l] for l in order], counts
 
 

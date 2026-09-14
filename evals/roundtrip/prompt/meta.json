@@ -1,1 +1,1 @@
-{"guidance": "plugins/laws/skills/prompt/references/craft.md", "ext": "md", "reader": "an LLM agent writing text that another LLM will read"}
+{"guidance": "plugins/laws/skills/prompt/references/craft.md", "ext": "md", "reader": "an LLM agent writing text that another LLM will read", "guidance_is_compiler": true, "note": "the compiler must read this craft to compile it, so the recompile is not blind; craft-roundtrip-without-craft.md is a first attempt that obeyed the blindness rule and so never read the craft"}
