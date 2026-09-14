@@ -1,0 +1,1 @@
+{"guidance": "plugins/laws/skills/code/SKILL.md", "ext": "py", "reader": "an LLM agent writing, editing, reviewing or designing code", "run": "uv run --with pytest pytest -q {file}"}

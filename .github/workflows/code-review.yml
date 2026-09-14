@@ -126,6 +126,10 @@ jobs:
           # for each baseline pattern lives beside the patterns themselves, and
           # read_repo_config, which parses the per-repo half. [LAW:one-source-of-truth]
           EXCLUDE_PATTERNS: ".github/workflows/code-review.yml,dist/**,**/dist/**,build/**,**/build/**,*.lock,package-lock.json,yarn.lock,pnpm-lock.yaml,plugins/laws/skills/**,plugins/laws/design-docs/**,design-docs/**"
+          # RENDERED, not literal. This repo's MAX_REVIEW_ROUNDS from .github/code-review.conf,
+          # else the fleet default — see DEFAULT_MAX_REVIEW_ROUNDS in install.sh for what a
+          # spent cap does and why the number is a per-repo declaration.
+          MAX_REVIEW_ROUNDS: "5"
 
       # The transcript is the only artifact that can explain a review that failed,
       # hung, or misbehaved — the exact prompt, the raw engine output including
