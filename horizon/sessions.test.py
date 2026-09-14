@@ -52,12 +52,13 @@ def slash_command(name, text):
                      "<command-args>%s</command-args>" % (name, text))
 
 
-# The three spellings a goal actually arrives in are fixtures, not one canonical form.
-# This suite passed 12/12 against a detector that could see only the envelope, because
-# the envelope was the only thing the fixtures ever produced - a green suite proving the
-# fixture agreed with the code, and nothing about the transcripts either would meet.
+# Every spelling a goal is recorded in is a fixture, not one canonical form. This suite
+# passed 12/12 against a detector that could see only the envelope, because the envelope
+# was the only thing the fixtures ever produced - a green suite proving the fixture agreed
+# with the code, and nothing about the transcripts either would meet.
 def raw_goal(text):
-    """A /goal PASTED into the input box, as v2.1.258 records it: plain text."""
+    """A /goal that arrived and never executed: pasted at a real goal's size, v2.1.263
+    records it as this plain text, with no command and no Stop hook."""
     return user_text("/goal %s" % text)
 
 
@@ -201,15 +202,18 @@ def main():
         check("only the faithfully carried handoff counts as intact",
               report["goal_carries_intact"] == 1,
               "got %s" % report["goal_carries_intact"])
+        check("session one's executed pinned goal is reported in force",
+              report["session_one_goal_in_force"] is True,
+              "got %r" % report.get("session_one_goal_in_force"))
 
-        # The driver reads two numbers out of this report through lib.sh. Fed the real
+        # The driver reads three values out of this report through lib.sh. Fed the real
         # output, so a key renamed on either side fails here and not mid-campaign.
         counts = subprocess.run(
             ["bash", "-c", '. "$1/lib.sh" && horizon_report_counts', "-", HERE],
             input=json.dumps(report), capture_output=True, text=True,
         )
         check("lib.sh reads the report's counts the way sessions.py writes them",
-              counts.returncode == 0 and counts.stdout.split() == ["2", "2"],
+              counts.returncode == 0 and counts.stdout.split() == ["2", "2", "1"],
               "rc=%s out=%r err=%r" % (counts.returncode, counts.stdout, counts.stderr))
 
         # A commit outside every session window must be surfaced, not dropped: silently
@@ -238,11 +242,36 @@ def main():
                   gap["consecutive_with_commits"] == 1,
                   "got %s" % gap["consecutive_with_commits"])
 
-    # Every spelling a goal arrives in must be seen, because a spelling this reader
-    # cannot parse produces the identical output to a carry that genuinely died - and
-    # then the run reports its own instrument as broken, or worse, as fine.
+    # A goal that arrived as plain text never executed, so it is not a goal in force -
+    # not for a successor, and not for session one. Attempt 3 was exactly this shape: the
+    # driver's own pasted /goal, which this reader then counted as issued.
+    with tempfile.TemporaryDirectory() as tmp2:
+        cfg = os.path.join(tmp2, "config")
+        proj = os.path.join(tmp2, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp2, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+                      "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL, goal_builder=raw_goal)
+        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+                      "2026-01-01T03:00:00+00:00", goal_text=PINNED_GOAL, goal_builder=raw_goal)
+        pasted = run(cfg, proj, gf, [])
+        check("a /goal recorded only as pasted plain text is not a goal in force",
+              pasted["sessions"][1]["goal_issued"] is False
+              and pasted["goal_carries_expected"] == 1
+              and pasted["goal_carries_intact"] == 0,
+              "got issued=%s expected=%s intact=%s"
+              % (pasted["sessions"][1]["goal_issued"], pasted["goal_carries_expected"],
+                 pasted["goal_carries_intact"]))
+        check("session one whose goal was only pasted has no goal in force",
+              pasted.get("session_one_goal_in_force") is False,
+              "got %r" % pasted.get("session_one_goal_in_force"))
+
+    # Every spelling an executed goal is recorded in must be seen, because a spelling this
+    # reader cannot parse produces the identical output to a carry that genuinely died -
+    # and then the run reports its own instrument as broken, or worse, as fine.
     for label, builder in (("envelope", lambda t: slash_command("/goal", t)),
-                           ("raw pasted text", raw_goal),
                            ("carried Stop-hook condition", carried_goal)):
         with tempfile.TemporaryDirectory() as tmp2:
             cfg = os.path.join(tmp2, "config")

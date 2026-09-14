@@ -155,13 +155,6 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_log "recording unattended boot state"
   horizon_write_boot_state "$config_dir" "$project_dir"
 
-  horizon_log "launching session one"
-  horizon_launch_session "$config_dir" "$project_dir"
-  horizon_wait_ready
-  # The isolation guarantee, checked rather than assumed - see horizon_assert_transport.
-  horizon_assert_transport
-  horizon_log "handoff transport verified: in-place reset, config dir preserved"
-
   # The pinned wording is RE-ISSUED FROM THE COMMIT THE MANIFEST NAMES, never retyped
   # here and never read from the working tree. manifest.json records goal_wording.sha256
   # at that commit; taking the bytes from anywhere else would let a run report a
@@ -171,8 +164,14 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   goal_sha="$(horizon_manifest_field "$instrument_dir/manifest.json" goal_wording ref)"
   horizon_goal_wording_file "$repo_root" "$goal_sha" "$goal_file"
 
-  horizon_log "issuing the pinned /goal wording"
-  horizon_send "/goal $(<"$goal_file")"
+  horizon_log "launching session one with the pinned /goal wording as its prompt"
+  horizon_launch_session "$config_dir" "$project_dir" "$goal_file"
+  horizon_wait_ready
+  # The isolation guarantee, checked rather than assumed - see horizon_assert_transport.
+  horizon_assert_transport
+  horizon_log "handoff transport verified: in-place reset, config dir preserved"
+  horizon_wait_goal_in_force "$config_dir" "$project_dir" "$goal_file"
+  horizon_log "session one's pinned /goal is in force"
 
   horizon_log "run is live; observing until ${HORIZON_TARGET_SESSIONS} sessions of committed work"
   horizon_observe "$config_dir" "$project_dir" "$goal_file" \

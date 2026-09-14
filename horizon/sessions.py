@@ -29,25 +29,29 @@ import re
 import sys
 from datetime import datetime, timezone
 
-# A goal reaches a session in one of THREE recorded spellings, and a reader that knows
-# only one reports every other as "this session got no goal" - the identical output a
-# genuinely lost carry produces. That confusion is the single thing this check exists to
-# prevent, so all three are parsed here and reduced to one answer. [LAW:parse-dont-validate]
+# A goal in force is recorded in one of TWO spellings, both left by a /goal that EXECUTED.
+# A reader that knows only one reports the other as "this session got no goal" - the
+# identical output a genuinely lost carry produces - so both are parsed here and reduced
+# to one answer. [LAW:parse-dont-validate]
+#
+# A /goal that only ARRIVED is deliberately not a third. Pasted at a real goal's size,
+# Claude Code collapses it into a "[Pasted text #n]" placeholder and submits it as a
+# plain message reading "/goal ...": no command runs and no Stop hook is installed, so the
+# session follows the wording as ordinary text until its first quiet turn ends the run
+# (acceptance attempt 3, 2026-09-08, v2.1.263). This reader used to count that plain text,
+# and so reported runs in which no session ever had a goal in force as carrying one.
 #
 # Recording the wording, not just its presence: "a goal was issued" is the weaker claim
 # that stays true while the text degrades into something else.
+#
+# The command envelope an executed /goal leaves in the session that ran it.
 COMMAND_NAME_RE = re.compile(r"<command-name>\s*(?P<name>[^<]+?)\s*</command-name>")
 COMMAND_ARGS_RE = re.compile(r"<command-args>(?P<args>.*?)</command-args>", re.DOTALL)
-# What a slash command typed into the input box looks like at v2.1.258 - the plain text,
-# no envelope. This is how the DRIVER's own /goal arrives, so missing it makes even
-# session one look ungoaled.
-RAW_GOAL_RE = re.compile(r"\A\s*/goal\s+(?P<goal>.+)\Z", re.DOTALL)
-# How a goal CARRIED by finalize-session announces itself in the relaunched session:
-# /goal installs a session-scoped Stop hook and the successor is told its condition. No
-# /goal message appears in that transcript at all, so this is the ONLY spelling that can
-# evidence a carry - a reader without it can never see one, and reports a healthy carry
-# and a dead one identically. Anchored on the template's closing phrase rather than on
-# the next quote character: the goal is prose, and prose contains quotes.
+# The line an executed /goal adds once it installs its session-scoped Stop hook, telling
+# the session its condition. A carried goal can show up as only this line, so a reader
+# without it reports a healthy carry and a dead one identically. Anchored on the
+# template's closing phrase rather than on the next quote character: the goal is prose,
+# and prose contains quotes.
 STOP_HOOK_GOAL_RE = re.compile(
     r"Stop hook is now active with condition:\s*\"(?P<goal>.*)\"\.\s*Briefly acknowledge",
     re.DOTALL,
@@ -64,9 +68,6 @@ def goal_text(text):
     if name and name.group("name").strip() == "/goal":
         args = COMMAND_ARGS_RE.search(text)
         return args.group("args").strip() if args else ""
-    raw = RAW_GOAL_RE.match(text)
-    if raw:
-        return raw.group("goal").strip()
     hook = STOP_HOOK_GOAL_RE.search(text)
     if hook:
         return hook.group("goal").strip()
@@ -294,6 +295,10 @@ def main():
             "consecutive_with_commits": consecutive_run(sessions),
             "goal_carries_intact": len(carried),
             "goal_carries_expected": len(successors),
+            # Whether the driver's own launch put the pinned goal in force. The carry
+            # counts exclude session one, so without this a run whose FIRST goal never
+            # executed would look like a run with nothing to carry yet.
+            "session_one_goal_in_force": bool(sessions) and sessions[0]["goal_matches_pinned"],
             "unattributed_commits": unattributed,
         },
         sys.stdout,

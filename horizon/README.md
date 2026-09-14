@@ -205,9 +205,16 @@ while the hook never fires: no hook of the operator's runs against a seed commit
 horizon/run-loop.sh [seed-dir] [memento-ref]
 ```
 
-Builds time zero with the two commands above, issues the pinned `/goal` wording once,
-and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`. Every session
-after the first is produced by memento's own relaunch.
+Builds time zero with the two commands above, launches session one with the pinned
+`/goal` wording as claude's prompt, waits until that session's transcript records the
+goal executed, and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`.
+Every session after the first is produced by memento's own relaunch.
+
+The goal is the launch prompt because a `/goal` typed or pasted into the input box does
+not reliably run. Pasted at the pinned wording's size, Claude Code collapses it into a
+`[Pasted text #n]` placeholder and submits it as a plain message, so the session reads
+the wording with no goal in force (acceptance attempt 3, Claude Code v2.1.263). The same
+text given as the launch prompt executes.
 
 The driver does not repair, and that is the central design point. memento's goal-carry
 and its in-place relaunch are the controlled variables this eval measures. A driver that
@@ -335,7 +342,9 @@ verdict can be recomputed from an archived run months later with nothing running
 
 Per session it reports the session id, its time window, whether a `/goal` was issued,
 whether that goal matches the pinned wording rather than merely being some goal, and
-which commits fall in its window. It also reports the longest run of *consecutive*
+which commits fall in its window. A goal counts only when the transcript records it
+executed: the `/goal` command envelope, or the line announcing its Stop hook. A `/goal`
+recorded as plain message text arrived without running, so it does not count. It also reports the longest run of *consecutive*
 sessions that each committed something. Consecutive matters: three committing sessions
 with a dead one between them is a loop that stalled and was restarted.
 
@@ -346,6 +355,8 @@ counting it would flatter the result. `goal_carries_intact` is how many of those
 successors received the pinned wording exactly - their `goal_matches_pinned` is true.
 `horizon_observe` in lib.sh reads both through `horizon_report_counts` and stops the run,
 loudly, the moment they differ; that is the mechanism by which a lost carry stops the run.
+`session_one_goal_in_force` says whether the driver's own launch put the pinned goal in
+force. `horizon_wait_goal_in_force` requires it before the run is declared live.
 
 Tests: `horizon/sessions.test.py`.
 
