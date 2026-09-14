@@ -351,10 +351,12 @@ horizon_provision_config_dir() {
   mkdir -p "$config_dir"
   CLAUDE_CONFIG_DIR="$config_dir" claude plugin marketplace add "$pinned_dir" \
     >/dev/null || horizon_die "failed to add pinned marketplace at $pinned_dir"
+  # stdin is /dev/null inside the loop: the loop reads the plugin names from its own
+  # stdin, and a claude that read stdin would swallow the names still waiting there.
   while read -r name; do
     CLAUDE_CONFIG_DIR="$config_dir" claude plugin install \
       "${name}@${HORIZON_MARKETPLACE_NAME}" --scope user \
-      >/dev/null || horizon_die "failed to install ${name}@${HORIZON_MARKETPLACE_NAME}"
+      </dev/null >/dev/null || horizon_die "failed to install ${name}@${HORIZON_MARKETPLACE_NAME}"
   done <<<"$names"
 }
 
