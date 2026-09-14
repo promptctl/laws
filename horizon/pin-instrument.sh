@@ -2,15 +2,15 @@
 # Pin the horizon eval's controlled-inclusion instrument, one run at a time.
 #
 # WHY: a long-horizon run is only readable against a baseline if every controlled
-# variable is nailed down and RECORDED - memento at a git ref, lit's binary identity
-# and the pickup procedure it embeds, the reviewer action's tag resolved to its actual
-# commit, and the standard /goal wording. This script is the one command that builds
-# that environment and writes the manifest proving what it built.
+# variable is nailed down and RECORDED - memento and lit's Claude plugin each at a git
+# ref, lit's binary identity, the reviewer action's tag resolved to its actual commit,
+# and the standard /goal wording. This script is the one command that builds that
+# environment and writes the manifest proving what it built.
 # [LAW:verifiable-goals] "done" for a run is: the manifest exists and every field in it
 # resolves back to something checkable.
 #
 # Usage:
-#   horizon/pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha] [goal-ref]
+#   horizon/pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha] [goal-ref] [lit-ref]
 #
 # <run-dir>      directory to build the run's environment in (created fresh; an
 #                existing run-dir is refused rather than silently merged into -
@@ -32,9 +32,17 @@
 #                so the same caller that pins the two refs above pins this one too,
 #                or a commit landing mid-verification fails the reproducibility check
 #                for a reason that has nothing to do with the instrument.
+# [lit-ref]      git ref to pin lit's Claude plugin at - the plugin that ships the /next
+#                skill - resolved against lit's repository
+#                (promptctl/links-issue-tracker). Defaults to that repo's default
+#                branch, which moves like memento's, so a campaign passes it too.
+#
+# An empty argument means that argument's default, so a caller can give a later
+# argument without inventing values for the ones before it.
 #
 # Produces, under <run-dir>:
-#   pinned/                 the memento git-archive snapshot + its marketplace.json
+#   pinned/                 a git-archive snapshot of each plugin's owning repo, one
+#                           directory per plugin, and the marketplace.json listing them
 #   manifest.json           every pinned identity, canonical JSON, no timestamps -
 #                           so two invocations with unchanged inputs are byte-identical
 #
@@ -60,17 +68,16 @@ horizon_need git
 horizon_need gh
 horizon_need python3
 horizon_need lit
-horizon_need cat
 # Reached from inside lib.sh pipelines - git archive | tar, and the reviewer prompt
 # decode. Absent, pipefail would blame the tool at the head of the pipe instead of
 # the one that is actually missing.
 horizon_need tar
 horizon_need base64
 
-# Scratch that exists only to produce recorded identities: memento's objects, and the
-# throwaway repos lit writes its /next procedure into. Neither is an output of the
-# run - everything they establish reaches the run dir as a manifest field or as the
-# pinned snapshot - so the run dir keeps its three documented outputs and nothing else.
+# Scratch that exists only to produce recorded identities: the fetched objects of each
+# plugin's repository. They are not an output of the run - everything they establish
+# reaches the run dir as a manifest field or as the pinned snapshot - so the run dir keeps
+# its documented outputs and nothing else.
 # Script scope, not main's: the EXIT trap runs after main's locals are gone, and under
 # `set -u` a trap reaching for a dead local dies on the way out, replacing the real
 # error with a bogus one. [LAW:no-ambient-temporal-coupling]
@@ -79,27 +86,43 @@ trap 'rm -rf "$WORK"' EXIT
 
 main() {
   local run_dir="${1:-}" memento_ref="${2:-}" reviewer_sha_override="${3:-}" goal_ref="${4:-}"
-  [ -n "$run_dir" ] || horizon_die "usage: pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha] [goal-ref]"
+  local lit_ref="${5:-}"
+  [ -n "$run_dir" ] || horizon_die "usage: pin-instrument.sh <run-dir> [memento-ref] [reviewer-sha] [goal-ref] [lit-ref]"
   [ -e "$run_dir" ] && horizon_die "run-dir already exists, refusing to overwrite: $run_dir"
 
   local repo_root
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
-  [ -z "$memento_ref" ] && memento_ref="$HORIZON_MEMENTO_DEFAULT_REF"
   # Defaulted to a ref and resolved unconditionally below, never branched on whether an
   # override was given: resolving an explicit sha returns that sha and additionally
-  # proves it exists in this checkout. [LAW:dataflow-not-control-flow]
+  # proves it exists. [LAW:dataflow-not-control-flow]
+  [ -z "$memento_ref" ] && memento_ref="$HORIZON_MEMENTO_DEFAULT_REF"
+  [ -z "$lit_ref" ] && lit_ref="$HORIZON_LIT_DEFAULT_REF"
   [ -z "$goal_ref" ] && goal_ref="HEAD"
 
   mkdir -p "$run_dir"
+  local pinned_dir="$run_dir/pinned"
 
   horizon_log "fetching memento from $HORIZON_MEMENTO_REPO_URL at $memento_ref"
   local memento_sha memento_tree_sha
-  memento_sha="$(horizon_memento_fetch "$WORK/memento.git" "$memento_ref")"
-  memento_tree_sha="$(horizon_memento_tree_sha "$WORK/memento.git" "$memento_sha")"
+  memento_sha="$(horizon_git_fetch "$HORIZON_MEMENTO_REPO_URL" "$WORK/memento.git" "$memento_ref")"
+  memento_tree_sha="$(horizon_git_tree_sha "$WORK/memento.git" "$memento_sha")"
   horizon_log "memento pinned at $memento_sha (tree $memento_tree_sha)"
+  horizon_build_plugin_snapshot "$WORK/memento.git" "$memento_sha" "$pinned_dir" \
+    memento "$HORIZON_MEMENTO_PLUGIN_SUBDIR" "${HORIZON_MEMENTO_SKILLS[@]}"
+  horizon_assert_relaunch_binary \
+    "$pinned_dir/$(horizon_plugin_rel_path memento "$HORIZON_MEMENTO_PLUGIN_SUBDIR")" "$memento_sha"
 
-  horizon_log "building pinned memento snapshot"
-  horizon_build_memento_snapshot "$WORK/memento.git" "$memento_sha" "$run_dir/pinned"
+  horizon_log "fetching lit's Claude plugin from $HORIZON_LIT_REPO_URL at $lit_ref"
+  local lit_plugin_sha lit_plugin_tree_sha
+  lit_plugin_sha="$(horizon_git_fetch "$HORIZON_LIT_REPO_URL" "$WORK/lit.git" "$lit_ref")"
+  lit_plugin_tree_sha="$(horizon_git_tree_sha "$WORK/lit.git" "$lit_plugin_sha")"
+  horizon_log "lit plugin pinned at $lit_plugin_sha (tree $lit_plugin_tree_sha)"
+  horizon_build_plugin_snapshot "$WORK/lit.git" "$lit_plugin_sha" "$pinned_dir" \
+    lit "$HORIZON_LIT_PLUGIN_SUBDIR" "${HORIZON_LIT_SKILLS[@]}"
+
+  horizon_write_marketplace "$pinned_dir" \
+    memento "$HORIZON_MEMENTO_PLUGIN_SUBDIR" "$memento_sha" \
+    lit "$HORIZON_LIT_PLUGIN_SUBDIR" "$lit_plugin_sha"
 
   horizon_log "recording lit's binary identity"
   local lit_path lit_sha256
@@ -109,10 +132,6 @@ main() {
   lit_path="$(horizon_lit_path)"
   lit_sha256="$(horizon_sha256_file "$lit_path")" \
     || horizon_die "could not hash lit binary at $lit_path"
-
-  horizon_log "recording the /next procedure this lit embeds"
-  local next_skill_sha256
-  next_skill_sha256="$(horizon_lit_next_skill_sha256 "$WORK/lit-next-probe")"
 
   # `tag` alone would imply resolved_sha was obtained by resolving it, which is false
   # whenever a sha is handed in - the common case, since verify-instrument.sh overrides
@@ -143,10 +162,11 @@ main() {
     "memento_repo_url=$HORIZON_MEMENTO_REPO_URL" \
     "memento_ref=$memento_sha" \
     "memento_tree_sha=$memento_tree_sha" \
+    "lit_plugin_repo_url=$HORIZON_LIT_REPO_URL" \
+    "lit_plugin_ref=$lit_plugin_sha" \
+    "lit_plugin_tree_sha=$lit_plugin_tree_sha" \
     "lit_binary_path=$lit_path" \
     "lit_sha256=$lit_sha256" \
-    "lit_next_skill_path=$HORIZON_NEXT_SKILL_REL_PATH" \
-    "lit_next_skill_sha256=$next_skill_sha256" \
     "reviewer_repo=$REVIEWER_REPO" \
     "reviewer_tag=$REVIEWER_TAG" \
     "reviewer_resolved_sha=$reviewer_sha" \
@@ -167,18 +187,21 @@ out, *pairs = sys.argv[1:]
 f = dict(p.split("=", 1) for p in pairs)
 
 manifest = {
-    "schema_version": 2,
+    "schema_version": 3,
     "instrument": "promptctl-horizon",
     "memento": {
         "repo_url": f["memento_repo_url"],
         "ref": f["memento_ref"],
         "tree_sha": f["memento_tree_sha"],
     },
+    "lit_plugin": {
+        "repo_url": f["lit_plugin_repo_url"],
+        "ref": f["lit_plugin_ref"],
+        "tree_sha": f["lit_plugin_tree_sha"],
+    },
     "lit": {
         "binary_path": f["lit_binary_path"],
         "sha256": f["lit_sha256"],
-        "next_skill_path": f["lit_next_skill_path"],
-        "next_skill_sha256": f["lit_next_skill_sha256"],
     },
     "reviewer": {
         "repo": f["reviewer_repo"],
