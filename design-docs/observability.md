@@ -1,10 +1,11 @@
 # Observability: runtime introspection as a law
 
-**2026-09-07, owner direction; brainstorm record, not yet a law.** Observability will
-become a universal law in laws:code. This file records what the owner asked for, what
-the broader industry has settled on, and the claims strong enough to carry into the
-law. The law's wording is not written here; it gets proposed separately and approved
-before it enters the craft.
+**2026-09-07, owner direction; brainstorm record, not yet a law. Shape decisions
+added 2026-09-13.** Observability will become a universal law in laws:code. This file
+records what the owner asked for, what the broader industry has settled on, the claims
+strong enough to carry into the law, and the decisions that fix its shape. The law's
+wording is not written here; it gets proposed separately and approved before it enters
+the craft.
 
 ## What the owner asked for
 
@@ -196,7 +197,66 @@ answers:
   hot path gets ripped out.
 - **Retrofitting.** Every practitioner who writes about this says the same thing:
   bolted-on observability is thin, inconsistent, and missing where it is needed. This
-  is the empirical support for the "from the beginning" requirement.
+  is the empirical support for the "from the beginning" requirement. Existing code
+  still has to be retrofitted; the section below says how without producing a bolt-on.
+- **Fail-loud versus the hot path.** Telemetry obeys fail-loud, and instrumentation
+  that breaks the hot path gets ripped out. These collide when the exporter is down:
+  crashing the request because a log line could not be shipped turns a logging outage
+  into a service outage. Resolved 2026-09-13: a telemetry failure is itself
+  telemetry. Dropped events are counted and surfaced, and the work continues. Nothing
+  fails silently, which is fail-loud's intent, and the hot path never depends on the
+  telemetry pipeline being up.
+
+## Retrofitting existing codebases
+
+Proposed 2026-09-13, not yet owner-approved. Most code that will meet this law
+already exists, so the law needs a stance on retrofits that produces something other than the thin bolt-on the industry warns
+about. The stance follows from the substrate claim: a retrofit does not add telemetry
+at call sites. It instruments the layer every unit of work already passes through, and
+where no such layer exists it builds one first. That turns "add metrics to this
+codebase" into two questions per domain: which layer does every unit of work pass
+through, and if none does, what consolidation would create one.
+
+The work, in the order that keeps each step cheap and the result consistent:
+
+1. **Inventory the chokepoints.** The HTTP framework, the database client, the
+   outbound client, the job runner, the command dispatcher. Each one gets the wide
+   event and the correlation ID. Coverage grows with the number of chokepoints, not
+   the number of call sites, which is why this step alone covers most of a codebase.
+2. **Consolidate where there is no chokepoint.** Three hand-rolled HTTP clients, or
+   requests assembled inline across the codebase, have no layer to instrument.
+   Instrumenting each copy cements the duplication and yields the inconsistent
+   bolt-on. The first move is to collapse the copies into one client, then instrument
+   that. This is single source of truth applied to the retrofit itself.
+3. **Give every job and script a summary event.** One structured line at exit with
+   counts, including zero. This is the cheapest step and it closes the third state
+   for the whole codebase: a job that ran and did nothing becomes distinguishable
+   from a job that never ran.
+4. **Fold existing log lines into the wide event over time.** Ad-hoc logging is not
+   deleted in a sweep, and it is not the source of truth either. As the code around
+   a log line is touched, its facts become fields on the unit of work's event. A
+   metric that duplicates an existing log line is a second source of truth and is
+   not added.
+5. **Fix the naming convention before the first instrument lands.** The
+   inconsistency of bolt-ons comes from each retrofit inventing its own names.
+   Attribute names, event names, and units are settled once, up front.
+
+The done criterion is the list of concrete failures above, used as an audit. Walk
+the codebase for those six shapes: the zero-item exit 0, the swallowing catch-all, the
+silent retry, the cache without a hit rate, the job that is only running or not, the
+config value with no winner. Each one found is a ticket. The retrofit is done when
+none of them can happen unseen.
+
+In this repo's tooling that audit already has a home. Once the law has a token, the
+sheriff audit cites it and produces the findings, and the posse skill implements them.
+Retrofitting is the law plus the existing audit-and-remediation loop; it needs no
+skill of its own. The audit's tell for a bad retrofit is telemetry added per call site
+where a shared layer exists, because that is the shape that goes missing.
+
+Where the guidance lives: the law carries one sentence, that in a retrofit
+instrumentation lands in the substrate or the substrate is built first. The ordered
+procedure is binding-level, since the chokepoints differ by domain. The six failure
+shapes feed the sheriff.
 
 ## Where it goes
 
@@ -212,12 +272,35 @@ Rejected placements:
 - A cross-craft principle. The other readings (agent process, verification, documents)
   were explicitly excluded from this law.
 
-## Open before wording
+## Shape decisions, 2026-09-13
 
-- Whether the law names the "three states" (working, not working, unknown) directly, or
-  whether the zero-versus-absent claim carries the third state on its own.
-- How the bindings express "from the beginning" without becoming a checklist of
-  libraries. The substrate claim is the candidate: the law says where instrumentation
-  lives, the binding says what the substrate is for each domain.
-- Which existing laws the binding text must cite so that telemetry visibly obeys them,
-  rather than relying on "it must obey all other laws" as a blanket sentence.
+Three questions were open before wording. The owner settled them as follows.
+
+- **The law names the three states directly.** Zero-versus-absent is the mechanism
+  for the third state, but a reader who has not seen the states will not know why the
+  distinction matters. The law opens with one line naming working, not working, and
+  unknown, and zero-versus-absent appears as the tell for the third. It costs one
+  sentence.
+- **"From the beginning" is expressed through the substrate claim, as a place, not a
+  library.** The law says instrumentation lives where the code already passes: the
+  layer every unit of work goes through. Each binding names that layer for its
+  domain. For a service it is the middleware and the base client; for a CLI, the
+  entry point and command dispatch; for a script, the run wrapper that emits the
+  summary event at exit; for a migration, the runner. The sheriff's tell is telemetry
+  added per call site instead of in the shared layer.
+- **The binding text cites specific laws by concept.** Single source of truth for
+  "one wide event, everything else derived." Boundary validation for the outbound
+  edge, which is where redaction lives. Unrepresentable states as the twin. Fail-loud
+  with the resolution recorded under tensions: a telemetry failure is itself
+  telemetry. The wording author maps these concepts to the current law tokens; this
+  document names concepts, not tokens, so it does not go stale when a token is
+  renamed.
+
+Also decided: the fail-loud collision under tensions. The retrofit section above is a
+proposal from the same date, awaiting owner review.
+
+## Still open
+
+- The law's wording. Proposed separately, approved before it enters the craft.
+- Whether the retrofit procedure belongs in each domain binding or in a single
+  binding-level section that every domain shares, with per-domain chokepoint lists.
