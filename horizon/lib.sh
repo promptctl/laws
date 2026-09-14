@@ -3,14 +3,15 @@
 #
 # THE MODEL: a fresh CLAUDE_CONFIG_DIR per run, populated through the real `claude
 # plugin` CLI — never by hand-writing its internal JSON — with exactly one
-# marketplace exposing exactly one plugin (memento), pinned to a recorded git ref via
-# a `git archive` snapshot rather than a live directory pointer. Nothing else is
-# declared in that marketplace, so nothing else can ever become installable, let
-# alone enabled: the isolation is what the marketplace does NOT list, not a runtime
-# filter. [LAW:types-are-the-program] the marketplace.json we generate IS the
-# admitted set; there is no separate check to keep in sync with it.
+# marketplace exposing exactly the plugins the GOAL_PROMPT loop needs (memento, and
+# lit's plugin for /next), each pinned to a recorded git ref via a `git archive`
+# snapshot rather than a live directory pointer. Nothing else is declared in that
+# marketplace, so nothing else can ever become installable, let alone enabled: the
+# isolation is what the marketplace does NOT list, not a runtime filter.
+# [LAW:types-are-the-program] the marketplace.json we generate IS the admitted set;
+# provisioning and the verifier both read it rather than keeping a list of their own.
 #
-# [LAW:one-source-of-truth] every pinned identity (memento ref, lit binary, reviewer
+# [LAW:one-source-of-truth] every pinned identity (plugin refs, lit binary, reviewer
 # tag, goal wording) is read fresh from its one authority on every call — nothing is
 # cached or copied ahead of time and reused stale.
 # [LAW:effects-at-boundaries] every git/gh/claude/shasum invocation lives in this
@@ -90,7 +91,7 @@ horizon_need() {
 # different point, so a caller reaching only part of the surface over-declares a coreutil
 # or two. That is the accepted trade - an exact list per caller needs a tool set per
 # function, and the five drifting per-script copies this replaced are the worse failure.
-# cat/tar/base64 stay with pin-instrument.sh only because they are reached from nothing
+# tar/base64 stay with pin-instrument.sh only because they are reached from nothing
 # else at all.
 HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tr wc)
 
@@ -151,140 +152,219 @@ horizon_repo_root() {
     || horizon_die "not inside a git repo: $anchor"
 }
 
-# ── memento: pinned from the repo that owns it, never from this checkout ───────────
-# memento's skills live in promptctl/memento and this repo carries no copy of them,
-# so there is nothing here a run could be provisioned from even by accident.
-# [LAW:one-source-of-truth] the skills have exactly one home and the instrument reads
-# from it - a snapshot of a second copy is not a pin, it is a lie with a sha
-# attached.
+# ── plugins: each pinned from the repo that owns it, never from this checkout ───────
+# A run's plugins are memento and lit, and this repo carries a copy of neither, so there
+# is nothing here a run could be provisioned from even by accident.
+# [LAW:one-source-of-truth] each plugin has exactly one home and the instrument reads
+# from it - a snapshot of a second copy is not a pin, it is a lie with a sha attached.
+#
+# Both are the same kind of thing - a plugin directory inside its owner's repository,
+# pinned by fetching one commit - so both go through the same fetch, snapshot and
+# marketplace functions below, told apart only by the values each passes in.
+# [LAW:one-type-per-behavior]
+#
+# `HEAD` rather than a branch name for each default ref: the remote owns which branch is
+# its default, and a name copied into this file is that fact going stale - a rename would
+# break every default invocation. git asks the remote directly, so there is nothing here
+# to drift. [LAW:one-source-of-truth]
 : "${HORIZON_MEMENTO_REPO_URL:=https://github.com/promptctl/memento}"
-# `HEAD` rather than a branch name: the remote owns which branch is its default, and a
-# name copied into this file is that fact going stale - a rename would break every
-# default invocation. git asks the remote directly, so there is nothing here to drift.
-# [LAW:one-source-of-truth]
 : "${HORIZON_MEMENTO_DEFAULT_REF:=HEAD}"
 HORIZON_MEMENTO_PLUGIN_SUBDIR="memento"
-# The skills the GOAL_PROMPT loop needs *from the plugin*. `next` is deliberately not
-# among them: it is a pointer in memento too, because the pickup procedure now ships
-# inside the lit binary, and it is checked where it actually lands - see
-# HORIZON_NEXT_SKILL_REL_PATH in the lit section below. This array is the whole
-# definition of "the plugin is fit for the loop"; the pin checks the snapshot against
-# it and the verifier checks the install against it, both reading this one list.
+# The skills the GOAL_PROMPT loop needs from memento. Together with HORIZON_LIT_SKILLS
+# this is the whole definition of "the plugins are fit for the loop"; the pin checks each
+# snapshot against its list and the verifier checks each install against the same list.
 HORIZON_MEMENTO_SKILLS=(address-pr-reviews message-in-a-bottle)
-# The binary the session boundary is made of, relative to the plugin directory. Named
-# once: the pin checks it in the snapshot and verify-instrument checks it as installed.
+# The binary the session boundary is made of, relative to memento's plugin directory.
+# Named once: the pin checks it in the snapshot and verify-instrument checks it as installed.
 HORIZON_MEMENTO_RELAUNCH_REL_PATH="skills/message-in-a-bottle/bin/finalize-session"
-# A moved skill leaves this heading behind - it is how memento's own `next` pointer is
-# written, the one pointer left in this ecosystem. Checking it is a convention check,
-# not proof that a body contains a procedure; it earns its place because a pointer
-# standing where a procedure should be is exactly how this instrument went green while
-# broken.
+
+# lit's pickup procedure, /next, ships in lit's Claude plugin, which lives in lit's own
+# repository beside the binary's source. It is pinned from there by commit, like memento,
+# and not from the lit binary on PATH: `lit init` stopped writing it into projects when
+# the plugin took it over, and the binary exposes its build commit only as human output
+# that lit documents as not for parsing.
+: "${HORIZON_LIT_REPO_URL:=https://github.com/promptctl/links-issue-tracker}"
+: "${HORIZON_LIT_DEFAULT_REF:=HEAD}"
+HORIZON_LIT_PLUGIN_SUBDIR="claude-plugin"
+HORIZON_LIT_SKILLS=(next)
+
+# A moved skill leaves this heading behind. Checking it is a convention check, not proof
+# that a body contains a procedure; it earns its place because a pointer standing where a
+# procedure should be is exactly how this instrument once went green while broken.
 HORIZON_MOVED_SKILL_HEADING='^# Moved$'
 
-# Fetch the pinned memento objects into an object store of our own and resolve the ref
-# against it. Depth 1: a run needs one commit's tree, never the history behind it.
+# Fetch one commit of a plugin's owning repository into an object store of our own and
+# resolve the ref against it. Depth 1: a run needs one commit's tree, never the history
+# behind it.
 #
 # Returns the resolved sha rather than leaving callers to read FETCH_HEAD afterwards.
 # That ref is ambient state in the fetched store - a second fetch into the same store
 # moves it under any caller still working from the first - so the sha travels as a
 # value from here on. [LAW:no-ambient-temporal-coupling]
-# Usage: horizon_memento_fetch <git_dir> <ref>  -> prints the resolved commit sha
-horizon_memento_fetch() {
-  local git_dir="$1" ref="$2"
+# Usage: horizon_git_fetch <repo_url> <git_dir> <ref>  -> prints the resolved commit sha
+horizon_git_fetch() {
+  local repo_url="$1" git_dir="$2" ref="$3"
   git init --bare -q "$git_dir" \
-    || horizon_die "could not create the memento object store at $git_dir"
-  git -C "$git_dir" fetch --depth 1 "$HORIZON_MEMENTO_REPO_URL" "$ref" \
-    || horizon_die "could not fetch '$ref' from $HORIZON_MEMENTO_REPO_URL"
+    || horizon_die "could not create an object store at $git_dir"
+  git -C "$git_dir" fetch --depth 1 "$repo_url" "$ref" \
+    || horizon_die "could not fetch '$ref' from $repo_url"
   git -C "$git_dir" rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null \
-    || horizon_die "memento ref does not resolve to a commit: $ref"
+    || horizon_die "'$ref' in $repo_url does not resolve to a commit"
 }
 
-# Usage: horizon_memento_tree_sha <git_dir> <commit_sha>  -> tree sha of that commit
-horizon_memento_tree_sha() {
+# Usage: horizon_git_tree_sha <git_dir> <commit_sha>  -> tree sha of that commit
+horizon_git_tree_sha() {
   local git_dir="$1" commit_sha="$2"
   git -C "$git_dir" rev-parse --verify "${commit_sha}^{tree}" 2>/dev/null \
-    || horizon_die "no tree for memento commit $commit_sha"
+    || horizon_die "no tree for commit $commit_sha in $git_dir"
 }
 
-# Extract the pinned commit's whole tree into <snapshot_dir> and write a marketplace
-# over it that declares exactly one plugin. This directory - not a live clone - is what
-# gets registered, so a later push to memento can never leak into an already-pinned run.
+# Usage: horizon_plugin_rel_path <plugin_name> <plugin_subdir>  -> that plugin's
+# directory, relative to the pinned dir
+#
+# The one spelling of where a plugin sits in a snapshot. Each owner's whole tree is
+# extracted under its own plugin name, so two owners' trees cannot collide whatever
+# their top-level files are called - memento's tree even carries its own
+# .claude-plugin/marketplace.json, which lands inside memento/ where nothing registers it.
+horizon_plugin_rel_path() {
+  printf '%s/%s\n' "$1" "$2"
+}
+
+# Extract a pinned commit's whole tree under <pinned_dir>/<plugin_name>, and refuse it
+# unless every named skill is there as a procedure. This directory - not a live clone -
+# is what gets registered, so a later push to the owner's repo can never leak into an
+# already-pinned run.
 #
 # The WHOLE tree, not just the plugin subdir: memento keeps one copy of each skill at
-# the repo root and symlinks it into every plugin that ships it, so an archive of
-# `memento/` alone extracts dangling links. Snapshotting the closure is what makes the
-# pin self-contained; `claude plugin install` then materialises those links into real
-# files in its cache.
-#
-# The archive also carries memento's own marketplace.json, which declares a second
-# plugin (auto-bottle). Overwriting it here IS the inclusion control - what a run can
-# install is what this file lists, and it lists one thing.
-# [LAW:types-are-the-program] the marketplace.json we generate IS the admitted set.
-# Usage: horizon_build_memento_snapshot <git_dir> <commit_sha> <snapshot_dir>
-horizon_build_memento_snapshot() {
-  local git_dir="$1" commit_sha="$2" snapshot_dir="$3"
-  rm -rf "$snapshot_dir"
-  mkdir -p "$snapshot_dir"
+# its repo root and symlinks it into every plugin that ships it, so an archive of the
+# plugin directory alone extracts dangling links. Snapshotting the closure is what makes
+# the pin self-contained; `claude plugin install` then materialises those links into
+# real files in its cache.
+# Usage: horizon_build_plugin_snapshot <git_dir> <commit_sha> <pinned_dir> <plugin_name> <plugin_subdir> <skill>...
+horizon_build_plugin_snapshot() {
+  local git_dir="$1" commit_sha="$2" pinned_dir="$3" name="$4" subdir="$5"
+  shift 5
+  local tree_dir="$pinned_dir/$name"
+  rm -rf "$tree_dir"
+  mkdir -p "$tree_dir"
   git -C "$git_dir" archive "$commit_sha" \
-    | tar -x -C "$snapshot_dir" \
-    || horizon_die "git archive of memento at $commit_sha failed"
-  local plugin_dir="$snapshot_dir/$HORIZON_MEMENTO_PLUGIN_SUBDIR"
+    | tar -x -C "$tree_dir" \
+    || horizon_die "git archive of $name at $commit_sha failed"
+  local plugin_dir
+  plugin_dir="$pinned_dir/$(horizon_plugin_rel_path "$name" "$subdir")"
   [ -d "$plugin_dir" ] \
-    || horizon_die "memento at $commit_sha carries no $HORIZON_MEMENTO_PLUGIN_SUBDIR/ plugin directory"
+    || horizon_die "$name at $commit_sha carries no $subdir/ plugin directory"
   # Each required skill, present and carrying a procedure, checked at pin time. `-f`
   # follows the symlink, so a skill whose closure did not come along fails HERE rather
   # than as an agent mid-run finding nothing behind the name. [LAW:no-silent-failure]
   local skill skill_file
-  for skill in "${HORIZON_MEMENTO_SKILLS[@]}"; do
+  for skill in "$@"; do
     skill_file="$plugin_dir/skills/$skill/SKILL.md"
     [ -f "$skill_file" ] \
-      || horizon_die "memento at $commit_sha does not provide the '$skill' skill"
+      || horizon_die "$name at $commit_sha does not provide the '$skill' skill"
     # Negated, never `grep -q ... && die`: that form's own exit status is 1 on the
     # healthy path, which under the callers' `set -e` aborts the pin on a good skill.
     ! grep -q "$HORIZON_MOVED_SKILL_HEADING" "$skill_file" \
-      || horizon_die "memento at $commit_sha ships '$skill' as a pointer stub, not a procedure"
+      || horizon_die "$name at $commit_sha ships '$skill' as a pointer stub, not a procedure"
   done
-  # The relaunch binary itself, executable. The skill check above proves the procedure
-  # is there; this proves the thing the session boundary is MADE of is there. A snapshot
-  # missing it boots, works one session, and then never hands off - a run does not
-  # notice for hours; it just stops committing and burns its wall-clock ceiling.
-  # [LAW:no-silent-failure]
+}
+
+# Usage: horizon_assert_relaunch_binary <memento_plugin_dir> <commit_sha>
+#
+# memento's relaunch binary, executable. The skill check proves the procedure is there;
+# this proves the thing the session boundary is MADE of is there. A snapshot missing it
+# boots, works one session, and then never hands off - a run does not notice for hours;
+# it just stops committing and burns its wall-clock ceiling. [LAW:no-silent-failure]
+horizon_assert_relaunch_binary() {
+  local plugin_dir="$1" commit_sha="$2"
   local relaunch="$plugin_dir/$HORIZON_MEMENTO_RELAUNCH_REL_PATH"
   [ -x "$relaunch" ] \
     || horizon_die "memento at $commit_sha carries no executable finalize-session at $relaunch.
 The session boundary IS that binary, so this instrument could never cross one."
-  mkdir -p "$snapshot_dir/.claude-plugin"
-  cat > "$snapshot_dir/.claude-plugin/marketplace.json" <<EOF
-{
-  "name": "$HORIZON_MARKETPLACE_NAME",
-  "description": "Pinned, controlled-inclusion snapshot for the horizon eval instrument. Exposes exactly one plugin: memento, at $commit_sha.",
-  "owner": {"name": "Brandon Fryslie"},
-  "plugins": [
-    {"name": "memento", "source": "./$HORIZON_MEMENTO_PLUGIN_SUBDIR", "description": "Agent-native workflow tooling (pinned snapshot, $commit_sha)."}
-  ]
-}
-EOF
 }
 
-# Register the snapshot marketplace and install memento into a fresh CLAUDE_CONFIG_DIR,
-# through the real `claude plugin` CLI - the plugin cache's on-disk shape is that CLI's
-# to own, not ours to hand-write. [LAW:single-enforcer]
-# Usage: horizon_provision_config_dir <config_dir> <snapshot_dir>
+# Usage: horizon_write_marketplace <pinned_dir> [<plugin_name> <plugin_subdir> <commit_sha>]...
+#
+# Write the marketplace a run registers: exactly the plugins named here, each pointing at
+# its snapshot. What a run can install is what this file lists, so this file IS the
+# inclusion control - provisioning installs every plugin it lists and nothing else, and
+# the verifier requires exactly this set installed.
+# [LAW:types-are-the-program] the marketplace.json we generate IS the admitted set.
+horizon_write_marketplace() {
+  local pinned_dir="$1"
+  shift
+  [ "$#" -gt 0 ] && [ $(($# % 3)) -eq 0 ] \
+    || horizon_die "horizon_write_marketplace: plugins come as <name> <subdir> <commit> triples"
+  local entries=()
+  while [ "$#" -gt 0 ]; do
+    entries+=("$1" "./$(horizon_plugin_rel_path "$1" "$2")" "$3")
+    shift 3
+  done
+  mkdir -p "$pinned_dir/.claude-plugin"
+  python3 - "$pinned_dir/.claude-plugin/marketplace.json" "$HORIZON_MARKETPLACE_NAME" "${entries[@]}" <<'PY' \
+    || horizon_die "could not write the pinned marketplace in $pinned_dir"
+import json, sys
+
+out, marketplace, *flat = sys.argv[1:]
+plugins = [
+    {"name": name, "source": source, "description": f"Pinned snapshot at {commit}."}
+    for name, source, commit in zip(flat[0::3], flat[1::3], flat[2::3])
+]
+with open(out, "w") as fh:
+    json.dump({
+        "name": marketplace,
+        "description": "Pinned, controlled-inclusion snapshot for the horizon eval instrument. "
+                       "Exposes exactly: " + ", ".join(p["name"] for p in plugins) + ".",
+        "owner": {"name": "Brandon Fryslie"},
+        "plugins": plugins,
+    }, fh, indent=2)
+    fh.write("\n")
+PY
+}
+
+# Usage: horizon_marketplace_plugins <pinned_dir>  -> one plugin name per line
+#
+# The reader of the admitted set, for the two places that act on it: provisioning and
+# the verifier. An empty list is refused, because installing nothing would boot a run
+# with no workflow at all.
+horizon_marketplace_plugins() {
+  local pinned_dir="$1"
+  python3 - "$pinned_dir/.claude-plugin/marketplace.json" <<'PY' \
+    || horizon_die "could not read the plugins listed in $pinned_dir/.claude-plugin/marketplace.json"
+import json, sys
+
+names = [p["name"] for p in json.load(open(sys.argv[1]))["plugins"]]
+if not names:
+    sys.exit("the pinned marketplace lists no plugins")
+print("\n".join(names))
+PY
+}
+
+# Register the snapshot marketplace and install every plugin it lists into a fresh
+# CLAUDE_CONFIG_DIR, through the real `claude plugin` CLI - the plugin cache's on-disk
+# shape is that CLI's to own, not ours to hand-write. [LAW:single-enforcer]
+# Usage: horizon_provision_config_dir <config_dir> <pinned_dir>
 horizon_provision_config_dir() {
-  local config_dir="$1" snapshot_dir="$2"
+  local config_dir="$1" pinned_dir="$2" names name
+  names="$(horizon_marketplace_plugins "$pinned_dir")"
   rm -rf "$config_dir"
   mkdir -p "$config_dir"
-  CLAUDE_CONFIG_DIR="$config_dir" claude plugin marketplace add "$snapshot_dir" \
-    >/dev/null || horizon_die "failed to add pinned marketplace at $snapshot_dir"
-  CLAUDE_CONFIG_DIR="$config_dir" claude plugin install \
-    "memento@${HORIZON_MARKETPLACE_NAME}" --scope user \
-    >/dev/null || horizon_die "failed to install memento@${HORIZON_MARKETPLACE_NAME}"
+  CLAUDE_CONFIG_DIR="$config_dir" claude plugin marketplace add "$pinned_dir" \
+    >/dev/null || horizon_die "failed to add pinned marketplace at $pinned_dir"
+  # stdin is /dev/null inside the loop: the loop reads the plugin names from its own
+  # stdin, and a claude that read stdin would swallow the names still waiting there.
+  while read -r name; do
+    CLAUDE_CONFIG_DIR="$config_dir" claude plugin install \
+      "${name}@${HORIZON_MARKETPLACE_NAME}" --scope user \
+      </dev/null >/dev/null || horizon_die "failed to install ${name}@${HORIZON_MARKETPLACE_NAME}"
+  done <<<"$names"
 }
 
-# ── lit: no version string exists (`lit doctor` reports "dev build (build date
-# unknown)"), so the recorded identity is the binary actually on PATH: its resolved
-# path and its content hash. A run that silently picked up a different lit binary
-# than the one recorded is exactly the drift this instrument exists to catch.
+# ── lit: the binary's only version surface is `lit version`, whose output lit documents
+# as human-readable and not for parsing, so the recorded identity is the binary actually
+# on PATH: its resolved path and its content hash. A run that silently picked up a
+# different lit binary than the one recorded is exactly the drift this instrument exists
+# to catch.
 horizon_lit_path() {
   command -v lit || horizon_die "lit not found on PATH"
 }
@@ -297,58 +377,6 @@ horizon_lit_sha256() {
   local p
   p="$(horizon_lit_path)"
   horizon_sha256_file "$p" || horizon_die "could not hash lit binary at $p"
-}
-
-# The pickup half of the GOAL_PROMPT loop is no longer a plugin skill at all: it ships
-# inside the lit binary, and `lit init` writes it into the project at this path. So the
-# instrument's third named skill is pinned exactly like the other two - by the content
-# lit actually produces, recorded in the manifest - and a lit too old to produce it
-# fails the pin rather than a run. [LAW:one-source-of-truth]
-HORIZON_NEXT_SKILL_REL_PATH=".claude/skills/next/SKILL.md"
-
-# Usage: horizon_lit_next_skill_write <project_dir>  -> path of the /next skill lit wrote
-#
-# One `lit init` against one fresh project, returning the file it produced. Built on the
-# seeding primitives (defined further down this file) so the probe repo carries the same
-# neutralised git config a seeded project does.
-horizon_lit_next_skill_write() {
-  local project_dir="$1"
-  horizon_project_init "$project_dir"
-  horizon_lit_init "$project_dir"
-  local skill_file="$project_dir/$HORIZON_NEXT_SKILL_REL_PATH"
-  [ -f "$skill_file" ] \
-    || horizon_die "the lit on PATH does not write $HORIZON_NEXT_SKILL_REL_PATH, so a run's agent has no way to pull a ticket - it needs a lit newer than 0.11.0 (\`lit version\`; \`lit upgrade\`)"
-  ! grep -q "$HORIZON_MOVED_SKILL_HEADING" "$skill_file" \
-    || horizon_die "the lit on PATH writes $HORIZON_NEXT_SKILL_REL_PATH as a pointer stub, not a procedure"
-  printf '%s\n' "$skill_file"
-}
-
-# Usage: horizon_lit_next_skill_sha256 <scratch_dir>  -> sha256 of the /next skill the
-# lit on PATH writes
-#
-# Running lit is the only way to read this identity: the procedure is embedded in the
-# binary, so nothing on disk to hash and no version string to trust.
-#
-# Twice, under two deliberately different project names, because one recorded hash can
-# only stand for every run if the bytes are a property of the BINARY. lit does derive
-# project-specific state from the directory name - the issue prefix comes from it - so
-# this file's independence of that name is a real property to establish, not one to
-# assume: were it ever templated, every call site probes under its own fixed name, so
-# the manifest would record a hash no real run reproduces and every check here would
-# stay green. That is the failure this instrument exists to refuse.
-# [LAW:verifiable-goals] [LAW:behavior-not-structure] the check is what lit produces,
-# never which version it claims to be.
-horizon_lit_next_skill_sha256() {
-  local scratch="$1"
-  [ -n "$scratch" ] || horizon_die "horizon_lit_next_skill_sha256: no scratch directory given"
-  local file_a file_b sha_a sha_b
-  file_a="$(horizon_lit_next_skill_write "$scratch/lit-next-probe")"
-  file_b="$(horizon_lit_next_skill_write "$scratch/a-differently-named-project")"
-  sha_a="$(horizon_sha256_file "$file_a")" || horizon_die "could not hash $file_a"
-  sha_b="$(horizon_sha256_file "$file_b")" || horizon_die "could not hash $file_b"
-  [ "$sha_a" = "$sha_b" ] \
-    || horizon_die "the /next procedure lit writes depends on the project directory name ($sha_a vs $sha_b), so no single recorded hash describes every run"
-  printf '%s\n' "$sha_a"
 }
 
 # ── reviewer: resolve the moving `v1` tag to the exact commit it points at right now,
@@ -955,7 +983,7 @@ Note the credential is bound to this PATH, so logging in somewhere else will not
 # Written AFTER horizon_provision_config_dir, which rm -rf's the directory - order that
 # matters, so it is stated where it can be seen rather than left to the caller to
 # remember. Both files are MERGED into rather than replaced: provisioning leaves real
-# state in each (settings.json carries the pinned marketplace and the enabled plugin),
+# state in each (settings.json carries the pinned marketplace and the enabled plugins),
 # and clobbering either would make this a second writer of a file the CLI owns.
 horizon_write_boot_state() {
   local config_dir="$1" project_dir="$2"

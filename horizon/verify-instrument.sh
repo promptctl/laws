@@ -2,23 +2,21 @@
 # Verify the instrument against its three acceptance criteria:
 #
 #   1. Two invocations of pin-instrument.sh, same inputs, produce byte-identical
-#      manifest.json files. Three of the refs a pin resolves move on their own -
-#      memento's default branch, the reviewer's `v1` tag, and this checkout's own
-#      HEAD - so this script resolves all three exactly ONCE and passes the same
-#      shas into both invocations. Otherwise a push, a tag move, or a commit landing
-#      here between the two calls would fail this check for reasons that have
-#      nothing to do with the instrument itself.
-#   2. A session launched against the produced CLAUDE_CONFIG_DIR has memento
-#      installed and enabled, and has nothing else installed - no laws plugin, no
-#      owner CLAUDE.md, no owner memory - because the pinned marketplace never
-#      declared anything but memento in the first place.
+#      manifest.json files. Four of the refs a pin resolves move on their own -
+#      memento's default branch, lit's default branch, the reviewer's `v1` tag, and
+#      this checkout's own HEAD - so this script resolves all four exactly ONCE and
+#      passes the same shas into both invocations. Otherwise a push, a tag move, or a
+#      commit landing here between the two calls would fail this check for reasons
+#      that have nothing to do with the instrument itself.
+#   2. A session launched against the produced CLAUDE_CONFIG_DIR has exactly the
+#      plugins the pinned marketplace lists installed and enabled, and nothing else -
+#      no laws plugin, no owner CLAUDE.md, no owner memory.
 #   3. The instrument can actually execute GOAL_PROMPT.md's loop: every skill that
 #      loop names is present as a procedure, and is the pinned one. A directory
 #      existing is not that test - it is how this verifier once went green against an
-#      instrument whose skills were all pointer stubs. The plugin's skills are checked
-#      byte-for-byte against the snapshot they were pinned from, and the pickup
-#      procedure - which ships inside the lit binary now, not in any plugin - against
-#      the manifest's recorded hash of it.
+#      instrument whose skills were all pointer stubs. Each plugin's skills are checked
+#      byte-for-byte against the snapshot they were pinned from: memento's
+#      address-pr-reviews and message-in-a-bottle, and lit's next.
 #
 # [LAW:verifiable-goals] this script IS the machine-checkable "done" for the ticket;
 # exit 0 means every criterion held on this run, exit nonzero says which one didn't.
@@ -52,27 +50,48 @@ trap 'rm -rf "$WORK"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 
+# Usage: check_installed_skills <install_path> <snapshot_plugin_dir> <plugin_name> <skill>...
+#
+# Compared against the snapshot they were pinned from, never merely counted as
+# directories: `claude plugin install` materialises symlinked skills into real files, so
+# equality here is what proves the install carries the pinned bytes rather than something
+# that happens to occupy the same name. The pin has already refused a snapshot whose
+# skills were pointer stubs, so "same as the snapshot" is the whole remaining question.
+# [LAW:one-source-of-truth]
+check_installed_skills() {
+  local install_path="$1" snapshot_plugin_dir="$2" name="$3" skill
+  shift 3
+  for skill in "$@"; do
+    [ -d "$install_path/skills/$skill" ] || fail "installed $name is missing the '$skill' skill"
+    diff -r "$snapshot_plugin_dir/skills/$skill" "$install_path/skills/$skill" >/dev/null \
+      || fail "installed $name '$skill' differs from the pinned snapshot it came from"
+  done
+}
+
 main() {
-  local repo_root ref reviewer_sha goal_ref
-  # memento's default branch is a moving ref, exactly like the reviewer's `v1` tag:
-  # resolved once here and handed to both runs as a sha, so a push landing between the
-  # two invocations cannot fail the reproducibility check for reasons that have nothing
-  # to do with the instrument.
+  local repo_root memento_sha lit_sha reviewer_sha goal_ref
+  # memento's and lit's default branches are moving refs, exactly like the reviewer's
+  # `v1` tag: resolved once here and handed to both runs as shas, so a push landing
+  # between the two invocations cannot fail the reproducibility check for reasons that
+  # have nothing to do with the instrument.
   horizon_log "resolving memento once for both runs: ${HORIZON_MEMENTO_REPO_URL}@${HORIZON_MEMENTO_DEFAULT_REF}"
-  ref="$(horizon_memento_fetch "$WORK/memento.git" "$HORIZON_MEMENTO_DEFAULT_REF")"
+  memento_sha="$(horizon_git_fetch "$HORIZON_MEMENTO_REPO_URL" "$WORK/memento.git" "$HORIZON_MEMENTO_DEFAULT_REF")"
+  horizon_log "resolving lit's plugin once for both runs: ${HORIZON_LIT_REPO_URL}@${HORIZON_LIT_DEFAULT_REF}"
+  lit_sha="$(horizon_git_fetch "$HORIZON_LIT_REPO_URL" "$WORK/lit.git" "$HORIZON_LIT_DEFAULT_REF")"
 
   horizon_log "resolving reviewer once for both runs: ${REVIEWER_REPO}@${REVIEWER_TAG}"
   reviewer_sha="$(horizon_reviewer_sha)"
 
   # This checkout's HEAD is a moving ref too - anything committing here between the two
-  # runs would otherwise change goal_wording under them. Pinned once, like the other two.
+  # runs would otherwise change goal_wording under them. Pinned once, like the others.
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
   goal_ref="$(horizon_resolve_commit "$repo_root" "HEAD")"
 
-  horizon_log "run 1: pinning at $ref"
-  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run1" "$ref" "$reviewer_sha" "$goal_ref"
-  horizon_log "run 2: pinning at $ref"
-  "$SCRIPT_DIR/pin-instrument.sh" "$WORK/run2" "$ref" "$reviewer_sha" "$goal_ref"
+  local run
+  for run in run1 run2; do
+    horizon_log "$run: pinning memento $memento_sha, lit plugin $lit_sha"
+    "$SCRIPT_DIR/pin-instrument.sh" "$WORK/$run" "$memento_sha" "$reviewer_sha" "$goal_ref" "$lit_sha"
+  done
 
   if diff -u "$WORK/run1/manifest.json" "$WORK/run2/manifest.json" >/dev/null; then
     pass "two invocations produced byte-identical manifest.json"
@@ -84,27 +103,35 @@ main() {
   # A THROWAWAY config dir under $WORK, never the machine's real, authenticated one: a
   # verification must not wipe the directory a run launches against. Built from run 2's
   # snapshot, which is also the one the installed skills are compared against below.
-  local config_dir="$WORK/config" snapshot_dir="$WORK/run2/pinned"
+  local config_dir="$WORK/config" pinned_dir="$WORK/run2/pinned"
   horizon_log "provisioning a throwaway config dir from run 2's snapshot"
-  horizon_provision_config_dir "$config_dir" "$snapshot_dir"
+  horizon_provision_config_dir "$config_dir" "$pinned_dir"
 
-  local plugin_list
+  local plugin_list admitted
   plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" claude plugin list --json)" \
     || fail "could not read claude plugin list --json from the isolated config dir"
+  admitted="$(horizon_marketplace_plugins "$pinned_dir")"
 
+  # One line per installed plugin, "<name>\t<real install path>", printed only once the
+  # installed set is exactly the admitted set and every one of them is enabled.
   # sys.exit, never assert: -O / PYTHONOPTIMIZE compiles asserts out, which would turn
   # this acceptance check into a silent pass on any input. [LAW:no-silent-failure]
-  echo "$plugin_list" | python3 -c '
-import json, sys
-expected_id = f"memento@{sys.argv[1]}"
+  local installed
+  installed="$(printf '%s' "$plugin_list" | python3 -c '
+import json, os, sys
+marketplace, admitted = sys.argv[1], sys.argv[2].split("\n")
 plugins = json.load(sys.stdin)
-ids = [p["id"] for p in plugins]
-if ids != [expected_id]:
-    sys.exit(f"expected only {expected_id} installed, got {ids}")
-if plugins[0]["enabled"] is not True:
-    sys.exit("memento is installed but not enabled")
-' "$HORIZON_MARKETPLACE_NAME" || fail "claude plugin list did not show exactly memento@${HORIZON_MARKETPLACE_NAME} enabled"
-  pass "isolated config dir has exactly memento installed and enabled"
+expected = sorted(f"{name}@{marketplace}" for name in admitted)
+ids = sorted(p["id"] for p in plugins)
+if ids != expected:
+    sys.exit(f"expected exactly {expected} installed, got {ids}")
+for p in plugins:
+    if p["enabled"] is not True:
+        sys.exit(p["id"] + " is installed but not enabled")
+    print(p["id"].split("@")[0] + "\t" + os.path.realpath(p["installPath"]))
+' "$HORIZON_MARKETPLACE_NAME" "$admitted")" \
+    || fail "claude plugin list did not show exactly the pinned marketplace's plugins enabled"
+  pass "isolated config dir has exactly the pinned plugins installed and enabled: $(printf '%s' "$admitted" | tr '\n' ' ')"
 
   [ -f "$config_dir/CLAUDE.md" ] && fail "isolated config dir has a CLAUDE.md - owner guidance leaked in"
   pass "isolated config dir carries no CLAUDE.md"
@@ -125,31 +152,34 @@ if plugins[0]["enabled"] is not True:
   # actually falling under $config_dir - otherwise a plugin CLI that resolved
   # "user" scope to some shared location outside this run's isolation would still
   # pass by finding the skills wherever they really landed.
-  local install_path
-  install_path="$(echo "$plugin_list" \
-    | python3 -c 'import json, os, sys; print(os.path.realpath(json.load(sys.stdin)[0]["installPath"]))')" \
-    || fail "could not read installPath from claude plugin list --json"
-  case "$install_path" in
-    "$config_dir"/*) ;;
-    *) fail "installed plugin path ($install_path) is not under the isolated config dir ($config_dir)" ;;
-  esac
-  # Compared against the snapshot they were pinned from, never merely counted as
-  # directories: `claude plugin install` materialises memento's symlinked skills into
-  # real files, so equality here is what proves the install carries the pinned bytes
-  # rather than something that happens to occupy the same name. The pin has already
-  # refused a snapshot whose skills were pointer stubs, so "same as the snapshot" is
-  # the whole remaining question. [LAW:one-source-of-truth]
-  local snapshot_skills="$snapshot_dir/$HORIZON_MEMENTO_PLUGIN_SUBDIR/skills"
-  local installed_skills="$install_path/skills" skill
-  for skill in "${HORIZON_MEMENTO_SKILLS[@]}"; do
-    [ -d "$installed_skills/$skill" ] || fail "installed memento is missing the '$skill' skill"
-    diff -r "$snapshot_skills/$skill" "$installed_skills/$skill" >/dev/null \
-      || fail "installed '$skill' differs from the pinned snapshot it came from"
-  done
+  local name install_path memento_install="" lit_install=""
+  while IFS=$'\t' read -r name install_path; do
+    case "$install_path" in
+      "$config_dir"/*) ;;
+      *) fail "installed $name path ($install_path) is not under the isolated config dir ($config_dir)" ;;
+    esac
+    case "$name" in
+      memento) memento_install="$install_path" ;;
+      lit) lit_install="$install_path" ;;
+    esac
+  done <<<"$installed"
+  # The loop needs these two by name. The admitted-set check above already failed on a
+  # marketplace listing anything else; this fails on one that forgot either of them.
+  [ -n "$memento_install" ] || fail "the pinned marketplace does not admit memento"
+  [ -n "$lit_install" ] || fail "the pinned marketplace does not admit lit, so a run has no /next"
+
+  check_installed_skills "$memento_install" \
+    "$pinned_dir/$(horizon_plugin_rel_path memento "$HORIZON_MEMENTO_PLUGIN_SUBDIR")" \
+    memento "${HORIZON_MEMENTO_SKILLS[@]}"
   # diff compares bytes, not mode bits; the relaunch binary has to be runnable as installed.
-  [ -x "$install_path/$HORIZON_MEMENTO_RELAUNCH_REL_PATH" ] \
-    || fail "installed memento's finalize-session is not executable: $install_path/$HORIZON_MEMENTO_RELAUNCH_REL_PATH"
+  [ -x "$memento_install/$HORIZON_MEMENTO_RELAUNCH_REL_PATH" ] \
+    || fail "installed memento's finalize-session is not executable: $memento_install/$HORIZON_MEMENTO_RELAUNCH_REL_PATH"
   pass "installed memento carries the pinned skills, byte for byte, with the relaunch binary executable"
+
+  check_installed_skills "$lit_install" \
+    "$pinned_dir/$(horizon_plugin_rel_path lit "$HORIZON_LIT_PLUGIN_SUBDIR")" \
+    lit "${HORIZON_LIT_SKILLS[@]}"
+  pass "installed lit plugin carries the pinned /next skill, byte for byte"
 
   local recorded_lit_sha256 actual_lit_sha256
   recorded_lit_sha256="$(horizon_manifest_field "$WORK/run1/manifest.json" lit sha256)" \
@@ -158,18 +188,6 @@ if plugins[0]["enabled"] is not True:
   [ "$recorded_lit_sha256" = "$actual_lit_sha256" ] \
     || fail "recorded lit sha256 ($recorded_lit_sha256) does not match the lit currently on PATH ($actual_lit_sha256)"
   pass "lit on PATH matches the manifest's recorded identity"
-
-  # The loop's pickup step. It is not a plugin skill any more - it ships inside lit and
-  # `lit init` writes it into the project - so the only way to check it is to run lit
-  # and read what it produced. A lit too old to write it fails inside this call, before
-  # any comparison, with the upgrade to run. [LAW:verifiable-goals]
-  local recorded_next_sha256 actual_next_sha256
-  recorded_next_sha256="$(horizon_manifest_field "$WORK/run1/manifest.json" lit next_skill_sha256)" \
-    || fail "could not read lit.next_skill_sha256 from run1/manifest.json"
-  actual_next_sha256="$(horizon_lit_next_skill_sha256 "$WORK/lit-next-probe")"
-  [ "$recorded_next_sha256" = "$actual_next_sha256" ] \
-    || fail "recorded /next skill sha256 ($recorded_next_sha256) does not match what the lit on PATH writes ($actual_next_sha256)"
-  pass "the /next procedure lit writes matches the manifest's recorded identity"
 
   horizon_log "all checks passed"
 }
