@@ -874,8 +874,12 @@ horizon_auth_state() {
   local config_dir="$1" probe_dir envelope state rc=0
   [ -n "$config_dir" ] || horizon_die "horizon_auth_state: no config dir given"
   probe_dir="$(mktemp -d)" || horizon_die "horizon_auth_state: could not create a probe dir"
+  # stdin is /dev/null, not the caller's. From v2.1.270 `claude -p` with a non-terminal
+  # stdin waits 3s for piped input and then warns on stderr, and that warning lands in
+  # front of the envelope - an unattended driver never has a terminal, so every check
+  # died as "no result envelope" while the envelope said logged in.
   envelope="$(cd "$probe_dir" && CLAUDE_CONFIG_DIR="$config_dir" claude -p 'Reply with the single word ok' \
-    --output-format json --model haiku --max-turns 1 --tools "" --no-session-persistence 2>&1)" || true
+    --output-format json --model haiku --max-turns 1 --tools "" --no-session-persistence </dev/null 2>&1)" || true
   rm -rf "$probe_dir"
   state="$(printf '%s' "$envelope" | python3 -c '
 import json, sys
@@ -1022,23 +1026,31 @@ horizon_release_run_lock() {
     || horizon_die "could not end the run session $HORIZON_TMUX_SESSION: $err"
 }
 
-# Usage: horizon_launch_session <config_dir> <project_dir>
+# Usage: horizon_launch_session <config_dir> <project_dir> <goal_file>
 #
 # The ONE write that starts a run: claude replaces the placeholder shell in the locked
-# session's pane. Inside tmux because that single choice decides whether the run stays
-# isolated - see horizon_assert_transport, which is how that claim gets checked instead
-# of assumed.
+# session's pane, with the pinned /goal as its prompt. Inside tmux because that single
+# choice decides whether the run stays isolated - see horizon_assert_transport, which is
+# how that claim gets checked instead of assumed.
 #
 # CLAUDE_CONFIG_DIR is set in the SESSION's environment rather than exported: a pane
 # spawned on an already-running tmux server inherits the server's environment, not the
 # caller's, so an exported value would silently not arrive and the run would read the
 # operator's real config. [LAW:no-silent-failure]
+#
+# THE GOAL IS THE LAUNCH PROMPT, never typed into the input box afterwards. Pasted at the
+# pinned wording's size, a /goal is collapsed into a "[Pasted text #n]" placeholder and
+# submitted as a plain message, so the session reads the wording with no goal in force
+# (acceptance attempt 3, v2.1.263). Given as the prompt argument the same text executes,
+# and nothing waits on an input box being ready. The command reaches tmux as separate
+# words, so no shell runs: the prose arrives byte for byte, and claude is itself the pane
+# process horizon_assert_transport looks for. horizon_wait_goal_in_force confirms it.
 horizon_launch_session() {
-  local config_dir="$1" project_dir="$2"
+  local config_dir="$1" project_dir="$2" goal_file="$3"
   tmux set-environment -t "$HORIZON_TMUX_SESSION" CLAUDE_CONFIG_DIR "$config_dir" \
     || horizon_die "could not bind CLAUDE_CONFIG_DIR into the run session"
   tmux respawn-pane -k -t "$HORIZON_TMUX_SESSION" -c "$project_dir" \
-    "claude --dangerously-skip-permissions" \
+    claude --dangerously-skip-permissions "/goal $(<"$goal_file")" \
     || horizon_die "could not launch claude in the run session"
 }
 
@@ -1069,42 +1081,6 @@ horizon_wait_ready() {
   horizon_die "session did not reach a ready input box within ${HORIZON_BOOT_TIMEOUT_SECONDS}s.
 The pane was showing:
 $(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
-}
-
-# Usage: horizon_send <text>
-#
-# Pastes text into the session's input box and submits it. Delivered through a tmux
-# buffer rather than `send-keys <text>`, so no shell or tmux metacharacter in the text
-# can be interpreted on the way in - the pinned goal wording is prose, and prose
-# contains quotes.
-#
-# Enter is pressed when the input box SHOWS the paste, not after a pause. Claude Code
-# collapses a bracketed multi-line paste into `[Pasted text #n +<lines> lines]`, where
-# <lines> is the pasted text's newline count (probed on 2.1.259), so that placeholder
-# with this text's own count is the proof the whole text arrived - a submit that raced
-# it would issue a truncated goal and be read downstream as a failed carry.
-# [LAW:no-ambient-temporal-coupling]
-horizon_send() {
-  local text="$1"
-  [ -n "$text" ] || horizon_die "horizon_send: nothing to send"
-  local lines landed
-  lines="$(printf '%s' "$text" | wc -l | tr -d ' ')"
-  landed="\[Pasted text #[0-9]+ \+${lines} lines\]"
-  printf '%s' "$text" | tmux load-buffer -b horizon-send - \
-    || horizon_die "could not load the text to send into a tmux buffer"
-  tmux paste-buffer -d -b horizon-send -t "$HORIZON_TMUX_SESSION" -p \
-    || horizon_die "could not paste into the run session"
-  local waited=0
-  until horizon_pane | grep -qE "$landed"; do
-    [ "$waited" -lt "$HORIZON_BOOT_TIMEOUT_SECONDS" ] \
-      || horizon_die "the pasted text never appeared in the input box (${lines} lines).
-The pane was showing:
-$(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
-    sleep "$HORIZON_POLL_SECONDS"
-    waited=$((waited + HORIZON_POLL_SECONDS))
-  done
-  tmux send-keys -t "$HORIZON_TMUX_SESSION" Enter \
-    || horizon_die "could not submit into the run session"
 }
 
 # Usage: horizon_assert_transport
@@ -1215,7 +1191,8 @@ horizon_report() {
     || horizon_die "could not analyse the run's sessions"
 }
 
-# Usage: horizon_report_counts < report  -> "<consecutive committing sessions> <lost carries>"
+# Usage: horizon_report_counts < report
+#   -> "<consecutive committing sessions> <lost carries> <session one goal in force: 1|0>"
 #
 # The one reader of the report's keys outside sessions.py. sessions.test.py runs it
 # against real sessions.py output, so the two sides cannot drift apart unnoticed.
@@ -1224,8 +1201,36 @@ horizon_report_counts() {
   python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-print(d["consecutive_with_commits"], d["goal_carries_expected"] - d["goal_carries_intact"])
+print(d["consecutive_with_commits"], d["goal_carries_expected"] - d["goal_carries_intact"],
+      int(d["session_one_goal_in_force"]))
 ' || horizon_die "could not read the run report"
+}
+
+# Usage: horizon_wait_goal_in_force <config_dir> <project_dir> <goal_file>
+#
+# The run is not live until session one's transcript records the pinned goal EXECUTED.
+# Launching with the goal as the prompt is the one form verified to execute; this is what
+# turns "verified once" into "checked on every run". Waited for rather than read once,
+# because the command is recorded a few boot entries in. Stopping here is not the driver
+# repairing anything - session one's goal is the driver's own write, and a run whose
+# first goal never took would otherwise be observed for hours as a lost carry it is not.
+# [LAW:verifiable-goals] [LAW:no-silent-failure]
+horizon_wait_goal_in_force() {
+  local config_dir="$1" project_dir="$2" goal_file="$3"
+  local report counts reached drifted in_force waited=0
+  while :; do
+    report="$(horizon_report "$config_dir" "$project_dir" "$goal_file")"
+    # Assigned, then split: a reader that dies inside a here-string is not seen by errexit.
+    counts="$(printf '%s' "$report" | horizon_report_counts)"
+    read -r reached drifted in_force <<<"$counts"
+    [ "$in_force" = 1 ] && return 0
+    [ "$waited" -lt "$HORIZON_BOOT_TIMEOUT_SECONDS" ] \
+      || horizon_die "session one's pinned /goal was not in force within ${HORIZON_BOOT_TIMEOUT_SECONDS}s.
+The report shows what the transcript recorded (goal_received is null when no /goal executed):
+$report"
+    sleep "$HORIZON_POLL_SECONDS"
+    waited=$((waited + HORIZON_POLL_SECONDS))
+  done
 }
 
 # Usage: horizon_observe <config_dir> <project_dir> <goal_file> <target_sessions> <max_minutes>
@@ -1246,12 +1251,12 @@ horizon_observe() {
   local config_dir="$1" project_dir="$2" goal_file="$3"
   local target="$4" max_minutes="$5"
   local deadline=$((SECONDS + max_minutes * 60))
-  local report counts reached=0 drifted last_seen=-1
+  local report counts reached=0 drifted in_force last_seen=-1
 
   while [ "$SECONDS" -lt "$deadline" ]; do
     report="$(horizon_report "$config_dir" "$project_dir" "$goal_file")"
     counts="$(printf '%s' "$report" | horizon_report_counts)"
-    reached="${counts% *}" drifted="${counts#* }"
+    read -r reached drifted in_force <<<"$counts"
 
     if [ "$reached" != "$last_seen" ]; then
       horizon_log "sessions with committed work, consecutively: $reached/$target"
@@ -1268,9 +1273,10 @@ horizon_observe() {
     if [ "$drifted" -gt 0 ]; then
       printf '%s\n' "$report"
       horizon_die "the pinned goal did not survive $drifted session boundary/boundaries.
-finalize-session takes the goal from whatever the agent passes to --goal, so a paraphrase
-there silently becomes the successor's whole instruction. The wording each session
-actually received is in goal_received above."
+The wording each session actually received is in goal_received above. A paraphrase there
+means the agent passed finalize-session a different --goal. A null means no /goal
+executed in that session at all - a carried goal that was pasted instead of executed
+arrives as plain text and leaves exactly this."
     fi
     if [ "$reached" -ge "$target" ]; then
       printf '%s\n' "$report"
