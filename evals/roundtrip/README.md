@@ -56,9 +56,10 @@ Rules the templates and script enforce:
   clause the spec lacks. In the pilot the compiler chose its own temptations, and the
   spec grew by a third on the trip back.
 - **Arms differ only in guidance.** `stage.py` fails if two arm prompts differ anywhere
-  else.
+  else, counting the prompts an earlier `arms` run left in the scratch directory.
 - **Judges are blind.** Outputs are copied as `A`, `B`, `C` in an independent random
-  order per judge into a scratch directory. The script fails if a judge prompt names
+  order per judge into its own temporary directory, apart from the scratch directory
+  that holds the judge key. The script fails if a judge prompt names
   an arm or the experiment, or if a response mentions it.
 - **Fidelity is scored.** Each judge counts missing, misstated and added facts against
   the task. In the pilot, a judge that scored only the rubric ranked the arm with the

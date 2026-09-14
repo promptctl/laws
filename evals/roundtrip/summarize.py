@@ -16,21 +16,36 @@ LABELS = {"missing": "missing", "misstated": "misstated", "added": "added", "inv
           "not met": "not met", "met": "met", "n/a": "n/a"}
 
 
-def counts_in(line: str) -> dict[str, int]:
-    """Read 'label N' or 'N label' counts; judges write both ("met 17", "13 met")."""
-    found: dict[str, int] = {}
-    for label, key in LABELS.items():
-        plain = re.escape(label) if label != "met" else r"(?<!not )met"
-        number_first = re.search(rf"(\d+)\s+{plain}\b", line)
-        label_first = re.search(rf"(?<![\w/]){plain}\s*:?\s*(\d+)", line)
-        match = number_first or label_first
-        if match:
-            found[key] = int(match.group(1))
-    return found
+# Longest label first, so "not met" is one token and never "not" plus "met".
+TOKEN = re.compile(r"(?<![\w/])(" + "|".join(map(re.escape, sorted(LABELS, key=len, reverse=True)))
+                   + r")(?![\w/])|(\d+)")
 
 
 def fail(message: str) -> None:
     sys.exit(f"summarize: {message}")
+
+
+def counts_in(line: str, where: str) -> dict[str, int]:
+    """Pair each count with its label.
+
+    Judges write both orders ("met 17", "13 met") and switch between clauses of one line
+    ("added 0; rubric 20 met, 9 not met"), so order is read per clause - the text between
+    commas, semicolons or bars - where labels and numbers must alternate and the first
+    token says which comes first. A line with no separators is one clause.
+    """
+    found: dict[str, int] = {}
+    for clause in re.split(r"[,;|]", line):
+        tokens = TOKEN.findall(clause)
+        shape = "".join("L" if label else "N" for label, _ in tokens)
+        if not re.fullmatch(r"(LN)*|(NL)*", shape):
+            fail(f"{where}: cannot pair labels with counts in {clause.strip()!r}")
+        labels = [LABELS[label] for label, _ in tokens if label]
+        numbers = [int(number) for _, number in tokens if number]
+        for key, number in zip(labels, numbers):
+            if key in found:
+                fail(f"{where}: '{key}' counted twice in {line!r}")
+            found[key] = number
+    return found
 
 
 def parse_key(text: str) -> dict[str, dict[str, str]]:
@@ -61,7 +76,7 @@ def parse_verdict(text: str, letters: dict[str, str], where: str) -> tuple[list[
         line = re.search(rf"^\W*{letter}\b.*$", totals, re.M)
         if not line:
             fail(f"{where}: no totals line for {letter}")
-        found = counts_in(line.group(0))
+        found = counts_in(line.group(0), where)
         for needed in ("missing", "misstated", "added", "met", "not met"):
             if needed not in found:
                 fail(f"{where}: totals line for {letter} has no '{needed}' count: {line.group(0)!r}")

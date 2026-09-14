@@ -16,9 +16,9 @@ import argparse
 import json
 import random
 import re
-import secrets
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -100,19 +100,27 @@ def compile_(medium: Path, meta: dict, scratch: Path, arm_names: tuple[str, ...]
 def arms(medium: Path, meta: dict, scratch: Path, arm_names: tuple[str, ...]) -> None:
     task = require(medium / "task.md").read_text()
     sources = {"control": None, "current": REPO / meta["guidance"], "roundtrip": medium / "craft-roundtrip.md"}
-    skeletons = set()
+    prompts = {arm: scratch / "prompts" / f"arm-{medium.name}-{arm}.md" for arm in ARMS}
+    texts: dict[str, str] = {}
+    skeletons: dict[str, str] = {}
     # The control and current arms need no spec, so they can run before the recompile exists.
-    for arm in arm_names:
+    # A split run must still give every arm the same prompt, so prompts an earlier run left
+    # in the scratch directory are compared along with the ones rendered now.
+    for arm in (a for a in ARMS if a in arm_names or prompts[a].is_file()):
         src = sources[arm]
         block = ("There is no guidance for this run beyond the task." if src is None else
                  "Guidance you must follow while doing the task. It is between the markers.\n\n"
                  f"<guidance>\n{require(src).read_text()}\n</guidance>")
         out = medium / "outputs" / f"{arm}.{meta['ext']}"
-        text = fill("arm.md", {"OUTPATH": str(out), "GUIDANCE": block, "TASK": task})
-        skeletons.add(text.replace(block, "<guidance>").replace(str(out), "<out>"))
-        write(scratch / "prompts" / f"arm-{medium.name}-{arm}.md", text)
-    if len(skeletons) != 1:
-        sys.exit("arm prompts differ outside the guidance block and output path")
+        texts[arm] = (fill("arm.md", {"OUTPATH": str(out), "GUIDANCE": block, "TASK": task})
+                      if arm in arm_names else prompts[arm].read_text())
+        skeletons[arm] = texts[arm].replace(block, "<guidance>").replace(str(out), "<out>")
+    if len(set(skeletons.values())) != 1:
+        sys.exit(f"arm prompts {sorted(skeletons)} differ outside the guidance block and output path "
+                 f"(an earlier run's prompt in {scratch / 'prompts'} counts, as does a guidance file "
+                 "edited since that run)")
+    for arm in arm_names:
+        write(prompts[arm], texts[arm])
     (medium / "outputs").mkdir(exist_ok=True)
 
 
@@ -121,8 +129,8 @@ def judges(medium: Path, meta: dict, scratch: Path, arm_names: tuple[str, ...]) 
     rubrics = {"spec": require(medium / "spec.md"), "guidance": require(REPO / meta["guidance"])}
     key: dict[str, dict] = {}
     for name, rubric in rubrics.items():
-        staging = scratch / f"review-{secrets.token_hex(3)}"
-        staging.mkdir(parents=True)
+        # Not under scratch: its parent would hold the judge key and the arm prompts.
+        staging = Path(tempfile.mkdtemp(prefix="review-"))
         order = list(ARMS)
         random.shuffle(order)
         letters = dict(zip("ABC", order))
