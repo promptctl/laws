@@ -22,6 +22,10 @@ Each medium has a directory, such as `prose/` or `code/`, holding:
 - `judge-spec.md` and `judge-guidance.md` - two blind verdicts, one using the spec as
   rubric and one using the current guidance. `judge-key.md` decodes their letters.
 
+The seven `spec.md` files were distilled with `.claude/skills/distill/SKILL.md` as of
+commit 15361a3. The skill was revised afterward from those runs' reports, so a rerun
+of `distill` will not reproduce them exactly.
+
 `prose/pilot/` holds the first run, made before these templates existed. Its
 `results.md` explains why the protocol looks the way it does.
 

@@ -12,20 +12,25 @@ the source did not say.
 ## Terms
 
 - Rule: a statement the source expects the reader to obey. Rules are stated
-  directly, or carried by a story, metaphor, example, or warning.
+  directly, or carried by a story, metaphor, example, warning, or self-check question.
 - Strength: hard (Do / Do not), soft (Prefer / Avoid), or permission (May). A
-  symptom the source names without an imperative ("headers in a short document") is
-  written as the check it implies: "Treat X as a sign to revise."
+  declarative sentence about what the reader does or what the output is ("A ticket
+  carries its why") is hard unless the source softens it ("usually", "ideally",
+  "encouraged"). A symptom the source names without an imperative is written as the
+  check it implies: "Treat X as a sign to revise."
 - Condition: when a rule applies. Exception: when it does not.
-- Failure clause: one sentence on a requirement naming the mistake the source says
-  readers make, e.g. "Failure: writers skip this when they think they know the reader."
-  Written only where the source names the mistake.
+- Failure clause: one sentence on a requirement naming a mistake the source says is
+  made, by the reader of the guidance or by the readers of what they produce, e.g.
+  "Failure: writers skip this when they think they know the reader." Written only
+  where the source says the mistake happens.
 
 ## Setup
 
 1. Do not read laws:prompt or `plugins/laws/skills/prompt/references/craft.md` in this
-   session. If either is already in context, stop and run this skill in a fresh session
-   or a fresh subagent seeded with only this skill.
+   session, unless that craft is itself the source; then read it only as material to
+   extract, never as guidance for your output. If either is in context for any other
+   reason, stop and run this skill in a fresh session or a fresh subagent seeded with
+   only this skill.
 2. Fix the source path and the output path. Default output: the source's directory,
    same basename with `.spec.md`. An output path the requester names wins. Never
    overwrite the source.
@@ -34,7 +39,7 @@ the source did not say.
 ## Extract
 
 Build a working list, not part of the output. One entry per rule: source location,
-statement, strength, condition, exceptions.
+statement, strength, condition, exceptions, failure clause.
 
 4. A direct statement is one entry.
 5. A story or anecdote yields the rule it demonstrates and the condition that
@@ -42,43 +47,53 @@ statement, strength, condition, exceptions.
    mistake being made, that mistake becomes the entry's failure clause.
 6. A metaphor yields the literal claim it stands for.
 7. An example yields the rule it demonstrates. Keep the example itself only if the
-   rule cannot be stated without it, cut to the shortest form that still shows it.
+   rule cannot be stated without it, cut to the shortest form that still shows it. A bad
+   example yields a failure clause only if the source says its mistake is actually made.
 8. A warning about a temptation ("you will want to X; refuse it") is a Do-not entry with
    its trigger as the condition and the temptation as its failure clause.
-9. Passages that say the same rule in different words merge into one entry. Record the
-   strongest strength any of them used. If they disagree, write the strongest and
-   record the disagreement for the report.
-10. A term the source coined or uses in a non-plain sense is replaced by the plain
+9. A self-check or diagnostic question becomes the check inside the requirement it
+   tests.
+10. Passages that say the same rule in different words merge into one entry, with the
+    strongest strength any of them used; if they disagree, record the disagreement for
+    the report. A soft passage and a hard passage that state separable rules are split
+    instead of merged. Two rules that conflict with no order in the source both stay,
+    and the conflict is recorded for the report.
+11. A term the source coined or uses in a non-plain sense is replaced by the plain
     term. If no plain term exists, or the plain term loses part of the meaning, and the
-    term appears in two or more entries, define it once under Terms.
-11. Rationale is dropped. Keep one clause of it only where the rule's boundary cannot
+    term appears in two or more entries, define it once under Terms. Identifiers the
+    source attaches to rules, such as `[LAW:token]`, stay on their requirements.
+12. Rationale is dropped. Keep one clause of it only where the rule's boundary cannot
     be found without it.
-12. Pure motivation, praise, framing, and audience address yield no entry.
-13. Record every passage that yielded no entry, whichever rule dropped it, for the
-    report.
+13. Pure motivation, praise, framing, audience address, and passages addressed to the
+    source's editors rather than its reader yield no entry.
+14. Record every passage that yielded no entry, whichever rule dropped it, including
+    passages used only for the Scope sentence. On a long source, group them by kind with
+    line ranges.
 
 ## Write
 
-14. Format: title; one Scope sentence; Terms (only defined terms, omit the heading if
-    none); Requirements, numbered continuously, grouped under headings in the source's
-    topic order. A topic whose entries all merged into other topics gets no heading.
-    The Scope sentence may name what is out of scope.
-15. Each requirement is one rule: one or two sentences, imperative, checkable by a
-    reader who has not seen the source. Condition, exceptions and failure clause sit in the same item. A rule that governs a
-    group of other rules names them by number.
-16. State each rule once. No story, metaphor, anecdote, repetition, or example beyond
+15. Format: title; one Scope sentence, which may name what is out of scope; Terms (only
+    defined terms, omit the heading if none); Requirements, numbered continuously,
+    grouped under headings in the source's topic order. A topic whose entries all merged
+    into other topics gets no heading.
+16. Each requirement is one rule in one or two imperative sentences, checkable by a
+    reader who has not seen the source, with its condition and exceptions inside those
+    sentences, followed by its failure clause if it has one. A rule that governs a group
+    of other rules names them by number.
+17. State each rule once. No story, metaphor, anecdote, repetition, or example beyond
     what rule 7 allows.
-17. Preserve strength. Do not promote a soft rule to hard or demote a hard one.
-18. Preserve ordering the source gives between rules that conflict.
-19. Add nothing the source did not say. A gap in the source is reported, not filled.
+18. Preserve strength. Do not promote a soft rule to hard or demote a hard one, except
+    as rule 10 decides for merged passages.
+19. Preserve ordering the source gives between rules that conflict.
+20. Add nothing the source did not say. A gap in the source is reported, not filled.
 
 ## Verify
 
-20. Every working-list entry maps to one requirement; every requirement maps to at
+21. Every working-list entry maps to one requirement; every requirement maps to at
     least one source location. Fix any miss before reporting.
-21. Re-read the output file, not the draft in memory. For each requirement, confirm a
-    reader could tell whether they had followed it. Where the source gives only an inward
-    test ("sounds right"), keep it as stated; do not invent an outward one.
-22. Report: source and output paths; word count of each; the dropped passages from
-    rule 13; any disagreement from rule 9; any gap from rule 19. Keep the working
-    list and include it when the requester asks for the mapping.
+22. Re-read the output file, not the draft in memory. For each requirement, confirm a
+    reader could tell whether they had followed it. Where the source gives only an
+    inward test ("sounds right"), keep it as stated; do not invent an outward one.
+23. Report: source and output paths; the word count of each, frontmatter included; the
+    passages from rule 14; any disagreement or conflict from rule 10; any gap from rule
+    20. Keep the working list and include it when the requester asks for the mapping.
