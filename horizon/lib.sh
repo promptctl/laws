@@ -91,7 +91,7 @@ horizon_need() {
 # different point, so a caller reaching only part of the surface over-declares a coreutil
 # or two. That is the accepted trade - an exact list per caller needs a tool set per
 # function, and the five drifting per-script copies this replaced are the worse failure.
-# cat/tar/base64 stay with pin-instrument.sh only because they are reached from nothing
+# tar/base64 stay with pin-instrument.sh only because they are reached from nothing
 # else at all.
 HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tr wc)
 
