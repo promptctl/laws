@@ -29,7 +29,11 @@ the trip.
 
 1. Distill: fresh subagent, `distill` only, craft to `spec.md`.
 2. Recompile: fresh subagent, `laws:prompt` only, `spec.md` to `craft-roundtrip.md`.
-   It must not read the original craft.
+   It must not read the original craft. It may harden a rule with a rehearsed
+   temptation only where the spec gives that rule a failure clause, and it adds no
+   permission, method or clause the spec lacks. The prose pilot's compile prompt left
+   temptations to the compiler, and `prose/pilot/spec-diff.md` shows the spec growing by
+   about a third as a result.
 3. Run the three arms as fresh subagents from one prompt template that differs only
    in the guidance block. Arms load no skills.
 4. Judge: fresh subagent, no skills, given `task.md`, `spec.md`, and the three
