@@ -13,7 +13,7 @@
 # lost carry is reported, loudly, and the run stops. [LAW:no-silent-failure]
 #
 # Usage:
-#   horizon/run-loop.sh [seed-dir] [memento-ref]
+#   horizon/run-loop.sh [seed-dir] [memento-ref] [lit-ref]
 #
 # [seed-dir]     the seed bundle to start from. Defaults to horizon/seeds/macklebox,
 #                the reference seed.
@@ -21,6 +21,8 @@
 #                memento (promptctl/memento) and passed straight to pin-instrument.sh.
 #                Defaults to that repo's default branch; a campaign pins it explicitly
 #                on every run. The /goal wording is pinned at this checkout's HEAD.
+# [lit-ref]      git ref to pin lit's Claude plugin (the /next skill) at, resolved
+#                against lit's repository (promptctl/links-issue-tracker) the same way.
 #
 # THE CONFIG DIR IS AT A FIXED PATH AND THE WORK DIR IS NOT INSIDE IT. Claude Code keys
 # its stored credential to the config directory's PATH, so the config dir has to be the
@@ -71,7 +73,7 @@ end_run() {
 }
 
 main() {
-  local seed_dir="${1:-$SCRIPT_DIR/seeds/macklebox}" memento_ref="${2:-}"
+  local seed_dir="${1:-$SCRIPT_DIR/seeds/macklebox}" memento_ref="${2:-}" lit_ref="${3:-}"
 
   horizon_need_base
   horizon_need git
@@ -128,7 +130,9 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   local goal_file="$HORIZON_WORK_DIR/goal.md"
 
   horizon_log "pinning the instrument"
-  "$SCRIPT_DIR/pin-instrument.sh" "$instrument_dir" ${memento_ref:+"$memento_ref"} \
+  # Empty refs are passed through as empty: pin-instrument.sh reads an empty argument as
+  # that argument's default, and the reviewer and goal refs are always left to theirs.
+  "$SCRIPT_DIR/pin-instrument.sh" "$instrument_dir" "$memento_ref" "" "" "$lit_ref" \
     || horizon_die "pin-instrument.sh failed"
 
   # Here, under the lock, and not inside the pin: this is the one shared thing the pin
