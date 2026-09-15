@@ -66,7 +66,7 @@ const pendingPath = path.join(dir, 'pending.json');
 // surfaced a truncated offer as a Node stack trace, and a well-formed one missing a field reached
 // the messages below as "laws:undefined". [LAW:parse-dont-validate]
 function readPending() {
-  const unusable = (why) => die('the pending craft switch at ' + pendingPath + ' ' + why + '. Nothing was changed. Stay in the current craft, and remove ' + pendingPath + ' so the guard can record a new offer.');
+  const unusable = (why) => die('the pending craft switch at ' + pendingPath + ' ' + why + '. Nothing was changed. Stay in the current craft, and run `rm -r ' + pendingPath + '` so the guard can record a new offer.');
   let text;
   try { text = fs.readFileSync(pendingPath, 'utf8'); }
   catch (e) {

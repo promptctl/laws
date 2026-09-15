@@ -189,6 +189,11 @@ for (const [shape, stage] of [
       assert.strictEqual(out.stdout, '', 'a result was reported for an offer that could not be read');
       assert.deepStrictEqual(server.seen, [], 'a request went out on an offer that could not be read');
       assert.strictEqual(onDisk(file), before, 'the unreadable offer was changed');
+      // The advice is run, not read: it has to clear the path whether a file or a directory holds it.
+      const advice = out.stderr.match(/`([^`]+)`/);
+      assert.ok(advice, 'no command in the advice: ' + out.stderr);
+      execFileSync('sh', ['-c', advice[1]]);
+      assert.ok(!fs.existsSync(file), 'following the advice left ' + file + ' in place');
     });
   }
 }
