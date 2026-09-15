@@ -77,8 +77,11 @@ const TOMBSTONE = '[TOMBSTONE]';
 // [LAW:parse-dont-validate] the caller receives edges that are known-wellformed, never a mixed bag
 // it has to re-inspect.
 function parsePolicy(text) {
+  // A carriage return is whitespace, exactly as skill-router.sh reads it (tr '\r' ' '). It has to
+  // go BEFORE the comment strip: `.` does not match \r, so /#.*$/ leaves "# note\r" whole and it
+  // parses as a three-token malformed line. [LAW:single-enforcer]
   const rows = text.split('\n')
-    .map((l) => l.replace(/#.*$/, '').trim())
+    .map((l) => l.replace(/\r/g, ' ').replace(/#.*$/, '').trim())
     .filter(Boolean)
     .map((l) => l.split(/\s+/));
   return {

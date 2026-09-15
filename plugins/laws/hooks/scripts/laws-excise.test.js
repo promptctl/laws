@@ -98,6 +98,16 @@ t('parsePolicy refuses a line that is not exactly two tokens', () => {
   assert.deepStrictEqual(p.malformed, ['code prompt extra-note', 'code']);
 });
 
+t('parsePolicy reads a CRLF policy file as the router does', () => {
+  // The same text is fixture 14b in skill-router.test.sh; one side alone cannot catch the two
+  // parsers disagreeing about line endings. [LAW:single-enforcer]
+  // Each line breaks a different parser without the fix: a bare CRLF edge breaks the router's `read`,
+  // and a comment before the \r breaks the comment strip here.
+  const p = M.parsePolicy('code prompt\r\n# a note\r\nprose prompt # why\r\n\r\n');
+  assert.deepStrictEqual(p.edges, [['code', 'prompt'], ['prose', 'prompt']]);
+  assert.deepStrictEqual(p.malformed, []);
+});
+
 t('a malformed policy line is not enforced by the gate', () => {
   const edges = M.parsePolicy('code prompt extra-note\n').edges;
   const d = M.decide([loadLine({ medium: 'code' })], { conflictEdges: edges, incomingMedium: 'prompt' });
