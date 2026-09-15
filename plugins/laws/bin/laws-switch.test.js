@@ -112,8 +112,8 @@ function run(args, { dir, tmp, env = {} }) {
 }
 
 // Each case gets its own handoff dir AND its own TMPDIR, so the lock slots cannot collide.
-function bed() {
-  const dir = temp('laws-sw-dir-');
+function bed(dirPrefix = 'laws-sw-dir-') {
+  const dir = temp(dirPrefix);
   const tmp = temp('laws-sw-tmp-');
   pending(dir);
   return { dir, tmp };
@@ -176,7 +176,8 @@ for (const [shape, stage] of [
 ]) {
   for (const choice of ['tombstone', 'reject']) {
     t(choice + ' on an offer ' + shape + ' is refused by name, not with a stack trace', async () => {
-      const { dir, tmp } = bed();
+      // A space and a quote in the directory: the advice below is run through a shell, and must survive it.
+      const { dir, tmp } = bed("laws-sw o'dd dir-");
       const file = path.join(dir, 'pending.json');
       stage(file);
       const before = onDisk(file);
@@ -184,7 +185,7 @@ for (const [shape, stage] of [
       const out = await run([choice], { dir, tmp });
       server.close();
       assert.strictEqual(out.status, 1, out.stderr);
-      assert.match(out.stderr, /^laws-switch: the pending craft switch at \S*pending\.json /);
+      assert.match(out.stderr, /^laws-switch: the pending craft switch at .*pending\.json /);
       assert.ok(!/\n\s+at /.test(out.stderr), 'a stack trace reached the user: ' + out.stderr);
       assert.strictEqual(out.stdout, '', 'a result was reported for an offer that could not be read');
       assert.deepStrictEqual(server.seen, [], 'a request went out on an offer that could not be read');
