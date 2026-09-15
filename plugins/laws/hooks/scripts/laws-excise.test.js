@@ -69,6 +69,17 @@ t('both shipped base-dir layouts name the craft, and another plugin’s skills a
   assert.strictEqual(M.craftMediumOf(JSON.parse(loadLineAt('/Users/x/code/repo/plugins/memento/skills/code'))), null);
 });
 
+t('a long base directory still names the craft', () => {
+  // A long home directory under the versioned cache layout, with a prerelease version. Detection
+  // used to read only the first 300 characters, and a path this long fell out of it silently.
+  const baseDir = '/Users/' + 'a-very-long-account-name.'.repeat(6) + '/.claude/plugins/cache/promptctl-organization/laws/' +
+    '0.26.0-rc.1+build.' + '0123456789abcdef'.repeat(5) + '/skills/code';
+  const line = JSON.parse(loadLineAt(baseDir));
+  // The fixture has to outrun the old budget, or it passes without the fix.
+  assert.ok(line.message.content[0].text.split('\n', 1)[0].length > 300, 'the fixture path is too short to test anything');
+  assert.strictEqual(M.craftMediumOf(line), 'code');
+});
+
 // ---- policy -------------------------------------------------------------------------------
 t('parsePolicy strips comments and blanks, keeps pairs', () => {
   const p = M.parsePolicy('# header\n\ncode prompt  # inline\n\n');
