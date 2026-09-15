@@ -371,9 +371,10 @@ case "$HOOK_TYPE" in
             # its own from the transcript. Craft names are media slugs, so ',' cannot occur in one.
             # Written beside its final name and renamed into place. A rename within one directory is
             # atomic, so a writer interrupted mid-write cannot leave a partial pending.json: a reader
-            # sees the previous offer or this one, never half of one.
+            # sees the previous offer or this one, never half of one. A directory in its place is
+            # refused first: mv would move the offer into it and report success.
             pending_tmp="$LAWS_SWITCH_DIR/.pending.json.$$"
-            if printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
+            if [ ! -d "$LAWS_SWITCH_DIR/pending.json" ] && printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
                  "$(json_escape "$sid")" "$(json_escape "$transcript")" \
                  "$(json_escape "$conflicts")" "$(json_escape "$craft")" \
                  > "$pending_tmp" && mv -f "$pending_tmp" "$LAWS_SWITCH_DIR/pending.json"; then
