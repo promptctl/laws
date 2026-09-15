@@ -84,7 +84,9 @@ t('a namespace the graph reads THROUGH is present, and its absent members are re
   const { bun, absent } = surface();
   assert.doesNotThrow(() => bun.unsafe.setJITPolicy?.(1));
   assert.strictEqual(bun.unsafe.setJITPolicy, undefined, 'an absent member must stay undefined, not become a stub');
-  assert.deepStrictEqual([...new Set(absent)], ['unsafe.setJITPolicy']);
+  // A second namespace, so a name that ignores which namespace was read cannot pass.
+  assert.strictEqual(bun.stdin.text, undefined);
+  assert.deepStrictEqual([...new Set(absent)], ['unsafe.setJITPolicy', 'stdin.text']);
 });
 
 t('Bun.stdin.stream reads the stdin the surface was given, in the shape edit-hook reads it', async () => {

@@ -321,23 +321,26 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
   // because `?.` guards the last step and not the one before it. The namespace records its own absent
   // members by dotted name, exactly as the surface records top-level ones, so an empty namespace is
   // still absence and never a stub. [LAW:no-silent-failure]
-  const namespace = (name, members) => new Proxy(members, {
+  // Each namespace's name is its key here, so the dotted name it records cannot drift from the path
+  // the graph read. [LAW:one-source-of-truth]
+  const namespaces = Object.fromEntries(Object.entries({
+    // Read through from 2.1.270, which calls setJITPolicy in the message loop: undefined here threw
+    // on the first turn. node has no JIT tier-up knob, so the member stays absent.
+    unsafe: {},
+    // `claude edit-hook` reads its edit as `new Response(Bun.stdin.stream()).text()`.
+    stdin: { stream: () => Readable.toWeb(stdin) },
+  }).map(([name, members]) => [name, new Proxy(members, {
     get(target, key) {
       if (key in target) return target[key];
       onAbsentApi(name + '.' + String(key));
       return undefined;
     },
-  });
+  })]));
   const surface = {
     version: '1.3.14', revision: '0', main: entryName, env,
     get argv() { return process.argv; },
     isStandaloneExecutable: true, enableANSIColors: true, isMainThread: true,
-
-    // Read through from 2.1.270, which calls setJITPolicy in the message loop: undefined here threw
-    // on the first turn. node has no JIT tier-up knob, so the member stays absent.
-    unsafe: namespace('unsafe', {}),
-    // `claude edit-hook` reads its edit as `new Response(Bun.stdin.stream()).text()`.
-    stdin: namespace('stdin', { stream: () => Readable.toWeb(stdin) }),
+    ...namespaces,
 
     file: (p) => ({
       async text() { return String(embedded.readAny(p, 'utf8')); },
