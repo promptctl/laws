@@ -112,8 +112,8 @@ function run(args, { dir, tmp, env = {} }) {
 }
 
 // Each case gets its own handoff dir AND its own TMPDIR, so the lock slots cannot collide.
-function bed() {
-  const dir = temp('laws-sw-dir-');
+function bed(dirPrefix = 'laws-sw-dir-') {
+  const dir = temp(dirPrefix);
   const tmp = temp('laws-sw-tmp-');
   pending(dir);
   return { dir, tmp };
@@ -156,6 +156,48 @@ t('a summary reaches the session verbatim', async () => {
   server.close();
   assert.strictEqual(server.seen[0].summary, 'I did the thing');
 });
+
+// ---- the pending offer --------------------------------------------------------------------------
+
+// The guard writes the offer atomically, but it is still input this process did not write: a file
+// left by an older guard, edited by hand, or not a file at all reaches the same read. Every bad
+// shape, under every choice, reports through the CLI's own message, sends nothing, and leaves the
+// offer as it found it.
+const write = (contents) => (file) => fs.writeFileSync(file, contents);
+const onDisk = (file) => (fs.statSync(file).isDirectory() ? '<directory>' : fs.readFileSync(file, 'utf8'));
+for (const [shape, stage] of [
+  ['truncated mid-write', write('{"sessionId":"' + SID.slice(0, 8))],
+  ['valid JSON missing a field', write(JSON.stringify({ sessionId: SID, transcript: '/tmp/t.jsonl', current: 'code' }))],
+  // The session refuses an offer with no transcript as "no switch pending", and the CLI would then
+  // tell the user another call may have enacted it. The CLI must refuse it first, by name.
+  ['missing the transcript the session needs', write(JSON.stringify({ sessionId: SID, current: 'code', incomingMedium: 'prompt' }))],
+  // A read that fails for any reason but absence: EISDIR here, and EACCES would take the same branch.
+  ['that cannot be read', (file) => { fs.rmSync(file); fs.mkdirSync(file); }],
+]) {
+  for (const choice of ['tombstone', 'reject']) {
+    t(choice + ' on an offer ' + shape + ' is refused by name, not with a stack trace', async () => {
+      // A space and a quote in the directory: the advice below is run through a shell, and must survive it.
+      const { dir, tmp } = bed("laws-sw o'dd dir-");
+      const file = path.join(dir, 'pending.json');
+      stage(file);
+      const before = onDisk(file);
+      const server = serve(dir, { ok: true, rewound: false, tombstoned: 1, changed: true, switchedFrom: ['code'], switchedTo: 'prompt' });
+      const out = await run([choice], { dir, tmp });
+      server.close();
+      assert.strictEqual(out.status, 1, out.stderr);
+      assert.match(out.stderr, /^laws-switch: the pending craft switch at .*pending\.json /);
+      assert.ok(!/\n\s+at /.test(out.stderr), 'a stack trace reached the user: ' + out.stderr);
+      assert.strictEqual(out.stdout, '', 'a result was reported for an offer that could not be read');
+      assert.deepStrictEqual(server.seen, [], 'a request went out on an offer that could not be read');
+      assert.strictEqual(onDisk(file), before, 'the unreadable offer was changed');
+      // The advice is run, not read: it has to clear the path whether a file or a directory holds it.
+      const advice = out.stderr.match(/`([^`]+)`/);
+      assert.ok(advice, 'no command in the advice: ' + out.stderr);
+      execFileSync('sh', ['-c', advice[1]]);
+      assert.ok(!fs.existsSync(file), 'following the advice left ' + file + ' in place');
+    });
+  }
+}
 
 t('EVERY retired craft is released, not just the first', async () => {
   // A switch can retire more than one engaged craft; releasing one and reporting success would leave

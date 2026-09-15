@@ -199,12 +199,40 @@ if [ -f "$swdir/pending.json" ]; then
     *"$sw1"*) ok "  ... and the transcript the switch must be computed against";;
     *) bad "  ... pending.json is missing the transcript path (got: $pend)";;
   esac
+  if [ "$(ls -A "$swdir")" = "pending.json" ]; then
+    ok "  ... and leaves nothing of the write beside it"
+  else
+    bad "  ... but left something of the write beside it (got: $(ls -A "$swdir"))"
+  fi
 else
   bad "  ... but wrote no pending.json"
   bad "  ... (shape check skipped)"
   bad "  ... (transcript check skipped)"
+  bad "  ... (leftover check skipped)"
 fi
 rm -rf "$swdir"
+
+# 9a. A directory where pending.json belongs cannot hold an offer. mv would move the write into it
+#     and succeed, so the guard must refuse before writing and withhold the offer loudly.
+swdir=$(mktemp -d)
+mkdir "$swdir/pending.json"
+swerr=$(mktemp)
+out=$(printf '%s' "$(switch_payload SW1 laws:prompt "$sw1")" | LAWS_SWITCH_DIR="$swdir" LAWS_SWITCH_SESSION=SW1 "$ROUTER" guard 2>"$swerr")
+assert_deny "a directory in pending.json's place still denies the load" "$out" "laws:code" "laws:prompt"
+case "$out" in
+  *"laws-switch"*) bad "  ... but offers a switch it never recorded (got: $out)";;
+  *) ok "  ... and offers no switch";;
+esac
+case "$(cat "$swerr")" in
+  *"could not record the pending craft switch"*) ok "  ... and says the offer could not be recorded";;
+  *) bad "  ... without saying the offer could not be recorded (got: $(cat "$swerr"))";;
+esac
+if [ -z "$(ls -A "$swdir/pending.json")" ] && [ "$(ls -A "$swdir")" = "pending.json" ]; then
+  ok "  ... and writes nothing into it or beside it"
+else
+  bad "  ... but left a write behind (inside: $(ls -A "$swdir/pending.json"); beside: $(ls -A "$swdir"))"
+fi
+rm -rf "$swdir" "$swerr"
 
 # 9b. Without the launcher there is nothing that could enact a switch, so it must not be advertised.
 run guard "$(skill_payload SW2 laws:code)" >/dev/null
