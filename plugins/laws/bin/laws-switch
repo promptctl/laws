@@ -21,7 +21,7 @@ const M = require(path.join(__dirname, '..', 'hooks', 'scripts', 'laws-excise.js
 const { requestSwitch, PROVABLY_NOT_DELIVERED } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-channel.js'));
 // The refusal vocabulary has ONE home and this reads it rather than spelling a reason out; a copy
 // of the string here would drift from the arm it names. [LAW:one-source-of-truth]
-const { REFUSED } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-request.js'));
+const { REFUSED, OFFERED } = require(path.join(__dirname, '..', 'hooks', 'injector', 'switch-request.js'));
 const { spawnSync } = require('child_process');
 // The router owns the engaged-craft lock's layout; this is the only sanctioned way to release one.
 const ROUTER = path.join(__dirname, '..', 'hooks', 'scripts', 'skill-router.sh');
@@ -66,7 +66,7 @@ const pendingPath = path.join(dir, 'pending.json');
 // surfaced a truncated offer as a Node stack trace, and a well-formed one missing a field reached
 // the messages below as "laws:undefined". [LAW:parse-dont-validate]
 function readPending() {
-  const unusable = (why) => die('the pending craft switch at ' + pendingPath + ' ' + why + '. Nothing was changed. Stay in the current craft; the next load the guard denies records a new offer.');
+  const unusable = (why) => die('the pending craft switch at ' + pendingPath + ' ' + why + '. Nothing was changed. Stay in the current craft, and remove ' + pendingPath + ' so the guard can record a new offer.');
   let text;
   try { text = fs.readFileSync(pendingPath, 'utf8'); }
   catch (e) {
@@ -76,7 +76,10 @@ function readPending() {
   let offer;
   try { offer = JSON.parse(text); }
   catch (e) { unusable('is not valid JSON (' + e.message + ')'); }
-  const missing = ['sessionId', 'current', 'incomingMedium'].filter((k) => !(offer && typeof offer[k] === 'string' && offer[k]));
+  // The fields read here, plus every field the session requires: an offer the session would refuse as
+  // "no switch pending" is refused here instead, where its real fault can be named.
+  const missing = [...new Set(['sessionId', 'current', 'incomingMedium', ...OFFERED])]
+    .filter((k) => !(offer && typeof offer[k] === 'string' && offer[k]));
   if (missing.length) unusable('is missing ' + missing.join(', '));
   return offer;
 }

@@ -168,6 +168,9 @@ const onDisk = (file) => (fs.statSync(file).isDirectory() ? '<directory>' : fs.r
 for (const [shape, stage] of [
   ['truncated mid-write', write('{"sessionId":"' + SID.slice(0, 8))],
   ['valid JSON missing a field', write(JSON.stringify({ sessionId: SID, transcript: '/tmp/t.jsonl', current: 'code' }))],
+  // The session refuses an offer with no transcript as "no switch pending", and the CLI would then
+  // tell the user another call may have enacted it. The CLI must refuse it first, by name.
+  ['missing the transcript the session needs', write(JSON.stringify({ sessionId: SID, current: 'code', incomingMedium: 'prompt' }))],
   // A read that fails for any reason but absence: EISDIR here, and EACCES would take the same branch.
   ['that cannot be read', (file) => { fs.rmSync(file); fs.mkdirSync(file); }],
 ]) {
