@@ -162,6 +162,9 @@ so an empty namespace still shows up as absence. `Bun.stdin` came back with only
 `claude edit-hook` reads. A sweep of the nested `Bun.<namespace>.<member>` reads in the 2.1.270
 bundle found only `YAML` and `TOML` still read through an absent namespace without a guard. The
 other absent namespaces (`ant`, `Image`, `WebView`) are read inside `try` or behind an `in` check.
+An empty namespace would not help `YAML` or `TOML`. `Bun.YAML.parse(text)` has no `?.` on the call,
+so it would throw "not a function" instead of "reading 'parse'". The fix is a real parser behind
+each member, tracked in promptctl-injector-jeq.
 
 ## The boot self-check: observations in the host, the verdict in the launcher
 
