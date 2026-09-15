@@ -303,7 +303,9 @@ function decide(rawLines, opts = {}) {
   const ordered = conflicts.slice().sort((a, b) => a.i - b.i);
   const oldest = ordered[0];
   const cur = parsed[oldest.i];                            // its load line — the rewind anchor
-  const current = ordered.map((h) => h.medium);
+  // The crafts being retired, each named once. `ordered` is per LINE, and one craft loaded twice is two
+  // lines: both are tombstoned (conflictIndices, conflicts), but the user is told the craft once.
+  const current = [...new Set(ordered.map((h) => h.medium))];
 
   const tombstoneTokens = estimateTokens(rawLines.slice(oldest.i).reduce((n, l) => n + l.length, 0));
   const deep = tombstoneTokens >= largeAt;

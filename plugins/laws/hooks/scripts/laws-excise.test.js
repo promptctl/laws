@@ -252,8 +252,9 @@ t('the two namings of the conflicting set can never disagree', () => {
   assert.strictEqual(d.conflicts.length, d.conflictIndices.length);
   d.conflictIndices.forEach((lineIndex, i) => {
     assert.strictEqual(JSON.parse(lines[lineIndex]).uuid, d.conflicts[i].uuid);
-    assert.strictEqual(d.conflicts[i].medium, d.current[i]);
   });
+  // `current` names crafts, not lines: exactly the crafts the lines hold, each once.
+  assert.deepStrictEqual(d.current, [...new Set(d.conflicts.map((c) => c.medium))]);
 });
 
 t('the rewind anchor is the FIRST conflict named by uuid', () => {
@@ -278,6 +279,26 @@ t('tombstone retires EVERY conflicting craft, not just one', () => {
   const stillLoaded = out.map((l) => { try { return M.craftMediumOf(JSON.parse(l)); } catch (_e) { return null; } })
                          .filter(Boolean);
   assert.deepStrictEqual(stillLoaded, [], 'a conflicting craft survived the switch: ' + stillLoaded);
+});
+
+t('one craft loaded twice is named once, and BOTH of its loads are retired', () => {
+  // Two different questions with two different answers: which crafts the user is told about (one),
+  // and which lines the switch must excise (both). Collapsing either into the other is the bug.
+  const lines = [
+    said('c0', null, 'before any craft'),
+    loadLine({ medium: 'code', uuid: 'A', parentUuid: 'c0', ts: '2026-08-09T00:00:00.000Z' }),
+    said('c1', 'A', 'work under code'),
+    loadLine({ medium: 'code', uuid: 'B', parentUuid: 'c1', ts: '2026-08-09T00:01:00.000Z' }),
+    said('c2', 'B', 'more work under code'),
+  ];
+  const d = M.decide(lines, { conflictEdges: EDGES, incomingMedium: 'prompt' });
+  assert.deepStrictEqual(d.current, ['code']);
+  assert.deepStrictEqual(d.conflictIndices, [1, 3]);
+  assert.deepStrictEqual(d.conflicts.map((c) => c.uuid), ['A', 'B']);
+  const out = M.applySwitch(lines, d, 'tombstone', {}).lines;
+  const stillLoaded = out.map((l) => { try { return M.craftMediumOf(JSON.parse(l)); } catch (_e) { return null; } })
+                         .filter(Boolean);
+  assert.deepStrictEqual(stillLoaded, [], 'a load of the retired craft survived the switch: ' + stillLoaded);
 });
 
 t('the rewind anchor is the OLDEST conflict, so no older one survives above it', () => {
