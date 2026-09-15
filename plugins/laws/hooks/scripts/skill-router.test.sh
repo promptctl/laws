@@ -515,6 +515,26 @@ case "$(cat "$mixpol/err.txt")" in
 esac
 rm -rf "$mixpol"
 
+# 14b. A CRLF policy file is enforced here exactly as laws-excise.js enforces it. `read` does not
+#      split on \r, so the edge used to parse as to="prompt\r": two tokens, no warning, never a
+#      match - while the gate enforced the same line. The same text is parsed in
+#      laws-excise.test.js; one fixture alone cannot catch the two disagreeing. [LAW:single-enforcer]
+crlfpol=$(mktemp -d)
+cp "$ROUTER" "$crlfpol/skill-router.sh"
+# The code->prompt line carries no comment on purpose: a comment strip would take the \r with it
+# and hide the bug this case exists to catch.
+printf 'code prompt\r\n# a note\r\nprose prompt # why\r\n\r\n' > "$crlfpol/incompatible-crafts.txt"
+cr_code='{"session_id":"CR1","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:code"}}'
+cr_prompt='{"session_id":"CR1","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}'
+printf '%s' "$cr_code" | "$crlfpol/skill-router.sh" guard >/dev/null 2>&1
+out=$(printf '%s' "$cr_prompt" | "$crlfpol/skill-router.sh" guard 2>"$crlfpol/err.txt")
+assert_deny "a CRLF policy line is enforced as an edge" "$out" "laws:code" "laws:prompt"
+case "$(cat "$crlfpol/err.txt")" in
+  *"malformed"*|*"no craft pairs readable"*) bad "a CRLF policy file was reported as broken (stderr: $(cat "$crlfpol/err.txt"))";;
+  *) ok "a CRLF policy file parses without a warning";;
+esac
+rm -rf "$crlfpol"
+
 # 15. The routing text's conflict clause is RENDERED FROM the policy file, not written out in
 #     prose beside it. The injected text is what an agent actually reads at the moment it picks
 #     a craft, so it has to name the real edges - and naming them by hand made it a second copy

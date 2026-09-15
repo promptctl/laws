@@ -61,7 +61,10 @@ EOT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POLICY_FILE="$SCRIPT_DIR/incompatible-crafts.txt"
 INCOMPATIBLE=""
-[ -r "$POLICY_FILE" ] && INCOMPATIBLE="$(sed -E 's/#.*$//' "$POLICY_FILE" | grep -E '[^[:space:]]')"
+# A carriage return is whitespace, as it is to parsePolicy's trim and \s+ split. `read` does not
+# split on it, so a CRLF line "code prompt" would otherwise parse with to="prompt\r": two tokens, no
+# warning, and an edge that never matches while the JS gate enforces it. [LAW:single-enforcer]
+[ -r "$POLICY_FILE" ] && INCOMPATIBLE="$(tr '\r' ' ' < "$POLICY_FILE" | sed -E 's/#.*$//' | grep -E '[^[:space:]]')"
 # THE policy parser for this script - run once, at launch, so every consumer downstream reads
 # the same normalized edge list instead of re-reading the raw file with a parser of its own.
 # Emits one "engaged refused" line per WELL-FORMED edge and drops the rest loudly.
