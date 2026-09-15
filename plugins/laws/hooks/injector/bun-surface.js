@@ -316,11 +316,31 @@ function serveOver(http, options = {}) {
 }
 
 // Build the surface. `onAbsentApi` is called for every name the graph asks for that is not here.
-function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, env, platform, entryName, onAbsentApi }) {
+function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, env, platform, entryName, stdin, onAbsentApi }) {
+  // A member the graph reads THROUGH — `Bun.unsafe.setJITPolicy?.(1)` — needs its namespace present,
+  // because `?.` guards the last step and not the one before it. The namespace records its own absent
+  // members by dotted name, exactly as the surface records top-level ones, so an empty namespace is
+  // still absence and never a stub. [LAW:no-silent-failure]
+  // Each namespace's name is its key here, so the dotted name it records cannot drift from the path
+  // the graph read. [LAW:one-source-of-truth]
+  const namespaces = Object.fromEntries(Object.entries({
+    // Read through from 2.1.270, which calls setJITPolicy in the message loop: undefined here threw
+    // on the first turn. node has no JIT tier-up knob, so the member stays absent.
+    unsafe: {},
+    // `claude edit-hook` reads its edit as `new Response(Bun.stdin.stream()).text()`.
+    stdin: { stream: () => Readable.toWeb(stdin) },
+  }).map(([name, members]) => [name, new Proxy(members, {
+    get(target, key) {
+      if (key in target) return target[key];
+      onAbsentApi(name + '.' + String(key));
+      return undefined;
+    },
+  })]));
   const surface = {
     version: '1.3.14', revision: '0', main: entryName, env,
     get argv() { return process.argv; },
     isStandaloneExecutable: true, enableANSIColors: true, isMainThread: true,
+    ...namespaces,
 
     file: (p) => ({
       async text() { return String(embedded.readAny(p, 'utf8')); },

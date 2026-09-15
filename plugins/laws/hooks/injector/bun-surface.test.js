@@ -51,6 +51,7 @@ function surface(overrides = {}) {
     // recording what node was actually asked for.
     childProcess: { spawn: (...a) => ({ spawned: a, on: () => {} }), spawnSync: (...a) => ({ spawnedSync: a }) },
     env: { PATH: '/usr/bin:/bin' }, platform: 'darwin', entryName: '/$bunfs/root/cli',
+    stdin: require('stream').Readable.from([Buffer.from('{"edit":1}')]),
     onAbsentApi: (n) => absent.push(n), ...overrides,
   });
   return { bun, absent };
@@ -69,13 +70,29 @@ t('a member the surface does not have is RECORDED, and is undefined — not a tr
 });
 
 t('the members the graph never uses are absent rather than wrong', () => {
-  // Surveyed against the shipped graph: nothing reads Bun.stdin/stdout/stderr or calls Bun.color.
+  // Surveyed against the 2.1.270 graph: nothing reads Bun.stdout/stderr or calls Bun.color.
   // Keeping a wrong-shaped member for them would answer plausibly; absence is recorded.
   const { bun, absent } = surface();
-  for (const name of ['stdin', 'stdout', 'stderr', 'color', 'spawnSync', 'generateHeapSnapshot']) {
+  for (const name of ['stdout', 'stderr', 'color', 'spawnSync', 'generateHeapSnapshot']) {
     assert.strictEqual(bun[name], undefined, name);
   }
-  assert.deepStrictEqual([...new Set(absent)], ['stdin', 'stdout', 'stderr', 'color', 'spawnSync', 'generateHeapSnapshot']);
+  assert.deepStrictEqual([...new Set(absent)], ['stdout', 'stderr', 'color', 'spawnSync', 'generateHeapSnapshot']);
+});
+
+t('a namespace the graph reads THROUGH is present, and its absent members are recorded by dotted name', () => {
+  // The exact 2.1.270 call. With Bun.unsafe undefined this threw on the first turn of a hosted session.
+  const { bun, absent } = surface();
+  assert.doesNotThrow(() => bun.unsafe.setJITPolicy?.(1));
+  assert.strictEqual(bun.unsafe.setJITPolicy, undefined, 'an absent member must stay undefined, not become a stub');
+  // A second namespace, so a name that ignores which namespace was read cannot pass.
+  assert.strictEqual(bun.stdin.text, undefined);
+  assert.deepStrictEqual([...new Set(absent)], ['unsafe.setJITPolicy', 'stdin.text']);
+});
+
+t('Bun.stdin.stream reads the stdin the surface was given, in the shape edit-hook reads it', async () => {
+  const { bun, absent } = surface();
+  assert.strictEqual(await new Response(bun.stdin.stream()).text(), '{"edit":1}');
+  assert.deepStrictEqual(absent, []);
 });
 
 t('a member the surface does have is never recorded as absent', () => {
