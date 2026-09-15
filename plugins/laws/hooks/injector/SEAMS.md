@@ -151,8 +151,17 @@ test against a synthetic graph, which the real graph could never have shown. The
 the doctrine this shim runs on, stated plainly: every member of the `Bun` surface is either a real
 implementation or absent. A present-but-wrong stub keeps the process alive while corrupting what it
 touched and is invisible; an absent member is recorded and reaches the launcher by name. Members the
-graph never uses — `Bun.stdin`, `Bun.stdout`, `Bun.stderr`, `Bun.color` — were deleted rather than
-kept as plausible-looking placeholders.
+graph never uses — `Bun.stdout`, `Bun.stderr`, `Bun.color` — were deleted rather than kept as
+plausible-looking placeholders.
+
+The same rule applies one level down. Claude Code 2.1.270 calls `Bun.unsafe.setJITPolicy?.(1)` when
+the message loop starts and on a 10s timer. The `?.` guards a missing `setJITPolicy`, not a missing
+`Bun.unsafe`, so a hosted session died on its first turn. The surface now has `unsafe` and `stdin`
+as namespaces. A member missing from a namespace is recorded by dotted name (`unsafe.setJITPolicy`),
+so an empty namespace still shows up as absence. `Bun.stdin` came back with only `stream()`, which
+`claude edit-hook` reads. A sweep of the nested `Bun.<namespace>.<member>` reads in the 2.1.270
+bundle found only `YAML` and `TOML` still read through an absent namespace without a guard. The
+other absent namespaces (`ant`, `Image`, `WebView`) are read inside `try` or behind an `in` check.
 
 ## The boot self-check: observations in the host, the verdict in the launcher
 
@@ -193,9 +202,9 @@ Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
   stub plans and never the real bundle.
 
 Tests: `bun-graph.test.js` (21 — synthetic containers for every named absence, plus a live read of
-the installed binary), `embedded-fs.test.js` (22), `bun-surface.test.js` (30),
+the installed binary), `embedded-fs.test.js` (22), `bun-surface.test.js` (32),
 `bun-runtime.test.mjs` (20), `boot-channel.test.js` (7), `boot-guard.test.js` (5) and
-`launch.test.js` (32, stub plans) — 137 in all. 111 deliberate source mutations across the seven
+`launch.test.js` (32, stub plans) — 139 in all. 111 deliberate source mutations across the seven
 modules were each killed by a test.
 
 Run the mutation sweep against a COPY of this directory, never the working tree. A sweep that edits
