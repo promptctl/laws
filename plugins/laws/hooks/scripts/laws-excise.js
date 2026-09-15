@@ -129,7 +129,9 @@ function craftMediumOf(o) {
   const blk = Array.isArray(c) ? c[0] : null;
   if (!blk || blk.type !== 'text' || typeof blk.text !== 'string') return null;
   if (blk.text.startsWith(TOMBSTONE)) return null;        // already tombstoned → not a live load
-  const firstLine = blk.text.slice(0, 300);
+  // The base-directory line, whole: it is what BASEDIR_RE matches, and a character budget would drop
+  // a long home or cache path out of detection with no symptom at all.
+  const firstLine = blk.text.split('\n', 1)[0];
   if (!firstLine.startsWith(PREFIX)) return null;
   const m = firstLine.match(BASEDIR_RE);
   return m ? m[1] : null;
