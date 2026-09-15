@@ -86,7 +86,7 @@ const embedded = createEmbeddedFs(graph.modules, {
 // where this process never reaches an end to report from.
 globalThis.Bun = createBunSurface({
   embedded, realFs: fs, childProcess, crypto, zlib, http,
-  env: process.env, platform: process.platform, entryName: graph.entryName,
+  env: process.env, platform: process.platform, entryName: graph.entryName, stdin: process.stdin,
   onAbsentApi: (name) => channel.absentApi(name),
 });
 
