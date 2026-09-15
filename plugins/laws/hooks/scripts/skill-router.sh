@@ -62,17 +62,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POLICY_FILE="$SCRIPT_DIR/incompatible-crafts.txt"
 INCOMPATIBLE=""
 [ -r "$POLICY_FILE" ] && INCOMPATIBLE="$(sed -E 's/#.*$//' "$POLICY_FILE" | grep -E '[^[:space:]]')"
-# One condition for both ways the policy can fail to arrive, because they have identical
-# consequences: no edges means conflicts_with answers false for everything and the guard
-# is off. Unreadable and readable-but-pairless are the same degraded state, so they get the
-# same warning rather than one being announced and the other passing as "everything coexists"
-# - which is what an unchecked `grep` exit status used to do to a comment-only policy file.
-# A lost policy must never BLOCK skill loading, but it must never be silent either.
-# [LAW:no-silent-failure] [LAW:dataflow-not-control-flow] the degrade is one path, not two.
-if [ -z "$INCOMPATIBLE" ]; then
-  echo "laws skill-router guard: no craft pairs readable from $POLICY_FILE; craft compatibility enforcement disabled this session" >&2
-fi
-
 # THE policy parser for this script - run once, at launch, so every consumer downstream reads
 # the same normalized edge list instead of re-reading the raw file with a parser of its own.
 # Emits one "engaged refused" line per WELL-FORMED edge and drops the rest loudly.
@@ -98,6 +87,14 @@ $INCOMPATIBLE
 EOF
 }
 EDGES="$(parse_edges)"
+# Tested on the PARSED edges, because no edges is what turns the guard off: conflicts_with then
+# answers false for everything. A missing file, a comment-only file, and a file whose every line is
+# malformed all arrive here, so all three get this warning instead of passing as "everything
+# coexists". A lost policy must never BLOCK skill loading, but it must never be silent either.
+# [LAW:no-silent-failure] [LAW:dataflow-not-control-flow] the degrade is one path, not three.
+if [ -z "$EDGES" ]; then
+  echo "laws skill-router guard: no craft pairs readable from $POLICY_FILE; craft compatibility enforcement disabled this session" >&2
+fi
 
 # The conflict clause of the routing text, RENDERED FROM THE POLICY rather than written out.
 # The routing text is injected at the moment an agent picks a craft, and an agent will not open

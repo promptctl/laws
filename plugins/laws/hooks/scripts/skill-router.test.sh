@@ -491,6 +491,12 @@ case "$err" in
     ok "a malformed policy line is announced on stderr, not silently dropped";;
   *) bad "a malformed policy line was dropped silently (stderr: $err)";;
 esac
+# Every line malformed leaves no edge, so the guard is off - and says so, as a missing or
+# comment-only file does. The per-line note alone is not that signal.
+case "$err" in
+  *"no craft pairs readable"*) ok "a policy file with no well-formed line warns that enforcement is disabled";;
+  *) bad "a policy file with no well-formed line disabled enforcement without the warning (stderr: $err)";;
+esac
 rm -rf "$badpol"
 
 # 14a. Rejecting the malformed line must not take the file's GOOD lines with it: a typo costs
@@ -501,8 +507,12 @@ printf 'code prompt extra-note\ncode prompt\n' > "$mixpol/incompatible-crafts.tx
 mx_code='{"session_id":"MX1","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:code"}}'
 mx_prompt='{"session_id":"MX1","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}'
 printf '%s' "$mx_code" | "$mixpol/skill-router.sh" guard >/dev/null 2>&1
-out=$(printf '%s' "$mx_prompt" | "$mixpol/skill-router.sh" guard 2>/dev/null)
+out=$(printf '%s' "$mx_prompt" | "$mixpol/skill-router.sh" guard 2>"$mixpol/err.txt")
 assert_deny "a well-formed edge beside a malformed line is still enforced" "$out" "laws:code" "laws:prompt"
+case "$(cat "$mixpol/err.txt")" in
+  *"no craft pairs readable"*) bad "a policy with a surviving edge claimed enforcement is disabled";;
+  *) ok "a policy with a surviving edge does not claim enforcement is disabled";;
+esac
 rm -rf "$mixpol"
 
 # 15. The routing text's conflict clause is RENDERED FROM the policy file, not written out in
