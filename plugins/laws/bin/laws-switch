@@ -60,12 +60,31 @@ const dir = process.env.LAWS_SWITCH_DIR;
 if (!dir) die('LAWS_SWITCH_DIR is unset — this session has no host to enact a switch, so nothing can be applied. Pick "reject" and stay in the current craft. To get a session that CAN switch, start it with `claude-laws` instead of `claude`; if that is not on your PATH, run `install-launcher` once — it installs the launcher and prints the export line to add if the install directory is not already on PATH.');
 
 const pendingPath = path.join(dir, 'pending.json');
-if (!fs.existsSync(pendingPath)) die('no pending craft switch — the guard has not denied an incompatible load in this session.');
-const pending = JSON.parse(fs.readFileSync(pendingPath, 'utf8'));
+
+// The offer is parsed here, once, into a value carrying every field this command reads, and each way
+// it can fail to be one dies through die() like every other failure in this file. A bare JSON.parse
+// surfaced a truncated offer as a Node stack trace, and a well-formed one missing a field reached
+// the messages below as "laws:undefined". [LAW:parse-dont-validate]
+function readPending() {
+  const unusable = (why) => die('the pending craft switch at ' + pendingPath + ' ' + why + '. Nothing was changed. Stay in the current craft; the next load the guard denies records a new offer.');
+  let text;
+  try { text = fs.readFileSync(pendingPath, 'utf8'); }
+  catch (e) {
+    if (e.code === 'ENOENT') die('no pending craft switch — the guard has not denied an incompatible load in this session.');
+    unusable('could not be read (' + e.message + ')');
+  }
+  let offer;
+  try { offer = JSON.parse(text); }
+  catch (e) { unusable('is not valid JSON (' + e.message + ')'); }
+  const missing = ['sessionId', 'current', 'incomingMedium'].filter((k) => !(offer && typeof offer[k] === 'string' && offer[k]));
+  if (missing.length) unusable('is missing ' + missing.join(', '));
+  return offer;
+}
+const pending = readPending();
 
 // `current` is the whole conflicting SET, comma-joined by the guard - a switch can retire more
 // than one engaged craft, so this renders a list rather than assuming a single name.
-const currentPretty = String(pending.current || '').split(',').filter(Boolean).map((c) => 'laws:' + c).join(', ');
+const currentPretty = pending.current.split(',').filter(Boolean).map((c) => 'laws:' + c).join(', ');
 
 // Reject changes nothing and needs no session: the load was already denied, so the session is
 // already in the state this option describes.

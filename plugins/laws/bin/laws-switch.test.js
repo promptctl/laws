@@ -157,6 +157,32 @@ t('a summary reaches the session verbatim', async () => {
   assert.strictEqual(server.seen[0].summary, 'I did the thing');
 });
 
+// ---- the pending offer --------------------------------------------------------------------------
+
+// The guard writes the offer atomically, but it is still input this process did not write: a file
+// left by an older guard, or edited by hand, reaches the same read. Every bad shape, under every
+// choice, reports through the CLI's own message, sends nothing, and leaves the offer as it found it.
+for (const [shape, contents] of [
+  ['truncated mid-write', '{"sessionId":"' + SID.slice(0, 8)],
+  ['valid JSON missing a field', JSON.stringify({ sessionId: SID, transcript: '/tmp/t.jsonl', current: 'code' })],
+]) {
+  for (const choice of ['tombstone', 'reject']) {
+    t(choice + ' on an offer ' + shape + ' is refused by name, not with a stack trace', async () => {
+      const { dir, tmp } = bed();
+      fs.writeFileSync(path.join(dir, 'pending.json'), contents);
+      const server = serve(dir, { ok: true, rewound: false, tombstoned: 1, changed: true, switchedFrom: ['code'], switchedTo: 'prompt' });
+      const out = await run([choice], { dir, tmp });
+      server.close();
+      assert.strictEqual(out.status, 1, out.stderr);
+      assert.match(out.stderr, /^laws-switch: the pending craft switch at \S*pending\.json /);
+      assert.ok(!/\n\s+at /.test(out.stderr), 'a stack trace reached the user: ' + out.stderr);
+      assert.strictEqual(out.stdout, '', 'a result was reported for an offer that could not be read');
+      assert.deepStrictEqual(server.seen, [], 'a request went out on an offer that could not be read');
+      assert.strictEqual(fs.readFileSync(path.join(dir, 'pending.json'), 'utf8'), contents, 'the unreadable offer was changed');
+    });
+  }
+}
+
 t('EVERY retired craft is released, not just the first', async () => {
   // A switch can retire more than one engaged craft; releasing one and reporting success would leave
   // the session unable to load the craft it switched to.

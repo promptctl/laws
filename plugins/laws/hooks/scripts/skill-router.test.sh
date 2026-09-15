@@ -199,10 +199,16 @@ if [ -f "$swdir/pending.json" ]; then
     *"$sw1"*) ok "  ... and the transcript the switch must be computed against";;
     *) bad "  ... pending.json is missing the transcript path (got: $pend)";;
   esac
+  if [ "$(ls -A "$swdir")" = "pending.json" ]; then
+    ok "  ... and leaves nothing of the write beside it"
+  else
+    bad "  ... but left something of the write beside it (got: $(ls -A "$swdir"))"
+  fi
 else
   bad "  ... but wrote no pending.json"
   bad "  ... (shape check skipped)"
   bad "  ... (transcript check skipped)"
+  bad "  ... (leftover check skipped)"
 fi
 rm -rf "$swdir"
 

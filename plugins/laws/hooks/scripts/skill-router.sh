@@ -369,10 +369,14 @@ case "$HOOK_TYPE" in
             # `current` carries the whole conflicting set, comma-joined. `bin/laws-switch` is its
             # only reader - it splits it back for the reject message, while the session recomputes
             # its own from the transcript. Craft names are media slugs, so ',' cannot occur in one.
+            # Written beside its final name and renamed into place. A rename within one directory is
+            # atomic, so a writer interrupted mid-write cannot leave a partial pending.json: a reader
+            # sees the previous offer or this one, never half of one.
+            pending_tmp="$LAWS_SWITCH_DIR/.pending.json.$$"
             if printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
                  "$(json_escape "$sid")" "$(json_escape "$transcript")" \
                  "$(json_escape "$conflicts")" "$(json_escape "$craft")" \
-                 > "$LAWS_SWITCH_DIR/pending.json"; then
+                 > "$pending_tmp" && mv -f "$pending_tmp" "$LAWS_SWITCH_DIR/pending.json"; then
               switch_offer=" OR SWITCH: this session can move to laws:$craft by retiring $conflicts_pretty, keeping your work on disk either way. Run 'laws-switch <option>': reject (stay in $conflicts_pretty, change nothing); tombstone (keep the whole conversation, retire the $conflicts_pretty guidance in place - cheapest to reason about, most expensive when the session is deep); rewind_summarize --summary '<what you did since $conflicts_pretty loaded>' (rewind to that point and carry your work forward as a summary you write now, because after the rewind only you know it - summarize YOUR WORK ONLY and carry none of $conflicts_pretty's guidance into it, or you re-inject the guidance this switch exists to retire); rewind_discard (rewind to just before $conflicts_pretty loaded and drop the conversation since). Files you have written are never reverted by any option. Ask the user which they want unless they have already said."
             else
               # The offer is only made when the decision it depends on was actually recorded.
@@ -380,6 +384,8 @@ case "$HOOK_TYPE" in
               # "no pending craft switch" - which contradicts the deny it is holding and points it
               # at the wrong diagnosis. Withhold the offer and say why, matching the empty-session_id
               # and unwritable-lock branches above. [LAW:no-silent-failure]
+              # A failed write or rename leaves the temp file behind; nothing reads it, so it goes.
+              rm -f "$pending_tmp"
               echo "laws skill-router guard: could not record the pending craft switch in $LAWS_SWITCH_DIR; denying without a switch offer" >&2
             fi
           else
