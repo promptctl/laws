@@ -13,10 +13,10 @@
 #                    ticket plus its docs is normal, complementary work - so what this
 #                    refuses is not a second craft but a conflicting ORDERING: an engaged
 #                    craft whose standard corrupts the one now being loaded. The edges live
-#                    in incompatible-crafts.txt and nothing here hard-codes them; today that
-#                    file holds laws:code THEN laws:prompt. Every edge runs ONE WAY - loading
-#                    laws:code after laws:prompt is allowed - so the guard must be read as
-#                    a directed rule, never a mutual incompatibility. This turns "what is
+#                    in incompatible-crafts.txt and nothing here hard-codes them. Every edge
+#                    runs ONE WAY - the reverse ordering is allowed unless it has its own
+#                    edge - so the guard must be read as a directed rule, never a mutual
+#                    incompatibility. This turns "what is
 #                    loaded" from luck into owned state and refuses a conflicting addition,
 #                    naming the craft it clashes with.
 #
@@ -62,7 +62,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POLICY_FILE="$SCRIPT_DIR/incompatible-crafts.txt"
 INCOMPATIBLE=""
 # A carriage return is whitespace, as it is to parsePolicy's trim and \s+ split. `read` does not
-# split on it, so a CRLF line "code prompt" would otherwise parse with to="prompt\r": two tokens, no
+# split on it, so a CRLF line "a b" would otherwise parse with to="b\r": two tokens, no
 # warning, and an edge that never matches while the JS gate enforces it. [LAW:single-enforcer]
 [ -r "$POLICY_FILE" ] && INCOMPATIBLE="$(tr '\r' ' ' < "$POLICY_FILE" | sed -E 's/#.*$//' | grep -E '[^[:space:]]')"
 # THE policy parser for this script - run once, at launch, so every consumer downstream reads
@@ -70,10 +70,10 @@ INCOMPATIBLE=""
 # Emits one "engaged refused" line per WELL-FORMED edge and drops the rest loudly.
 #
 # EXACTLY TWO TOKENS, or the line is not an edge and the operator is told. `read -r from to`
-# alone silently swallows a third word INTO $to ("code prompt extra-note" -> to="prompt
+# alone silently swallows a third word INTO $to ("a b extra-note" -> to="b
 # extra-note"), which can never equal an incoming craft name - so the edge quietly became a
 # permanent no-op here while parsePolicy in laws-excise.js truncated the same line to a live
-# code->prompt edge and enforced it. Two enforcers, one file, opposite rules, no symptom. The
+# a->b edge and enforced it. Two enforcers, one file, opposite rules, no symptom. The
 # third field exists solely to catch what a two-field read would otherwise hide.
 # [LAW:single-enforcer] [LAW:no-silent-failure]
 parse_edges() {
@@ -175,8 +175,8 @@ slot_dir_for() {
 }
 
 # True (exit 0) iff an already-loaded $1 forbids loading an incoming $2, per the INCOMPATIBLE
-# policy. DIRECTED: it matches a line in THAT ORDER ONLY, because the policy's edges run one way
-# (code degrades prompts; prompt does not degrade code). It reads the policy data and hard-codes
+# policy. DIRECTED: it matches a line in THAT ORDER ONLY, because the policy's edges run one way.
+# It reads the policy data and hard-codes
 # no craft name, so changing the rule is editing INCOMPATIBLE, never this function.
 #
 # THE ARGUMENT ORDER IS THE CONTRACT. This was symmetric once, and under symmetry the two
