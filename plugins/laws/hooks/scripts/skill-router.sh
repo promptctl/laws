@@ -126,19 +126,12 @@ EOF
 CONFLICT_CLAUSE="$(render_conflict_clause)"
 
 # The routing text - injected at session start AND re-asserted on every user message
-# (see the engage case), so it stays loaded with system-prompt durability and needs no
-# CLAUDE.md entry. Same formatting constraints as ENGAGE_TEXT: single-line, straight
-# quotes, no backslashes, so it needs no JSON escaping. The heredoc is unquoted for the one
-# substitution it carries; nothing else in the text is shell-special.
+# (see the engage case), so it stays loaded
 read -r -d '' ROUTE_TEXT <<EOT
-Before substantive work, identify the medium of your primary deliverable and load the skill that matches: Skill(laws:code); Skill(laws:prompt); Skill(laws:prose). $CONFLICT_CLAUSE Avoid stacking crafts even where allowed; each body is large and context is scarce. Do the other craft's work in a fresh subagent seeded with only that skill - never a fork or context-inheriting subagent, which brings the engaged craft along where the guard cannot see it.
+Before substantive work, identify the medium of your primary deliverable and load the craft skill that matches, if one does.
 EOT
 
-# Read the hook's JSON payload once. Every hook event delivers JSON on stdin; session-start
-# and guard read fields out of it, engage ignores it. Harmless where unused. Newlines are
-# stripped so field extraction is independent of whether Claude Code sends compact or
-# pretty-printed JSON - a string key/value pair is intra-line either way, but collapsing
-# first makes that independence explicit rather than a latent assumption.
+# Read the hook's JSON payload once. Every hook event delivers JSON on stdin
 INPUT=$(cat | tr -d '\n')
 
 # --- pure-bash field extraction -------------------------------------------------------
