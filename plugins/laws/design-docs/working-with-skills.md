@@ -5,10 +5,9 @@ persuasive guidance, each written to the standard of one medium and built to kee
 firing deep in a session against competing defaults. An agent that reads one and then
 does other work carries that standard into the other work: reading one skill puts its
 whole standard on duty and biases what you do next. Most standards sit together fine -
-code, its ticket, and its docs are complementary work. But one standard actively damages
-another: read laws:code and the prompts you write afterwards come out corrupted by it.
-That is the failure that has already ruined a session here, and it runs one way - the
-damage is code's effect on prompts, not a quarrel between equals.
+code, its ticket, and its docs are complementary work. But some standards actively damage
+what you write next under another, and that damage runs one way: a given ordering fails,
+and the reverse ordering may be fine. That failure has already ruined a session here.
 
 So there is one rule, and a way to work under it.
 
@@ -24,13 +23,6 @@ coexist.** That file is the authority - both enforcers read it, neither hard-cod
 name, and adding an edge there changes the rule everywhere at once. Do not restate its
 contents as a fixed pair anywhere else. A second copy is a second thing to go stale, and
 the copy is what a reader will believe.
-
-Today it holds one edge, and it is the one that paid for this document: **once laws:code is
-engaged, laws:prompt may not be loaded.** Code's standard degrades prompts written under it,
-and that is the failure that has ruined a session here. The reverse is not a failure at all -
-write a prompt first, turn to code afterwards, and both come out fine, so that ordering is
-deliberately absent from the file. It is not a mutually incompatible pair; it is a one-way
-edge.
 
 ## Don't stack crafts even where the guard allows it
 

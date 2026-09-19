@@ -14,11 +14,10 @@
 // COMPATIBILITY, NOT "ONE AT A TIME": crafts COEXIST by default. code+prose+ticket is normal,
 // complementary work. What the gate fires on is a genuine conflicting ORDERING — an engaged
 // craft whose standard corrupts the one now being loaded — per the policy in
-// incompatible-crafts.txt (today: only code→prompt). Anything else is left completely alone.
+// incompatible-crafts.txt. Anything else is left completely alone.
 //
-// THE RULE IS DIRECTED, not a mutual incompatibility. code degrades prompts; prompt does not
-// degrade code. So laws:code engaged + incoming laws:prompt is refused, while laws:prompt
-// engaged + incoming laws:code is ordinary allowed work. Treating this as symmetric — as an
+// THE RULE IS DIRECTED, not a mutual incompatibility. An edge A→B refuses B loaded after A
+// and says nothing about A loaded after B, which is ordinary allowed work. Treating this as symmetric — as an
 // earlier version did — produces a FALSE REFUSAL in the harmless direction, and the cost is
 // not a warning: the user is offered a tombstone-or-rewind switch and may spend real
 // conversation escaping a conflict that never existed.
@@ -66,7 +65,7 @@ const TOMBSTONE = '[TOMBSTONE]';
 //
 // EXACTLY TWO TOKENS, and the exactness is the point. This used to take the first two tokens of
 // any line with at least two, while the router's `read -r from to` stuffs every extra word into
-// `to` — so `code prompt extra-note` was an enforced edge here and a permanent no-op there, the
+// `to` — so `a b extra-note` was an enforced edge here and a permanent no-op there, the
 // two enforcers quietly applying opposite rules to the same line. Both now reject any line that
 // is not exactly two tokens, and both say so. [LAW:single-enforcer] one rule, read the same way
 // by both readers.
@@ -500,7 +499,7 @@ function writeAtomic(file, contents) {
 
 // Standalone "make this transcript satisfy the policy" repair: while an engaged craft forbids a
 // later one, tombstone the FORBIDDING side (keep the newer). The direction comes from the policy,
-// so a legitimate ordering — prompt then code — is left completely alone rather than "repaired"
+// so a legitimate ordering — the reverse of an edge — is left completely alone rather than "repaired"
 // into a tombstone it never needed. Compatible stacks are likewise untouched.
 function run(file, opts = {}) {
   const dryRun = opts.dryRun || false;
