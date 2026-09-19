@@ -1,8 +1,8 @@
 # Editing the laws skills
 
-Each medium - code, prose, ticket, chat, prompt, application-spec, backlog - is one
-skill. A skill takes whatever shape makes it most effective for its own medium: one
-file or twenty, decided by what that skill needs, never copied from another skill.
+Each medium is one skill. A skill takes whatever shape makes it most effective for
+its own medium: one file or twenty, decided by what that skill needs, never copied
+from another skill.
 These rules keep content in the right skill. That's all this skill does. It does not
 teach you how to write well in any medium; that's laws:prompt.
 
@@ -19,8 +19,8 @@ care. Simple is the goal, not a step toward something more impressive.
 1. Compatible crafts coexist; incompatible ones do not. A craft loads a whole medium's
    standard, and reading it changes what you do next, by design. Most standards are
    complementary (code, its ticket, its docs), but an *incompatible* pair stacks and
-   corrupts each other - laws:code with laws:prompt is the known one, and the guard
-   refuses the second of that pair. A session may hold several compatible crafts, and a
+   corrupts each other. `hooks/scripts/incompatible-crafts.txt` lists the pairs, and
+   the guard refuses the second of one. A session may hold several compatible crafts, and a
    session whose whole job is one skill may load that skill's craft and edit it
    directly - holding the whole craft is how a change integrates instead of bolting on.
    When you need a craft that conflicts with one already engaged, you don't load it
