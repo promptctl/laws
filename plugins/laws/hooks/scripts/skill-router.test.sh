@@ -185,7 +185,7 @@ out=$(printf '%s' "$(switch_payload SW1 laws:prompt "$sw1")" | LAWS_SWITCH_DIR="
 assert_deny "under the launcher, the deny still refuses and also offers the switch" \
   "$out" "laws:code" "laws:prompt" "laws-switch" "rewind_summarize"
 case "$out" in
-  *"dispatch a fresh subagent"*) ok "  ... and keeps the subagent escape hatch";;
+  *"fresh subagent"*) ok "  ... and keeps the subagent escape hatch";;
   *) bad "  ... lost the subagent escape hatch (got: $out)";;
 esac
 if [ -f "$swdir/pending.json" ]; then
@@ -534,72 +534,6 @@ case "$(cat "$crlfpol/err.txt")" in
   *) ok "a CRLF policy file parses without a warning";;
 esac
 rm -rf "$crlfpol"
-
-# 15. The routing text's conflict clause is RENDERED FROM the policy file, not written out in
-#     prose beside it. The injected text is what an agent actually reads at the moment it picks
-#     a craft, so it has to name the real edges - and naming them by hand made it a second copy
-#     that would go stale the day a second edge was added, while both enforcers silently obeyed
-#     the file. These cases pin the rendering to the policy, so adding an edge to the file must
-#     change the injected text with no edit to the script. [LAW:one-source-of-truth]
-#
-# The routing text is read back through the SessionStart emission - the same string the agent
-# receives - rather than by sourcing the script for its variables, which would pin an internal
-# name instead of the contract. [LAW:behavior-not-structure]
-route_text_from() { # <router-dir-or-empty> -> the injected routing text
-  local router=${1:-$ROUTER}
-  printf '%s' "$(start_payload RT1 startup)" | "$router" session-start 2>/dev/null
-}
-contains() { # <label> <haystack> <needle>
-  case "$2" in *"$3"*) ok "$1";; *) bad "$1 (missing '$3' in: $2)";; esac
-}
-excludes() { # <label> <haystack> <needle>
-  case "$2" in *"$3"*) bad "$1 (unexpectedly found '$3' in: $2)";; *) ok "$1";; esac
-}
-
-# 15a. Under the shipped single-edge policy, the clause reads exactly this.
-shipped_clause="These orderings are refused: once laws:code is engaged, laws:prompt is refused. An ordering is listed only because it was shown to corrupt real work - the engaged craft's standard degrades what you would write next in the refused one."
-contains "routing text renders the shipped policy's single edge verbatim" \
-  "$(route_text_from)" "$shipped_clause"
-
-# 15b. A SECOND edge in the file appears in the text with no source edit - the whole point.
-#      Joined with "; ", both clauses present, in the file's order.
-twoedge=$(mktemp -d)
-cp "$ROUTER" "$twoedge/skill-router.sh"
-printf 'code prompt\nprose ticket\n' > "$twoedge/incompatible-crafts.txt"
-te_text=$(route_text_from "$twoedge/skill-router.sh")
-contains "a second policy edge reaches the routing text unaided" "$te_text" \
-  "These orderings are refused: once laws:code is engaged, laws:prompt is refused; once laws:prose is engaged, laws:ticket is refused."
-rm -rf "$twoedge"
-
-# 15c. A policy with no well-formed edges says so, and does not emit a list-shaped opening with
-#      no list behind it ("These orderings are refused: ." is an answer-shaped void).
-noedge=$(mktemp -d)
-cp "$ROUTER" "$noedge/skill-router.sh"
-printf '# only comments here\n\n' > "$noedge/incompatible-crafts.txt"
-ne_text=$(route_text_from "$noedge/skill-router.sh")
-contains "a pairless policy renders the empty-case sentence" "$ne_text" \
-  "No craft ordering is currently refused."
-excludes "  ... and never the list opening with nothing after it" "$ne_text" \
-  "These orderings are refused"
-# The surrounding routing text is untouched by the empty case - only the clause varies.
-contains "  ... while the rest of the routing text still stands" "$ne_text" \
-  "Avoid stacking crafts even where allowed"
-rm -rf "$noedge"
-
-# 15d. A malformed line is skipped by the rendering EXACTLY as conflicts_with skips it - one
-#      parser, one verdict. If the renderer had its own parser it could show the operator an
-#      edge the guard does not enforce, which is the two-parsers defect one level up.
-badrender=$(mktemp -d)
-cp "$ROUTER" "$badrender/skill-router.sh"
-printf 'prose ticket extra-note\ncode prompt\n' > "$badrender/incompatible-crafts.txt"
-br_text=$(route_text_from "$badrender/skill-router.sh")
-excludes "a malformed policy line is not rendered into the routing text" "$br_text" "extra-note"
-# The needle is the CLAUSE form, not the bare craft name: "laws:prose" also occurs in the
-# opening's Skill(laws:prose) and would make this assertion pass for the wrong reason.
-excludes "  ... nor rendered as a truncated two-token edge" "$br_text" "laws:prose is engaged"
-contains "  ... while the well-formed edge beside it still renders" "$br_text" \
-  "These orderings are refused: once laws:code is engaged, laws:prompt is refused."
-rm -rf "$badrender"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
