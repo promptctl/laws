@@ -51,7 +51,8 @@ the lock records what was *loaded*, not what was *inherited*, and a fork is the 
 where those two diverge. Nothing will refuse it and nothing will warn you.
 
 The cost of a fresh agent is that you must write the task context into its prompt
-instead of getting it for free. That is the correct price.
+instead of getting it for free. That is the correct price. The guard's refusal message
+lists what the prompt must carry; it is the one place that list lives.
 
 If the session's whole job has become that craft, the other option is /clear and load it
 clean.

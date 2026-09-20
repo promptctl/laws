@@ -99,31 +99,6 @@ if [ -z "$EDGES" ]; then
   echo "laws skill-router guard: no craft pairs readable from $POLICY_FILE; craft compatibility enforcement disabled this session" >&2
 fi
 
-# The conflict clause of the routing text, RENDERED FROM THE POLICY rather than written out.
-# The routing text is injected at the moment an agent picks a craft, and an agent will not open
-# a file at that moment - so the clause has to name the actual edges. Naming them in prose made
-# the routing text a second copy of the policy that no one would notice going stale the day a
-# second edge was added. Rendering it from EDGES keeps the concrete wording AND leaves the file
-# the only place an edge is declared. [LAW:one-source-of-truth]
-#
-# The empty case drops the trailing sentence rather than emitting "These orderings are refused: ."
-# - a list-shaped opening with no list is an answer-shaped void, and the sentence explaining why
-# an ordering is listed has nothing to explain when nothing is. [LAW:parse-dont-validate]
-render_conflict_clause() {
-  local from to clauses=""
-  while read -r from to; do
-    [ -n "$from" ] || continue
-    clauses="${clauses:+$clauses; }once laws:$from is engaged, laws:$to is refused"
-  done <<EOF
-$EDGES
-EOF
-  if [ -z "$clauses" ]; then
-    printf '%s' "No craft ordering is currently refused."
-    return
-  fi
-  printf '%s' "These orderings are refused: $clauses. An ordering is listed only because it was shown to corrupt real work - the engaged craft's standard degrades what you would write next in the refused one."
-}
-CONFLICT_CLAUSE="$(render_conflict_clause)"
 
 # The routing text - injected at session start AND re-asserted on every user message
 # (see the engage case), so it stays loaded
@@ -393,7 +368,7 @@ case "$HOOK_TYPE" in
             echo "laws skill-router guard: transcript_path did not resolve to a readable file (got '$transcript'); denying without a switch offer" >&2
           fi
         fi
-        deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft on top of it would corrupt your laws:$craft work - the damage runs THIS WAY ONLY, so it is this ordering that is refused, not the pairing (design-docs/working-with-skills.md). To do laws:$craft work now, dispatch a fresh subagent seeded with only that skill, and keep only its answer. Not a fork, and not any subagent that inherits this conversation: it starts with the engaged craft already in its context, so it reproduces exactly this corruption - and the guard cannot catch that, because the craft lock is per-agent and records loads, not inherited context. If this session's whole job has become laws:$craft, run /clear, then load it clean.$switch_offer"
+        deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft after it is refused: laws:$craft work written in this ordering comes out wrong (design-docs/working-with-skills.md). Do the laws:$craft work in a fresh subagent that loads only that skill - not a fork, not any subagent that inherits this conversation, since either carries the engaged craft where the guard cannot see it. The subagent sees only its prompt, so put in it: the requester's requirements in their own words, the exact output path, what a correct result looks like, and an instruction to read its artifact back against those before reporting. Keep only its answer. If this session's whole job has become laws:$craft, run /clear and load it clean.$switch_offer"
         exit 0
     fi
     exit 0
