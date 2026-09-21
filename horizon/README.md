@@ -32,11 +32,14 @@ Builds `<run-dir>` from nothing:
   it, so archiving the plugin directory alone extracts dangling links. Snapshotting the
   closure is what makes the pin self-contained - `claude plugin install` then
   materialises those links into real files in its cache.
-- `manifest.json` - canonical JSON (`schema_version: 3`, sorted keys, no timestamps)
+- `manifest.json` - canonical JSON (`schema_version: 4`, sorted keys, no timestamps)
   recording every pinned identity: the repository URL, commit and tree sha of memento
   and of lit's plugin (`lit_plugin`); the path and sha256 of the `lit` binary currently
   on `PATH`; the commit the reviewer action's `v1` tag resolves to plus the sha256 of its
-  prompt file; and the commit and sha256 of `horizon/GOAL_PROMPT.md`.
+  prompt file; the commit and sha256 of `horizon/GOAL_PROMPT.md`; and the harness the run
+  executes on (`claude`) - the resolved path and version of the Claude Code binary, the
+  campaign's version pin or `null`, and the model its sessions run.
+- `bin/claude` - a symlink to that exact executable, and the thing `run-loop.sh` execs.
 
   memento's fields are a pure function of `memento-ref`, and `lit_plugin`'s of
   `lit-ref`, so two runs at the same refs are byte-identical there by construction.
@@ -96,6 +99,55 @@ parseable version to read, the manifest records the path and sha256 of whatever 
 `command -v lit` resolves to. A later run whose `lit` hash disagrees with an earlier
 manifest is a real config drift, not noise.
 
+### The harness: the model, and Claude Code itself
+
+Two controlled variables are properties of *this machine* rather than of anything the
+pin fetches: the model the run's sessions think with, and the version of Claude Code
+they run on. Neither has a repo or a ref, so `manifest.json` carries a `claude` block
+holding a resolved path, an observed version, the campaign's pin, and the model.
+
+**The model is set, not observed.** Launching bare `claude` takes whatever default the
+installed CLI ships, so a manifest that only *recorded* a model would be naming a
+control nothing applied. `horizon_write_model` writes `model` into the run config dir's
+`settings.json` - Claude Code's own key for it - as the last step of provisioning. That
+reaches every session of the run, including ones `finalize-session` relaunches, which
+never see the driver's command line; a `--model` flag would reach only the first. It is
+a full model id and never an alias, because `opus` resolves to a different model as new
+ones ship, which is precisely the drift a five-run campaign must not absorb. Override it
+with `HORIZON_CLAUDE_MODEL`.
+
+**The version is pinned by resolving a symlink.** The native installer keeps versions
+side by side as immutable executables (`~/.local/share/claude/versions/2.1.278`), and
+auto-update *repoints* the `claude` on `PATH` at a new one rather than rewriting the file
+behind it. So the name moves and its resolved target does not, and `pin-instrument.sh`
+resolves it once and writes `<run-dir>/bin/claude` pointing at that exact executable.
+`run-loop.sh` execs *that*, which is what makes an update landing mid-campaign unable to
+reach a run. The symlink is named `claude` because `horizon_assert_transport` identifies
+the pane process by that basename, and the resolved target's own filename is a version
+string.
+
+Pinning the first session pins them all: `horizon_assert_transport` guarantees the
+in-place handoff, so every later session is that same process reset rather than a fresh
+launch.
+
+Two smaller guards sit behind that. `DISABLE_AUTOUPDATER=1` goes into the run's tmux
+session so the run's own sessions cannot repoint the installation underneath it - it
+cannot stop another session on the machine from doing so, and nothing repo-scoped could,
+but the pinned symlink turns that case from silent version drift into a loud missing
+binary. And after boot, `horizon_assert_booted_version` reads the version off the
+session's own banner and requires it to equal the recorded one: every other field
+describes a file the driver resolved, and this is the single reading taken from the
+process that is actually running.
+
+**`version_pin` states which control was applied.** It is `null` when
+`HORIZON_CLAUDE_VERSION_PIN` is unset, and that null is the honest statement that the
+version was *recorded but not held* - the run took whatever was installed. Set it to a
+version string and `pin-instrument.sh` refuses any run on a different one, during the
+pin, before the config dir is rebuilt and hours before a session would have made the
+mismatch visible. There is deliberately no second `enforcement` field saying the same
+thing in words: two spellings of one fact are two things that can disagree, and a reader
+trusting the wrong one would credit a campaign with a control it never had.
+
 ## Verify
 
 ```sh
@@ -135,14 +187,17 @@ terminal, and that is how the verifier twice went green against a config dir no
 unattended run could actually launch a session in — once stopped at first-run
 onboarding, once at the workspace trust dialog.
 
-The launched session is required to reach `logged-out`, not `ready`, and the difference
-is the check rather than a weakening of it. Claude Code keys its stored credential to
-the config dir's **path**, so a throwaway dir under the verifier's scratch space is
-unauthenticated by construction and nothing this script may do would change that. But
-`logged-out` is reachable only by a session that has drawn its banner and its input box,
-which means onboarding and the trust dialog are both settled — so the check proves
-exactly the instrument's half of booting and claims nothing about the operator's. The
-run asserts `ready`, against its own authenticated dir.
+The launched session is required to reach a state **past those gates** — `logged-out` or
+`ready` — and which of the two it lands on is deliberately not the question. Either is
+reachable only by a session that has drawn its banner and its input box, which means
+onboarding and the trust dialog are both settled, so either proves exactly the
+instrument's half of booting and claims nothing about the operator's. In the ordinary
+case it is `logged-out`: Claude Code keys its stored credential to the config dir's
+**path**, so a throwaway dir under the verifier's scratch space is unauthenticated by
+construction and nothing this script may do would change that. Requiring `logged-out`
+alone would promote that ordinary case into a requirement and fail a sound instrument on
+a machine that authenticates some other way. The run asserts `ready`, against its own
+authenticated dir.
 
 The project it launches in is reached through a **symlink** on purpose. Claude Code
 records a workspace under its resolved path, so the

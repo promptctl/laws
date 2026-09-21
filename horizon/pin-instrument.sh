@@ -4,7 +4,8 @@
 # WHY: a long-horizon run is only readable against a baseline if every controlled
 # variable is nailed down and RECORDED - memento and lit's Claude plugin each at a git
 # ref, lit's binary identity, the reviewer action's tag resolved to its actual commit,
-# and the standard /goal wording. This script is the one command that builds that
+# the standard /goal wording, and the harness the run executes on: the model its sessions
+# use and the Claude Code binary itself. This script is the one command that builds that
 # environment and writes the manifest proving what it built.
 # [LAW:verifiable-goals] "done" for a run is: the manifest exists and every field in it
 # resolves back to something checkable.
@@ -43,6 +44,10 @@
 # Produces, under <run-dir>:
 #   pinned/                 a git-archive snapshot of each plugin's owning repo, one
 #                           directory per plugin, and the marketplace.json listing them
+#   bin/claude              a symlink to the exact Claude Code executable this run will
+#                           launch, resolved through the moving `claude` on PATH. The
+#                           run's own handle on its harness version, and the thing
+#                           run-loop.sh actually execs.
 #   manifest.json           every pinned identity, canonical JSON, no timestamps -
 #                           so two invocations with unchanged inputs are byte-identical
 #
@@ -73,6 +78,9 @@ horizon_need lit
 # the one that is actually missing.
 horizon_need tar
 horizon_need base64
+# The pinned-binary symlink below is this script's own write, so `ln` is declared here
+# rather than in HORIZON_BASE_TOOLS, which lists only what lib.sh reaches for its callers.
+horizon_need ln
 
 # Scratch that exists only to produce recorded identities: the fetched objects of each
 # plugin's repository. They are not an output of the run - everything they establish
@@ -99,8 +107,45 @@ main() {
   [ -z "$lit_ref" ] && lit_ref="$HORIZON_LIT_DEFAULT_REF"
   [ -z "$goal_ref" ] && goal_ref="HEAD"
 
+  # THE HARNESS ITSELF, and FIRST - before the run dir is created and before the two
+  # network fetches below. This is the one check that can refuse the whole run, so it
+  # belongs where refusing is free and leaves nothing behind: a campaign pinned to a
+  # version this machine no longer has is told so immediately, rather than after two
+  # repositories have been cloned to reach the same answer. The same ordering rule
+  # run-loop.sh follows when it asserts authentication before touching anything shared.
+  # [LAW:no-ambient-temporal-coupling]
+  #
+  # Resolved through the symlink PATH gives, because the native installer keeps versions
+  # side by side and auto-update repoints that name rather than rewriting the file behind
+  # it - so the resolved target is the only stable way to say "this version", and a run
+  # that holds it cannot be moved by an update landing mid-campaign. The version is the
+  # binary's own answer, taken from the file just resolved.
+  horizon_log "recording the Claude Code binary this run will execute"
+  local claude_target claude_version
+  claude_target="$(horizon_claude_path)"
+  claude_version="$(horizon_claude_version "$claude_target")"
+  # The campaign gate, here and not in run-loop.sh: this is where the version becomes
+  # known, and refusing at the point of knowledge is what keeps the check from being a
+  # second reader that can disagree with the recorded field. [LAW:single-enforcer]
+  horizon_assert_claude_version "$claude_version"
+  # Refused here, where the manifest is about to claim it. An empty model would be
+  # recorded as a controlled variable and then written into settings.json as `""`, which
+  # Claude Code reads as no override at all - a run whose sessions take the CLI default
+  # while the record says they were pinned. [LAW:no-silent-failure]
+  [ -n "$HORIZON_CLAUDE_MODEL" ] \
+    || horizon_die "HORIZON_CLAUDE_MODEL is empty; a run cannot record a model it does not impose"
+  horizon_log "claude pinned at $claude_version ($claude_target), model $HORIZON_CLAUDE_MODEL"
+
   mkdir -p "$run_dir"
   local pinned_dir="$run_dir/pinned"
+
+  # The run's OWN name for that binary, inside the run dir beside every other pinned
+  # artifact. Named `claude` because horizon_assert_transport identifies the pane process
+  # by that basename and the resolved target's own name is a version string.
+  local claude_link="$run_dir/bin/claude"
+  mkdir -p "$run_dir/bin" || horizon_die "could not create $run_dir/bin"
+  ln -s "$claude_target" "$claude_link" \
+    || horizon_die "could not pin the claude binary at $claude_link"
 
   horizon_log "fetching memento from $HORIZON_MEMENTO_REPO_URL at $memento_ref"
   local memento_sha memento_tree_sha
@@ -176,6 +221,10 @@ main() {
     "goal_wording_path=$HORIZON_GOAL_PROMPT_REL_PATH" \
     "goal_wording_ref=$goal_ref" \
     "goal_wording_sha256=$goal_sha256" \
+    "claude_binary_path=$claude_target" \
+    "claude_version=$claude_version" \
+    "claude_version_pin=$HORIZON_CLAUDE_VERSION_PIN" \
+    "claude_model=$HORIZON_CLAUDE_MODEL" \
     <<'PY' || horizon_die "failed to write manifest.json"
 import json, sys
 
@@ -187,8 +236,27 @@ out, *pairs = sys.argv[1:]
 f = dict(p.split("=", 1) for p in pairs)
 
 manifest = {
-    "schema_version": 3,
+    "schema_version": 4,
     "instrument": "promptctl-horizon",
+    # The two controlled variables that are properties of this machine rather than of
+    # something fetched, which is why they carry a resolved path and an observed version
+    # instead of a repo and a ref.
+    #
+    # version_pin IS the statement of which control was applied: null means the version
+    # was recorded and NOT held, a string means the run was refused unless it matched.
+    # There is deliberately no second "enforcement" field saying the same thing in
+    # words - two spellings of one fact are two things that can disagree, and a reader
+    # trusting the wrong one would credit the campaign with a control it never had.
+    # [LAW:one-source-of-truth]
+    #
+    # model has no such pair because it is not observed at all: it is SET, in the run
+    # config dir's settings.json, so recording it records something the run imposed.
+    "claude": {
+        "binary_path": f["claude_binary_path"],
+        "version": f["claude_version"],
+        "version_pin": f["claude_version_pin"] or None,
+        "model": f["claude_model"],
+    },
     "memento": {
         "repo_url": f["memento_repo_url"],
         "ref": f["memento_ref"],
