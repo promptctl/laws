@@ -885,6 +885,20 @@ HORIZON_BANNER_RE='Claude Code v[0-9]'
 # refresh token the server retired mid-campaign - the second is the one a long baseline
 # hits, because it needs no mistake by anyone, only time.
 HORIZON_LOGIN_NOTICE_RE='Not logged in|Login expired'
+# Positive evidence that the STATUS LINE has been painted, which is the line the login
+# notice would appear on. Without it `ready` would rest on an absence - no notice seen -
+# and a poll landing between the banner being drawn and the status line being drawn would
+# read a dead-credential session as ready, which is the exact hole the states below exist
+# to close. In a real pane the mode indicator and the login notice share that one line,
+# so a pane showing the indicator has already had its chance to show a notice.
+#
+# Matched as plain words rather than by the arrows that precede them: the glyphs are
+# multi-byte and this has to hold whatever locale grep runs under. It is the indicator for
+# `--dangerously-skip-permissions`, which both launch paths pass - the run's in
+# horizon_launch_session and the verifier's in verify-instrument.sh. A session launched
+# without that flag never reaches `ready` here and times out showing its pane, which is
+# loud and reads correctly rather than passing on a technicality.
+HORIZON_STATUS_LINE_RE='bypass permissions on'
 # First-run onboarding: the theme picker, before any banner is drawn.
 HORIZON_ONBOARDING_RE="Choose the text style|Let's get started[.]"
 # The workspace trust dialog. Keyed by the CLI to the project's resolved path - see
@@ -1145,7 +1159,13 @@ horizon_pane() {
 # credential and this library must never require one to be read.
 horizon_boot_state() {
   local pane
-  pane="$(cat)"
+  # Read with the shell's own builtin rather than `cat`, which is not in
+  # HORIZON_BASE_TOOLS and would have made that list - this repo's one answer for what may
+  # be invoked - quietly false. Removing the call beats declaring it: this runs on every
+  # poll of every wait. `read -d ''` stops only at EOF, so it takes the whole pane, and it
+  # reports failure AT that EOF, which is the normal ending here and is why the status is
+  # discarded rather than checked. [LAW:polishing-by-subtraction]
+  IFS= read -r -d '' pane || true
   if printf '%s\n' "$pane" | grep -qE "$HORIZON_ONBOARDING_RE"; then
     printf 'onboarding\n'
   elif printf '%s\n' "$pane" | grep -qE "$HORIZON_UNTRUSTED_RE"; then
@@ -1153,8 +1173,15 @@ horizon_boot_state() {
   elif printf '%s\n' "$pane" | grep -qE "$HORIZON_BANNER_RE"; then
     if printf '%s\n' "$pane" | grep -qE "$HORIZON_LOGIN_NOTICE_RE"; then
       printf 'logged-out\n'
-    else
+    elif printf '%s\n' "$pane" | grep -qE "$HORIZON_STATUS_LINE_RE"; then
       printf 'ready\n'
+    else
+      # Banner drawn, status line not yet. Nothing has been ruled out - the notice that
+      # would make this `logged-out` belongs to the line that has not been painted - so
+      # this is the no-evidence answer and the caller polls again, rather than `ready`
+      # being handed out for the one reason it must never be handed out: that the evidence
+      # against it had not arrived yet.
+      printf 'forming\n'
     fi
   else
     printf 'forming\n'
@@ -1187,15 +1214,31 @@ horizon_boot_state_meaning() {
 # timeout on one buys nothing and costs a campaign two minutes per run to be told something
 # that was true at the first poll. [LAW:no-silent-failure] it says which state it got.
 horizon_await_boot_state() {
-  local session="$1" want="$2" waited=0 state
+  local session="$1" want="$2" waited=0 pane state
   while [ "$waited" -lt "$HORIZON_BOOT_TIMEOUT_SECONDS" ]; do
-    state="$(horizon_pane "$session" 2>/dev/null | horizon_boot_state)"
+    # Captured ONCE per poll, then classified and quoted from that single copy - so the
+    # pane a message shows is the pane the verdict was reached on, and a second tmux call
+    # cannot fail while building the message that explains the first failure.
+    #
+    # Read through an explicit check, never into a bare assignment. Under `set -o
+    # pipefail` a pane that cannot be read makes the substitution non-zero, a bare
+    # assignment trips errexit on it, and the run ends with NO output whatever - the
+    # discarded stderr taking horizon_die's own explanation with it. A session whose pane
+    # cannot be read is one that died during boot, because tmux destroys a session with
+    # its last pane: a thing to report, never a thing to retry quietly.
+    # [LAW:no-silent-failure]
+    pane="$(horizon_pane "$session" 2>&1)" \
+      || horizon_die "the pane of tmux session $session could not be read while waiting for '$want'.
+tmux destroys a session with its last pane, so this is most likely a session that died on
+startup rather than a fault in tmux. tmux said:
+$pane"
+    state="$(printf '%s\n' "$pane" | horizon_boot_state)"
     if [ "$state" != forming ]; then
       [ "$state" = "$want" ] && return 0
       horizon_die "session $session booted to '$state', wanted '$want'.
 $state: $(horizon_boot_state_meaning "$state")
 The pane was showing:
-$(horizon_pane "$session" 2>&1 | grep -v '^[[:space:]]*$')"
+$(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$')"
     fi
     sleep "$HORIZON_POLL_SECONDS"
     waited=$((waited + HORIZON_POLL_SECONDS))
@@ -1206,8 +1249,8 @@ $(horizon_pane "$session" 2>&1 | grep -v '^[[:space:]]*$')"
   # out by hand, at which point the session may already have been cleaned up. An error
   # should say where to look; this one can simply say what it saw. [LAW:no-silent-failure]
   horizon_die "session $session never left 'forming' within ${HORIZON_BOOT_TIMEOUT_SECONDS}s, so it never became '$want'.
-The pane was showing:
-$(horizon_pane "$session" 2>&1 | grep -v '^[[:space:]]*$')"
+The last pane read was showing:
+$(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$')"
 }
 
 # Usage: horizon_wait_ready

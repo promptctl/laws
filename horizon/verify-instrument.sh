@@ -56,6 +56,8 @@ horizon_need lit
 horizon_need diff
 # Criterion 4 boots a real session; the run lives in tmux for isolation and so does this.
 horizon_need tmux
+# Reached only by criterion 4b, which puts a symlink in front of the project on purpose.
+horizon_need ln
 
 # Canonicalized at creation: on macOS mktemp -d hands back /var/... while the real
 # path is /private/var/..., and the isolation check below compares a path derived from
@@ -238,10 +240,34 @@ for p in plugins:
   [ "$got" = ready ] || fail "an authenticated pane classified as '$got', not ready"
   got="$(printf '%s\n' "" "   ░░░░░░░░" | horizon_boot_state)"
   [ "$got" = forming ] || fail "a pane that has drawn nothing classified as '$got', not forming"
+  # THE RACE. Banner and input box painted, status line not yet - so the login notice, if
+  # this session has one coming, has not had anywhere to appear. Answering `ready` here is
+  # answering from an absence, and it would hand a dead-credential session to the run for
+  # the one reason that must never be enough: the evidence against it had not arrived.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " | horizon_boot_state)"
+  [ "$got" = forming ] || fail "a pane whose status line has not painted classified as '$got', not forming"
   # The one that matters most, and the reason the login notice is tested at all: the SAME
   # banner appears in both, so a classifier that only looked for it would call the dead
   # session ready. That was the behaviour here until 2026-09-21.
   pass "the pane classifier separates ready from logged-out, onboarding, untrusted and forming"
+
+  # A pane that CANNOT be read must end the wait with a diagnosis rather than in silence.
+  # Checked against a session name that does not exist, which needs no session and costs
+  # nothing: the failing read is the same one a session that died on startup produces, and
+  # tmux destroys a session with its last pane, so that is not hypothetical. This guards a
+  # regression that reached this file once and was invisible in every other check - under
+  # `set -o pipefail` a bare assignment from the pane read tripped errexit and exited 1
+  # having printed NOTHING, horizon_die's own message going to a discarded stderr, after a
+  # column of PASS lines had already been printed. [LAW:no-silent-failure]
+  local dead_refusal=""
+  if dead_refusal="$( horizon_await_boot_state "horizon-verify-no-such-session-$$" ready 2>&1 )"; then
+    fail "waiting on a session that does not exist returned success"
+  fi
+  case "$dead_refusal" in
+    *"could not be read"*) ;;
+    *) fail "waiting on an unreadable pane did not say so: ${dead_refusal:-(it printed nothing at all, which is the regression this checks for)}" ;;
+  esac
+  pass "a pane that cannot be read ends the wait with a diagnosis, not in silence"
 
   # Criterion 4b: boot a real session against the config dir this script just produced.
   #
@@ -262,6 +288,22 @@ for p in plugins:
     || fail "could not create the verification tmux session $VERIFY_TMUX_SESSION"
   tmux set-environment -t "$VERIFY_TMUX_SESSION" CLAUDE_CONFIG_DIR "$config_dir" \
     || fail "could not bind CLAUDE_CONFIG_DIR into the verification session"
+  # "Unauthenticated by construction" is true of the KEYCHAIN credential, which Claude Code
+  # keys to the config dir's path - and false of a token in the environment, which
+  # authenticates any config dir at all. Left alone, whether one even reaches the pane is
+  # worse than wrong, it is nondeterministic: a tmux server starting fresh inherits this
+  # shell's environment while an already-running one does not, so the same machine would
+  # pass or fail this criterion by whether tmux happened to be up. An operator with a
+  # reviewer token exported - CLAUDE_CODE_OAUTH_TOKEN is exactly that, and rotating it is
+  # routine here - would be told the instrument is broken when their shell is the cause.
+  # Removed from the session's environment rather than asserted about, so the precondition
+  # this criterion rests on is TRUE instead of merely checked.
+  # [LAW:no-ambient-temporal-coupling]
+  local leaked
+  for leaked in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN; do
+    tmux set-environment -t "$VERIFY_TMUX_SESSION" -u "$leaked" \
+      || fail "could not clear $leaked from the verification session's environment"
+  done
   tmux respawn-pane -k -t "$VERIFY_TMUX_SESSION" -c "$verify_link" \
     claude --dangerously-skip-permissions \
     || fail "could not launch claude in the verification session"
@@ -278,6 +320,18 @@ for p in plugins:
   if refusal="$( horizon_await_boot_state "$VERIFY_TMUX_SESSION" ready 2>&1 )"; then
     fail "waiting for 'ready' accepted a session that is only 'logged-out' - the run would launch into a session that accepts nothing"
   fi
+  # A non-zero exit is not by itself evidence of the RIGHT refusal. The same wait also
+  # exits non-zero when the session has died between the two calls - and that one comes
+  # back EMPTY, because what failed was the pane read - and when it simply timed out in
+  # `forming`. Both are ruled out by name first, so a dead session is reported as a dead
+  # session instead of as a classifier that forgot to name its states.
+  # [LAW:parse-dont-validate]
+  [ -n "$refusal" ] \
+    || fail "waiting for 'ready' failed without a word, so the verification session most likely died between the two waits"
+  case "$refusal" in
+    *"never left 'forming'"*) fail "waiting for 'ready' timed out rather than refusing a logged-out session: $refusal" ;;
+    *"could not be read"*) fail "the verification session died between the two waits: $refusal" ;;
+  esac
   case "$refusal" in
     *"booted to 'logged-out'"*"wanted 'ready'"*) ;;
     *) fail "the refusal did not name the state it found and the state it wanted: $refusal" ;;
