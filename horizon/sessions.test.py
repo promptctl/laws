@@ -594,7 +594,9 @@ def main():
     # Collapsing a message's blocks is only lossless while they agree about what the
     # message cost. Nothing in the schema promises that, and a version that broke it
     # would keep the first block met and under-report the rest - a smaller number, still
-    # entirely plausible, with nothing anywhere saying it had changed meaning.
+    # entirely plausible, with nothing anywhere saying it had changed meaning. So it is
+    # counted and the larger figure kept; the close-out is what refuses a run reporting
+    # any, because this also runs on the live poll and must not kill a run mid-flight.
     with tempfile.TemporaryDirectory() as tmp8:
         transcripts = os.path.join(tmp8, "transcripts")
         proj = os.path.join(tmp8, "project")
@@ -606,14 +608,35 @@ def main():
                       "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
                       goal_text=PINNED_GOAL,
                       extra=[assistant_block("m1", output=1000),
-                             assistant_block("m1", output=250)])
-        clashed = subprocess.run(
-            [sys.executable, SESSIONS, transcripts, proj, gf],
-            input="", capture_output=True, text=True,
-        )
-        check("two blocks of one message disagreeing about usage stops the report",
-              clashed.returncode != 0 and "m1" in clashed.stderr,
-              "rc=%s stderr=%r" % (clashed.returncode, clashed.stderr))
+                             assistant_block("m1", output=250),
+                             assistant_block("m2", output=100),
+                             assistant_block("m2", output=400)])
+        clashed = run(transcripts, proj, gf, [])
+        check("blocks of one message disagreeing about usage are counted, not assumed away",
+              clashed["usage_disagreements"] == 2,
+              "got %s" % clashed.get("usage_disagreements"))
+        check("a disagreed usage is billed at the larger figure, never the first seen",
+              clashed["tokens"]["total"]["output_tokens"] == 1400,
+              "got %s" % clashed["tokens"]["total"])
+
+    # The ordinary case, stated so the count above cannot pass by counting everything:
+    # identical repeats are what a real transcript holds, and they are not disagreements.
+    with tempfile.TemporaryDirectory() as tmp9:
+        transcripts = os.path.join(tmp9, "transcripts")
+        proj = os.path.join(tmp9, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp9, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(transcripts, "p", "agreeing", proj,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
+                      goal_text=PINNED_GOAL,
+                      extra=[assistant_block("m1", output=1000),
+                             assistant_block("m1", output=1000)])
+        agreed = run(transcripts, proj, gf, [])
+        check("blocks repeating one usage are not counted as a disagreement",
+              agreed["usage_disagreements"] == 0,
+              "got %s" % agreed.get("usage_disagreements"))
 
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))
