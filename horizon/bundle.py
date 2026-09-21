@@ -41,16 +41,26 @@ def parse_step(line):
 
 
 def elapsed(started, ended):
-    """Whole seconds between two ISO-8601 stamps, or None when either is unreadable.
+    """Whole seconds between two ISO-8601 stamps, or None when that is not a duration.
 
     None rather than zero: a duration of zero is a claim about the run, and "the clock was
     not readable" is a claim about the record. Collapsing them would put a real-looking
     number in front of a reader with nothing behind it.
+
+    A finish BEFORE the start is the same kind of claim and gets the same answer. The two
+    stamps are read at opposite ends of a run that can last eight hours, so an NTP
+    correction in between - or a caller handing them over in the wrong order - yields a
+    negative span, and a negative span is not a short run: it is a record that cannot be
+    read as a duration at all. Left as a number it would be printed, subtracted and
+    averaged like any other. [LAW:parse-dont-validate] what comes back is a duration or
+    it is nothing.
     """
     try:
         begin = datetime.fromisoformat(started.replace("Z", "+00:00"))
         finish = datetime.fromisoformat(ended.replace("Z", "+00:00"))
     except ValueError:
+        return None
+    if finish < begin:
         return None
     return int((finish - begin).total_seconds())
 
