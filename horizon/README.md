@@ -371,6 +371,28 @@ The four usage figures are never added into a single "tokens used". A cached rea
 generated token differ in price by more than an order of magnitude, and this file is the
 record a human quotes from.
 
+Every transcript found under the run's config dir is one of four things, and `loop.json`
+reports all four because they are not interchangeable. A **session** is the run's own, and
+counts toward the acceptance. A **subprocess** matched the project but took no turns of
+its own — a headless `claude -p` a tool spawned — so it is billed and counted
+(`subprocess_transcripts`) without being a session. A **foreign** transcript
+(`foreign_transcripts`) recorded a working directory and it was somebody else's; its spend
+is not billed at all. A **forming** transcript (`forming_transcripts`) recorded no working
+directory at any point, so nothing can say whose it is: Claude Code opens a transcript with
+boot entries carrying neither `cwd` nor `entrypoint`, and some never acquire one. The
+distinction between the last two is the whole point — absence of evidence is not evidence
+of somebody else, and collapsing them once killed an unattended run at minute zero.
+
+Two fields say the totals above cannot be trusted, and the close-out refuses a run that
+reports either. `usage_disagreements` counts messages whose content blocks disagreed about
+what the message cost; spend is billed once per message id, so a nonzero count means every
+total is a floor rather than a count, and the larger figure is the one kept.
+`tokens.unattributed` is spend found in a forming transcript, deliberately **not** folded
+into `tokens.total` — `total` is what the analysis can stand behind, and a floor published
+as a count is just a wrong number. `horizon_capture_loop` writes `loop.json` first and
+refuses afterwards, because the record is not broken: it is complete, and what it says is
+that the totals are unsafe.
+
 Tests: `horizon/sessions.test.py`.
 
 ## The run bundle
