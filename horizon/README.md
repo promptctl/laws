@@ -154,7 +154,7 @@ operator override. The symlink makes that difference exist on every machine inst
 only where the work dir happens to sit under one.
 
 Both live checks read the pane through one classifier, which turns it into exactly one
-of five states:
+of six states:
 
 | state | what the pane shows | what it means |
 | --- | --- | --- |
@@ -162,6 +162,7 @@ of five states:
 | `logged-out` | banner **and** `Not logged in` / `Login expired` | drew everything, authenticates nothing |
 | `onboarding` | the theme picker, before any banner | boot state never reached this config dir |
 | `untrusted` | the workspace trust dialog | the trust key was written under a path the CLI does not look itself up under |
+| `bypass-disclaimer` | the bypass-permissions warning | the acceptance was written to a key this CLI version does not read |
 | `forming` | nothing recognised yet, **or** a banner whose status line has not painted | still starting — no evidence either way |
 
 `ready` is the only state that turns on something *not* being present, so it is the only
@@ -188,6 +189,15 @@ indicator, where the two sit left- and right-aligned; an agent would have to pri
 markers on one row to forge it. A window of the last few rows is not enough, which is not
 a guess: a pane holding a `Not logged in` tool result directly above the status line was
 classified `logged-out` by exactly that rule.
+
+`bypass-disclaimer` is the third gate `horizon_write_boot_state` settles, and it is the
+one most likely to come back: the CLI has already moved that acceptance once — from
+`bypassPermissionsModeAccepted` in `.claude.json` to `skipDangerousModePermissionPrompt`
+in `settings.json` — and is expected to move it again. When it does, the key lands where
+nothing reads it and the session stops on that dialog. Without a state of its own that
+stop looked like `forming`: a run burning the full boot timeout and then reporting that
+the pane "drew nothing this script recognises", about a dialog that was on screen the
+whole time and was never going to clear.
 
 A login wording that ever appeared somewhere other than the status line would read as
 `ready` here, and that is the direction to fail in. The run proceeds to

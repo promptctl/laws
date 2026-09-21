@@ -227,6 +227,11 @@ for p in plugins:
   [ "$got" = onboarding ] || fail "the theme picker pane classified as '$got', not onboarding"
   got="$(printf '%s\n' " Accessing workspace:" " /private/tmp/x/proj" " Quick safety check: Is this a project you created or one you trust? (Like your own code" " ❯ No, exit" "   Yes, I trust this folder" | horizon_boot_state)"
   [ "$got" = untrusted ] || fail "the trust-dialog pane classified as '$got', not untrusted"
+  # The THIRD gate horizon_write_boot_state settles. Without a state of its own it read as
+  # `forming`, so a run stopped here burned the whole boot timeout and then reported that
+  # the pane drew nothing recognisable - about a dialog that was on screen throughout.
+  got="$(printf '%s\n' " WARNING: Claude Code running in Bypass Permissions mode" " ❯ No, exit" "   Yes, I accept" " Enter to confirm · Esc to cancel" | horizon_boot_state)"
+  [ "$got" = bypass-disclaimer ] || fail "the bypass-permissions disclaimer classified as '$got', not bypass-disclaimer"
   got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "▝▜██████▀  Opus 5 (1M context) · API Usage Billing" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle)                    Not logged in · Run /login" | horizon_boot_state)"
   [ "$got" = logged-out ] || fail "a not-logged-in pane classified as '$got', not logged-out"
   # The OTHER wording, and the one a baseline campaign actually meets: a config dir that
@@ -320,6 +325,13 @@ for p in plugins:
   # pass or fail this criterion by whether tmux happened to be up. An operator with a
   # reviewer token exported - CLAUDE_CODE_OAUTH_TOKEN is exactly that, and rotating it is
   # routine here - would be told the instrument is broken when their shell is the cause.
+  # `-r`, NOT `-u`, and the difference is the whole effect. `-u` unsets the name in the
+  # SESSION environment, after which tmux copies the server's GLOBAL environment into the
+  # new pane and the variable arrives anyway - verified on the installed tmux: a global
+  # value survived `-u` into a respawned pane and did not survive `-r`. Since the server
+  # usually inherits its environment from the operator's own shell, `-u` would have been a
+  # scrub that scrubbed nothing in exactly the case it exists for.
+  #
   # Removed from the session's environment rather than asserted about. This narrows the
   # vectors; it cannot close them, and the criterion below does NOT rest on it having done
   # so - a proxy behind ANTHROPIC_BASE_URL or a cloud role could still authenticate, and
@@ -329,7 +341,7 @@ for p in plugins:
   local leaked
   for leaked in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN \
                 ANTHROPIC_BASE_URL CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX; do
-    tmux set-environment -t "$VERIFY_TMUX_SESSION" -u "$leaked" \
+    tmux set-environment -t "$VERIFY_TMUX_SESSION" -r "$leaked" \
       || fail "could not clear $leaked from the verification session's environment"
   done
   tmux respawn-pane -k -t "$VERIFY_TMUX_SESSION" -c "$verify_link" \
