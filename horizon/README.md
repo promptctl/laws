@@ -127,7 +127,61 @@ relaunch binary, must be executable. `diff` compares bytes, not mode bits, and `
 plugin install` materialises symlinked files into real ones, which can drop the
 executable bit; a relaunch binary without it breaks the session handoff silently.
 
-Finally it checks the `lit` binary on `PATH` against the manifest's hash of it.
+It then checks the `lit` binary on `PATH` against the manifest's hash of it.
+
+Finally it **boots a real session** against the config dir it just produced. Everything
+above this point runs `claude plugin list`, which needs neither a credential nor a
+terminal, and that is how the verifier twice went green against a config dir no
+unattended run could actually launch a session in — once stopped at first-run
+onboarding, once at the workspace trust dialog.
+
+The launched session is required to reach `logged-out`, not `ready`, and the difference
+is the check rather than a weakening of it. Claude Code keys its stored credential to
+the config dir's **path**, so a throwaway dir under the verifier's scratch space is
+unauthenticated by construction and nothing this script may do would change that. But
+`logged-out` is reachable only by a session that has drawn its banner and its input box,
+which means onboarding and the trust dialog are both settled — so the check proves
+exactly the instrument's half of booting and claims nothing about the operator's. The
+run asserts `ready`, against its own authenticated dir.
+
+The project it launches in is reached through a **symlink** on purpose. Claude Code
+records a workspace under its resolved path, so the
+`projects[<dir>].hasTrustDialogAccepted` key that settles the trust dialog has to be
+resolved too — written under an unresolved path it never matches, and the value sits in
+`.claude.json` looking correct while the dialog still appears. On this platform that
+needs no mistake by anyone: `/tmp` is `/private/tmp`, and `HORIZON_WORK_DIR` is an
+operator override. The symlink makes that difference exist on every machine instead of
+only where the work dir happens to sit under one.
+
+Both live checks read the pane through one classifier, which turns it into exactly one
+of five states:
+
+| state | what the pane shows | what it means |
+| --- | --- | --- |
+| `ready` | banner, input box, no login notice | up and accepting input |
+| `logged-out` | banner **and** `Not logged in` / `Login expired` | drew everything, authenticates nothing |
+| `onboarding` | the theme picker, before any banner | boot state never reached this config dir |
+| `untrusted` | the workspace trust dialog | the trust key was written under a path the CLI does not look itself up under |
+| `forming` | nothing recognised yet | still starting — no evidence either way |
+
+`logged-out` exists because readiness used to be a boolean and the boolean was wrong: a
+session whose credential has died draws the banner *and* an input box, so grepping the
+pane for the banner answered "ready" for a run that could never move — a driver then
+watched a login prompt for a whole turn, unable to tell it from an agent thinking hard.
+The banner is still necessary and is no longer sufficient.
+
+`forming` is deliberately kept apart from the three failures rather than folded in with
+them. A pane that has drawn nothing yet is a session still starting, not a broken one,
+and that distinction is what lets the wait refuse a settled gate on the first poll — a
+trust dialog does not clear itself, and a retired credential does not come back —
+without also refusing a slow machine. It is the same rule the transcript classification
+in `sessions.py` follows: a state that claims something needs evidence for it, and the
+absence of evidence is its own state.
+
+Every pattern the classifier matches was read off a real pane captured from a session
+put deliberately into that state, and each state is checked against one of those
+captured panes on every run — a live boot can only ever exhibit one state, so the other
+branches would otherwise never execute.
 
 ## Seeding a run's time zero
 

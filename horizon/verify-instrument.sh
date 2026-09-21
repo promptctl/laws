@@ -17,6 +17,20 @@
 #      instrument whose skills were all pointer stubs. Each plugin's skills are checked
 #      byte-for-byte against the snapshot they were pinned from: memento's
 #      address-pr-reviews and message-in-a-bottle, and lit's next.
+#   4. A REAL SESSION launched against the produced config dir gets past every gate the
+#      instrument is responsible for. `claude plugin list` needs no credential and no
+#      terminal, so it went green against a config dir that could not boot a session at
+#      all - which is how a run reached an interactive dialog no unattended driver can
+#      answer, twice. The check below boots one and reads the pane.
+#
+#      It asserts the session reaches `logged-out`, not `ready`, and that is the whole
+#      point rather than a weakened test: Claude Code keys its credential to the config
+#      dir's PATH, so a throwaway dir under $WORK is unauthenticated BY CONSTRUCTION and
+#      no verification can make it otherwise without touching a credential store, which
+#      this script will not do. `logged-out` is reached only by a session that drew its
+#      banner and its input box, which means onboarding and the trust dialog are both
+#      settled - so it proves exactly the instrument's half and claims nothing about the
+#      operator's. The run asserts `ready` instead, against its own authenticated dir.
 #
 # [LAW:verifiable-goals] this script IS the machine-checkable "done" for the ticket;
 # exit 0 means every criterion held on this run, exit nonzero says which one didn't.
@@ -40,12 +54,24 @@ horizon_need claude
 horizon_need python3
 horizon_need lit
 horizon_need diff
+# Criterion 4 boots a real session; the run lives in tmux for isolation and so does this.
+horizon_need tmux
 
 # Canonicalized at creation: on macOS mktemp -d hands back /var/... while the real
 # path is /private/var/..., and the isolation check below compares a path derived from
 # this against one the claude CLI may report already resolved. [LAW:one-source-of-truth]
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$WORK"' EXIT
+# Its own session name, never HORIZON_TMUX_SESSION: that one is the run's machine-wide
+# lock, and a verifier borrowing it would either be refused while a run is live or, worse,
+# kill the run's session on the way out. $$ keeps two verifiers off each other too.
+VERIFY_TMUX_SESSION="horizon-verify-$$"
+# `|| true` on the kill, and it is load-bearing rather than defensive: this runs under
+# errexit, so a kill that fails - which is the NORMAL case, because most runs never get
+# far enough to create the session - would abort the handler on its first line, take the
+# `rm -rf` with it, and hand back a failing status from a script whose every check passed.
+# The trap is also the ONLY place the session is ended, so the success path and the
+# horizon_die path leave nothing behind by the same line. [LAW:single-enforcer]
+trap 'tmux kill-session -t "$VERIFY_TMUX_SESSION" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
@@ -188,6 +214,79 @@ for p in plugins:
   [ "$recorded_lit_sha256" = "$actual_lit_sha256" ] \
     || fail "recorded lit sha256 ($recorded_lit_sha256) does not match the lit currently on PATH ($actual_lit_sha256)"
   pass "lit on PATH matches the manifest's recorded identity"
+
+  # Criterion 4a: the pane classifier, against panes captured from real sessions put into
+  # each state on purpose. Kept as fixtures rather than left to the live boot below, which
+  # can only ever exhibit ONE state per run: a classifier whose failure branches are never
+  # executed is the tautology this repo has already shipped once. Every string here was
+  # read off a v2.1.278 pane, not composed to match the regex. [LAW:verifiable-goals]
+  local got
+  got="$(printf '%s\n' " Let's get started." " Choose the text style that looks best with your terminal" "   1. Auto (match terminal)" | horizon_boot_state)"
+  [ "$got" = onboarding ] || fail "the theme picker pane classified as '$got', not onboarding"
+  got="$(printf '%s\n' " Accessing workspace:" " /private/tmp/x/proj" " Quick safety check: Is this a project you created or one you trust? (Like your own code" " ❯ No, exit" "   Yes, I trust this folder" | horizon_boot_state)"
+  [ "$got" = untrusted ] || fail "the trust-dialog pane classified as '$got', not untrusted"
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "▝▜██████▀  Opus 5 (1M context) · API Usage Billing" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle)                    Not logged in · Run /login" | horizon_boot_state)"
+  [ "$got" = logged-out ] || fail "a not-logged-in pane classified as '$got', not logged-out"
+  # The OTHER wording, and the one a baseline campaign actually meets: a config dir that
+  # was logged in when the campaign started and whose refresh token the server retired
+  # part way through. It needs no mistake by anyone, only elapsed time, so the run that
+  # hits it is a later run of a long campaign - the most expensive possible moment to
+  # discover the pane vocabulary only covered the other spelling. Observed 2026-09-07.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " "  Login expired · Please run /login" | horizon_boot_state)"
+  [ "$got" = logged-out ] || fail "an expired-login pane classified as '$got', not logged-out"
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "an authenticated pane classified as '$got', not ready"
+  got="$(printf '%s\n' "" "   ░░░░░░░░" | horizon_boot_state)"
+  [ "$got" = forming ] || fail "a pane that has drawn nothing classified as '$got', not forming"
+  # The one that matters most, and the reason the login notice is tested at all: the SAME
+  # banner appears in both, so a classifier that only looked for it would call the dead
+  # session ready. That was the behaviour here until 2026-09-21.
+  pass "the pane classifier separates ready from logged-out, onboarding, untrusted and forming"
+
+  # Criterion 4b: boot a real session against the config dir this script just produced.
+  #
+  # The project is reached through a SYMLINK on purpose. Claude Code records a workspace
+  # under its RESOLVED path, so the trust key horizon_write_boot_state writes has to be
+  # resolved too - and on this platform an operator whose HORIZON_WORK_DIR sits anywhere
+  # under /tmp or /var supplies an unresolved path without doing anything unusual. Passing
+  # a symlink here makes that difference exist on every machine instead of only on the
+  # ones where it happens to: drop the resolution and this boots to `untrusted`.
+  local verify_project="$WORK/project" verify_link="$WORK/project-via-symlink"
+  mkdir -p "$verify_project" || fail "could not create $verify_project"
+  ( cd "$verify_project" && git init -q . ) || fail "could not init the verification project"
+  ln -s "$verify_project" "$verify_link" || fail "could not create $verify_link"
+  horizon_write_boot_state "$config_dir" "$verify_link"
+
+  horizon_log "booting a real session against the produced config dir"
+  tmux new-session -d -s "$VERIFY_TMUX_SESSION" -x 200 -y 50 \
+    || fail "could not create the verification tmux session $VERIFY_TMUX_SESSION"
+  tmux set-environment -t "$VERIFY_TMUX_SESSION" CLAUDE_CONFIG_DIR "$config_dir" \
+    || fail "could not bind CLAUDE_CONFIG_DIR into the verification session"
+  tmux respawn-pane -k -t "$VERIFY_TMUX_SESSION" -c "$verify_link" \
+    claude --dangerously-skip-permissions \
+    || fail "could not launch claude in the verification session"
+  horizon_await_boot_state "$VERIFY_TMUX_SESSION" logged-out
+  pass "a real session against the produced config dir clears onboarding and the trust dialog, leaving only the credential"
+
+  # The SAME live session, asked for the state the RUN asks for. Without this the wait is
+  # only ever exercised on the path where it agrees, so a wait that returned success for
+  # any settled state would pass everything above while leaving run-loop.sh to march a
+  # dead session through a whole run - the exact defect this ticket exists for, reinstated
+  # with the gate still green. Here the discriminator has to do its job in the failing
+  # direction, on a real pane, and say which state it actually found.
+  local refusal=""
+  if refusal="$( horizon_await_boot_state "$VERIFY_TMUX_SESSION" ready 2>&1 )"; then
+    fail "waiting for 'ready' accepted a session that is only 'logged-out' - the run would launch into a session that accepts nothing"
+  fi
+  case "$refusal" in
+    *"booted to 'logged-out'"*"wanted 'ready'"*) ;;
+    *) fail "the refusal did not name the state it found and the state it wanted: $refusal" ;;
+  esac
+  case "$refusal" in
+    *"horizon/login.sh"*) ;;
+    *) fail "the refusal did not tell the operator how to fix a logged-out config dir: $refusal" ;;
+  esac
+  pass "waiting for 'ready' refuses a logged-out session, naming both states and the fix"
 
   horizon_log "all checks passed"
 }
