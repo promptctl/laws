@@ -1663,6 +1663,14 @@ horizon_bundle_project_dir() {
 # directory listing.
 horizon_write_bundle_readme() {
   local bundle_dir="$1"
+  # Staged outside the bundle and moved in, for the reason the loop and PR captures are:
+  # the redirect is opened before the render runs, so an `awk` that failed partway used to
+  # leave a half-written README under the name the layout step inventories - a front page
+  # that trails off mid-sentence, counted as present. The `|| horizon_die` on the redirect
+  # only ever caught a file that could not be OPENED.
+  local staged
+  staged="$(mktemp "${TMPDIR:-/tmp}/horizon-readme.XXXXXX")" \
+    || horizon_die "could not make a staging file for the bundle README"
   {
     cat <<'EOT'
 # A horizon run bundle
@@ -1734,7 +1742,9 @@ wrong one and the tool says so rather than reporting a run in which nothing happ
 
 `prs/index.json` can be rebuilt the same way, with `horizon/prs.py <bundle>/prs`.
 EOT
-  } > "$bundle_dir/README.md" \
+  } > "$staged" \
+    || horizon_die "could not render the bundle README"
+  mv "$staged" "$bundle_dir/README.md" \
     || horizon_die "could not write $bundle_dir/README.md"
   printf '%s path(s) described\n' "$(horizon_bundle_layout_paths | wc -l | tr -d ' ')"
 }
@@ -1918,6 +1928,14 @@ print("; ".join(reasons))' "$bundle_dir/loop.json")" \
     || horizon_die "could not read the token bookkeeping from $bundle_dir/loop.json"
   [ -z "$floor" ] \
     || horizon_die "this run's token totals are a floor rather than a count: $floor - see usage_disagreements and tokens.unattributed in loop.json"
-  printf '%s\n' "$(horizon_report_counts < "$bundle_dir/loop.json" \
-    | awk '{ printf "%s consecutive committing session(s), %s lost carry/carries", $1, $2 }')"
+  # Read into a variable first. Wrapped in `printf "%s\\n" "$(...)"` the substitution's
+  # exit status was thrown away by printf, which then succeeded with nothing to print - so
+  # a loop.json this could not count came back as a capture marked `"ok": true` with an
+  # empty detail, which is the shape of a step that ran and found nothing to say.
+  # [LAW:no-silent-failure]
+  local counts
+  counts="$(horizon_report_counts < "$bundle_dir/loop.json")" \
+    || horizon_die "could not read the run counts from $bundle_dir/loop.json"
+  printf '%s\n' "$counts" \
+    | awk '{ printf "%s consecutive committing session(s), %s lost carry/carries\n", $1, $2 }'
 }
