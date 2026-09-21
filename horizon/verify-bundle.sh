@@ -41,6 +41,13 @@ horizon_need_base
 horizon_need git
 horizon_need lit
 horizon_need python3
+# Not in HORIZON_BASE_TOOLS, and reached by this script alone: the bundle comparison, the
+# fixture heredocs, and making the fixture `gh` executable. Declared here for the same
+# reason the sibling verifiers declare theirs - a missing one should say so in this
+# script's own voice, not as a bare "command not found" from partway through a check.
+horizon_need diff
+horizon_need cat
+horizon_need chmod
 
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$WORK"' EXIT
@@ -92,19 +99,22 @@ GH_FIXTURE
   export PATH
 }
 
-# Usage: write_pr_fixture <number> <resolved> <unresolved> [truncated]
+# Usage: write_pr_fixture <number> <resolved> <unresolved> [flaw]
 #
-# One captured pull request in the shape `gh api graphql` returns. `truncated` sets
-# hasNextPage on the review threads, which is the one condition prs.py must refuse.
+# One captured pull request in the shape `gh api graphql` returns. `flaw` writes one that
+# came back short, and which one matters: `truncated` overflows the review threads
+# themselves, `thread-truncated` overflows the comments INSIDE one thread - a connection
+# nested in a connection, and the likeliest of the two to happen for real.
 write_pr_fixture() {
   python3 - "$HORIZON_FIXTURE_DIR" "$@" <<'PY'
 import json, os, sys
 out_dir, number, resolved, unresolved = sys.argv[1:5]
-truncated = len(sys.argv) > 5 and sys.argv[5] == "truncated"
+flaw = sys.argv[5] if len(sys.argv) > 5 else ""
+truncated = flaw == "truncated"
 
 def thread(is_resolved, n):
     return {"isResolved": is_resolved, "isOutdated": False, "path": "src/app.py", "line": n,
-            "comments": {"pageInfo": {"hasNextPage": False},
+            "comments": {"pageInfo": {"hasNextPage": flaw == "thread-truncated"},
                          "nodes": [{"author": {"login": "copirate"},
                                     "createdAt": "2026-01-01T00:00:00Z",
                                     "body": "This branch is unreachable."}]}}
@@ -158,13 +168,23 @@ build_bundle() {
 
   # lit BEFORE the remote, and that ordering is the whole reason this fixture is built by
   # hand rather than cloned from a run: `lit init` adopts a backlog from any remote it
-  # finds, so a project that already had an origin would start from promptctl/horizon-eval's
-  # real backlog - which is a network call this gate must never make, and somebody else's
-  # tickets in the middle of a check about this run's.
+  # finds, so a project that already had an origin would start from that remote's backlog
+  # instead of this fixture's - somebody else's tickets in the middle of a check about
+  # this run's.
   ( cd "$project_dir" && lit init >/dev/null )
   ( cd "$project_dir" && lit new --title "Build the CLI boundary" --type feature \
       --topic cli >/dev/null )
-  git -C "$project_dir" remote add origin "git@github.com:promptctl/horizon-eval.git"
+  # A LOCAL origin, and that is the point rather than a convenience. `lit export` syncs
+  # against origin when it cannot settle the backlog from what is on disk - measured
+  # 2026-09-21: an empty local backlog with a github.com origin spent 5.9 seconds on the
+  # network, and the same project with one ticket spent 0.09 and stayed offline. This
+  # fixture creates a ticket, so pointing origin at GitHub happened to be hermetic - by
+  # coincidence, and only until lit changes when it syncs or this fixture stops making
+  # that ticket. A path origin cannot reach the network whatever lit decides to do, so
+  # the guarantee stops depending on either. What the GitHub URL was covering - that
+  # horizon_project_remote_repo turns a remote into `owner/name` - is checked directly
+  # further down instead of incidentally here. [LAW:no-ambient-temporal-coupling]
+  git -C "$project_dir" remote add origin "$WORK/remote.git"
 
   printf '{\n  "project": {\n    "name": "macklebox"\n  }\n}\n' \
     > "$bundle_dir/seed/seed-manifest.json"
@@ -227,7 +247,22 @@ mkdir -p "$HORIZON_FIXTURE_DIR"
 export HORIZON_FIXTURE_DIR
 
 build_gh_fixture
+git init --quiet --bare "$WORK/remote.git"
 build_bundle "$BUNDLE" "$CONFIG"
+
+# What the fixture's local origin no longer exercises, checked head-on rather than as a
+# side effect of something else: both spellings git accepts for a GitHub remote reduce to
+# the one `gh` wants. This is the read the PR capture depends on.
+URL_PROBE="$WORK/url-probe"
+mkdir -p "$URL_PROBE"
+git -C "$URL_PROBE" init --quiet --initial-branch=master
+git -C "$URL_PROBE" remote add origin "git@github.com:promptctl/horizon-eval.git"
+[ "$(horizon_project_remote_repo "$URL_PROBE")" = "promptctl/horizon-eval" ] \
+  || fail "an ssh remote did not read back as owner/name"
+git -C "$URL_PROBE" remote set-url origin "https://github.com/promptctl/horizon-eval.git"
+[ "$(horizon_project_remote_repo "$URL_PROBE")" = "promptctl/horizon-eval" ] \
+  || fail "an https remote did not read back as owner/name"
+pass "both spellings of a GitHub remote read back as the owner/name the PR capture needs"
 
 # PR #7 is a LEFTOVER from an earlier run of this shared repository; #8 and #9 are this
 # run's. A capture that ignored the watermark would adopt #7 as this run's work.
@@ -359,5 +394,118 @@ horizon_capture_backlog "$STANDALONE" "$BUNDLE/seed/macklebox" >/dev/null \
 [ -f "$STANDALONE/backlog/export.json" ] \
   || fail "the backlog capture wrote somewhere other than the bundle it was handed"
 pass "a capture writes to the bundle it is handed, not to one its caller happened to name"
+
+# ── 5. A capture that could not read its subject refuses, rather than reporting zero ──
+#
+# Each of these produces a file or a number that looks exactly like a real, quiet, empty
+# result. That resemblance is the whole hazard: a reader has no way to tell a run that
+# created nothing from a recording that broke, and they are opposite findings.
+
+# `lit export` exits 0 on a sync it cannot settle and writes an empty document. Every run
+# is seeded with a backlog, so no tickets at all is that failure and never a thin backlog.
+EMPTY_PROJECT="$WORK/empty-backlog"
+mkdir -p "$EMPTY_PROJECT"
+git -C "$EMPTY_PROJECT" init --quiet --initial-branch=master
+git -C "$EMPTY_PROJECT" config user.name "horizon verify"
+git -C "$EMPTY_PROJECT" config user.email "horizon@promptctl.invalid"
+printf 'print("hi")\n' > "$EMPTY_PROJECT/app.py"
+git -C "$EMPTY_PROJECT" add -A
+git -C "$EMPTY_PROJECT" -c commit.gpgsign=false commit --quiet -m "seed"
+( cd "$EMPTY_PROJECT" && lit init >/dev/null )
+git -C "$EMPTY_PROJECT" remote add origin "$WORK/remote.git"
+EMPTY_BUNDLE="$WORK/empty-backlog-bundle"
+mkdir -p "$EMPTY_BUNDLE"
+if ( horizon_capture_backlog "$EMPTY_BUNDLE" "$EMPTY_PROJECT" ) >"$WORK/empty.out" 2>&1; then
+  fail "a backlog export holding no tickets was recorded as a captured backlog"
+fi
+grep -q 'no tickets' "$WORK/empty.out" \
+  || fail "the refusal does not say what was wrong: $(cat "$WORK/empty.out")"
+pass "an export with no tickets is refused, not counted as an empty backlog"
+
+# The transcripts capture MOVES the directory in, so its absence means that step did not
+# land. Analysing that as a run of zero sessions writes a clean, entirely fabricated
+# loop.json - and the README sends readers to loop.json on its own.
+NO_TRANSCRIPTS="$WORK/no-transcripts"
+mkdir -p "$NO_TRANSCRIPTS"
+cp -R "$BUNDLE/seed" "$NO_TRANSCRIPTS/seed"
+cp "$BUNDLE/goal.md" "$NO_TRANSCRIPTS/goal.md"
+if ( horizon_capture_loop "$NO_TRANSCRIPTS" "$NO_TRANSCRIPTS/seed/macklebox" ) \
+     >"$WORK/noloop.out" 2>&1; then
+  fail "the loop capture reported a run from a bundle whose transcripts never landed"
+fi
+[ ! -e "$NO_TRANSCRIPTS/loop.json" ] \
+  || fail "the loop capture wrote a record of a run it could not read"
+pass "a bundle whose transcripts did not land is refused, not reported as zero sessions"
+
+# ── 6. run.json stays readable whatever a step printed ────────────────────────────────
+
+CHATTY="$(horizon_capture_step chatty python3 -c 'print("x" * 5000)')"
+CHATTY_DETAIL="$(printf '%s' "$CHATTY" | cut -f3)"
+[ "${#CHATTY_DETAIL}" -lt 5000 ] \
+  || fail "a step that printed 5000 characters put all of them in run.json"
+case "$CHATTY_DETAIL" in
+  *"(truncated)") : ;;
+  *) fail "a detail was cut without saying so: $CHATTY_DETAIL" ;;
+esac
+TERSE="$(horizon_capture_step terse printf 'two tickets\n')"
+[ "$(printf '%s' "$TERSE" | cut -f3)" = "two tickets" ] \
+  || fail "a detail short enough to keep was altered anyway"
+pass "a long capture detail is bounded and says it was cut; a short one is left alone"
+
+# ── 7. The record's own failure paths ─────────────────────────────────────────────────
+
+mkdir -p "$WORK/malformed"
+if printf 'this row has no tabs\n' \
+     | python3 "$SCRIPT_DIR/bundle.py" "$WORK/malformed" run.json \
+         "2026-01-01T00:00:00Z" "2026-01-01T01:00:00Z" "$BUNDLE/seed/macklebox" \
+         2>"$WORK/malformed.err"; then
+  fail "a malformed capture row was written into run.json instead of refused"
+fi
+grep -q 'malformed capture row' "$WORK/malformed.err" \
+  || fail "the refusal does not name the problem: $(cat "$WORK/malformed.err")"
+
+# An unreadable clock must read back as null, never as a duration of zero: one is a claim
+# about the record and the other is a claim about the run.
+mkdir -p "$WORK/clockless"
+printf 'transcripts\t1\t3 transcript(s)\n' \
+  | python3 "$SCRIPT_DIR/bundle.py" "$WORK/clockless" run.json "not-a-time" "nor-this" \
+      "$BUNDLE/seed/macklebox" \
+  || fail "an unreadable clock took down the whole record"
+[ "$(json_field "$WORK/clockless/run.json" 'd["duration_seconds"]')" = None ] \
+  || fail "an unreadable clock became a duration instead of null"
+pass "run.json refuses a malformed row, and records an unreadable clock as null"
+
+# ── 8. Every way a PR capture can come back unusable is refused ───────────────────────
+#
+# Usage: refuses_capture <name> <document-file> <expected-text-in-the-refusal>
+refuses_capture() {
+  local name="$1" document="$2" expected="$3" dir="$WORK/refuse-$1"
+  mkdir -p "$dir/prs"
+  cp "$document" "$dir/prs/pr-0008.json"
+  if python3 "$SCRIPT_DIR/prs.py" "$dir/prs" 2>"$dir/err"; then
+    fail "a capture that $name was accepted as a complete pull request"
+  fi
+  grep -q "$expected" "$dir/err" \
+    || fail "the refusal for '$name' does not name it: $(cat "$dir/err")"
+  [ ! -e "$dir/prs/index.json" ] \
+    || fail "a capture that $name still wrote an index, which reads as a complete one"
+}
+
+write_pr_fixture 8 2 0 thread-truncated
+refuses_capture "overflowed one thread's comments" \
+  "$HORIZON_FIXTURE_DIR/pr-8.json" 'more comments than one page'
+
+printf '{"errors": [{"message": "Could not resolve to a Repository."}]}\n' \
+  > "$WORK/graphql-error.json"
+refuses_capture "came back a GraphQL error" "$WORK/graphql-error.json" 'GraphQL error'
+
+printf '{"data": {"repository": {"pullRequest": null}}}\n' > "$WORK/no-such-pr.json"
+refuses_capture "named a pull request that does not exist" \
+  "$WORK/no-such-pr.json" 'captured no pull request'
+
+printf '{"data": {"repository": {}}}\n' > "$WORK/shapeless.json"
+refuses_capture "does not have the shape prs.py reads" \
+  "$WORK/shapeless.json" 'disagree about the document'
+pass "a short, errored, empty or drifted PR capture is refused by name and writes no index"
 
 printf '\nall checks passed\n'

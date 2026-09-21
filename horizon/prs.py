@@ -38,35 +38,44 @@ CONNECTIONS = (
 )
 
 
-def connection(pull_request, path):
-    """The connection at `path`, or an exit when the captured document has no such key.
+def captured(root, path, subject):
+    """The value at `path` inside a captured document, or an exit naming what is missing.
 
-    A missing connection means the capture query and this reader have drifted apart, which
-    is a defect in the instrument rather than a fact about the run - so it stops here
-    instead of being reported as a pull request with no reviews.
+    EVERY structural read of a capture goes through here - a connection, its `pageInfo`,
+    the `nodes` under it, and the comments nested inside a review thread alike. A bare
+    `doc["a"]["b"]` anywhere else raises a KeyError naming neither the pull request nor
+    the field, which is the one thing this module promises never to do: a missing key
+    means the capture query and this reader have drifted apart, and that is a defect in
+    the instrument rather than a fact about the run. One reader, so there is no second
+    way to reach into a capture that fails differently. [LAW:single-enforcer]
+
+    `subject` names the thing being read and is passed in rather than derived from `root`,
+    because `root` is a review thread or a whole capture file as often as a pull request,
+    and neither of those knows the PR number the message has to carry.
     """
-    node = pull_request
+    node = root
     for key in path:
         if not isinstance(node, dict) or key not in node:
-            sys.exit("captured pull request #%s has no %s: the capture query and prs.py "
-                     "disagree about the document's shape"
-                     % (pull_request.get("number"), ".".join(path)))
+            sys.exit("%s has no %s: the capture and prs.py disagree about the document's "
+                     "shape" % (subject, ".".join(path)))
         node = node[key]
     return node
 
 
 def refuse_truncation(number, pull_request):
+    subject = "captured pull request #%s" % number
     for path in CONNECTIONS:
-        node = connection(pull_request, path)
-        if node["pageInfo"]["hasNextPage"]:
+        if captured(pull_request, path + ("pageInfo", "hasNextPage"), subject):
             sys.exit("PR #%s has more %s than one page: the capture is short, and a bundle "
                      "holding half a review thread is worse than one holding none. "
                      "Raise the page size in HORIZON_PR_QUERY and capture it again."
                      % (number, ".".join(path)))
         # A review thread's own comments are a connection inside a connection, and it is
         # the likeliest one to overflow: a long argument on one line of one file.
-        for thread in node["nodes"] if path == ("reviewThreads",) else ():
-            if thread["comments"]["pageInfo"]["hasNextPage"]:
+        if path != ("reviewThreads",):
+            continue
+        for thread in captured(pull_request, path + ("nodes",), subject):
+            if captured(thread, ("comments", "pageInfo", "hasNextPage"), subject):
                 sys.exit("PR #%s has a review thread on %s with more comments than one "
                          "page: the capture is short."
                          % (number, thread.get("path")))
@@ -83,34 +92,49 @@ def read_capture(path):
     if "errors" in document:
         sys.exit("%s records a GraphQL error rather than a pull request: %s"
                  % (os.path.basename(path), json.dumps(document["errors"])))
-    pull_request = document["data"]["repository"]["pullRequest"]
+    pull_request = captured(document, ("data", "repository", "pullRequest"),
+                            os.path.basename(path))
     if pull_request is None:
         sys.exit("%s captured no pull request - the number does not exist in that "
                  "repository" % os.path.basename(path))
     return pull_request
 
 
+# What the index calls each of the pull request\'s own flat fields, beside what GitHub
+# calls it. Read as data rather than written out as nine lookups, so every one of them
+# goes through the same loud-on-drift reader below without nine chances to forget.
+# [LAW:dataflow-not-control-flow]
+FLAT_FIELDS = (
+    ("number", "number"),
+    ("title", "title"),
+    ("url", "url"),
+    ("state", "state"),
+    ("merged", "merged"),
+    ("created_at", "createdAt"),
+    ("merged_at", "mergedAt"),
+    ("head_ref", "headRefName"),
+    ("head_sha", "headRefOid"),
+)
+
+
 def summarise(pull_request):
-    threads = connection(pull_request, ("reviewThreads",))["nodes"]
-    return {
-        "number": pull_request["number"],
-        "title": pull_request["title"],
-        "url": pull_request["url"],
-        "state": pull_request["state"],
-        "merged": pull_request["merged"],
-        "created_at": pull_request["createdAt"],
-        "merged_at": pull_request["mergedAt"],
-        "head_ref": pull_request["headRefName"],
-        "head_sha": pull_request["headRefOid"],
-        "commits": connection(pull_request, ("commits",))["totalCount"],
-        "reviews": len(connection(pull_request, ("reviews",))["nodes"]),
+    # `.get` for the label, so a capture missing `number` is reported by the read that
+    # wants it rather than by the line building the message about it.
+    subject = "captured pull request #%s" % pull_request.get("number")
+    threads = captured(pull_request, ("reviewThreads", "nodes"), subject)
+    summary = {name: captured(pull_request, (key,), subject) for name, key in FLAT_FIELDS}
+    summary.update({
+        "commits": captured(pull_request, ("commits", "totalCount"), subject),
+        "reviews": len(captured(pull_request, ("reviews", "nodes"), subject)),
         "review_threads": len(threads),
         # The number a reviewer actually scans for. An unresolved thread on a merged PR is
         # the workflow failing in the specific way this eval exists to catch, so it is
         # surfaced in the index rather than left inside the per-PR file.
-        "review_threads_unresolved": sum(1 for t in threads if not t["isResolved"]),
-        "comments": len(connection(pull_request, ("comments",))["nodes"]),
-    }
+        "review_threads_unresolved":
+            sum(1 for t in threads if not captured(t, ("isResolved",), subject)),
+        "comments": len(captured(pull_request, ("comments", "nodes"), subject)),
+    })
+    return summary
 
 
 def main():
@@ -121,7 +145,7 @@ def main():
     summaries = []
     for path in sorted(glob.glob(os.path.join(prs_dir, "pr-*.json"))):
         pull_request = read_capture(path)
-        refuse_truncation(pull_request["number"], pull_request)
+        refuse_truncation(pull_request.get("number"), pull_request)
         summaries.append(summarise(pull_request))
 
     summaries.sort(key=lambda s: s["number"])

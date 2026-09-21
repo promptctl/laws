@@ -1366,6 +1366,11 @@ arrives as plain text and leaves exactly this."
 # is one of the rows that file is built from cannot check that the file is there.
 HORIZON_BUNDLE_RECORD="run.json"
 
+# How much of a capture step's output `run.json` carries. Long enough for any message the
+# steps here actually write, short enough that one chatty failure cannot bury the other
+# nine rows in the file a reader opens first.
+HORIZON_DETAIL_MAX=400
+
 # Tab-separated `<path><TAB><what it holds>`, one per line.
 HORIZON_BUNDLE_LAYOUT='README.md	this file: what each path below holds, and where the three things reviewers come for live
 run.json	when the run ran, what it drove, and which of the captures below landed
@@ -1485,11 +1490,23 @@ query($owner:String!, $name:String!, $number:Int!) {
 # stops the capture rather than being written short. A bundle that silently holds most of a
 # review thread is worse than one that holds none, because only the second announces
 # itself. [LAW:no-silent-failure]
+# Usage: horizon_require_bundle_project <project_dir>
+#
+# The one check for "this bundle has a project to read". Every capture that needs one asks
+# here rather than spelling the test out again, because three copies of a rule is three
+# places to change it and two of them get changed. [LAW:single-enforcer]
+#
+# A bundle with no project is a real state, not a broken one: the run died before seeding
+# finished. What must not happen is a capture treating that as an empty result.
+horizon_require_bundle_project() {
+  [ -n "$1" ] && [ -d "$1" ] \
+    || horizon_die "no project in this bundle - the run ended before seeding finished"
+}
+
 horizon_capture_prs() {
   local bundle_dir="$1" project_dir="$2"
   local prs_dir="$bundle_dir/prs" time_zero="$bundle_dir/prs/time-zero.json"
-  [ -n "$project_dir" ] && [ -d "$project_dir" ] \
-    || horizon_die "no project in this bundle - the run ended before seeding finished"
+  horizon_require_bundle_project "$project_dir"
   [ -f "$time_zero" ] \
     || horizon_die "no $time_zero: the remote was never reset, so which PRs are this run's is unknowable"
 
@@ -1538,20 +1555,35 @@ horizon_capture_backlog() {
   # from horizon_capture_bundle, which happens to use that same name - so renaming a local
   # in the caller would have moved this file without a word. [LAW:no-shared-mutable-globals]
   local out="$bundle_dir/backlog/export.json"
-  [ -n "$project_dir" ] && [ -d "$project_dir" ] \
-    || horizon_die "no project in this bundle - the run ended before seeding finished"
+  horizon_require_bundle_project "$project_dir"
   mkdir -p "$bundle_dir/backlog" || horizon_die "could not create $bundle_dir/backlog"
   horizon_lit_export "$project_dir" > "$out" \
     || horizon_die "could not export the backlog from $project_dir"
   # Indexed, not searched: an export without `issues` is not a thin backlog, it is a
   # document this code does not understand, and the KeyError says so where a `.get` default
   # would report a healthy empty backlog. [LAW:no-silent-failure]
+  #
+  # And ZERO tickets is refused rather than counted, because it is not a state a horizon
+  # project can legally be in: every run is seeded from a seed bundle that imports a
+  # backlog, so the tickets exist before the agent has done anything at all. What produces
+  # an empty export instead is `lit export` hitting a sync it cannot resolve - measured
+  # 2026-09-21: it printed a blocking error to stderr, EXITED 0, and wrote
+  # `{"issues": [], "comments": [], "events": []}`. Exit status alone would have recorded
+  # that as `"ok": true, "detail": "0 ticket(s)"`, which a reader can only read as "this
+  # run created nothing" - the opposite finding from the truth, and exactly the ambiguity
+  # this bundle exists to make impossible. [LAW:parse-dont-validate] the shape this accepts
+  # is an export OF A SEEDED PROJECT, not an export.
   python3 -c '
 import json, sys
 doc = json.load(open(sys.argv[1]))
+issues, comments, events = doc["issues"], doc["comments"], doc["events"]
+if not issues:
+    sys.exit("the export holds no tickets at all. Every run is seeded with a backlog, so "
+             "this is a broken export rather than an empty one - `lit export` exits 0 on "
+             "a sync it cannot resolve and writes exactly this document.")
 print("%d ticket(s), %d comment(s), %d event(s)"
-      % (len(doc["issues"]), len(doc["comments"]), len(doc["events"])))' "$out" \
-    || horizon_die "$out is not a lit export this code can read"
+      % (len(issues), len(comments), len(events)))' "$out" \
+    || horizon_die "$out is not a readable lit export of a seeded project"
 }
 
 # Usage: horizon_bundle_project_dir <bundle_dir>  -> the project's path, or empty
@@ -1598,10 +1630,16 @@ EOT
     printf '%s\n' "$HORIZON_BUNDLE_LAYOUT" | awk -F'\t' 'NF { printf "- `%s` - %s\n", $1, $2 }'
     cat <<'EOT'
 
-Every path above is in every bundle, for every run, whether the run finished the backlog or
-died in its first minute. When a capture could not run, its entry in `run.json` says so and
-says why - so an empty result here always means the run produced nothing, never that the
-recording failed.
+`run.json` answers the same questions for every run, with the same keys, whether the run
+finished the backlog or died in its first minute: every capture above has an entry there,
+and one that could not run says so and says why rather than leaving you an absent file to
+interpret. The `layout` entry names any path in the list above that this bundle does not
+have - a run that died before it was seeded genuinely has no `seed/`, and that is written
+down rather than left for you to notice.
+
+So nothing here has to be guessed at. Read `run.json` first: an empty result whose capture
+says `"ok": true` means the run produced nothing, and a capture that failed is named,
+with its reason, beside the others that did not.
 
 ## The three things people come here for
 
@@ -1655,6 +1693,14 @@ horizon_capture_step() {
   # Flattened to one line, because the row is tab-separated and a detail containing either
   # a tab or a newline would silently become a different number of fields.
   detail="$(printf '%s' "$detail" | tr '\n\t' '  ')"
+  # And bounded. `run.json` is the surface two bundles get compared on, and a step that
+  # failed can print a great deal: `lit export` alone emits a 2.4 KB block of agent
+  # instructions on a sync it cannot resolve. One such value pushes every other capture
+  # off the page. The cut is announced in the text, so nobody reads a sentence that stops
+  # mid-word as the whole reason - the full message is still on the run's own stderr.
+  if [ "${#detail}" -gt "$HORIZON_DETAIL_MAX" ]; then
+    detail="${detail:0:$HORIZON_DETAIL_MAX} ... (truncated)"
+  fi
   if [ "$status" -eq 0 ]; then
     printf '%s\t1\t%s\n' "$name" "${detail:-captured}"
   else
@@ -1748,8 +1794,17 @@ horizon_check_bundle_layout() {
 # record most worth having, so it is written from the close-out like everything else.
 horizon_capture_loop() {
   local bundle_dir="$1" project_dir="$2"
-  [ -n "$project_dir" ] && [ -d "$project_dir" ] \
-    || horizon_die "no project in this bundle - the run ended before seeding finished"
+  horizon_require_bundle_project "$project_dir"
+  # The transcripts capture runs first and MOVES the directory into place, so its absence
+  # here means that step did not land - never that the run held no sessions. Without this,
+  # sessions.py globs a directory that is not there, matches nothing, and writes a
+  # loop.json of zero sessions and zero tokens: `run.json` then carries `loop: ok` beside
+  # `transcripts: failed`, and a reader who opens loop.json on its own - which the bundle
+  # README invites - sees a clean report of a run that did nothing. An EMPTY transcripts/
+  # is a different thing and stays legal: the run died before booting a session, and all
+  # zeros is then the truth. [LAW:no-silent-failure]
+  [ -d "$bundle_dir/transcripts" ] \
+    || horizon_die "no transcripts/ in this bundle - the transcripts capture did not land, so there is nothing to analyse and a zero here would be a fabrication"
   horizon_report "$bundle_dir/transcripts" "$project_dir" "$bundle_dir/goal.md" \
     > "$bundle_dir/loop.json" \
     || horizon_die "could not analyse the run's sessions"
