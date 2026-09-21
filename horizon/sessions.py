@@ -389,6 +389,7 @@ def main():
         pinned_goal = handle.read().strip()
 
     sessions = []
+    subprocesses = []
     subprocess_tokens = no_tokens()
     foreign = []
     forming = []
@@ -400,6 +401,7 @@ def main():
             sessions.append(transcript)
             disagreements += transcript["usage_disagreements"]
         elif transcript["kind"] == SUBPROCESS:
+            subprocesses.append(transcript["session_id"])
             add_tokens(subprocess_tokens, transcript["tokens"])
             disagreements += transcript["usage_disagreements"]
         elif transcript["kind"] == FOREIGN:
@@ -421,7 +423,13 @@ def main():
     # belonged to this project" and "the run did nothing" produce identical output, and
     # the wrong one of those is a quiet zero a reader has no reason to doubt.
     # [LAW:no-silent-failure]
-    if foreign and not sessions:
+    # `sessions` alone is the wrong bucket to ask, and the message above is why: a
+    # SUBPROCESS matched this project too - that is what made it a subprocess rather than
+    # a foreign transcript - it is simply not a session of the run. A bundle holding one
+    # headless reviewer and one genuinely foreign transcript would abort saying "all
+    # another project's" about a set that demonstrably was not. The predicate has to be
+    # the claim the sentence makes. [LAW:one-source-of-truth]
+    if foreign and not sessions and not subprocesses:
         sys.exit("no transcript in %s belongs to %s (%d found, all another project's).\n"
                  "An archived run records the path it ran at, not where the bundle now "
                  "sits - pass project.path from the bundle's run.json."
@@ -500,6 +508,11 @@ def main():
             # transcript is foreign, so without this line a run that dropped one
             # transcript's spend would read exactly like a run that had none to drop.
             "foreign_transcripts": len(foreign),
+            # Transcripts that matched the project but took no turns of their own - the
+            # headless claudes the run's tools spawned. Counted here as well as billed
+            # below, because `tokens.subprocesses` answers what they cost and not how
+            # many there were, and the abort above now turns on whether any existed.
+            "subprocess_transcripts": len(subprocesses),
             # Transcripts that recorded no working directory at all, so nothing here can
             # say whose they are. A session that is still booting looks like this, which
             # is why they are not counted above: a reviewer reading `foreign` as "somebody

@@ -1517,9 +1517,16 @@ query($owner:String!, $name:String!, $number:Int!) {
 #
 # A bundle with no project is a real state, not a broken one: the run died before seeding
 # finished. What must not happen is a capture treating that as an empty result.
+#
+# The message names what this can SEE and stops there. It used to assert the cause - "the
+# run ended before seeding finished" - which is one of two ways to arrive here, and the
+# other one (a manifest that exists and will not read) then went into run.json wearing the
+# wrong diagnosis, in the record, permanently. A refusal may not claim a cause it did not
+# check; it points at the evidence instead, which is in the bundle either way.
+# [LAW:no-silent-failure]
 horizon_require_bundle_project() {
   [ -n "$1" ] && [ -d "$1" ] \
-    || horizon_die "no project in this bundle - the run ended before seeding finished"
+    || horizon_die "no project to read in this bundle: seed/seed-manifest.json names none, either because the run ended before seeding finished or because the manifest it wrote cannot be read - seed/ is in the bundle, look there for which"
 }
 
 horizon_capture_prs() {
@@ -1630,8 +1637,17 @@ print("%d ticket(s), %d comment(s), %d event(s)"
 # [LAW:one-source-of-truth]
 horizon_bundle_project_dir() {
   local bundle_dir="$1" seed_manifest="$1/seed/seed-manifest.json" name
+  # No manifest at all is the legitimate empty: seeding never got as far as writing one.
   [ -f "$seed_manifest" ] || return 0
-  name="$(horizon_manifest_field "$seed_manifest" project name)" || return 0
+  # A manifest that EXISTS and will not read is a different finding, and it used to reach
+  # nobody at all: `|| return 0` collapsed it into the same empty, and `horizon_die`'s one
+  # line went to a terminal that an unattended run has nobody watching. Said out loud
+  # here, and NOT made fatal - dying would take run.json down with it, and the bundle is
+  # this run's entire product. [LAW:no-silent-failure]
+  if ! name="$(horizon_manifest_field "$seed_manifest" project name)"; then
+    horizon_log "$seed_manifest is present but records no readable project.name; every capture that needs a project will refuse"
+    return 0
+  fi
   printf '%s/seed/%s\n' "$bundle_dir" "$name"
 }
 

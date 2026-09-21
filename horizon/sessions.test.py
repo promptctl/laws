@@ -694,6 +694,93 @@ def main():
               orphaned["tokens"]["total"]["output_tokens"] == 0,
               "got %s" % orphaned["tokens"]["total"])
 
+    # The all-foreign abort, asked whether it means what its sentence says. A SUBPROCESS
+    # matched the project - that match is the whole difference between it and a foreign
+    # transcript - it is simply not a session. Keyed on `sessions` alone, the refusal fired
+    # on a bundle holding a headless reviewer that plainly did belong, and told the reader
+    # every transcript was another project's while billing one of them to this run in the
+    # same document.
+    with tempfile.TemporaryDirectory() as tmp12:
+        transcripts = os.path.join(tmp12, "transcripts")
+        proj = os.path.join(tmp12, "project")
+        other = os.path.join(tmp12, "elsewhere")
+        os.makedirs(proj)
+        os.makedirs(other)
+        gf = os.path.join(tmp12, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(transcripts, "p", "reviewer", proj,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T00:10:00+00:00",
+                      entrypoint="sdk-cli", extra=[assistant_block("m1", output=55)])
+        write_session(transcripts, "elsewhere", "stranger", other,
+                      "2026-01-01T00:30:00+00:00", "2026-01-01T00:45:00+00:00",
+                      extra=[assistant_block("m2", output=999)])
+        mixed = subprocess.run(
+            [sys.executable, SESSIONS, transcripts, proj, gf],
+            input="", capture_output=True, text=True,
+        )
+        check("a bundle whose only match is a subprocess is not called all-foreign",
+              mixed.returncode == 0,
+              "rc=%s stderr=%r" % (mixed.returncode, mixed.stderr))
+        if mixed.returncode == 0:
+            state = json.loads(mixed.stdout)
+            check("the subprocess that kept the abort quiet is counted in the record",
+                  state["subprocess_transcripts"] == 1
+                  and state["foreign_transcripts"] == 1
+                  and state["tokens"]["subprocesses"]["output_tokens"] == 55,
+                  "subprocess=%s foreign=%s tokens=%s"
+                  % (state.get("subprocess_transcripts"),
+                     state.get("foreign_transcripts"),
+                     state["tokens"]["subprocesses"]))
+
+        # And the abort still fires when nothing at all belonged, which is the state it
+        # was written for: an archived bundle read with the wrong project path.
+        alone = os.path.join(tmp12, "foreign-only")
+        os.makedirs(alone)
+        write_session(alone, "elsewhere", "stranger2", other,
+                      "2026-01-01T01:00:00+00:00", "2026-01-01T01:05:00+00:00",
+                      extra=[assistant_block("m3", output=1)])
+        only = subprocess.run(
+            [sys.executable, SESSIONS, alone, proj, gf],
+            input="", capture_output=True, text=True,
+        )
+        check("a bundle where nothing belonged is still refused by name",
+              only.returncode != 0 and "run.json" in only.stderr,
+              "rc=%s stderr=%r" % (only.returncode, only.stderr))
+
+    # An INTERACTIVE session recorded in a worktree under the project. `within()` was
+    # written for the headless case, and it admits this one too - deliberately, and stated
+    # here so the next reader does not read it as an oversight and tighten it back to an
+    # equality. The run's own agent moves into a worktree of the project when the work
+    # wants isolation; that transcript is the run's, its commits are the run's, and an
+    # exact-cwd test would drop both - understating the acceptance criterion the bundle
+    # exists to report on. The harness cannot produce a stranger here: the config dir is
+    # wiped and rebuilt per run and nobody else works in it.
+    with tempfile.TemporaryDirectory() as tmp13:
+        transcripts = os.path.join(tmp13, "transcripts")
+        proj = os.path.join(tmp13, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp13, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(transcripts, "p", "in-worktree",
+                      os.path.join(proj, ".claude", "worktrees", "wt"),
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
+                      goal_text=PINNED_GOAL,
+                      extra=[assistant_block("m1", output=12)])
+        moved_in = run(transcripts, proj, gf, [])
+        check("an interactive session working in a worktree of the project is the run's own",
+              [s["session_id"] for s in moved_in["sessions"]] == ["in-worktree"]
+              and moved_in["foreign_transcripts"] == 0,
+              "sessions=%s foreign=%s"
+              % ([s["session_id"] for s in moved_in["sessions"]],
+                 moved_in.get("foreign_transcripts")))
+        check("its spend is billed to the sessions, not to the subprocesses",
+              moved_in["tokens"]["sessions"]["output_tokens"] == 12
+              and moved_in["tokens"]["subprocesses"]["output_tokens"] == 0,
+              "sessions=%s subprocesses=%s"
+              % (moved_in["tokens"]["sessions"], moved_in["tokens"]["subprocesses"]))
+
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))
         return 1

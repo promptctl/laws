@@ -377,9 +377,16 @@ pass "run.json records the run-time project path, that every capture landed, and
 # The claim the README makes to the next reader, executed rather than trusted: loop.json is
 # recomputable from the bundle alone, using the path run.json records.
 RECOMPUTED="$WORK/recomputed.json"
+# Read into a variable FIRST, the way every other call in this file does. `json_field`
+# refuses by calling `fail`, which exits - but only the subshell the substitution forked,
+# and bash does not check an embedded substitution's status when it is merely one word of
+# a command line. Inlined here, a run.json that had stopped recording `project.path` would
+# hand sessions.py an empty argument, and the diff below would fail somewhere else
+# entirely. The assignment is what makes the refusal reach this script. [LAW:no-silent-failure]
+RECORDED_PROJECT="$(json_field "$BUNDLE/run.json" 'd["project"]["path"]')"
 ( cd "$BUNDLE/seed/macklebox" && git log --reverse --format='%H%x09%cI' ) \
   | python3 "$SCRIPT_DIR/sessions.py" "$BUNDLE/transcripts" \
-      "$(json_field "$BUNDLE/run.json" 'd["project"]["path"]')" "$BUNDLE/goal.md" \
+      "$RECORDED_PROJECT" "$BUNDLE/goal.md" \
   > "$RECOMPUTED" || fail "loop.json could not be recomputed from the bundle"
 diff "$BUNDLE/loop.json" "$RECOMPUTED" >/dev/null \
   || fail "recomputing loop.json from the bundle gives a different answer than the run recorded"
@@ -389,7 +396,18 @@ pass "loop.json recomputes from the bundle alone, byte for byte"
 
 DIED="$WORK/died"
 mkdir -p "$DIED"
-horizon_capture_bundle "$CONFIG" "$DIED" "2026-01-01T00:00:00Z" >/dev/null 2>&1 \
+# Its OWN config dir, not section 1's. Reusing $CONFIG produced the intended "no
+# transcripts" bundle only because the capture above had already moved $CONFIG/projects
+# into that bundle - a side effect of a different section, nowhere stated, and the kind
+# of coupling that survives until somebody reorders the file and then silently tests the
+# opposite scenario from the one the heading claims.
+# [LAW:no-ambient-temporal-coupling] the scenario builds what it needs.
+# With no projects/ inside it, which is what a config dir looks like when the run died
+# before a session ever booted - and is exactly the state section 1 left $CONFIG in by
+# accident. Built on purpose here, it is the scenario rather than a leftover.
+DIED_CONFIG="$WORK/died-config"
+mkdir -p "$DIED_CONFIG"
+horizon_capture_bundle "$DIED_CONFIG" "$DIED" "2026-01-01T00:00:00Z" >/dev/null 2>&1 \
   && fail "a run that died before seeding reported a successful capture"
 
 [ -f "$DIED/run.json" ] || fail "a run that died before seeding left no run.json"
@@ -541,7 +559,45 @@ printf 'transcripts\t1\t3 transcript(s)\n' \
   || fail "an unreadable clock took down the whole record"
 [ "$(json_field "$WORK/clockless/run.json" 'd["duration_seconds"]')" = None ] \
   || fail "an unreadable clock became a duration instead of null"
-pass "run.json refuses a malformed row and a duplicated one, and records an unreadable clock as null"
+
+# And a clock that ran BACKWARDS is the same kind of record. Both stamps parse here, so
+# the guard above lets this through; what comes out the other side without a second guard
+# is a negative number that reads like a duration and gets averaged like one.
+mkdir -p "$WORK/backwards"
+printf 'transcripts\t1\t3 transcript(s)\n' \
+  | python3 "$SCRIPT_DIR/bundle.py" "$WORK/backwards" run.json \
+      "2026-01-01T09:00:00Z" "2026-01-01T08:00:00Z" "$BUNDLE/seed/macklebox" \
+  || fail "a backwards clock took down the whole record"
+[ "$(json_field "$WORK/backwards/run.json" 'd["duration_seconds"]')" = None ] \
+  || fail "a run whose end precedes its start reported a duration: $(json_field "$WORK/backwards/run.json" 'd["duration_seconds"]')"
+pass "run.json refuses a malformed row and a duplicated one, and records an unreadable and a backwards clock as null"
+
+# ── 7b. A seed manifest that exists and will not read is not "the run never seeded" ───
+#
+# Two different findings that used to produce one sentence in the record. The bundle has a
+# seed/ with a project directory sitting in it, so a reader told "the run ended before
+# seeding finished" is told something the bundle itself contradicts.
+UNREADABLE="$WORK/unreadable-manifest"
+mkdir -p "$UNREADABLE/seed/macklebox"
+printf '{ this is not json' > "$UNREADABLE/seed/seed-manifest.json"
+[ -z "$(horizon_bundle_project_dir "$UNREADABLE" 2>/dev/null)" ] \
+  || fail "an unreadable seed manifest resolved to a project directory anyway"
+# Resolving to empty is not enough and never was: that is what the masked version did too.
+# What has to be true is that the reason was SAID. An unattended close-out has nobody
+# reading a python traceback, and "could not read project.name" without this line leaves
+# the reader to conclude from silence that there was simply no manifest.
+UNREADABLE_LOG="$( ( horizon_bundle_project_dir "$UNREADABLE" >/dev/null ) 2>&1 )"
+case "$UNREADABLE_LOG" in
+  *"is present but records no readable project.name"*) : ;;
+  *) fail "an unreadable seed manifest was masked as an absent one: $UNREADABLE_LOG" ;;
+esac
+UNREADABLE_REFUSAL="$( ( horizon_require_bundle_project "$(horizon_bundle_project_dir "$UNREADABLE")" ) 2>&1 )" \
+  && fail "a bundle whose manifest will not read was accepted as having a project"
+case "$UNREADABLE_REFUSAL" in
+  *"cannot be read"*) : ;;
+  *) fail "the refusal still asserts a cause it did not check: $UNREADABLE_REFUSAL" ;;
+esac
+pass "a seed manifest that exists and will not read is refused without inventing a cause"
 
 # ── 8. Every way a PR capture can come back unusable is refused ───────────────────────
 #
