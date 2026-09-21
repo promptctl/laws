@@ -154,7 +154,7 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # Here, under the lock, and not inside the pin: this is the one shared thing the pin
   # would otherwise touch, and the lock is what makes wiping it safe. [LAW:single-enforcer]
   horizon_log "rebuilding the config dir from the pinned snapshot"
-  horizon_provision_config_dir "$config_dir" "$instrument_dir/pinned"
+  horizon_provision_config_dir "$config_dir" "$instrument_dir"
 
   horizon_log "seeding time zero from $(basename "$seed_dir")"
   "$SCRIPT_DIR/seed-run.sh" "$seed_out_dir" "$seed_dir" \
@@ -198,8 +198,16 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_wait_ready
   # Asked of the session rather than of the driver: manifest.json records a version read
   # from a file on disk, and this is the only reading taken from the process running it.
-  horizon_assert_booted_version "$HORIZON_TMUX_SESSION" \
-    "$(horizon_manifest_field "$instrument_dir/manifest.json" claude version)"
+  #
+  # Captured into a checked assignment rather than nested into the argument list: a
+  # command substitution that fails inside an argument has its status discarded, so
+  # horizon_manifest_field's horizon_die would be swallowed and the assert would run with
+  # an empty expectation - reporting a harness divergence for what is really an unreadable
+  # manifest. The same rule horizon_lit_sha256 states. [LAW:no-silent-failure]
+  local recorded_version
+  recorded_version="$(horizon_manifest_field "$instrument_dir/manifest.json" claude version)" \
+    || horizon_die "could not read claude.version from $instrument_dir/manifest.json"
+  horizon_assert_booted_version "$HORIZON_TMUX_SESSION" "$recorded_version"
   # The isolation guarantee, checked rather than assumed - see horizon_assert_transport.
   horizon_assert_transport
   horizon_log "handoff transport verified: in-place reset, config dir preserved"

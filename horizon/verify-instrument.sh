@@ -144,13 +144,18 @@ main() {
   # snapshot, which is also the one the installed skills are compared against below.
   local config_dir="$WORK/config" pinned_dir="$WORK/run2/pinned"
   horizon_log "provisioning a throwaway config dir from run 2's snapshot"
-  horizon_provision_config_dir "$config_dir" "$pinned_dir"
+  horizon_provision_config_dir "$config_dir" "$WORK/run2"
 
   # Criterion 5d: the model the manifest records is the model the config dir imposes.
   # Read out of settings.json rather than trusted from the variable that wrote it: the key
   # name is Claude Code's, and a run whose model setting landed under a key the CLI does
   # not read would record a control while the sessions quietly took the CLI default -
   # which is the same silent shape as the trust key written under the wrong path.
+  #
+  # The non-empty half is the load-bearing one: it is what catches that regression. The
+  # equality half became worth asserting once provisioning started reading the model back
+  # out of manifest.json - it now checks that plumbing rather than comparing two readings
+  # of one environment variable, which agreed by construction and could not fail.
   local settings_model recorded_model
   recorded_model="$(horizon_manifest_field "$WORK/run2/manifest.json" claude model)" \
     || fail "could not read claude.model from run2/manifest.json"
@@ -165,7 +170,10 @@ print(json.load(open(sys.argv[1])).get("model", ""))
   pass "the provisioned config dir imposes the recorded model ($recorded_model)"
 
   local plugin_list admitted
-  plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" claude plugin list --json)" \
+  # The PINNED binary interrogates the pinned config dir, for the same reason provisioning
+  # uses it: the plugin cache's shape belongs to the CLI version that wrote it, so reading
+  # it back with a different one asks a question about a config dir nobody built.
+  plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" "$WORK/run2/bin/claude" plugin list --json)" \
     || fail "could not read claude plugin list --json from the isolated config dir"
   admitted="$(horizon_marketplace_plugins "$pinned_dir")"
 
@@ -474,9 +482,13 @@ print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
   # other check on the pin reads files the driver resolved; this one asks the process.
   # It is what makes "the recorded version is the version that ran" a checked claim
   # rather than a chain of plausible lookups. [LAW:verifiable-goals]
-  horizon_assert_booted_version "$VERIFY_TMUX_SESSION" \
-    "$(horizon_manifest_field "$WORK/run2/manifest.json" claude version)"
-  pass "the booted session runs the version the manifest records"
+  # Checked assignment, not nested into the argument list: a failing substitution there
+  # has its status discarded, and the assert would run against an empty expectation.
+  local booted_expected
+  booted_expected="$(horizon_manifest_field "$WORK/run2/manifest.json" claude version)" \
+    || fail "could not read claude.version from run2/manifest.json"
+  horizon_assert_booted_version "$VERIFY_TMUX_SESSION" "$booted_expected"
+  pass "the booted session runs the version the manifest records ($booted_expected)"
 
   # The SAME live session, asked for the state the RUN asks for. Without this the wait is
   # only ever exercised on the path where it agrees, so a wait that returned success for
