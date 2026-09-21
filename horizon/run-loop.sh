@@ -147,7 +147,14 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # ran on and had nothing to say about. Here rather than at the first PR, for the reason
   # that put the line above here: the remote must not be reset for a run that cannot
   # produce the thing it is measuring. [LAW:no-silent-failure]
-  horizon_log "checking the reviewer can authenticate on $HORIZON_RUN_REPO"
+  #
+  # The line says CREDENTIAL IS SET, not "can authenticate", and the difference is the
+  # whole point of the line. The check above really does authenticate - it makes a request.
+  # This one reads a secret store, and a token that is present but expired or out of quota
+  # passes it. An operator watching "checking the reviewer can authenticate" scroll past
+  # without complaint would take the review arm as verified, which is the false confidence
+  # this gate was added to remove rather than relocate. [FRAMING:representation]
+  horizon_log "checking the reviewer's credential is set on $HORIZON_RUN_REPO"
   horizon_assert_reviewer_credential "$HORIZON_RUN_REPO"
 
   mkdir -p "$HORIZON_WORK_DIR" || horizon_die "could not create the work dir $HORIZON_WORK_DIR"

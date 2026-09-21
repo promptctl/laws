@@ -279,6 +279,19 @@ put deliberately into that state, and each state is checked against one of those
 captured panes on every run — a live boot can only ever exhibit one state, so the other
 branches would otherwise never execute.
 
+Last, and unlike everything above it, a check that touches no GitHub at all: the
+**reviewer-credential gate** `run-loop.sh` opens with. It is driven from a `gh` fixture, so
+the verdict is about the instrument rather than about whether this machine's secret store
+happens to be set up — and so both directions of the gate run whatever that store holds,
+where the live remote could only ever exhibit the one it is currently in. Six fixtures: the
+credential absent, present on the repository, present as an **organization secret shared
+with the repository** (a different listing entirely, and one the action authenticates from
+just as well), a **suffixed near-miss** — `CLAUDE_CODE_OAUTH_TOKEN_<ACCOUNT>` is exactly how
+the keychain items holding these tokens are named, and the action reads the bare name — and
+each of the two listings failing outright, which has to be reported as an unknown rather
+than as an absent secret. The fixture answers those two calls and refuses any other by
+name, so a gate that grows a third question fails here instead of being waved through.
+
 ## Seeding a run's time zero
 
 ```sh
@@ -492,10 +505,19 @@ not knowable before a pull request exists — the action has no probe endpoint. 
 where that gets read instead: `horizon_capture_prs` captures every PR's reviews and review
 threads, so a human opening a run bundle can see whether the reviewer ever spoke.
 
-The reviewer **workflow** is not checked, and could not be. The seed carries no `.github/`
-at all, so at time zero the run repository provably holds no reviewer workflow; installing
-one is work the run agent does inside the run, and a check demanding it before the run
-started would refuse every run there is.
+The reviewer **workflow** is not checked, and could not be: the seed carries no `.github/`
+at all, so at time zero the run repository provably holds no reviewer workflow, and a check
+demanding one would refuse every run there is.
+
+That makes the refusal above **half** of "the reviewer runs", not the whole of it.
+`promptctl/horizon-eval` has had no workflow run at all, ever — the reference run installed
+the reviewer as its own PR #1, and the first `.3` run did not install one, which is why
+every review on its pull requests came from a local substitute. Whether the *instrument*
+should install the workflow, at the sha `manifest.json` pins, is an open instrument-shape
+decision: the epic calls the reviewer's version and prompt controlled variables, and a
+version the run agent chooses is not a control. The mechanism needs no template copied into
+this repository — `promptctl/copirate-code-review-agent` ships its own installer, which
+renders the workflow from the action's own base.
 
 ### Why the run lives in tmux
 

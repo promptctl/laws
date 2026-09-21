@@ -45,10 +45,12 @@
 #      An unset campaign pin is recorded as null and checked to be null: a reader decides
 #      from that field whether a campaign's runs are comparable, so "recorded but not
 #      held" must be unmistakable rather than inferred.
-#   6. The run refuses to start when the REVIEWER cannot authenticate. The reviewer is a
-#      controlled variable, and a run that merges every pull request without one measured
+#   6. The run refuses to start when the REVIEWER's credential is absent. The reviewer is
+#      a controlled variable, and a run that merges every pull request without one measured
 #      a workflow the campaign does not claim - silently, because a pull request nobody
 #      reviewed looks in the record exactly like one a reviewer had nothing to say about.
+#      The credential is half of "the reviewer runs"; installing the workflow is the other
+#      half, and it is not the instrument's job yet - see horizon_assert_reviewer_credential.
 #      Driven from fixtures, not against the live repository: the verdict must be about
 #      the instrument rather than about whether an operator's secret store is set up, and
 #      both directions of the gate have to run whatever that store holds.
@@ -580,19 +582,26 @@ print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
   # quietly answer for them too. [LAW:no-ambient-temporal-coupling]
   local gh_stub="$WORK/gh-stub"
   mkdir -p "$gh_stub" || fail "could not create $gh_stub"
-  # Serves exactly the one call the gate makes and refuses anything else BY NAME, so a gate
-  # that grows a second question fails here rather than being waved through by a stub that
-  # says yes to everything. `!` makes the listing itself fail, which is a different answer
-  # from "the secret is absent" and has to stay different.
+  # Serves exactly the two calls the gate makes and refuses anything else BY NAME, so a
+  # gate that grows a third question fails here rather than being waved through by a stub
+  # that says yes to everything. The two listings are answered SEPARATELY, because the
+  # whole point of there being two is that they hold different names. `!` makes a listing
+  # itself fail, which is a different answer from "the secret is absent" and has to stay
+  # different.
   cat > "$gh_stub/gh" <<'GH_FIXTURE'
 #!/usr/bin/env bash
 set -euo pipefail
+answer() {
+  if [ "$1" = "!" ]; then
+    printf 'gh fixture: HTTP 403\n' >&2; exit 1
+  fi
+  printf '%s\n' $1
+}
 case "$*" in
   "secret list "*)
-    if [ "${HORIZON_FIXTURE_SECRETS:-}" = "!" ]; then
-      printf 'gh fixture: HTTP 403\n' >&2; exit 1
-    fi
-    printf '%s\n' ${HORIZON_FIXTURE_SECRETS:-} ;;
+    answer "${HORIZON_FIXTURE_REPO_SECRETS:-}" ;;
+  "api repos/"*"/actions/organization-secrets"*)
+    answer "${HORIZON_FIXTURE_ORG_SECRETS:-}" ;;
   *)
     printf 'gh fixture: unexpected call: %s\n' "$*" >&2; exit 1 ;;
 esac
@@ -609,9 +618,10 @@ GH_FIXTURE
   # shellcheck disable=SC2016
   local gate='. "$1" && horizon_assert_reviewer_credential "$2"'
 
-  # The refusing direction first: a repository carrying secrets, none of them this one.
+  # The refusing direction first: both listings answer, and neither carries this name.
   local no_secret=""
-  if no_secret="$( PATH="$gh_stub:$PATH" HORIZON_FIXTURE_SECRETS="SOME_OTHER_SECRET" \
+  if no_secret="$( PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="SOME_OTHER_SECRET" \
+      HORIZON_FIXTURE_ORG_SECRETS="OPENAI_API_KEY" \
       bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" 2>&1 )"; then
     fail "the reviewer gate accepted a repository carrying no $REVIEWER_SECRET - every run would merge its pull requests unreviewed"
   fi
@@ -630,29 +640,51 @@ GH_FIXTURE
   # account suffix. The action reads the bare name and would find nothing, so a membership
   # test that matched on substring would pass a run straight into the silent failure this
   # gate exists to stop.
-  if PATH="$gh_stub:$PATH" HORIZON_FIXTURE_SECRETS="${REVIEWER_SECRET}_SOMEACCOUNT" \
+  if PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="${REVIEWER_SECRET}_SOMEACCOUNT" \
       bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1; then
     fail "the reviewer gate accepted ${REVIEWER_SECRET}_SOMEACCOUNT as $REVIEWER_SECRET - the action reads the bare name and would find nothing"
   fi
 
-  # An unreadable listing is NOT an absent secret. The two want opposite fixes - fix gh
-  # access versus set a secret - so a refusal that blamed the wrong one would send an
-  # operator to the wrong place with a message that reads certain. [LAW:no-silent-failure]
+  # EITHER listing failing is an unknown, not an absent secret. The two want opposite fixes
+  # - fix gh access versus set a secret - so a refusal that blamed the wrong one would send
+  # an operator to the wrong place with a message that reads certain. Both listings are
+  # exercised, because a guard on only one of them is a guard with a hole exactly where
+  # nobody looked. [LAW:no-silent-failure]
   local unreadable=""
-  if unreadable="$( PATH="$gh_stub:$PATH" HORIZON_FIXTURE_SECRETS="!" \
+  if unreadable="$( PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="!" \
+      HORIZON_FIXTURE_ORG_SECRETS="" \
       bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" 2>&1 )"; then
-    fail "the reviewer gate treated a failed secret listing as a pass"
+    fail "the reviewer gate treated a failed repository secret listing as a pass"
   fi
   case "$unreadable" in
     *"is unknown here"*) ;;
-    *) fail "a failed secret listing was reported as an absent secret: $unreadable" ;;
+    *) fail "a failed repository secret listing was reported as an absent secret: $unreadable" ;;
+  esac
+  if unreadable="$( PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="" \
+      HORIZON_FIXTURE_ORG_SECRETS="!" \
+      bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" 2>&1 )"; then
+    fail "the reviewer gate treated a failed organization secret listing as a pass"
+  fi
+  case "$unreadable" in
+    *"is unknown here"*) ;;
+    *) fail "a failed organization secret listing was reported as an absent secret: $unreadable" ;;
   esac
 
-  # And the accepting direction, so the gate is not simply refusing everything.
-  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_SECRETS="SOME_OTHER_SECRET $REVIEWER_SECRET" \
+  # And the two accepting directions, so the gate is not simply refusing everything - and
+  # so the ORG one has a check of its own. An organization secret shared with the repo
+  # authenticates the action exactly as a repository secret does, and it appears in a
+  # listing the repository call knows nothing about: a gate reading only the first would
+  # refuse a healthy run and blame a credential that was set. Confirmed disjoint on the
+  # live remote before this was written.
+  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="SOME_OTHER_SECRET $REVIEWER_SECRET" \
+    HORIZON_FIXTURE_ORG_SECRETS="OPENAI_API_KEY" \
     bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
     || fail "the reviewer gate refused a repository that does carry $REVIEWER_SECRET"
-  pass "the reviewer gate accepts $REVIEWER_SECRET, refuses its absence and a suffixed near-miss, and tells an unreadable listing from an absent secret"
+  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="SOME_OTHER_SECRET" \
+    HORIZON_FIXTURE_ORG_SECRETS="$REVIEWER_SECRET" \
+    bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
+    || fail "the reviewer gate refused a repository whose $REVIEWER_SECRET is shared from the organization - the action would have authenticated and the run was blocked for a cause that was not true"
+  pass "the reviewer gate accepts $REVIEWER_SECRET from either the repository or the organization, refuses its absence and a suffixed near-miss, and tells an unreadable listing from an absent secret"
 
   horizon_log "all checks passed"
 }

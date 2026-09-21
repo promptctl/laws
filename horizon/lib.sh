@@ -1067,12 +1067,16 @@ horizon_remote_branches() {
 # cause it never checked. This is the strongest theorem about the reviewer that is true at
 # time zero, and deliberately not a stronger one. [LAW:parse-dont-validate]
 #
-# THE WORKFLOW IS DELIBERATELY NOT CHECKED HERE. The seed carries no .github/ at all, so
-# at time zero the run repository provably holds no reviewer workflow; installing one is
-# work the run agent does inside the run. A check demanding it now would refuse every run
-# there is. The secret is different in kind: it survives the reset, because a force-push
-# rewrites master and never the repository's secret store, so it is set once by hand and
-# is a genuine standing fact about the remote that this function can read.
+# THE WORKFLOW IS DELIBERATELY NOT CHECKED HERE, and this gate is therefore half of the
+# answer rather than the whole one. The seed carries no .github/ at all, so at time zero
+# the run repository provably holds no reviewer workflow, and a check demanding one would
+# refuse every run there is. Whether the INSTRUMENT should install it - so that the
+# reviewer sha the manifest pins is the sha that runs, rather than whichever the run agent
+# picks - is an open instrument-shape decision, and the other half of this defect:
+# promptctl/horizon-eval has had no workflow run at all, ever. The secret is different in
+# kind: it survives the reset, because a force-push rewrites master and never the
+# repository's secret store, so it is set once by hand and is a genuine standing fact
+# about the remote that this function can read.
 #
 # Not folded into horizon_assert_remote_at_time_zero, the other place a fact about this
 # remote is checked: that one runs INSIDE horizon_bind_remote, after the force-push, and a
@@ -1083,14 +1087,39 @@ horizon_remote_branches() {
 # into a refusal naming the wrong cause, and the two want opposite fixes.
 # [LAW:no-silent-failure]
 horizon_assert_reviewer_credential() {
-  local repo="$1" names
-  names="$(gh secret list --repo "$repo" --json name --jq '.[].name')" \
-    || horizon_die "could not list the Actions secrets on $repo - whether the reviewer can authenticate is unknown here, which is not the same as false"
-  grep -qxF "$REVIEWER_SECRET" <<<"$names" \
-    || horizon_die "$repo carries no $REVIEWER_SECRET secret, so the reviewer Action cannot authenticate and this run would merge every pull request unreviewed.
+  local repo="$1" repo_secrets org_secrets names
+  # BOTH listings, because the question is what this repository's workflows can SEE, and
+  # the two answers are disjoint: `gh secret list` reports only secrets set ON the repo,
+  # while an organization secret shared with it authenticates the action just as well and
+  # appears in neither that listing nor any subset of it. Asking only the first would
+  # refuse a healthy run and name a cause that was not true - the same wrong-cause failure
+  # the unreadable-listing branch below exists to avoid, arrived at from the other side.
+  # Checked here on the live remote: the repo listing and the org-shared listing came back
+  # with one name each and no overlap.
+  #
+  # `actions/organization-secrets` is scoped to THIS REPOSITORY rather than to the org, so
+  # what it returns is what the repo can actually use. `gh secret list --org` would answer
+  # a different question - every secret the organization holds, including ones shared with
+  # other repositories only - and a gate built on it would pass a run whose repository
+  # cannot see the credential at all. [LAW:parse-dont-validate]
+  repo_secrets="$(gh secret list --repo "$repo" --json name --jq '.[].name')" \
+    || horizon_die "could not list the repository Actions secrets on $repo - whether the reviewer has a credential is unknown here, which is not the same as false"
+  org_secrets="$(gh api "repos/$repo/actions/organization-secrets" --jq '.secrets[].name')" \
+    || horizon_die "could not list the organization secrets shared with $repo - whether the reviewer has a credential is unknown here, which is not the same as false"
+  names="$repo_secrets"$'\n'"$org_secrets"
+  # Whole-line membership, in the shell, over the joined list. `grep -qxF` would do the
+  # same job and bring one more exit code to read: its 2 means grep itself failed, and
+  # folding that into 1 would undo, one line later, the care the two refusals above take
+  # to keep "could not read" apart from "absent". The line anchors are what rules out
+  # ${REVIEWER_SECRET}_<ACCOUNT>, which is exactly how the keychain items holding these
+  # tokens are named - the action reads the bare name and would find nothing.
+  case $'\n'"$names"$'\n' in
+    *$'\n'"$REVIEWER_SECRET"$'\n'*) ;;
+    *) horizon_die "$repo carries no $REVIEWER_SECRET secret - not on the repository, and none shared with it from the organization - so the reviewer Action cannot authenticate and this run would merge every pull request unreviewed.
 Set it once - it survives the reset that begins every run. The fleet's copy of this
 credential is owned by the agent-code-review-setup skill's install.sh, whose SECRETS
-table names the keychain item to read it from."
+table names the keychain item to read it from." ;;
+  esac
 }
 
 # ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═
