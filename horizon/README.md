@@ -464,6 +464,39 @@ so after a long gap between runs `login.sh` can be needed again with nothing mov
 lasts, so a login cannot rotate the credential underneath a live run; while one is live
 it refuses with the same "a run is live" message `run-loop.sh` gives.
 
+### The reviewer's credential — the other thing set once
+
+The reviewer is a GitHub Action on `promptctl/horizon-eval`, and it reads one credential:
+that repository's Actions secret `CLAUDE_CODE_OAUTH_TOKEN`. Like the login above it is set
+once, by a human, and every run afterwards is unattended — the reset a run begins with
+force-pushes `master` and never touches the repository's secret store, so one setting
+outlives every run that follows it.
+
+`run-loop.sh` refuses to start when that secret is absent, beside the config-dir login
+check and before the remote is reset. The failure it prevents is the quieter of the two: an
+unauthenticated config dir hangs the run, whereas a reviewer that cannot authenticate lets
+the run *finish*, and the bundle it leaves holds pull requests merged with no review arm at
+all — indistinguishable, in the record, from pull requests a reviewer read and had nothing
+to say about. The epic pins the reviewer as a controlled variable, so such a run measured a
+different workflow from the one the campaign claims to hold constant. That is not
+hypothetical; it is what the first `.3` run did.
+
+**A run whose reviewer never ran is not a baseline run.** An absent review arm is not a
+review that found nothing, and a spread mixing the two is not readable — so such runs do
+not count toward the `.5` baseline. The refusal above is what stops the question from
+arising a second time: a run that cannot produce a review arm does not start.
+
+What that refusal proves is exactly that the secret is present, and deliberately no more.
+Whether the token behind it is live, still has quota, or will actually produce a review is
+not knowable before a pull request exists — the action has no probe endpoint. The bundle is
+where that gets read instead: `horizon_capture_prs` captures every PR's reviews and review
+threads, so a human opening a run bundle can see whether the reviewer ever spoke.
+
+The reviewer **workflow** is not checked, and could not be. The seed carries no `.github/`
+at all, so at time zero the run repository provably holds no reviewer workflow; installing
+one is work the run agent does inside the run, and a check demanding it before the run
+started would refuse every run there is.
+
 ### Why the run lives in tmux
 
 The run is launched inside a detached tmux session, and that single fact decides whether

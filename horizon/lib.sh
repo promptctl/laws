@@ -29,6 +29,13 @@ HORIZON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${REVIEWER_REPO:=promptctl/copirate-code-review-agent}"
 : "${REVIEWER_TAG:=v1}"
 : "${REVIEWER_PROMPT_PATH:=review-agent/instructions.md}"
+# The ONE credential the reviewer Action reads, which is also the name of the Actions
+# secret the run repository has to carry it in. NOT overridable, unlike the three above:
+# those name a ref this eval CHOOSES to pin, and this names an input the action DECLARES.
+# A second spelling could only ever be a name the action does not read, and what it buys
+# is the quiet failure - a run that passes its preflight and reviews nothing.
+# [LAW:one-source-of-truth]
+REVIEWER_SECRET="CLAUDE_CODE_OAUTH_TOKEN"
 HORIZON_MARKETPLACE_NAME="promptctl-horizon"
 HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
 
@@ -1040,6 +1047,50 @@ horizon_remote_branches() {
   local repo="$1"
   gh api --paginate "repos/$repo/branches?per_page=100" --jq '.[].name' \
     || horizon_die "could not list branches in $repo"
+}
+
+# Usage: horizon_assert_reviewer_credential <repo>
+#
+# Asserted BEFORE anything shared is touched, beside the config dir's own auth check and
+# for the same reason: a reviewer that cannot authenticate does not stop a run, it
+# produces one whose pull requests were all merged with no review arm at all. The epic
+# names the reviewer a CONTROLLED VARIABLE, so such a run measured a different workflow
+# from the one the campaign claims to hold constant, and nothing in the bundle announces
+# it - the PRs look reviewed-and-clean exactly as a PR with nothing to say does. That is
+# not hypothetical: the first .3 run merged every PR that way, and the driver said
+# nothing. [LAW:no-silent-failure]
+#
+# WHAT THIS CHECKS, exactly: that $REVIEWER_SECRET exists on the run repository. NOT that
+# the token behind it is live, not that it has quota left, not that a review will run.
+# None of those are knowable before a pull request exists - the reviewer is a GitHub
+# Action with no probe endpoint - and a refusal that claimed them would be asserting a
+# cause it never checked. This is the strongest theorem about the reviewer that is true at
+# time zero, and deliberately not a stronger one. [LAW:parse-dont-validate]
+#
+# THE WORKFLOW IS DELIBERATELY NOT CHECKED HERE. The seed carries no .github/ at all, so
+# at time zero the run repository provably holds no reviewer workflow; installing one is
+# work the run agent does inside the run. A check demanding it now would refuse every run
+# there is. The secret is different in kind: it survives the reset, because a force-push
+# rewrites master and never the repository's secret store, so it is set once by hand and
+# is a genuine standing fact about the remote that this function can read.
+#
+# Not folded into horizon_assert_remote_at_time_zero, the other place a fact about this
+# remote is checked: that one runs INSIDE horizon_bind_remote, after the force-push, and a
+# run refused there has already destroyed the previous run's leavings for nothing.
+# [LAW:no-ambient-temporal-coupling]
+#
+# A failed listing must not read as "the secret is absent" - that would route a gh outage
+# into a refusal naming the wrong cause, and the two want opposite fixes.
+# [LAW:no-silent-failure]
+horizon_assert_reviewer_credential() {
+  local repo="$1" names
+  names="$(gh secret list --repo "$repo" --json name --jq '.[].name')" \
+    || horizon_die "could not list the Actions secrets on $repo - whether the reviewer can authenticate is unknown here, which is not the same as false"
+  grep -qxF "$REVIEWER_SECRET" <<<"$names" \
+    || horizon_die "$repo carries no $REVIEWER_SECRET secret, so the reviewer Action cannot authenticate and this run would merge every pull request unreviewed.
+Set it once - it survives the reset that begins every run. The fleet's copy of this
+credential is owned by the agent-code-review-setup skill's install.sh, whose SECRETS
+table names the keychain item to read it from."
 }
 
 # ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═

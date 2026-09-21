@@ -140,6 +140,16 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_log "checking the pinned config dir can authenticate"
   horizon_assert_authenticated "$config_dir"
 
+  # The reviewer's credential, in the same breath and for the same reason. The check above
+  # keeps a run from booting into a login prompt nobody is watching; this one keeps a run
+  # from finishing into a bundle whose PRs were never reviewed - the quieter of the two,
+  # because a PR the reviewer never ran on is indistinguishable in the record from one it
+  # ran on and had nothing to say about. Here rather than at the first PR, for the reason
+  # that put the line above here: the remote must not be reset for a run that cannot
+  # produce the thing it is measuring. [LAW:no-silent-failure]
+  horizon_log "checking the reviewer can authenticate on $HORIZON_RUN_REPO"
+  horizon_assert_reviewer_credential "$HORIZON_RUN_REPO"
+
   mkdir -p "$HORIZON_WORK_DIR" || horizon_die "could not create the work dir $HORIZON_WORK_DIR"
   local instrument_dir="$HORIZON_WORK_DIR/instrument"
   local seed_out_dir="$HORIZON_WORK_DIR/seed"
