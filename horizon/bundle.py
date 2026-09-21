@@ -69,9 +69,15 @@ def main():
         # Empty means the run ended before seeding produced one, which the captures that
         # needed it report in their own detail. Written as null rather than omitted: a
         # reader comparing two bundles reads the same keys in both.
+        # realpath, not abspath, because this value exists to be MATCHED against the cwd
+        # a transcript recorded, and sessions.py resolves both sides before comparing. A
+        # work dir reached through a symlink - /tmp is /private/tmp on this platform -
+        # would otherwise be published here in a spelling no transcript contains, so a
+        # reviewer grepping for it finds nothing and the match breaks outright once the
+        # symlink is gone. One spelling, decided here. [LAW:one-source-of-truth]
         "project": {
             "name": os.path.basename(project_dir) if project_dir else None,
-            "path": os.path.abspath(project_dir) if project_dir else None,
+            "path": os.path.realpath(project_dir) if project_dir else None,
         },
         "captured": captured,
     }

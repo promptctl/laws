@@ -415,8 +415,11 @@ pass "a capture that could not run records that it did not, and why"
 
 SHORT="$WORK/short"
 mkdir -p "$SHORT/prs"
-write_pr_fixture 8 2 0 truncated
-cp "$HORIZON_FIXTURE_DIR/pr-8.json" "$SHORT/prs/pr-0008.json"
+# #88, not #8. The numbers in HORIZON_FIXTURE_PR_NUMBERS are served by the fake `gh` to
+# the real capture further down, so overwriting one of those with a deliberately broken
+# document would leave a later check passing for a reason nobody wrote it to test.
+write_pr_fixture 88 2 0 truncated
+cp "$HORIZON_FIXTURE_DIR/pr-88.json" "$SHORT/prs/pr-0088.json"
 if python3 "$SCRIPT_DIR/prs.py" "$SHORT/prs" 2>"$WORK/short.err"; then
   fail "a pull request whose review threads ran past one page was accepted as complete"
 fi
@@ -467,7 +470,12 @@ if ( horizon_capture_backlog "$EMPTY_BUNDLE" "$EMPTY_PROJECT" ) >"$WORK/empty.ou
 fi
 grep -q 'no tickets' "$WORK/empty.out" \
   || fail "the refusal does not say what was wrong: $(cat "$WORK/empty.out")"
-pass "an export with no tickets is refused, not counted as an empty backlog"
+# And it leaves nothing behind. A refused export written in place is a well-formed
+# `{"issues": []}` sitting under the name the bundle README sends a reviewer to, saying
+# the run created no tickets - which is the opposite of what happened.
+[ ! -e "$EMPTY_BUNDLE/backlog/export.json" ] \
+  || fail "a refused backlog export was left in the bundle, reading as an empty backlog"
+pass "an export with no tickets is refused, not counted as an empty backlog, and not left behind"
 
 # The transcripts capture MOVES the directory in, so its absence means that step did not
 # land. Analysing that as a run of zero sessions writes a clean, entirely fabricated
@@ -538,9 +546,9 @@ refuses_capture() {
     || fail "a capture that $name still wrote an index, which reads as a complete one"
 }
 
-write_pr_fixture 8 2 0 thread-truncated
+write_pr_fixture 89 2 0 thread-truncated
 refuses_capture "overflowed one thread's comments" \
-  "$HORIZON_FIXTURE_DIR/pr-8.json" 'more comments than one page'
+  "$HORIZON_FIXTURE_DIR/pr-89.json" 'more comments than one page'
 
 printf '{"errors": [{"message": "Could not resolve to a Repository."}]}\n' \
   > "$WORK/graphql-error.json"

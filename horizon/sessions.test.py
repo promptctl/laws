@@ -638,6 +638,39 @@ def main():
               agreed["usage_disagreements"] == 0,
               "got %s" % agreed.get("usage_disagreements"))
 
+    # A transcript that has recorded no cwd AT ALL. write_session cannot produce one - it
+    # stamps a cwd on every entry - which is exactly why this went uncaught: Claude Code
+    # opens a transcript with boot entries carrying neither cwd nor entrypoint, and 53 of
+    # 3000 transcripts on a real machine never acquire one. Read as "belongs to another
+    # project", a session that was merely still booting tripped the all-foreign abort, and
+    # the driver polls this every two seconds from launch - so an unattended run died at
+    # minute zero, reported as an archived bundle handed the wrong path.
+    with tempfile.TemporaryDirectory() as tmp10:
+        transcripts = os.path.join(tmp10, "transcripts", "p")
+        proj = os.path.join(tmp10, "project")
+        os.makedirs(transcripts)
+        os.makedirs(proj)
+        gf = os.path.join(tmp10, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        with open(os.path.join(transcripts, "booting.jsonl"), "w") as handle:
+            for line in ({"type": "last-prompt", "sessionId": "booting"},
+                         {"type": "mode", "sessionId": "booting"}):
+                handle.write(json.dumps(line) + "\n")
+        booting = subprocess.run(
+            [sys.executable, SESSIONS, os.path.join(tmp10, "transcripts"), proj, gf],
+            input="", capture_output=True, text=True,
+        )
+        check("a transcript that has recorded no cwd yet does not kill the report",
+              booting.returncode == 0,
+              "rc=%s stderr=%r" % (booting.returncode, booting.stderr))
+        if booting.returncode == 0:
+            state = json.loads(booting.stdout)
+            check("a transcript with no cwd is counted as forming, not as another project's",
+                  state["forming_transcripts"] == 1 and state["foreign_transcripts"] == 0,
+                  "forming=%s foreign=%s" % (state.get("forming_transcripts"),
+                                             state.get("foreign_transcripts")))
+
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))
         return 1

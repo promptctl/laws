@@ -231,7 +231,18 @@ def is_run_session(session_id, entrypoints, has_turn):
 # value, and the bundle then under-reports what the run spent with nothing to show for it.
 # [LAW:parse-dont-validate] the classification is the proof, kept, rather than a check
 # thrown away at the door.
-SESSION, SUBPROCESS, FOREIGN = "session", "subprocess", "foreign"
+# FORMING is the state that cost a run. A transcript is FOREIGN only on EVIDENCE - it
+# recorded a cwd and that cwd is somewhere else. A transcript that has recorded no cwd at
+# all says nothing about where it belongs: Claude Code opens a transcript with boot
+# entries (`last-prompt`, `mode`, `permission-mode`) that carry neither cwd nor
+# entrypoint, so every session looks like this for its first moments, and 53 of 3000
+# transcripts on a real machine never acquire one. Collapsing "nothing recorded yet" into
+# "belongs to somebody else" put a session that was still booting into the bucket the
+# abort below fires on - and the driver polls this every two seconds from the moment it
+# launches, turning any nonzero exit into a dead run. An unattended run died at minute
+# zero, reported as an archived bundle handed the wrong project path.
+# [LAW:types-are-the-program] the absence of evidence gets its own name.
+SESSION, SUBPROCESS, FOREIGN, FORMING = "session", "subprocess", "foreign", "forming"
 
 
 def within(path, root):
@@ -263,6 +274,7 @@ def read_transcript(path, project_dir):
     want = os.path.realpath(project_dir)
     session_id = os.path.splitext(os.path.basename(path))[0]
     belongs = False
+    located = False
     has_turn = False
     entrypoints = set()
     first_time = None
@@ -275,8 +287,10 @@ def read_transcript(path, project_dir):
     with open(path, errors="replace") as handle:
         for index, entry in enumerate(transcript_entries(handle)):
             cwd = entry.get("cwd")
-            if cwd and within(cwd, want):
-                belongs = True
+            if cwd:
+                located = True
+                if within(cwd, want):
+                    belongs = True
             if "entrypoint" in entry:
                 entrypoints.add(entry["entrypoint"])
             if entry.get("type") == "assistant" and not entry.get("isSidechain"):
@@ -330,12 +344,12 @@ def read_transcript(path, project_dir):
             if found is not None:
                 goal_args.append(found)
 
-    if not belongs:
+    if belongs:
+        kind = SESSION if is_run_session(session_id, entrypoints, has_turn) else SUBPROCESS
+    elif located:
         kind = FOREIGN
-    elif is_run_session(session_id, entrypoints, has_turn):
-        kind = SESSION
     else:
-        kind = SUBPROCESS
+        kind = FORMING
 
     return {
         "kind": kind,
@@ -375,6 +389,7 @@ def main():
     sessions = []
     subprocess_tokens = no_tokens()
     foreign = []
+    forming = []
     disagreements = 0
     for path in glob.glob(os.path.join(transcripts_dir, "*", "*.jsonl")):
         transcript = read_transcript(path, project_dir)
@@ -384,8 +399,10 @@ def main():
         elif transcript["kind"] == SUBPROCESS:
             add_tokens(subprocess_tokens, transcript["tokens"])
             disagreements += transcript["usage_disagreements"]
-        else:
+        elif transcript["kind"] == FOREIGN:
             foreign.append(transcript["session_id"])
+        else:
+            forming.append(transcript["session_id"])
 
     # Transcripts exist and not one of them is this project's. That is never a run: it is
     # a <project-dir> that does not match the cwd the transcripts recorded - the shape an
@@ -468,11 +485,18 @@ def main():
             # executed would look like a run with nothing to carry yet.
             "session_one_goal_in_force": bool(sessions) and sessions[0]["goal_matches_pinned"],
             "unattributed_commits": unattributed,
-            # Transcripts in this bundle that belong to some other project. Normally
-            # zero, and reported even so: the abort below only fires when EVERY
+            # Transcripts that RECORDED a working directory and it was somebody else's.
+            # Normally zero, and reported even so: the abort above only fires when every
             # transcript is foreign, so without this line a run that dropped one
             # transcript's spend would read exactly like a run that had none to drop.
             "foreign_transcripts": len(foreign),
+            # Transcripts that recorded no working directory at all, so nothing here can
+            # say whose they are. A session that is still booting looks like this, which
+            # is why they are not counted above: a reviewer reading `foreign` as "somebody
+            # else was working in this config dir" would otherwise be reading a session
+            # stub that had not written its cwd yet. Nonzero at close-out means a
+            # transcript nobody can attribute, which is worth seeing and is not an error.
+            "forming_transcripts": len(forming),
             # Messages whose content blocks disagreed about what the message cost. Zero
             # on every transcript ever measured, and reported anyway: the totals below
             # are billed once per message id, so a number here means they are a floor
