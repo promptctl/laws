@@ -16,9 +16,9 @@
 #                    in incompatible-crafts.txt and nothing here hard-codes them. Every edge
 #                    runs ONE WAY - the reverse ordering is allowed unless it has its own
 #                    edge - so the guard must be read as a directed rule, never a mutual
-#                    incompatibility. This turns "what is
-#                    loaded" from luck into owned state and refuses a conflicting addition,
-#                    naming the craft it clashes with.
+#                    incompatibility. This turns "what is loaded" from luck into owned
+#                    state and refuses a conflicting addition, naming the craft it
+#                    clashes with.
 #
 # Routing is re-injected on EVERY message, not only at session start, so it carries the
 # same durability as a line in a system prompt: a long or compacted session can bury a
