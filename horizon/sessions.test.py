@@ -671,6 +671,29 @@ def main():
                   "forming=%s foreign=%s" % (state.get("forming_transcripts"),
                                              state.get("foreign_transcripts")))
 
+    # A forming transcript that SPENT something. Normally they are stubs, and "normally"
+    # is not a reason to drop a number: dropping it makes the totals quietly smaller,
+    # which is the failure the disagreement count exists to catch. Reported apart from
+    # the totals, because nothing here can say whose spend it is.
+    with tempfile.TemporaryDirectory() as tmp11:
+        transcripts = os.path.join(tmp11, "transcripts", "p")
+        proj = os.path.join(tmp11, "project")
+        os.makedirs(transcripts)
+        os.makedirs(proj)
+        gf = os.path.join(tmp11, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        with open(os.path.join(transcripts, "orphan.jsonl"), "w") as handle:
+            handle.write(json.dumps({"type": "last-prompt", "sessionId": "orphan"}) + "\n")
+            handle.write(json.dumps(assistant_block("m9", output=4242)) + "\n")
+        orphaned = run(os.path.join(tmp11, "transcripts"), proj, gf, [])
+        check("spend in a transcript nothing can attribute is reported, not discarded",
+              orphaned["tokens"]["unattributed"]["output_tokens"] == 4242,
+              "got %s" % orphaned["tokens"]["unattributed"])
+        check("unattributed spend is kept out of the total the analysis stands behind",
+              orphaned["tokens"]["total"]["output_tokens"] == 0,
+              "got %s" % orphaned["tokens"]["total"])
+
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))
         return 1

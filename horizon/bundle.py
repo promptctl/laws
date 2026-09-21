@@ -60,7 +60,19 @@ def main():
         sys.exit(__doc__)
     bundle_dir, record_name, started, ended, project_dir = sys.argv[1:]
 
-    captured = dict(parse_step(line) for line in sys.stdin if line.strip())
+    # Built a row at a time rather than with dict(), which would let two rows sharing a
+    # name collapse into one: run.json would then hold fewer captures than the close-out
+    # ran, in the one file whose contract is that every capture has an entry, and nothing
+    # would say a step had gone missing. [LAW:no-silent-failure]
+    captured = {}
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        name, record = parse_step(line)
+        if name in captured:
+            sys.exit("two capture rows are both named %r: run.json records one entry per "
+                     "capture, so collapsing them would drop a step without a word" % name)
+        captured[name] = record
 
     document = {
         "started": started,
