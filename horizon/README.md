@@ -407,6 +407,13 @@ is a *value* — `"ok": false` with the reason — never an absent file. An abse
 a reader guess between "this run had none" and "the recording broke", and those are
 opposite findings.
 
+The paths themselves are covered the same way rather than by a second promise. A run that
+died before it was seeded genuinely has no `seed/`, so the close-out's last step
+inventories the bundle against the layout and the `layout` capture *names* whatever is
+missing. The guarantee is not that every bundle holds every file; it is that `run.json`
+accounts for every file the layout declares, so absence is always read off the record
+rather than inferred from a directory listing.
+
 That is also why the close-out runs from the driver's exit handler on every path there is,
 and why a failed capture fails the run. The run most worth reading is the one that died,
 and it never reaches its own last line. Acceptance attempt 1 was stopped by hand four

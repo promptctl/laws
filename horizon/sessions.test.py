@@ -521,6 +521,14 @@ def main():
                       "2026-01-01T02:10:00+00:00", "2026-01-01T02:20:00+00:00",
                       entrypoint="sdk-cli",
                       extra=[assistant_block("m5", output=7000)])
+        # A headless `claude -p` a tool spawned from a git worktree UNDER the project.
+        # Its cwd is not the project's own, and under an equality test it came back
+        # FOREIGN and its spend vanished from the report entirely.
+        write_session(transcripts, "p", "worktree-reviewer",
+                      os.path.join(proj, ".claude", "worktrees", "wt"),
+                      "2026-01-01T02:30:00+00:00", "2026-01-01T02:40:00+00:00",
+                      entrypoint="sdk-cli",
+                      extra=[assistant_block("m7", output=300)])
         # Another project sharing the directory: not this run's spend at all.
         write_session(transcripts, "elsewhere", "stranger", other,
                       "2026-01-01T00:30:00+00:00", "2026-01-01T00:45:00+00:00",
@@ -543,13 +551,22 @@ def main():
               cost["tokens"]["sessions"]["output_tokens"] == 1600,
               "got %s" % cost["tokens"]["sessions"])
         check("a headless subprocess is billed to the run, apart from the sessions",
-              cost["tokens"]["subprocesses"]["output_tokens"] == 7000
-              and cost["tokens"]["total"]["output_tokens"] == 8600,
+              cost["tokens"]["subprocesses"]["output_tokens"] == 7300
+              and cost["tokens"]["total"]["output_tokens"] == 8900,
               "got subprocesses=%s total=%s"
               % (cost["tokens"]["subprocesses"], cost["tokens"]["total"]))
+        check("a subprocess run from inside the project is billed, not dropped as foreign",
+              cost["tokens"]["subprocesses"]["output_tokens"] == 7300,
+              "got %s" % cost["tokens"]["subprocesses"])
         check("another project's tokens are not billed to this run",
-              cost["tokens"]["total"]["output_tokens"] == 8600,
+              cost["tokens"]["total"]["output_tokens"] == 8900,
               "got %s" % cost["tokens"]["total"])
+        # Dropped on purpose, and said out loud: the refusal below only fires when EVERY
+        # transcript is foreign, so a run that dropped one would otherwise read exactly
+        # like a run that had none to drop.
+        check("a transcript belonging elsewhere is reported, not merely left out",
+              cost["foreign_transcripts"] == 1,
+              "got %s" % cost.get("foreign_transcripts"))
 
     # Every transcript belonging to somewhere else, and none to the project: the shape an
     # archived run takes when it is handed the path the BUNDLE sits at rather than the
@@ -573,6 +590,30 @@ def main():
         check("transcripts that all belong elsewhere are refused, not reported as a quiet zero",
               moved.returncode != 0 and "run.json" in moved.stderr,
               "rc=%s stderr=%r" % (moved.returncode, moved.stderr))
+
+    # Collapsing a message's blocks is only lossless while they agree about what the
+    # message cost. Nothing in the schema promises that, and a version that broke it
+    # would keep the first block met and under-report the rest - a smaller number, still
+    # entirely plausible, with nothing anywhere saying it had changed meaning.
+    with tempfile.TemporaryDirectory() as tmp8:
+        transcripts = os.path.join(tmp8, "transcripts")
+        proj = os.path.join(tmp8, "project")
+        os.makedirs(proj)
+        gf = os.path.join(tmp8, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(transcripts, "p", "disagreeing", proj,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
+                      goal_text=PINNED_GOAL,
+                      extra=[assistant_block("m1", output=1000),
+                             assistant_block("m1", output=250)])
+        clashed = subprocess.run(
+            [sys.executable, SESSIONS, transcripts, proj, gf],
+            input="", capture_output=True, text=True,
+        )
+        check("two blocks of one message disagreeing about usage stops the report",
+              clashed.returncode != 0 and "m1" in clashed.stderr,
+              "rc=%s stderr=%r" % (clashed.returncode, clashed.stderr))
 
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))

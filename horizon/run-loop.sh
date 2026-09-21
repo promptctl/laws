@@ -98,18 +98,26 @@ main() {
     || horizon_die "work dir already holds a run: $HORIZON_WORK_DIR
 Archive it (copy it wherever you are keeping runs) and remove it, then start this one."
 
+  # The run's start, read BEFORE the lock is taken and baked into the handler below.
+  # Taken at all rather than computed at the end from the earliest transcript, because the
+  # time spent pinning, provisioning and seeding is the run's time too, and a start
+  # derived from session one would silently omit all of it.
+  #
+  # BEFORE, and not one line after, because `horizon_die` exits without releasing anything
+  # and the handler that releases the lock cannot be installed until there is a lock to
+  # release. Anything fallible in between exits holding it: the tmux lock session stays
+  # alive, and every later run is refused with "one run at a time" until somebody kills it
+  # by hand. That is the exact shape this script's "a refused invocation leaves nothing
+  # behind" is written to prevent, so the window stays empty of anything that can fail.
+  local started
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || horizon_die "could not read the clock"
+
   # THE LOCK, before anything shared is touched and before anything is created: a refused
   # invocation leaves nothing behind. Everything below - the config dir wipe, the remote
   # reset, the launch - would otherwise land on top of a run that is still going, and the
   # only record of that would be the run stopping. [LAW:no-ambient-temporal-coupling]
   horizon_take_run_lock
   local config_dir="$HORIZON_CONFIG_DIR"
-  # The run's start, read once at the moment the lock makes this THE run, and baked into
-  # the handler below. Taken here rather than computed at the end from the earliest
-  # transcript: the time spent pinning, provisioning and seeding is the run's time too,
-  # and a start derived from session one would silently omit all of it.
-  local started
-  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || horizon_die "could not read the clock"
   # The handler is installed the moment there is a lock to release; it is the only
   # `trap ... EXIT` in this script, because a second one anywhere below would silently
   # replace it rather than add to it. Arguments are baked in now: a handler cannot read

@@ -167,11 +167,12 @@ def message_key(entry, line_number):
     output tokens where the true figure was 134,647 - a 2.6x overstatement, in the
     direction that flatters nothing and misleads everything.
 
-    The message id is the discriminator, and duplicates carrying it were checked to
-    report identical usage, so collapsing on it loses nothing. An entry with no id
-    cannot be matched to any other, so it counts once on its own line - the direction
-    that can only ever UNDER-collapse, because a schema that stopped writing ids must
-    not silently start billing at a fraction of the truth.
+    The message id is the discriminator, and collapsing on it loses nothing only while
+    the duplicates report identical usage - so read_transcript checks that rather than
+    trusting it, and stops if it ever stops being true. An entry with no id cannot be
+    matched to any other, so it counts once on its own line - the direction that can
+    only ever UNDER-collapse, because a schema that stopped writing ids must not
+    silently start billing at a fraction of the truth.
     """
     message = entry.get("message")
     identifier = message.get("id") if isinstance(message, dict) else None
@@ -233,6 +234,24 @@ def is_run_session(session_id, entrypoints, has_turn):
 SESSION, SUBPROCESS, FOREIGN = "session", "subprocess", "foreign"
 
 
+def within(path, root):
+    """True when `path` is `root` itself or sits inside it.
+
+    Deliberately not an equality. A headless `claude -p` a tool spawns records the
+    directory IT ran in, and that is a subdirectory or a git worktree of the project as
+    often as the project itself - so under equality those transcripts came back FOREIGN
+    and their spend was dropped from the report entirely, silently, with the reviewer
+    subprocess being the expensive one. FOREIGN has to keep meaning "another project",
+    because that reading is what the abort in main() rests on. [LAW:no-silent-failure]
+
+    A prefix test on the realpath, not a string prefix on the raw one: `/a/project-two`
+    starts with `/a/project` and is a different directory. The separator is what makes
+    it a containment test rather than a spelling one.
+    """
+    real = os.path.realpath(path)
+    return real == root or real.startswith(root + os.sep)
+
+
 def read_transcript(path, project_dir):
     """One transcript reduced to the facts the run's record asks about, and what it is.
 
@@ -248,12 +267,12 @@ def read_transcript(path, project_dir):
     last_time = None
     goal_args = []
     tokens = no_tokens()
-    billed = set()
+    billed = {}
 
     with open(path, errors="replace") as handle:
         for index, entry in enumerate(transcript_entries(handle)):
             cwd = entry.get("cwd")
-            if cwd and os.path.realpath(cwd) == want:
+            if cwd and within(cwd, want):
                 belongs = True
             if "entrypoint" in entry:
                 entrypoints.add(entry["entrypoint"])
@@ -265,9 +284,25 @@ def read_transcript(path, project_dir):
             # a configuration that leans on subagents would otherwise look cheap.
             usage = usage_of(entry)
             key = message_key(entry, index)
-            if usage is not None and key not in billed:
-                billed.add(key)
-                add_tokens(tokens, usage)
+            if usage is not None:
+                already = billed.get(key)
+                if already is None:
+                    billed[key] = usage
+                    add_tokens(tokens, usage)
+                elif already != usage:
+                    # Collapsing on the message id is only lossless while every block of
+                    # one message repeats the SAME usage. That held everywhere it was
+                    # measured, but nothing in the schema promises it, and the day it
+                    # stops holding this loop would keep the first block it met and
+                    # under-report the rest - a smaller number, still plausible, with
+                    # nothing anywhere saying it had changed meaning. Checked on every
+                    # entry instead, which costs a comparison and removes the guess.
+                    # [LAW:no-silent-failure]
+                    sys.exit("%s reports two different usages for message %s: %r then %r.\n"
+                             "Blocks of one message repeating one usage is what lets this "
+                             "bill it once; that is no longer true, so the token totals "
+                             "would be wrong rather than merely different."
+                             % (path, key[1], already, usage))
 
             stamp = parse_time(entry.get("timestamp"))
             if stamp is not None:
@@ -417,6 +452,11 @@ def main():
             # executed would look like a run with nothing to carry yet.
             "session_one_goal_in_force": bool(sessions) and sessions[0]["goal_matches_pinned"],
             "unattributed_commits": unattributed,
+            # Transcripts in this bundle that belong to some other project. Normally
+            # zero, and reported even so: the abort below only fires when EVERY
+            # transcript is foreign, so without this line a run that dropped one
+            # transcript's spend would read exactly like a run that had none to drop.
+            "foreign_transcripts": len(foreign),
             # What the run COST, which is half of what a reviewer comparing two arms is
             # reading the bundle for. Split rather than merged: `sessions` is what the
             # agent itself spent, `subprocesses` what the headless claudes its tools
