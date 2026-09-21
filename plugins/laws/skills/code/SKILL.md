@@ -1052,8 +1052,9 @@ procedure is mandatory:
 1. **Pause the current work.** Comment the ticket with where it stops and what is in
    play, and groom the backlog so the work is picked up again after the escape lands.
 2. **Plan the escape.** If you know what Y is, Y is the work. If you do not, step zero
-   is finding Y: a ticket to investigate, worked as a minion on a worktree so the
-   finding does not consume the session that noticed. The plan is a ticket or an epic,
+   is finding Y: file a ticket to investigate and let the session that pulls it spawn
+   a minion on a worktree, so the finding consumes neither the session that noticed
+   nor the one that plans. The plan is a ticket or an epic,
    ranked to the top, structured so the paused work resumes after it. It ends with a full law realignment across everything
    the escape touches, with no leftovers - that may mean nested epics, and they are
    worked, not filed and forgotten. `[LAW:polishing-by-subtraction]` is slow here and
@@ -1062,10 +1063,11 @@ procedure is mandatory:
    carries its own task and nothing else; trust the process to bring the paused work
    back.
 
-This law is cited where its decision lands: on the paused ticket's comment and on the
-escape ticket, not in a source file. Every ticket filed under it carries the label
-`escape-local-minima`. The label is the token: it is how the pattern is found again,
-counted, and documented wherever it recurs.
+Cite this law where its decision lands: on the paused ticket's comment and on the
+escape ticket, and in code only as an exception when the minimum is knowingly kept.
+Every ticket filed under it carries the label `escape-local-minima`, the token spelled
+as a label: that is how the pattern is found again, counted, and documented wherever
+it recurs.
 
 The temptation arrives sounding like prudence: *"YAGNI - don't build the big thing on
 spec."* YAGNI is about features with real carrying cost. It has nothing to say about

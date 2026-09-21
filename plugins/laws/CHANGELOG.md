@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.27.0 - 2026-09-21
+
+- laws(code): add [LAW:escape-local-minima] - the cheap "doesn't make anything worse, until we have X" choice pauses the work and the escape becomes the work (#68)
+
 ## v0.26.0 - 2026-09-13
 
 - laws(backlog): add the backlog medium - plan the work you know how to do, bricks, checkpoints (#54)
