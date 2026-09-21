@@ -44,8 +44,11 @@ HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
 # reaches every session of the run including the ones finalize-session relaunches; a
 # --model flag would reach only the one session the driver itself starts.
 #
-# A FULL ID, never an alias: `opus` resolves to a different model as new ones ship,
-# which is the exact drift across a five-run campaign that this pin exists to stop.
+# A FULL ID, never a family alias: `opus` names whichever Opus is current, so a campaign
+# pinned to it would silently change model the day a new one ships - the exact drift this
+# pin exists to stop. `claude-opus-5` is the id for that model, not a floating pointer at
+# the newest Opus. An empty value is refused rather than recorded (pin-instrument.sh), so
+# this can never become a manifest claiming a model while the sessions take the default.
 : "${HORIZON_CLAUDE_MODEL:=claude-opus-5}"
 # Empty means RECORDED BUT NOT HELD, and the manifest says so by carrying null - see
 # horizon_assert_claude_version. Set it to a version string ("2.1.278") to make a
@@ -363,15 +366,24 @@ PY
 # Register the snapshot marketplace and install every plugin it lists into a fresh
 # CLAUDE_CONFIG_DIR, through the real `claude plugin` CLI - the plugin cache's on-disk
 # shape is that CLI's to own, not ours to hand-write. [LAW:single-enforcer]
-# Usage: horizon_provision_config_dir <config_dir> <pinned_dir>
+# Usage: horizon_provision_config_dir <config_dir> <instrument_dir>
 horizon_provision_config_dir() {
-  local config_dir="$1" pinned_dir="$2" names name claude_path
+  # THE INSTRUMENT DIR, not the three paths inside it. pinned/, bin/claude and
+  # manifest.json are all facts about one pinned instrument, and a caller handed them
+  # separately can pass a pinned snapshot from one pin beside a binary from another.
+  # [LAW:composability] one whole thing crosses the seam.
+  local config_dir="$1" instrument_dir="$2" names name
+  local pinned_dir="$instrument_dir/pinned"
+  local claude_path="$instrument_dir/bin/claude"
   names="$(horizon_marketplace_plugins "$pinned_dir")"
-  # The pinned binary writes the plugin cache, not whichever claude PATH resolves right
-  # now: the cache's on-disk shape belongs to the CLI version that created it, so a
-  # provision by a newer claude than the run executes is a config dir the run did not
-  # build. [LAW:one-source-of-truth]
-  claude_path="$(horizon_claude_path)"
+  # THE PINNED SYMLINK, never a fresh `command -v claude`. The cache's on-disk shape
+  # belongs to the CLI version that wrote it, so provisioning with a newer claude than the
+  # run executes builds a config dir the run did not. Re-resolving PATH here would be the
+  # "two lookups happening to agree" that pinning exists to rule out - and they can
+  # genuinely disagree, because the pin's two git fetches leave a window in which
+  # auto-update can repoint PATH between the pin and this call. [LAW:one-source-of-truth]
+  [ -x "$claude_path" ] \
+    || horizon_die "horizon_provision_config_dir: no pinned claude at $claude_path"
   rm -rf "$config_dir"
   mkdir -p "$config_dir"
   CLAUDE_CONFIG_DIR="$config_dir" "$claude_path" plugin marketplace add "$pinned_dir" \
@@ -387,10 +399,18 @@ horizon_provision_config_dir() {
   # the pinned environment" means: a config dir this function returned is fully pinned,
   # with no second call a future caller can forget. horizon_write_boot_state stays
   # separate only because it needs the project dir, which does not exist yet.
-  horizon_write_model "$config_dir"
+  #
+  # The model comes OUT OF THE MANIFEST, not out of the environment that wrote it. The
+  # manifest is the record of what this run controls, so reading it back is what makes
+  # "the config dir imposes the recorded model" true by construction instead of true
+  # whenever two processes happened to see the same variable. [LAW:one-source-of-truth]
+  local model
+  model="$(horizon_manifest_field "$instrument_dir/manifest.json" claude model)" \
+    || horizon_die "could not read claude.model from $instrument_dir/manifest.json"
+  horizon_write_model "$config_dir" "$model"
 }
 
-# Usage: horizon_write_model <config_dir>
+# Usage: horizon_write_model <config_dir> <model>
 #
 # MERGED into settings.json, never written over it: horizon_provision_config_dir has just
 # put the pinned marketplace and the enabled plugins in that file, and clobbering it here
@@ -402,9 +422,15 @@ horizon_provision_config_dir() {
 # command line, and every session that opens this config dir reads it - including the ones
 # finalize-session relaunches, which never see the driver's arguments.
 horizon_write_model() {
-  local config_dir="$1"
+  local config_dir="$1" model="$2"
   [ -d "$config_dir" ] || horizon_die "horizon_write_model: no config dir at $config_dir"
-  python3 - "$config_dir/settings.json" "$HORIZON_CLAUDE_MODEL" <<'PY' \
+  # An empty model is refused, not written. Claude Code reads `"model": ""` as no
+  # override and takes its own default, so writing one would leave the manifest naming a
+  # control while the sessions ran on something else - the precise failure this whole
+  # design exists to prevent. [LAW:no-silent-failure]
+  [ -n "$model" ] \
+    || horizon_die "horizon_write_model: refusing to pin an empty model - the sessions would take the CLI default while the manifest claimed a pin"
+  python3 - "$config_dir/settings.json" "$model" <<'PY' \
     || horizon_die "could not write the pinned model into $config_dir/settings.json"
 import json, os, sys
 
@@ -437,10 +463,19 @@ horizon_lit_path() {
 # at a new one; it never rewrites the file a running pin is holding. So `command -v
 # claude` is a name that moves out from under a campaign, while its resolved target is
 # stable, and resolving once here is what turns "the version this machine had when the
-# run started" into a property of the run's own configuration. Everything that executes
-# claude - provisioning, the auth probe, the session launch - runs THIS path, so the
-# binary the manifest names and the binary that ran are the same file by construction
-# rather than by two lookups happening to agree. [LAW:one-source-of-truth]
+# run started" into a property of the run's own configuration.
+#
+# This function is the ONE place that resolution happens. Everything downstream takes the
+# pinned symlink pin-instrument.sh writes from it - provisioning and the session launch
+# both exec <run-dir>/bin/claude - so the binary the manifest names and the binary that
+# ran are the same file by construction rather than by two lookups happening to agree.
+# [LAW:one-source-of-truth]
+#
+# The auth probe (horizon_auth_state) is the deliberate exception and runs whatever is on
+# PATH: run-loop.sh asserts authentication BEFORE the pin exists, on purpose, so that a
+# config dir that cannot log in is refused before anything shared is touched. It asks
+# about the credential, which no CLI version changes, and its answer is a boolean - so it
+# cannot carry a wrong version into the record the way a recorded field would.
 #
 # The same reasoning as horizon_lit_path's, one step further: lit is not installed
 # behind a moving symlink, so recording its path and hash is enough there.
@@ -463,10 +498,19 @@ horizon_claude_path() {
 # version. A blank answer is a failure and not an unknown version. [LAW:no-silent-failure]
 horizon_claude_version() {
   local path="$1" out version
-  out="$("$path" --version 2>&1)" \
-    || horizon_die "could not read the version of the claude binary at $path: $out"
-  version="${out%% *}"
-  [ -n "$version" ] || horizon_die "the claude binary at $path reported no version: $out"
+  # STDOUT ONLY. Folding stderr in puts any warning the CLI emits ahead of the version
+  # into the same stream being parsed - and this CLI does emit them (lib.sh documents a
+  # stdin warning from v2.1.270 elsewhere). A campaign pin would then refuse a correct
+  # install, and an unpinned run would write the first word of the noise into the
+  # manifest as its harness version.
+  out="$("$path" --version 2>/dev/null)" \
+    || horizon_die "could not read the version of the claude binary at $path"
+  # MATCHED, not taken as "the first token". `--version` prints "2.1.278 (Claude Code)",
+  # but `${out%% *}` stops at the first space and not at a newline, so one stray line
+  # above it would yield "warning\n2.1.278" and pass a non-empty check.
+  version="$(printf '%s\n' "$out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*' | head -1)" || true
+  [ -n "$version" ] \
+    || horizon_die "the claude binary at $path reported no version this could parse: $out"
   printf '%s\n' "$version"
 }
 
@@ -998,7 +1042,20 @@ HORIZON_TMUX_SESSION="horizon-run"
 # holds itself to the same test rather than inventing a second notion of "up" - but the
 # banner is now necessary and no longer sufficient. [LAW:one-source-of-truth]
 # Verified still matching at Claude Code v2.1.278.
-HORIZON_BANNER_RE='Claude Code v[0-9]'
+#
+# The banner wording is spelled ONCE and the other two patterns are built from it. The
+# classifier asks whether a banner is present, horizon_pane_version reads the version out
+# of that same banner, and the reader strips the same prefix - three uses that must agree
+# about what a banner looks like. Spelled separately they can drift apart on the day the
+# wording changes, and the failure is quiet in the worst direction: the classifier would
+# still find the banner and call the session `ready` while the version parse silently
+# returned nothing, degrading the cross-check into a no-op. [LAW:one-source-of-truth]
+#
+# Braced, because `"$VAR[0-9]"` reads as an array subscript to both shellcheck and a
+# human even though bash expands it as the scalar followed by a literal bracket.
+HORIZON_BANNER_PREFIX='Claude Code v'
+HORIZON_BANNER_RE="${HORIZON_BANNER_PREFIX}[0-9]"
+HORIZON_BANNER_VERSION_RE="${HORIZON_BANNER_PREFIX}[0-9][0-9.]*"
 # The status line of a session that drew everything and cannot authenticate. Two wordings:
 # `Not logged in` on a config dir that never had a credential, `Login expired` on one whose
 # refresh token the server retired mid-campaign - the second is the one a long baseline
@@ -1412,22 +1469,32 @@ horizon_pane_version() {
   # `observed="$(... | horizon_pane_version)"` would abort the whole run under errexit
   # instead of receiving the empty string. A pipeline whose failure IS an answer has to
   # say so here, where the answer is known. [LAW:no-silent-failure]
-  version="$(printf '%s\n' "$pane" | grep -oE 'Claude Code v[0-9][0-9.]*' | tail -1)" || true
-  printf '%s\n' "${version#Claude Code v}"
+  version="$(printf '%s\n' "$pane" | grep -oE "$HORIZON_BANNER_VERSION_RE" | tail -1)" || true
+  printf '%s\n' "${version#"$HORIZON_BANNER_PREFIX"}"
 }
 
 # Usage: horizon_assert_booted_version <session> <expected_version>
 #
-# Closes the loop between what was recorded and what booted. An empty reading is not a
-# mismatch and is not failed silently either - it is reported as the one thing it proves
-# nothing about. [LAW:no-silent-failure]
+# Closes the loop between what was recorded and what booted.
+#
+# AN EMPTY READING IS A FAILURE HERE, even though horizon_pane_version reports emptiness
+# as a legitimate answer. Every caller of this function asks it immediately after a wait
+# that only returns on a state requiring the banner to be on screen - `ready` for the run,
+# `logged-out`-or-`ready` for the verifier. So at these call sites the banner IS present,
+# and an empty parse cannot mean "it scrolled off": it means the parse stopped working.
+# Treating it as "proves nothing" and returning 0 would turn the one reading taken from
+# the running process into a no-op that passes on every version, forever, while the
+# fixtures stayed green against the old wording. [LAW:no-silent-failure]
 horizon_assert_booted_version() {
   local session="$1" expected="$2" observed
+  [ -n "$expected" ] \
+    || horizon_die "horizon_assert_booted_version: no recorded version to check against"
   observed="$(horizon_pane "$session" | horizon_pane_version)"
-  if [ -z "$observed" ]; then
-    horizon_log "note: the startup banner is no longer on screen in $session, so the running version could not be confirmed against the recorded $expected"
-    return 0
-  fi
+  [ -n "$observed" ] || horizon_die \
+    "session $session is past its boot gates, so its banner is on screen, but no version
+could be read from it. The banner wording has moved away from what
+HORIZON_BANNER_VERSION_RE matches, and the check that the recorded harness version is the
+one actually running has stopped working - it must not pass by default."
   [ "$observed" = "$expected" ] || horizon_die \
     "the session is running Claude Code $observed, but the instrument recorded $expected.
 The manifest would describe a harness version this run did not use. The pinned symlink
@@ -1786,7 +1853,7 @@ HORIZON_BUNDLE_LAYOUT='README.md	this file: what each path below holds, and wher
 run.json	when the run ran, what it drove, and which of the captures below landed
 goal.md	the exact /goal wording this run issued, byte for byte
 loop.json	what the run did: its sessions, their commits, whether the goal survived each handoff, and what it all cost in tokens
-instrument/	the pinned environment - manifest.json names every controlled variable, pinned/ is the plugin snapshots it names, bin/claude points at the exact Claude Code binary the run executed
+instrument/	the pinned environment - manifest.json names every controlled variable, pinned/ is the plugin snapshots it names; bin/claude is a machine-local symlink to the binary the run executed, whose identity manifest.json carries as claude.binary_path and claude.version, so a bundle archived off this machine keeps the record even though the link goes dangling
 seed/	time zero AND the produced repo: the project is seeded here and then worked in place, so its git history is the whole build
 transcripts/	one directory per project slug, one .jsonl per session - the primary record of what the agent actually did
 prs/	every pull request this run opened, each with its review threads, plus the PR number the run started above

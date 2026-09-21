@@ -128,7 +128,13 @@ main() {
   # known, and refusing at the point of knowledge is what keeps the check from being a
   # second reader that can disagree with the recorded field. [LAW:single-enforcer]
   horizon_assert_claude_version "$claude_version"
-  horizon_log "claude pinned at $claude_version ($claude_target)"
+  # Refused here, where the manifest is about to claim it. An empty model would be
+  # recorded as a controlled variable and then written into settings.json as `""`, which
+  # Claude Code reads as no override at all - a run whose sessions take the CLI default
+  # while the record says they were pinned. [LAW:no-silent-failure]
+  [ -n "$HORIZON_CLAUDE_MODEL" ] \
+    || horizon_die "HORIZON_CLAUDE_MODEL is empty; a run cannot record a model it does not impose"
+  horizon_log "claude pinned at $claude_version ($claude_target), model $HORIZON_CLAUDE_MODEL"
 
   mkdir -p "$run_dir"
   local pinned_dir="$run_dir/pinned"
