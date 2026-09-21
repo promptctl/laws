@@ -29,6 +29,13 @@ HORIZON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${REVIEWER_REPO:=promptctl/copirate-code-review-agent}"
 : "${REVIEWER_TAG:=v1}"
 : "${REVIEWER_PROMPT_PATH:=review-agent/instructions.md}"
+# The ONE credential the reviewer Action reads, which is also the name of the Actions
+# secret the run repository has to carry it in. NOT overridable, unlike the three above:
+# those name a ref this eval CHOOSES to pin, and this names an input the action DECLARES.
+# A second spelling could only ever be a name the action does not read, and what it buys
+# is the quiet failure - a run that passes its preflight and reviews nothing.
+# [LAW:one-source-of-truth]
+REVIEWER_SECRET="CLAUDE_CODE_OAUTH_TOKEN"
 HORIZON_MARKETPLACE_NAME="promptctl-horizon"
 HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
 
@@ -1040,6 +1047,98 @@ horizon_remote_branches() {
   local repo="$1"
   gh api --paginate "repos/$repo/branches?per_page=100" --jq '.[].name' \
     || horizon_die "could not list branches in $repo"
+}
+
+# Usage: horizon_assert_reviewer_credential <repo>
+#
+# Asserted BEFORE anything shared is touched, beside the config dir's own auth check and
+# for the same reason: a reviewer that cannot authenticate does not stop a run, it
+# produces one whose pull requests were all merged with no review arm at all. The epic
+# names the reviewer a CONTROLLED VARIABLE, so such a run measured a different workflow
+# from the one the campaign claims to hold constant, and nothing in the bundle announces
+# it - the PRs look reviewed-and-clean exactly as a PR with nothing to say does. That is
+# not hypothetical: the first .3 run merged every PR that way, and the driver said
+# nothing. [LAW:no-silent-failure]
+#
+# WHAT THIS CHECKS, exactly: that $REVIEWER_SECRET exists on the run repository. NOT that
+# the token behind it is live, not that it has quota left, not that a review will run.
+# None of those are knowable before a pull request exists - the reviewer is a GitHub
+# Action with no probe endpoint - and a refusal that claimed them would be asserting a
+# cause it never checked. This is the strongest theorem about the reviewer that is true at
+# time zero, and deliberately not a stronger one. [LAW:parse-dont-validate]
+#
+# THE WORKFLOW IS DELIBERATELY NOT CHECKED HERE, and this gate is therefore half of the
+# answer rather than the whole one. The seed carries no .github/ at all, so at time zero
+# the run repository provably holds no reviewer workflow, and a check demanding one would
+# refuse every run there is. Whether the INSTRUMENT should install it - so that the
+# reviewer sha the manifest pins is the sha that runs, rather than whichever the run agent
+# picks - is an open instrument-shape decision, and the other half of this defect:
+# promptctl/horizon-eval has had no workflow run at all, ever. The secret is different in
+# kind: it survives the reset, because a force-push rewrites master and never the
+# repository's secret store, so it is set once by hand and is a genuine standing fact
+# about the remote that this function can read.
+#
+# Not folded into horizon_assert_remote_at_time_zero, the other place a fact about this
+# remote is checked: that one runs INSIDE horizon_bind_remote, after the force-push, and a
+# run refused there has already destroyed the previous run's leavings for nothing.
+# [LAW:no-ambient-temporal-coupling]
+#
+# A failed listing must not read as "the secret is absent" - that would route a gh outage
+# into a refusal naming the wrong cause, and the two want opposite fixes.
+# [LAW:no-silent-failure]
+horizon_assert_reviewer_credential() {
+  local repo="$1" endpoint names unreadable=""
+  # TWO listings, and the run passes on the FIRST that carries the name, because the
+  # question is what this repository's workflows can SEE and both answers grant exactly
+  # that: a secret set on the repository and an organization secret shared with the
+  # repository authenticate the action identically. The two are disjoint - actions/secrets
+  # never reports an org-shared name, actions/organization-secrets never reports a
+  # repository one - so a gate asking only one of them would refuse a healthy run and name
+  # a cause that was not true. Checked on the live remote: one name each, no overlap.
+  #
+  # `organization-secrets` is scoped to THIS REPOSITORY rather than to the organization, so
+  # what it returns is what the repo can actually use. `gh secret list --org` would answer a
+  # different question - every secret the organization holds, including ones shared with
+  # other repositories only - and a gate built on it would pass a run whose repository
+  # cannot see the credential at all. [LAW:parse-dont-validate]
+  #
+  # They are a LIST rather than two branches because they differ in one value, the endpoint
+  # that answers them, and nothing downstream cares which one did. That is also why
+  # `--paginate` below is written once instead of twice.
+  # [LAW:dataflow-not-control-flow]
+  #
+  # `--paginate` is load-bearing, not decoration: the REST default is 30 per page and a
+  # truncated page is indistinguishable from a complete one, so without it a repository
+  # holding 31 secrets would be refused with "carries no ..." while the credential sat on
+  # page two - the same wrong-cause refusal the rest of this function is built to avoid,
+  # arrived at from a third side. [LAW:no-silent-failure]
+  for endpoint in secrets organization-secrets; do
+    # A listing that cannot be read is recorded and stepped over rather than refused on the
+    # spot, so the happy path stays unindented and the other endpoint still gets its turn.
+    names="$(gh api --paginate "repos/$repo/actions/$endpoint" --jq '.secrets[].name')" \
+      || { unreadable="${unreadable:+$unreadable, and }repos/$repo/actions/$endpoint"; continue; }
+    # Whole-line membership, in the shell. `grep -qxF` would do the same job and bring one
+    # more exit code to read: its 2 means grep itself failed, and folding that into 1 would
+    # undo, one line later, the care this function takes to keep "could not read" apart from
+    # "absent". The line anchors are what rules out ${REVIEWER_SECRET}_<ACCOUNT>, which is
+    # exactly how the keychain items holding these tokens are named - the action reads the
+    # bare name and would find nothing.
+    case $'\n'"$names"$'\n' in
+      *$'\n'"$REVIEWER_SECRET"$'\n'*) return 0 ;;
+    esac
+  done
+  # A listing that FAILED is worth reporting only once no listing has produced the name: a
+  # credential already found is a credential whatever the other call did. Refusing the
+  # moment a call fails - which is what reading these in the other order amounts to - aborts
+  # runs whose secret was sitting in the listing that answered, and blames a credential that
+  # was set. [LAW:no-silent-failure]
+  if [ -n "$unreadable" ]; then
+    horizon_die "could not list $unreadable - whether the reviewer has a credential is unknown here, which is not the same as false"
+  fi
+  horizon_die "$repo carries no $REVIEWER_SECRET secret - not on the repository, and none shared with it from the organization - so the reviewer Action cannot authenticate and this run would merge every pull request unreviewed.
+Set it once - it survives the reset that begins every run. The fleet's copy of this
+credential is owned by the agent-code-review-setup skill's install.sh, whose SECRETS
+table names the keychain item to read it from."
 }
 
 # ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═

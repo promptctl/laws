@@ -279,6 +279,32 @@ put deliberately into that state, and each state is checked against one of those
 captured panes on every run — a live boot can only ever exhibit one state, so the other
 branches would otherwise never execute.
 
+Last, and unlike everything above it, a check that touches no GitHub at all: the
+**reviewer-credential gate** `run-loop.sh` opens with. It is driven from a `gh` fixture, so
+the verdict is about the instrument rather than about whether this machine's secret store
+happens to be set up — and so both directions of the gate run whatever that store holds,
+where the live remote could only ever exhibit the one it is currently in. Eight fixtures:
+the credential absent, present on the repository, present as an **organization secret shared
+with the repository** (a different listing entirely, and one the action authenticates from
+just as well), a **suffixed near-miss** — `CLAUDE_CODE_OAUTH_TOKEN_<ACCOUNT>` is exactly how
+the keychain items holding these tokens are named, and the action reads the bare name —
+each of the two listings failing outright, which has to be reported as an unknown rather
+than as an absent secret, and each of them failing *while the other one carries the
+credential*, which must not refuse at all. A listing that could not be read only decides
+anything once no listing has produced the name; refusing the moment a call fails would abort
+a run whose credential was sitting in the listing that answered, and blame a credential that
+was set.
+
+The fixture answers those two calls and refuses any other by name, so a gate that grows a
+third question fails here instead of being waved through — and it matches the whole call
+shape, arity and `--paginate` and the jq filter, not merely the subcommand. A stub that
+answered any shape would let the real call drift beneath a green verdict: change the filter
+and every fixture above still passes, while the live gate reads gh's nonzero exit as an
+unreadable listing and refuses every run there is. `--paginate` earns its place in that list
+because the REST default is thirty names per page and a truncated page is indistinguishable
+from a complete one — the credential would sit on page two while the run was refused for not
+having one.
+
 ## Seeding a run's time zero
 
 ```sh
@@ -463,6 +489,48 @@ so after a long gap between runs `login.sh` can be needed again with nothing mov
 `login.sh` takes the same `horizon-run` tmux session as its lock for as long as the login
 lasts, so a login cannot rotate the credential underneath a live run; while one is live
 it refuses with the same "a run is live" message `run-loop.sh` gives.
+
+### The reviewer's credential — the other thing set once
+
+The reviewer is a GitHub Action on `promptctl/horizon-eval`, and it reads one credential:
+that repository's Actions secret `CLAUDE_CODE_OAUTH_TOKEN`. Like the login above it is set
+once, by a human, and every run afterwards is unattended — the reset a run begins with
+force-pushes `master` and never touches the repository's secret store, so one setting
+outlives every run that follows it.
+
+`run-loop.sh` refuses to start when that secret is absent, beside the config-dir login
+check and before the remote is reset. The failure it prevents is the quieter of the two: an
+unauthenticated config dir hangs the run, whereas a reviewer that cannot authenticate lets
+the run *finish*, and the bundle it leaves holds pull requests merged with no review arm at
+all — indistinguishable, in the record, from pull requests a reviewer read and had nothing
+to say about. The epic pins the reviewer as a controlled variable, so such a run measured a
+different workflow from the one the campaign claims to hold constant. That is not
+hypothetical; it is what the first `.3` run did.
+
+**A run whose reviewer never ran is not a baseline run.** An absent review arm is not a
+review that found nothing, and a spread mixing the two is not readable — so such runs do
+not count toward the `.5` baseline. The refusal above is what stops the question from
+arising a second time: a run that cannot produce a review arm does not start.
+
+What that refusal proves is exactly that the secret is present, and deliberately no more.
+Whether the token behind it is live, still has quota, or will actually produce a review is
+not knowable before a pull request exists — the action has no probe endpoint. The bundle is
+where that gets read instead: `horizon_capture_prs` captures every PR's reviews and review
+threads, so a human opening a run bundle can see whether the reviewer ever spoke.
+
+The reviewer **workflow** is not checked, and could not be: the seed carries no `.github/`
+at all, so at time zero the run repository provably holds no reviewer workflow, and a check
+demanding one would refuse every run there is.
+
+That makes the refusal above **half** of "the reviewer runs", not the whole of it.
+`promptctl/horizon-eval` has had no workflow run at all, ever — the reference run installed
+the reviewer as its own PR #1, and the first `.3` run did not install one, which is why
+every review on its pull requests came from a local substitute. Whether the *instrument*
+should install the workflow, at the sha `manifest.json` pins, is an open instrument-shape
+decision: the epic calls the reviewer's version and prompt controlled variables, and a
+version the run agent chooses is not a control. The mechanism needs no template copied into
+this repository — `promptctl/copirate-code-review-agent` ships its own installer, which
+renders the workflow from the action's own base.
 
 ### Why the run lives in tmux
 
