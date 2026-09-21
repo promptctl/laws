@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Write a run bundle's `run.json` - when the run ran, what it drove, and what landed.
+
+The one fact in a bundle that nothing else can supply afterwards. Everything else is
+recomputable from the files the run left, but "this began at 09:04 and ended at 17:31"
+and "the project lived at /Users/.../run/seed/macklebox" are properties of a moment that
+is over, so they are recorded rather than derived. [LAW:effects-at-boundaries] the clock
+is read by the driver at its edge; this side only formats what it is handed.
+
+`project.path` looks like a redundant copy of where the bundle already is, and is not:
+transcripts record the directory they were written in, so matching them to the project
+needs the path the run USED, which stops being where the bundle sits the moment anyone
+archives it. Without this field a moved bundle cannot be re-read at all.
+
+Usage:
+    bundle.py <bundle-dir> <record-name> <started-iso> <ended-iso> <project-dir> < steps.tsv
+
+<record-name> is the file to write, passed in rather than spelled here: lib.sh holds that
+name because its inventory step has to skip the very file it is a row of.
+
+where steps.tsv is `<name>\\t<1|0>\\t<detail>` per line, one per captured part.
+"""
+
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime
+
+
+def parse_step(line):
+    """One `<name>\\t<ok>\\t<detail>` row as (name, record).
+
+    Split on exactly two tabs: the detail is free text a step produced, and splitting on
+    every tab would let a detail containing one shorten the row into a different shape.
+    """
+    parts = line.rstrip("\n").split("\t", 2)
+    if len(parts) != 3:
+        sys.exit("malformed capture row (want name<TAB>ok<TAB>detail): %r" % line)
+    name, ok, detail = parts
+    return name, {"ok": ok == "1", "detail": detail}
+
+
+def elapsed(started, ended):
+    """Whole seconds between two ISO-8601 stamps, or None when that is not a duration.
+
+    None rather than zero: a duration of zero is a claim about the run, and "the clock was
+    not readable" is a claim about the record. Collapsing them would put a real-looking
+    number in front of a reader with nothing behind it.
+
+    A finish BEFORE the start is the same kind of claim and gets the same answer. The two
+    stamps are read at opposite ends of a run that can last eight hours, so an NTP
+    correction in between - or a caller handing them over in the wrong order - yields a
+    negative span, and a negative span is not a short run: it is a record that cannot be
+    read as a duration at all. Left as a number it would be printed, subtracted and
+    averaged like any other. [LAW:parse-dont-validate] what comes back is a duration or
+    it is nothing.
+    """
+    try:
+        begin = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        finish = datetime.fromisoformat(ended.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if finish < begin:
+        return None
+    return int((finish - begin).total_seconds())
+
+
+def main():
+    if len(sys.argv) != 6:
+        sys.exit(__doc__)
+    bundle_dir, record_name, started, ended, project_dir = sys.argv[1:]
+
+    # Built a row at a time rather than with dict(), which would let two rows sharing a
+    # name collapse into one: run.json would then hold fewer captures than the close-out
+    # ran, in the one file whose contract is that every capture has an entry, and nothing
+    # would say a step had gone missing. [LAW:no-silent-failure]
+    captured = {}
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        name, record = parse_step(line)
+        if name in captured:
+            sys.exit("two capture rows are both named %r: run.json records one entry per "
+                     "capture, so collapsing them would drop a step without a word" % name)
+        captured[name] = record
+
+    document = {
+        "started": started,
+        "ended": ended,
+        "duration_seconds": elapsed(started, ended),
+        # Empty means the run ended before seeding produced one, which the captures that
+        # needed it report in their own detail. Written as null rather than omitted: a
+        # reader comparing two bundles reads the same keys in both.
+        # realpath, not abspath, because this value exists to be MATCHED against the cwd
+        # a transcript recorded, and sessions.py resolves both sides before comparing. A
+        # work dir reached through a symlink - /tmp is /private/tmp on this platform -
+        # would otherwise be published here in a spelling no transcript contains, so a
+        # reviewer grepping for it finds nothing and the match breaks outright once the
+        # symlink is gone. One spelling, decided here. [LAW:one-source-of-truth]
+        "project": {
+            "name": os.path.basename(project_dir) if project_dir else None,
+            "path": os.path.realpath(project_dir) if project_dir else None,
+        },
+        "captured": captured,
+    }
+
+    # Written beside and moved on, never straight to the name a reader trusts. This is
+    # the one file the whole bundle is read THROUGH - the inventory, the project path,
+    # which captures ran - and every other capture in this close-out is already staged
+    # and moved for exactly this reason. A `json.dump` that stops partway through, on a
+    # full disk or a killed process, would otherwise leave that anchor truncated and
+    # unparseable while the layout step counts it as present: the "present and empty"
+    # shape this whole design exists to make impossible, on the file least able to
+    # afford it. `os.replace` is atomic within a directory, so the name either holds the
+    # old bytes or the whole new ones. [LAW:no-silent-failure]
+    handle = tempfile.NamedTemporaryFile(
+        "w", dir=bundle_dir, prefix=".%s." % record_name, delete=False)
+    try:
+        with handle:
+            json.dump(document, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(handle.name, os.path.join(bundle_dir, record_name))
+    except BaseException:
+        # The staging file must not survive the failure that produced it: the bundle's
+        # inventory lists what is in the directory, and a leftover is a file nobody can
+        # account for sitting next to the record that accounts for everything.
+        if os.path.exists(handle.name):
+            os.unlink(handle.name)
+        raise
+
+
+if __name__ == "__main__":
+    main()

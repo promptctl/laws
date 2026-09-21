@@ -261,9 +261,9 @@ numbers keep climbing. Run five does not start at `#1`. Nothing else carries ove
 the commands that just ran.
 
 **The repo is scratch space, not a record.** A run's PRs and review threads are captured
-onto disk as part of the run bundle (`promptctl-horizon-7ry.4`). Leaving them to live in
-a GitHub repo would make the bundle depend on that repo surviving untouched forever,
-which is the fragility capture exists to remove.
+onto disk into the run bundle (see "The run bundle" below). Leaving them to live in a
+GitHub repo would make the bundle depend on that repo surviving untouched forever, which
+is the fragility capture exists to remove.
 
 ### Two paths, opposite lifetimes, one login
 
@@ -335,12 +335,8 @@ worth keeping, so each gets its own directory rather than being loosened to shar
 
 ### What the run leaves behind
 
-The work dir keeps `transcripts/`, `goal.md`, and `loop.json` beside `instrument/` and
-`seed/`. `transcripts/` holds the session transcripts, moved rather than copied out of
-the config dir by the driver's exit handler on every exit path - success, a failed
-assertion, a dead session, the wall-clock ceiling. The config dir is a fixed path the
-next run wipes, so this is the only copy that outlives the run. `goal.md` is the exact
-`/goal` wording the run issued, read from the commit `manifest.json` names.
+The work dir **is the run bundle** — see "The run bundle" below for its shape. `goal.md`
+is the exact `/goal` wording the run issued, read from the commit `manifest.json` names.
 
 The run's record is `loop.json`, produced by `sessions.py`. That program is pure
 analysis over inputs it is handed — transcripts as files, commits on stdin — so the same
@@ -364,10 +360,129 @@ loudly, the moment they differ; that is the mechanism by which a lost carry stop
 `session_one_goal_in_force` says whether the driver's own launch put the pinned goal in
 force. `horizon_wait_goal_in_force` requires it before the run is declared live.
 
+Per session it also reports what that session **cost**, and `tokens` at the top level
+totals the run: `sessions` for the agent's own spend, `subprocesses` for the headless
+`claude` processes its tools spawned, `total` for the sum. The two are kept apart because
+a configuration that leans on subagents and adversarial reviewers would otherwise look
+free — on the one archived run this was checked against, the reviewer subprocesses
+accounted for 39% of the run's output tokens.
+
+The four usage figures are never added into a single "tokens used". A cached read and a
+generated token differ in price by more than an order of magnitude, and this file is the
+record a human quotes from.
+
+Every transcript found under the run's config dir is one of four things, and `loop.json`
+reports all four because they are not interchangeable. A **session** is the run's own, and
+counts toward the acceptance. A **subprocess** matched the project but took no turns of
+its own — a headless `claude -p` a tool spawned — so it is billed and counted
+(`subprocess_transcripts`) without being a session. A **foreign** transcript
+(`foreign_transcripts`) recorded a working directory and it was somebody else's; its spend
+is not billed at all. A **forming** transcript (`forming_transcripts`) recorded no working
+directory at any point, so nothing can say whose it is: Claude Code opens a transcript with
+boot entries carrying neither `cwd` nor `entrypoint`, and some never acquire one. The
+distinction between the last two is the whole point — absence of evidence is not evidence
+of somebody else, and collapsing them once killed an unattended run at minute zero.
+
+Two fields say the totals above cannot be trusted, and the close-out refuses a run that
+reports either. `usage_disagreements` counts messages whose content blocks disagreed about
+what the message cost; spend is billed once per message id, so a nonzero count means every
+total is a floor rather than a count, and the larger figure is the one kept.
+`tokens.unattributed` is spend found in a forming transcript, deliberately **not** folded
+into `tokens.total` — `total` is what the analysis can stand behind, and a floor published
+as a count is just a wrong number. `horizon_capture_loop` writes `loop.json` first and
+refuses afterwards, because the record is not broken: it is complete, and what it says is
+that the totals are unsafe.
+
 Tests: `horizon/sessions.test.py`.
 
-## What this does not do
+## The run bundle
 
-Capturing the run bundle is a separate ticket (`promptctl-horizon-7ry.4`). This directory
-pins the environment, builds the starting state, and drives the run that later piece
-records.
+```sh
+horizon/verify-bundle.sh
+```
+
+The work dir a run leaves behind is the eval's **output**, not its scratch. There is no
+scored layer anywhere here, so nothing downstream turns a run into a verdict — a person
+opens one bundle beside another and reads them. That makes reviewability the product, and
+it has to be two things at once:
+
+- **Complete.** The record outlives the machine that made it. Transcripts live inside the
+  config dir, which is a fixed path the next run wipes; a run's pull requests and review
+  threads live on GitHub, in a repository the next run resets. Both are moved or copied
+  into the bundle by the close-out, so nothing the bundle reports depends on anything
+  outside it surviving untouched.
+- **Identical in shape.** Two bundles are comparable because the same fact is in the same
+  place in both.
+
+`lib.sh` declares that shape once, in `HORIZON_BUNDLE_LAYOUT`. Three things read that one
+declaration and nothing else: the close-out, which creates what it names; the bundle's own
+`README.md`, rendered from it, so a reviewer never has to open this directory; and
+`verify-bundle.sh`, which checks a captured bundle against it. A path spelled a second time
+anywhere is a map that can drift from the tree it describes.
+
+### A fixed record, not a fixed set of files
+
+The part worth stating plainly, because it is what "identically structured" actually
+buys: a run that finished the backlog and a run that died holding the lock produce
+`run.json` with **the same keys and the same capture names**. A capture that could not run
+is a *value* — `"ok": false` with the reason — never an absent file. An absent file makes
+a reader guess between "this run had none" and "the recording broke", and those are
+opposite findings.
+
+That guarantee starts at the work dir, and the one case outside it is worth naming: a
+run refused before it created one — the config dir failed to authenticate, the lock was
+already held — leaves no bundle, and therefore no `run.json` at all. "A refused
+invocation leaves nothing behind" is the older promise and it wins here, because the
+alternative is a bundle directory conjured by the close-out for a run that never began,
+which the next invocation then refuses to start on top of. No bundle, and a bundle that
+answers every question, are both readable states; a bundle that exists because of how a
+run *ended* is not.
+
+A file in a bundle is whole or it is absent — never present and empty. Shell redirects
+are opened before the command that fills them runs, so `> loop.json` on a failing path
+left a zero-byte file the inventory then counted as present, which is the same
+empty-`loop.json` shape acceptance attempt 1 produced. Both `loop.json` and each
+`prs/pr-NNNN.json` are built outside the bundle and moved in, *outside* rather than
+beside under a `.partial` name, because the analysis ends in a `die` and a die exits —
+so a cleanup written after it never runs. For the same reason the close-out refuses a
+bundle that already holds `transcripts/`: `mv` into an existing directory nests rather
+than replaces, and `transcripts/projects/<slug>/` reads as a clean capture of a run that
+did nothing.
+
+The paths themselves are covered the same way rather than by a second promise. A run that
+died before it was seeded genuinely has no `seed/`, so the close-out's last step
+inventories the bundle against the layout and the `layout` capture *names* whatever is
+missing. The guarantee is not that every bundle holds every file; it is that `run.json`
+accounts for every file the layout declares, so absence is always read off the record
+rather than inferred from a directory listing.
+
+That is also why the close-out runs from the driver's exit handler on every path there is,
+and why a failed capture fails the run. The run most worth reading is the one that died,
+and it never reaches its own last line. Acceptance attempt 1 was stopped by hand four
+minutes in and left an empty `loop.json` behind — a record that existed because of how the
+run *ended* rather than because it ran — which is the shape this removes.
+
+### Scoping a run's pull requests
+
+Every run drives one shared repository, and closed pull requests are never deleted, so PR
+numbers climb across runs. Immediately after the remote is reset — the one moment the fact
+is true — the driver records the highest PR number as `prs/time-zero.json`. Everything
+numbered above it is this run's work by construction, rather than by a creation timestamp
+a slow clock or a long queue can put on the wrong side of the line.
+
+Each pull request is captured in one GraphQL query, because a PR's body, its reviews and
+its review threads are read together or they are read at inconsistent moments. GraphQL
+rather than REST because `isResolved` exists nowhere else, and whether a review thread was
+ever settled is the observation here, not decoration. The diff is deliberately not
+captured: the produced repository is in the bundle with its whole history.
+
+A connection that came back with `hasNextPage` stops the capture. A bundle holding most of
+a review thread is worse than one holding none, because only the second announces itself.
+
+### Reading a bundle again later
+
+`loop.json` and `prs/index.json` both recompute from an archived bundle with nothing
+running. The one field that makes it possible is `project.path` in `run.json`: transcripts
+record the directory they were written in, so matching them up needs the path the run
+*used*, which stops being where the bundle sits the moment anyone archives it. Passing the
+wrong one used to report a run in which nothing happened; it now says so instead.
