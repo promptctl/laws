@@ -154,7 +154,7 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # Here, under the lock, and not inside the pin: this is the one shared thing the pin
   # would otherwise touch, and the lock is what makes wiping it safe. [LAW:single-enforcer]
   horizon_log "rebuilding the config dir from the pinned snapshot"
-  horizon_provision_config_dir "$config_dir" "$instrument_dir/pinned"
+  horizon_provision_config_dir "$config_dir" "$instrument_dir"
 
   horizon_log "seeding time zero from $(basename "$seed_dir")"
   "$SCRIPT_DIR/seed-run.sh" "$seed_out_dir" "$seed_dir" \
@@ -190,8 +190,35 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_goal_wording_file "$repo_root" "$goal_sha" "$goal_file"
 
   horizon_log "launching session one with the pinned /goal wording as its prompt"
-  horizon_launch_session "$config_dir" "$project_dir" "$goal_file"
-  horizon_wait_ready
+  # The pinned binary, not the bare name: the symlink pin-instrument.sh wrote is this
+  # run's handle on its harness version, and horizon_assert_transport's in-place guarantee
+  # means this one process is every session the run will have. [LAW:one-source-of-truth]
+  horizon_launch_session "$config_dir" "$project_dir" "$goal_file" \
+    "$instrument_dir/bin/claude"
+  # The pane the wait settled on, kept rather than re-fetched: the banner is on screen
+  # because THIS capture is what `ready` was read out of, and by the time the manifest has
+  # been opened the session has been working for a beat and tmux would hand back a pane
+  # that has moved on. [LAW:no-ambient-temporal-coupling]
+  # Checked rather than bare, for the reason stated at recorded_version below: horizon_die
+  # inside a command substitution exits only the SUBSHELL, so the wait's own refusal
+  # becomes an ordinary non-zero assignment here. Errexit would end the run on it either
+  # way; what the explicit check adds is a line saying which wait failed, rather than a
+  # bare exit 1 under the wait's message. [LAW:no-silent-failure]
+  local booted_pane
+  booted_pane="$(horizon_wait_ready)" \
+    || horizon_die "session one never became ready - the wait's diagnosis is above"
+  # Asked of the session rather than of the driver: manifest.json records a version read
+  # from a file on disk, and this is the only reading taken from the process running it.
+  #
+  # Captured into a checked assignment rather than nested into the argument list: a
+  # command substitution that fails inside an argument has its status discarded, so
+  # horizon_manifest_field's horizon_die would be swallowed and the assert would run with
+  # an empty expectation - reporting a harness divergence for what is really an unreadable
+  # manifest. The same rule horizon_lit_sha256 states. [LAW:no-silent-failure]
+  local recorded_version
+  recorded_version="$(horizon_manifest_field "$instrument_dir/manifest.json" claude version)" \
+    || horizon_die "could not read claude.version from $instrument_dir/manifest.json"
+  horizon_assert_booted_version "$HORIZON_TMUX_SESSION" "$recorded_version" <<<"$booted_pane"
   # The isolation guarantee, checked rather than assumed - see horizon_assert_transport.
   horizon_assert_transport
   horizon_log "handoff transport verified: in-place reset, config dir preserved"

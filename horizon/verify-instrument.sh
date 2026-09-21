@@ -23,14 +23,28 @@
 #      all - which is how a run reached an interactive dialog no unattended driver can
 #      answer, twice. The check below boots one and reads the pane.
 #
-#      It asserts the session reaches `logged-out`, not `ready`, and that is the whole
-#      point rather than a weakened test: Claude Code keys its credential to the config
-#      dir's PATH, so a throwaway dir under $WORK is unauthenticated BY CONSTRUCTION and
-#      no verification can make it otherwise without touching a credential store, which
-#      this script will not do. `logged-out` is reached only by a session that drew its
-#      banner and its input box, which means onboarding and the trust dialog are both
-#      settled - so it proves exactly the instrument's half and claims nothing about the
-#      operator's. The run asserts `ready` instead, against its own authenticated dir.
+#      It asserts the session reaches a state PAST those gates - `logged-out` OR `ready` -
+#      and which of the two it gets is deliberately not the question. Both are reached
+#      only by a session that drew its banner and its input box, which means onboarding
+#      and the trust dialog are each settled, so either one proves exactly the
+#      instrument's half and claims nothing about the operator's. Ordinarily it is
+#      `logged-out`: Claude Code keys its credential to the config dir's PATH, so a
+#      throwaway dir under $WORK is unauthenticated BY CONSTRUCTION, and no verification
+#      can make it otherwise without touching a credential store, which this script will
+#      not do. Demanding `logged-out` ALONE would promote that ordinary outcome into a
+#      requirement and fail a sound instrument on a machine that happens to authenticate
+#      some other way. The run asserts `ready`, against its own authenticated dir.
+#   5. The HARNESS is pinned and recorded: the model the run's sessions use, and the
+#      Claude Code binary itself. Both are properties of this machine rather than of
+#      something fetched, so both are checked against the machine rather than against a
+#      ref - the pinned symlink, the manifest's path and version, the model the config
+#      dir actually imposes, and the version the booted session reports are all required
+#      to describe one binary and one model. The mismatch gate is exercised in its
+#      FAILING direction, since a gate only ever seen agreeing proves nothing.
+#
+#      An unset campaign pin is recorded as null and checked to be null: a reader decides
+#      from that field whether a campaign's runs are comparable, so "recorded but not
+#      held" must be unmistakable rather than inferred.
 #
 # [LAW:verifiable-goals] this script IS the machine-checkable "done" for the ticket;
 # exit 0 means every criterion held on this run, exit nonzero says which one didn't.
@@ -133,10 +147,39 @@ main() {
   # snapshot, which is also the one the installed skills are compared against below.
   local config_dir="$WORK/config" pinned_dir="$WORK/run2/pinned"
   horizon_log "provisioning a throwaway config dir from run 2's snapshot"
-  horizon_provision_config_dir "$config_dir" "$pinned_dir"
+  horizon_provision_config_dir "$config_dir" "$WORK/run2"
+
+  # Criterion 5d: the model the manifest records is the model the config dir imposes.
+  # Read out of settings.json rather than trusted from the variable that wrote it: the key
+  # name is Claude Code's, and a run whose model setting landed under a key the CLI does
+  # not read would record a control while the sessions quietly took the CLI default -
+  # which is the same silent shape as the trust key written under the wrong path.
+  #
+  # The non-empty half is the load-bearing one: it is what catches that regression. The
+  # equality half became worth asserting once provisioning started reading the model back
+  # out of manifest.json - it now checks that plumbing rather than comparing two readings
+  # of one environment variable, which agreed by construction and could not fail.
+  local settings_model recorded_model
+  recorded_model="$(horizon_manifest_field "$WORK/run2/manifest.json" claude model)" \
+    || fail "could not read claude.model from run2/manifest.json"
+  settings_model="$(python3 -c '
+import json, sys
+print(json.load(open(sys.argv[1])).get("model", ""))
+' "$config_dir/settings.json")" || fail "could not read $config_dir/settings.json"
+  [ -n "$settings_model" ] \
+    || fail "the provisioned config dir carries no model setting, so its sessions would take whatever default the CLI ships"
+  [ "$settings_model" = "$recorded_model" ] \
+    || fail "the config dir pins model '$settings_model' but the manifest records '$recorded_model'"
+  pass "the provisioned config dir imposes the recorded model ($recorded_model)"
 
   local plugin_list admitted
-  plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" claude plugin list --json)" \
+  # The PINNED binary interrogates the pinned config dir, for the same reason provisioning
+  # uses it: the plugin cache's shape belongs to the CLI version that wrote it, so reading
+  # it back with a different one asks a question about a config dir nobody built.
+  # DISABLE_AUTOUPDATER for the same reason provisioning sets it: this is the real CLI
+  # against the live install, and an update it triggers can prune the version run2 pinned
+  # out from under the criteria below that check run2 against what was recorded.
+  plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" DISABLE_AUTOUPDATER=1 "$WORK/run2/bin/claude" plugin list --json)" \
     || fail "could not read claude plugin list --json from the isolated config dir"
   admitted="$(horizon_marketplace_plugins "$pinned_dir")"
 
@@ -217,6 +260,69 @@ for p in plugins:
     || fail "recorded lit sha256 ($recorded_lit_sha256) does not match the lit currently on PATH ($actual_lit_sha256)"
   pass "lit on PATH matches the manifest's recorded identity"
 
+  # Criterion 5a: the harness pin resolves to a real executable, and every field
+  # describing it agrees with that one file. The pin is only worth anything if the symlink
+  # the run execs, the path the manifest names, and the version it claims are three views
+  # of the same binary - which is exactly what two independent lookups cannot promise.
+  local pinned_link="$WORK/run1/bin/claude" recorded_claude_path recorded_claude_version
+  [ -L "$pinned_link" ] || fail "the pin wrote no claude symlink at $pinned_link"
+  [ -x "$pinned_link" ] || fail "the pinned claude symlink is not executable: $pinned_link"
+  recorded_claude_path="$(horizon_manifest_field "$WORK/run1/manifest.json" claude binary_path)" \
+    || fail "could not read claude.binary_path from run1/manifest.json"
+  recorded_claude_version="$(horizon_manifest_field "$WORK/run1/manifest.json" claude version)" \
+    || fail "could not read claude.version from run1/manifest.json"
+  local link_target
+  link_target="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$pinned_link")" \
+    || fail "could not resolve the pinned claude symlink"
+  [ "$link_target" = "$recorded_claude_path" ] \
+    || fail "the pinned symlink resolves to $link_target but the manifest records $recorded_claude_path"
+  # Asked of the binary the symlink points at, so a manifest version copied from anywhere
+  # else - an install path, an earlier run - cannot pass. [LAW:one-source-of-truth]
+  local link_version
+  link_version="$(horizon_claude_version "$pinned_link")" \
+    || fail "could not read a version out of the pinned claude symlink at $pinned_link"
+  [ "$link_version" = "$recorded_claude_version" ] \
+    || fail "the pinned binary reports $link_version but the manifest records $recorded_claude_version"
+  pass "the pinned claude symlink, the recorded path and the recorded version all describe one binary ($recorded_claude_version)"
+
+  # Criterion 5b: an unset pin is recorded as NO CONTROL, not as a control that passed.
+  # This is the field a reader of a bundle uses to decide whether a campaign's runs are
+  # comparable at all, so "absent" has to be unmistakable rather than inferred from the
+  # version field looking plausible. [LAW:no-silent-failure]
+  local recorded_pin
+  recorded_pin="$(python3 -c '
+import json, sys
+print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
+' "$WORK/run1/manifest.json")" || fail "could not read claude.version_pin from run1/manifest.json"
+  if [ -n "${HORIZON_CLAUDE_VERSION_PIN:-}" ]; then
+    [ "$recorded_pin" = "\"$HORIZON_CLAUDE_VERSION_PIN\"" ] \
+      || fail "a campaign pin of $HORIZON_CLAUDE_VERSION_PIN was recorded as $recorded_pin"
+  else
+    [ "$recorded_pin" = null ] \
+      || fail "no campaign pin was set, but the manifest records $recorded_pin rather than null - a reader would credit this run with a control it never had"
+  fi
+  pass "the manifest states which version control was applied: version_pin=$recorded_pin"
+
+  # Criterion 5c: the gate refuses a mismatch. Exercised in the FAILING direction with a
+  # version no install can be, because the passing direction is what every other check
+  # here already runs through - a gate only ever seen agreeing is a gate that could be
+  # returning success unconditionally.
+  local pin_refusal=""
+  if pin_refusal="$( HORIZON_CLAUDE_VERSION_PIN=0.0.0-not-a-real-version \
+      "$SCRIPT_DIR/pin-instrument.sh" "$WORK/pin-mismatch" "$memento_sha" "$reviewer_sha" \
+      "$goal_ref" "$lit_sha" 2>&1 )"; then
+    fail "pin-instrument.sh built a run against a version the campaign does not pin"
+  fi
+  case "$pin_refusal" in
+    *"0.0.0-not-a-real-version"*) ;;
+    *) fail "the refusal did not name the pinned version it wanted: $pin_refusal" ;;
+  esac
+  case "$pin_refusal" in
+    *"$recorded_claude_version"*) ;;
+    *) fail "the refusal did not name the version actually installed: $pin_refusal" ;;
+  esac
+  pass "a campaign pin refuses a run on the wrong harness version, naming both versions"
+
   # Criterion 4a: the pane classifier, against panes captured from real sessions put into
   # each state on purpose. Kept as fixtures rather than left to the live boot below, which
   # can only ever exhibit ONE state per run: a classifier whose failure branches are never
@@ -279,6 +385,35 @@ for p in plugins:
   # banner appears in both, so a classifier that only looked for it would call the dead
   # session ready. That was the behaviour here until 2026-09-21.
   pass "the pane classifier separates ready from logged-out, onboarding, untrusted and forming, and reads the chrome rather than what a run prints into the pane"
+
+  # Criterion 5e: the version reader, against the same captured panes. It is the only
+  # reading taken from the running process rather than from a file the driver resolved,
+  # so a parse that quietly returned nothing would turn the cross-check into a no-op that
+  # passes on every version. Fixtures, for the same reason the classifier has them: a live
+  # boot exhibits exactly one version and would never exercise a mismatch.
+  local ver
+  ver="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "▝▜██████▀  Opus 5 (1M context) · API Usage Billing" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_pane_version)"
+  [ "$ver" = 2.1.278 ] || fail "the banner version read as '$ver', not 2.1.278"
+  # A pane reset in place keeps the previous session's banner above the current one, which
+  # is the ordinary shape here: the run resets its ONE session over and over. The last
+  # banner is the running version; the first is history.
+  ver="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.263" " (reset)" " ▐▛███▛█   Claude Code v2.1.278" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_pane_version)"
+  [ "$ver" = 2.1.278 ] || fail "a pane carrying two banners read as '$ver', not the later 2.1.278"
+  # A version carrying a suffix reads out WHOLE. This is the half the two readers have to
+  # agree on: horizon_claude_version records what the binary says, this reads what the
+  # banner shows, and horizon_assert_booted_version compares them for equality - so a
+  # banner pattern that stopped at the first non-digit would record `2.2.0-rc.1`, read
+  # back `2.2.0`, and refuse every run on a pre-release with a message blaming the pin.
+  # Both patterns are built from HORIZON_VERSION_RE now; this is what says so.
+  ver="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.2.0-rc.1" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_pane_version)"
+  [ "$ver" = 2.2.0-rc.1 ] \
+    || fail "a suffixed banner version read as '$ver', not the whole 2.2.0-rc.1 - the banner and binary version grammars have drifted apart again"
+  # Emptiness is the honest answer when the banner has scrolled off, and it must be
+  # distinguishable from a version: horizon_assert_booted_version treats it as "proves
+  # nothing" rather than as a mismatch, and that branch only exists if this returns empty.
+  ver="$(printf '%s\n' "  ● Bash(echo hi)" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_pane_version)"
+  [ -z "$ver" ] || fail "a pane with no banner reported version '$ver' instead of nothing"
+  pass "the pane version reader takes the running session's banner, prefers the latest after a reset, reads a suffixed version whole, and reports absence as absence"
 
   # A pane that CANNOT be read must end the wait with a diagnosis rather than in silence.
   # Checked against a session name that does not exist, which needs no session and costs
@@ -344,17 +479,52 @@ for p in plugins:
     tmux set-environment -t "$VERIFY_TMUX_SESSION" -r "$leaked" \
       || fail "could not clear $leaked from the verification session's environment"
   done
+  # Suppressed here too, for the same reason horizon_launch_session suppresses it: this is
+  # a real Claude Code booting against a live install, and an auto-update it triggers
+  # repoints the `claude` on PATH for the whole machine. It would land between run1's pin
+  # and the criteria below that compare run2 against what was recorded, failing a sound
+  # instrument for something the verifier itself caused. The run is guarded and its
+  # verification was not, which is the guard having a hole exactly where it is tested.
+  tmux set-environment -t "$VERIFY_TMUX_SESSION" DISABLE_AUTOUPDATER 1 \
+    || fail "could not disable the auto-updater in the verification session"
+  # THE PINNED SYMLINK, exactly as run-loop.sh launches it, not a bare `claude`. Launching
+  # the bare name here would verify a binary the run does not execute and leave the pin
+  # itself - the one new thing this criterion exists to exercise - never run at all.
   tmux respawn-pane -k -t "$VERIFY_TMUX_SESSION" -c "$verify_link" \
-    claude --dangerously-skip-permissions \
-    || fail "could not launch claude in the verification session"
+    "$WORK/run2/bin/claude" --dangerously-skip-permissions \
+    || fail "could not launch the pinned claude in the verification session"
   # EITHER state past the gates, because the question this criterion asks is "did the
   # session get past the gates the instrument owns" and both answer it - both require the
   # banner and a painted status line, which onboarding and the trust dialog each preclude.
   # Demanding `logged-out` alone would conflate that question with "and it has no
   # credential", which is a fact about the operator's environment rather than about the
   # instrument, and would fail a good instrument on a machine that happens to carry one.
-  horizon_await_boot_state "$VERIFY_TMUX_SESSION" logged-out ready
+  # Kept, not discarded: criterion 5f reads its version out of THIS capture, the one the
+  # wait reached its verdict on, rather than going back to tmux for a pane that has moved
+  # on. A bare call would also spill the whole pane into this script's own output, which
+  # is a column of PASS lines. [LAW:no-ambient-temporal-coupling]
+  #
+  # Checked, because a command substitution swallows the exit: horizon_die inside one ends
+  # the SUBSHELL, and errexit would then abort this script on the assignment having
+  # printed no FAIL line at all - the same invisible shape the unreadable-pane criterion
+  # above exists to catch. The wait's own diagnosis still reaches stderr; this adds the
+  # accounting. [LAW:no-silent-failure]
+  local verify_pane
+  verify_pane="$(horizon_await_boot_state "$VERIFY_TMUX_SESSION" logged-out ready)" \
+    || fail "the verification session never reached 'logged-out' or 'ready' - its diagnosis is above"
   pass "a real session against the produced config dir clears onboarding and the trust dialog"
+
+  # Criterion 5f: the booted session reports the version the manifest recorded. Every
+  # other check on the pin reads files the driver resolved; this one asks the process.
+  # It is what makes "the recorded version is the version that ran" a checked claim
+  # rather than a chain of plausible lookups. [LAW:verifiable-goals]
+  # Checked assignment, not nested into the argument list: a failing substitution there
+  # has its status discarded, and the assert would run against an empty expectation.
+  local booted_expected
+  booted_expected="$(horizon_manifest_field "$WORK/run2/manifest.json" claude version)" \
+    || fail "could not read claude.version from run2/manifest.json"
+  horizon_assert_booted_version "$VERIFY_TMUX_SESSION" "$booted_expected" <<<"$verify_pane"
+  pass "the booted session runs the version the manifest records ($booted_expected)"
 
   # The SAME live session, asked for the state the RUN asks for. Without this the wait is
   # only ever exercised on the path where it agrees, so a wait that returned success for
