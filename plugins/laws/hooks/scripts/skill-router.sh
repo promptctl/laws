@@ -101,8 +101,17 @@ fi
 
 
 # The routing text - injected at session start AND re-asserted on every user message
-# (see the engage case), so it stays loaded
-read -r -d '' ROUTE_TEXT <<EOT
+# (see the engage case), so it stays loaded.
+#
+# The heredoc is QUOTED, like ENGAGE_TEXT's. It was unquoted while it interpolated the
+# rendered conflict clause; that renderer is gone, so nothing here needs substitution and
+# the quoting closes the hazard the substitution used to require us to live with - a `$`,
+# a backtick, or a backslash in the prose expanding at hook launch, or breaking the JSON,
+# with every test still green. Keep it quoted: the prose is the kind of thing that gets
+# reworded by someone thinking about wording, not about shell. [LAW:no-silent-failure]
+# Same formatting constraints as ENGAGE_TEXT otherwise: single line, straight quotes, no
+# backslashes, so it needs no JSON escaping.
+read -r -d '' ROUTE_TEXT <<'EOT'
 Before substantive work, identify the medium of your primary deliverable and load the craft skill that matches, if one does.
 EOT
 

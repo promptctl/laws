@@ -51,8 +51,15 @@ the lock records what was *loaded*, not what was *inherited*, and a fork is the 
 where those two diverge. Nothing will refuse it and nothing will warn you.
 
 The cost of a fresh agent is that you must write the task context into its prompt
-instead of getting it for free. That is the correct price. The guard's refusal message
-lists what the prompt must carry; it is the one place that list lives.
+instead of getting it for free. That is the correct price. What the prompt must carry:
+the requester's requirements in their own words, the exact output path, what a correct
+result looks like, and an instruction to read the artifact back against those before
+reporting. Anything you leave out does not exist for that agent.
+
+The guard's refusal message carries the same list, because the two arrive in different
+moments - this one when you choose to dispatch, that one when you are refused a load you
+wanted. A reader who only ever met the refusal would never reach this page, and a reader
+planning a dispatch under a *legal* ordering never sees the refusal at all.
 
 If the session's whole job has become that craft, the other option is /clear and load it
 clean.
