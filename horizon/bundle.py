@@ -24,6 +24,7 @@ where steps.tsv is `<name>\\t<1|0>\\t<detail>` per line, one per captured part.
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime
 
 
@@ -104,9 +105,29 @@ def main():
         "captured": captured,
     }
 
-    with open(os.path.join(bundle_dir, record_name), "w") as handle:
-        json.dump(document, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    # Written beside and moved on, never straight to the name a reader trusts. This is
+    # the one file the whole bundle is read THROUGH - the inventory, the project path,
+    # which captures ran - and every other capture in this close-out is already staged
+    # and moved for exactly this reason. A `json.dump` that stops partway through, on a
+    # full disk or a killed process, would otherwise leave that anchor truncated and
+    # unparseable while the layout step counts it as present: the "present and empty"
+    # shape this whole design exists to make impossible, on the file least able to
+    # afford it. `os.replace` is atomic within a directory, so the name either holds the
+    # old bytes or the whole new ones. [LAW:no-silent-failure]
+    handle = tempfile.NamedTemporaryFile(
+        "w", dir=bundle_dir, prefix=".%s." % record_name, delete=False)
+    try:
+        with handle:
+            json.dump(document, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(handle.name, os.path.join(bundle_dir, record_name))
+    except BaseException:
+        # The staging file must not survive the failure that produced it: the bundle's
+        # inventory lists what is in the directory, and a leftover is a file nobody can
+        # account for sitting next to the record that accounts for everything.
+        if os.path.exists(handle.name):
+            os.unlink(handle.name)
+        raise
 
 
 if __name__ == "__main__":

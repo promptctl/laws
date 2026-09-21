@@ -48,6 +48,8 @@ horizon_need python3
 horizon_need diff
 horizon_need cat
 horizon_need chmod
+horizon_need cut
+horizon_need head
 
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$WORK"' EXIT
@@ -650,8 +652,14 @@ if ( horizon_capture_loop "$PARTIAL" "$BUNDLE/seed/macklebox" ) >/dev/null 2>&1;
 fi
 [ ! -e "$PARTIAL/loop.json" ] \
   || fail "a failed analysis left an empty loop.json in the bundle"
-[ -z "$(find "$PARTIAL" -name '*.partial')" ] \
-  || fail "a failed capture left its staging file in the bundle"
+# Nothing else appeared either - named by what the bundle HOLDS, not by what a leftover
+# might be called. The check here used to glob for `*.partial`, which no code path has
+# ever written: staging is a `mktemp` under $TMPDIR with a random suffix, and `.partial`
+# was the rejected design. A check that cannot fail passes a regression through as
+# readily as a fix, which is the one thing a gate may never do.
+LEFT_BEHIND="$(cd "$PARTIAL" && find . -mindepth 1 -maxdepth 1 | sort | tr '\n' ' ')"
+[ "$LEFT_BEHIND" = "./transcripts " ] \
+  || fail "a failed capture left something in the bundle beyond what it was given: $LEFT_BEHIND"
 pass "a failed analysis leaves no loop.json at all, whole or empty"
 
 PR_PARTIAL="$WORK/pr-partial"
@@ -666,8 +674,12 @@ fi
 HORIZON_FIXTURE_PR_NUMBERS="7 8 9"
 [ ! -e "$PR_PARTIAL/prs/pr-0010.json" ] \
   || fail "a failed PR query left an empty pr-0010.json in the bundle"
-[ -z "$(find "$PR_PARTIAL/prs" -name '*.partial')" ] \
-  || fail "a failed PR capture left its staging file in the bundle"
+# And prs/ holds exactly the queries that SUCCEEDED plus the watermark - no staging file
+# under any name, including one a future change might invent.
+PRS_LEFT="$(cd "$PR_PARTIAL/prs" && find . -mindepth 1 -maxdepth 1 | sort | tr '\n' ' ')"
+# #7 is the watermark itself, so it belongs to an EARLIER run and is never captured.
+[ "$PRS_LEFT" = "./pr-0008.json ./pr-0009.json ./time-zero.json " ] \
+  || fail "a failed PR capture left prs/ holding something other than the queries that worked: $PRS_LEFT"
 pass "a pull request whose query failed leaves no file behind, empty or otherwise"
 
 # ── 10. A second close-out over one bundle is refused, not silently nested ────────────

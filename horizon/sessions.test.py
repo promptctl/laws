@@ -781,6 +781,37 @@ def main():
               "sessions=%s subprocesses=%s"
               % (moved_in["tokens"]["sessions"], moved_in["tokens"]["subprocesses"]))
 
+    # The sibling whose name STARTS WITH the project's. `within()` names this case in its
+    # own docstring as the reason it tests for a separator rather than taking a bare string
+    # prefix, and nothing exercised it - so dropping the `+ os.sep` would have started
+    # billing an unrelated project's spend to this run and every check would still pass.
+    # A refusal a test never expresses is a refusal that can be deleted by accident.
+    with tempfile.TemporaryDirectory() as tmp14:
+        transcripts = os.path.join(tmp14, "transcripts")
+        proj = os.path.join(tmp14, "project")
+        sibling = os.path.join(tmp14, "project-two")
+        os.makedirs(proj)
+        os.makedirs(sibling)
+        gf = os.path.join(tmp14, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(transcripts, "p", "ours", proj,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
+                      goal_text=PINNED_GOAL, extra=[assistant_block("m1", output=10)])
+        write_session(transcripts, "p2", "theirs", sibling,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
+                      goal_text=PINNED_GOAL, extra=[assistant_block("m2", output=88888)])
+        siblings = run(transcripts, proj, gf, [])
+        check("a sibling directory whose name merely starts with the project's is foreign",
+              [s["session_id"] for s in siblings["sessions"]] == ["ours"]
+              and siblings["foreign_transcripts"] == 1,
+              "sessions=%s foreign=%s"
+              % ([s["session_id"] for s in siblings["sessions"]],
+                 siblings.get("foreign_transcripts")))
+        check("a sibling project's spend is not billed to this run",
+              siblings["tokens"]["total"]["output_tokens"] == 10,
+              "got %s" % siblings["tokens"]["total"])
+
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))
         return 1

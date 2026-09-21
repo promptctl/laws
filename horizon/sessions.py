@@ -285,13 +285,24 @@ def read_transcript(path, project_dir):
     tokens = no_tokens()
     billed = {}
     disagreements = 0
+    resolved = {}
 
     with open(path, errors="replace") as handle:
         for index, entry in enumerate(transcript_entries(handle)):
             cwd = entry.get("cwd")
             if cwd:
                 located = True
-                if within(cwd, want):
+                # One containment test per DISTINCT cwd rather than per entry. A session
+                # records the same directory on nearly every line it writes - hundreds of
+                # them - and `within` resolves both sides through the filesystem, so the
+                # same realpath was being taken hundreds of times for the same answer.
+                # It is not once per run either: the driver re-runs this whole analysis
+                # from a fresh process every two seconds for the length of the run, so the
+                # cost is paid again on every poll, over every transcript, forever.
+                matched = resolved.get(cwd)
+                if matched is None:
+                    matched = resolved[cwd] = within(cwd, want)
+                if matched:
                     belongs = True
             if "entrypoint" in entry:
                 entrypoints.add(entry["entrypoint"])
