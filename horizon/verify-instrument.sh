@@ -17,6 +17,20 @@
 #      instrument whose skills were all pointer stubs. Each plugin's skills are checked
 #      byte-for-byte against the snapshot they were pinned from: memento's
 #      address-pr-reviews and message-in-a-bottle, and lit's next.
+#   4. A REAL SESSION launched against the produced config dir gets past every gate the
+#      instrument is responsible for. `claude plugin list` needs no credential and no
+#      terminal, so it went green against a config dir that could not boot a session at
+#      all - which is how a run reached an interactive dialog no unattended driver can
+#      answer, twice. The check below boots one and reads the pane.
+#
+#      It asserts the session reaches `logged-out`, not `ready`, and that is the whole
+#      point rather than a weakened test: Claude Code keys its credential to the config
+#      dir's PATH, so a throwaway dir under $WORK is unauthenticated BY CONSTRUCTION and
+#      no verification can make it otherwise without touching a credential store, which
+#      this script will not do. `logged-out` is reached only by a session that drew its
+#      banner and its input box, which means onboarding and the trust dialog are both
+#      settled - so it proves exactly the instrument's half and claims nothing about the
+#      operator's. The run asserts `ready` instead, against its own authenticated dir.
 #
 # [LAW:verifiable-goals] this script IS the machine-checkable "done" for the ticket;
 # exit 0 means every criterion held on this run, exit nonzero says which one didn't.
@@ -40,12 +54,26 @@ horizon_need claude
 horizon_need python3
 horizon_need lit
 horizon_need diff
+# Criterion 4 boots a real session; the run lives in tmux for isolation and so does this.
+horizon_need tmux
+# Reached only by criterion 4b, which puts a symlink in front of the project on purpose.
+horizon_need ln
 
 # Canonicalized at creation: on macOS mktemp -d hands back /var/... while the real
 # path is /private/var/..., and the isolation check below compares a path derived from
 # this against one the claude CLI may report already resolved. [LAW:one-source-of-truth]
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$WORK"' EXIT
+# Its own session name, never HORIZON_TMUX_SESSION: that one is the run's machine-wide
+# lock, and a verifier borrowing it would either be refused while a run is live or, worse,
+# kill the run's session on the way out. $$ keeps two verifiers off each other too.
+VERIFY_TMUX_SESSION="horizon-verify-$$"
+# `|| true` on the kill, and it is load-bearing rather than defensive: this runs under
+# errexit, so a kill that fails - which is the NORMAL case, because most runs never get
+# far enough to create the session - would abort the handler on its first line, take the
+# `rm -rf` with it, and hand back a failing status from a script whose every check passed.
+# The trap is also the ONLY place the session is ended, so the success path and the
+# horizon_die path leave nothing behind by the same line. [LAW:single-enforcer]
+trap 'tmux kill-session -t "$VERIFY_TMUX_SESSION" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
@@ -188,6 +216,181 @@ for p in plugins:
   [ "$recorded_lit_sha256" = "$actual_lit_sha256" ] \
     || fail "recorded lit sha256 ($recorded_lit_sha256) does not match the lit currently on PATH ($actual_lit_sha256)"
   pass "lit on PATH matches the manifest's recorded identity"
+
+  # Criterion 4a: the pane classifier, against panes captured from real sessions put into
+  # each state on purpose. Kept as fixtures rather than left to the live boot below, which
+  # can only ever exhibit ONE state per run: a classifier whose failure branches are never
+  # executed is the tautology this repo has already shipped once. Every string here was
+  # read off a v2.1.278 pane, not composed to match the regex. [LAW:verifiable-goals]
+  local got
+  got="$(printf '%s\n' " Let's get started." " Choose the text style that looks best with your terminal" "   1. Auto (match terminal)" | horizon_boot_state)"
+  [ "$got" = onboarding ] || fail "the theme picker pane classified as '$got', not onboarding"
+  got="$(printf '%s\n' " Accessing workspace:" " /private/tmp/x/proj" " Quick safety check: Is this a project you created or one you trust? (Like your own code" " ❯ No, exit" "   Yes, I trust this folder" | horizon_boot_state)"
+  [ "$got" = untrusted ] || fail "the trust-dialog pane classified as '$got', not untrusted"
+  # The THIRD gate horizon_write_boot_state settles. Without a state of its own it read as
+  # `forming`, so a run stopped here burned the whole boot timeout and then reported that
+  # the pane drew nothing recognisable - about a dialog that was on screen throughout.
+  got="$(printf '%s\n' " WARNING: Claude Code running in Bypass Permissions mode" " ❯ No, exit" "   Yes, I accept" " Enter to confirm · Esc to cancel" | horizon_boot_state)"
+  [ "$got" = bypass-disclaimer ] || fail "the bypass-permissions disclaimer classified as '$got', not bypass-disclaimer"
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "▝▜██████▀  Opus 5 (1M context) · API Usage Billing" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle)                    Not logged in · Run /login" | horizon_boot_state)"
+  [ "$got" = logged-out ] || fail "a not-logged-in pane classified as '$got', not logged-out"
+  # The OTHER wording, and the one a baseline campaign actually meets: a config dir that
+  # was logged in when the campaign started and whose refresh token the server retired
+  # part way through. It needs no mistake by anyone, only elapsed time, so the run that
+  # hits it is a later run of a long campaign - the most expensive possible moment to
+  # discover the pane vocabulary only covered the other spelling.
+  #
+  # The WORDING is recorded, from the run that hit it on 2026-09-07. The PLACEMENT is
+  # inferred: it is put in the same right-hand status-line slot the captured `Not logged
+  # in` occupies, because both are that one widget reporting on one credential. Said
+  # plainly because it is the weakest evidence in this block - and bounded, because if the
+  # real pane puts it elsewhere this reads as `ready` and the run is refused moments later
+  # by horizon_wait_goal_in_force, which reads the transcript instead of the pane.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents      Login expired · Please run /login" | horizon_boot_state)"
+  [ "$got" = logged-out ] || fail "an expired-login pane classified as '$got', not logged-out"
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "an authenticated pane classified as '$got', not ready"
+  got="$(printf '%s\n' "" "   ░░░░░░░░" | horizon_boot_state)"
+  [ "$got" = forming ] || fail "a pane that has drawn nothing classified as '$got', not forming"
+  # THE RACE. Banner and input box painted, status line not yet - so the login notice, if
+  # this session has one coming, has not had anywhere to appear. Answering `ready` here is
+  # answering from an absence, and it would hand a dead-credential session to the run for
+  # the one reason that must never be enough: the evidence against it had not arrived.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " | horizon_boot_state)"
+  [ "$got" = forming ] || fail "a pane whose status line has not painted classified as '$got', not forming"
+  # MID-TURN, captured from a live pane with a tool actually running. run-loop.sh hands
+  # session one the `/goal` wording as its launch prompt, so the run's own wait polls a
+  # pane that is already working - never the idle splash the other fixtures show.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "  ✓ Bash  " "  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #70 · ← 1 agent" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "a pane mid-turn classified as '$got', not ready"
+
+  # AND THE CONVERSE, which is the one that costs a campaign. Every pattern above is a
+  # string the run can legitimately PRINT: an agent checking `gh auth status`, a grep over
+  # this very file. Matched anywhere in the capture they turn the wait into a fatal false
+  # failure - it dies on any settled state it did not want - so a healthy run is killed
+  # mid-flight with a confident wrong diagnosis. Each of these must read as `ready`.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "  ● Bash(gh auth status)" "    Not logged in" "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "an agent printing 'Not logged in' as tool output classified the session as '$got'"
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "  ● Bash(grep Accessing horizon/lib.sh)" "    lib.sh: Accessing workspace:" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "an agent printing 'Accessing workspace:' as tool output classified the session as '$got'"
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "  ● the picker says Choose the text style" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "an agent printing 'Choose the text style' as tool output classified the session as '$got'"
+  # The one that matters most, and the reason the login notice is tested at all: the SAME
+  # banner appears in both, so a classifier that only looked for it would call the dead
+  # session ready. That was the behaviour here until 2026-09-21.
+  pass "the pane classifier separates ready from logged-out, onboarding, untrusted and forming, and reads the chrome rather than what a run prints into the pane"
+
+  # A pane that CANNOT be read must end the wait with a diagnosis rather than in silence.
+  # Checked against a session name that does not exist, which needs no session and costs
+  # nothing: the failing read is the same one a session that died on startup produces, and
+  # tmux destroys a session with its last pane, so that is not hypothetical. This guards a
+  # regression that reached this file once and was invisible in every other check - under
+  # `set -o pipefail` a bare assignment from the pane read tripped errexit and exited 1
+  # having printed NOTHING, horizon_die's own message going to a discarded stderr, after a
+  # column of PASS lines had already been printed. [LAW:no-silent-failure]
+  local dead_refusal=""
+  if dead_refusal="$( horizon_await_boot_state "horizon-verify-no-such-session-$$" ready 2>&1 )"; then
+    fail "waiting on a session that does not exist returned success"
+  fi
+  case "$dead_refusal" in
+    *"could not be read"*) ;;
+    *) fail "waiting on an unreadable pane did not say so: ${dead_refusal:-(it printed nothing at all, which is the regression this checks for)}" ;;
+  esac
+  pass "a pane that cannot be read ends the wait with a diagnosis, not in silence"
+
+  # Criterion 4b: boot a real session against the config dir this script just produced.
+  #
+  # The project is reached through a SYMLINK on purpose. Claude Code records a workspace
+  # under its RESOLVED path, so the trust key horizon_write_boot_state writes has to be
+  # resolved too - and on this platform an operator whose HORIZON_WORK_DIR sits anywhere
+  # under /tmp or /var supplies an unresolved path without doing anything unusual. Passing
+  # a symlink here makes that difference exist on every machine instead of only on the
+  # ones where it happens to: drop the resolution and this boots to `untrusted`.
+  local verify_project="$WORK/project" verify_link="$WORK/project-via-symlink"
+  mkdir -p "$verify_project" || fail "could not create $verify_project"
+  ( cd "$verify_project" && git init -q . ) || fail "could not init the verification project"
+  ln -s "$verify_project" "$verify_link" || fail "could not create $verify_link"
+  horizon_write_boot_state "$config_dir" "$verify_link"
+
+  horizon_log "booting a real session against the produced config dir"
+  tmux new-session -d -s "$VERIFY_TMUX_SESSION" -x 200 -y 50 \
+    || fail "could not create the verification tmux session $VERIFY_TMUX_SESSION"
+  tmux set-environment -t "$VERIFY_TMUX_SESSION" CLAUDE_CONFIG_DIR "$config_dir" \
+    || fail "could not bind CLAUDE_CONFIG_DIR into the verification session"
+  # "Unauthenticated by construction" is true of the KEYCHAIN credential, which Claude Code
+  # keys to the config dir's path - and false of a token in the environment, which
+  # authenticates any config dir at all. Left alone, whether one even reaches the pane is
+  # worse than wrong, it is nondeterministic: a tmux server starting fresh inherits this
+  # shell's environment while an already-running one does not, so the same machine would
+  # pass or fail this criterion by whether tmux happened to be up. An operator with a
+  # reviewer token exported - CLAUDE_CODE_OAUTH_TOKEN is exactly that, and rotating it is
+  # routine here - would be told the instrument is broken when their shell is the cause.
+  # `-r`, NOT `-u`, and the difference is the whole effect. `-u` unsets the name in the
+  # SESSION environment, after which tmux copies the server's GLOBAL environment into the
+  # new pane and the variable arrives anyway - verified on the installed tmux: a global
+  # value survived `-u` into a respawned pane and did not survive `-r`. Since the server
+  # usually inherits its environment from the operator's own shell, `-u` would have been a
+  # scrub that scrubbed nothing in exactly the case it exists for.
+  #
+  # Removed from the session's environment rather than asserted about. This narrows the
+  # vectors; it cannot close them, and the criterion below does NOT rest on it having done
+  # so - a proxy behind ANTHROPIC_BASE_URL or a cloud role could still authenticate, and
+  # no list here would be provably complete. So the scrub is what makes the ordinary
+  # outcome deterministic, and accepting `ready` as well as `logged-out` is what keeps an
+  # exotic one from failing a good instrument. [LAW:no-ambient-temporal-coupling]
+  local leaked
+  for leaked in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN \
+                ANTHROPIC_BASE_URL CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX; do
+    tmux set-environment -t "$VERIFY_TMUX_SESSION" -r "$leaked" \
+      || fail "could not clear $leaked from the verification session's environment"
+  done
+  tmux respawn-pane -k -t "$VERIFY_TMUX_SESSION" -c "$verify_link" \
+    claude --dangerously-skip-permissions \
+    || fail "could not launch claude in the verification session"
+  # EITHER state past the gates, because the question this criterion asks is "did the
+  # session get past the gates the instrument owns" and both answer it - both require the
+  # banner and a painted status line, which onboarding and the trust dialog each preclude.
+  # Demanding `logged-out` alone would conflate that question with "and it has no
+  # credential", which is a fact about the operator's environment rather than about the
+  # instrument, and would fail a good instrument on a machine that happens to carry one.
+  horizon_await_boot_state "$VERIFY_TMUX_SESSION" logged-out ready
+  pass "a real session against the produced config dir clears onboarding and the trust dialog"
+
+  # The SAME live session, asked for the state the RUN asks for. Without this the wait is
+  # only ever exercised on the path where it agrees, so a wait that returned success for
+  # any settled state would pass everything above while leaving run-loop.sh to march a
+  # dead session through a whole run - the exact defect this ticket exists for, reinstated
+  # with the gate still green. Here the discriminator has to do its job in the failing
+  # direction, on a real pane, and say which state it actually found.
+  # Asked for a state this session provably is NOT - it has a banner, so it is past
+  # onboarding by construction. Chosen over asking for `ready` so the check does not
+  # depend on whether the session came up logged-out or authenticated: it exercises the
+  # discriminator itself, on a real pane, under either outcome above.
+  local refusal=""
+  if refusal="$( horizon_await_boot_state "$VERIFY_TMUX_SESSION" onboarding 2>&1 )"; then
+    fail "the wait accepted a booted session as 'onboarding' - it would accept any state at all, and the run would launch into a session that accepts nothing"
+  fi
+  # A non-zero exit is not by itself evidence of the RIGHT refusal. The same wait also
+  # exits non-zero when the session has died between the two calls - and that one comes
+  # back EMPTY, because what failed was the pane read - and when it simply timed out in
+  # `forming`. Both are ruled out by name first, so a dead session is reported as a dead
+  # session instead of as a classifier that forgot to name its states.
+  # [LAW:parse-dont-validate]
+  [ -n "$refusal" ] \
+    || fail "waiting for 'ready' failed without a word, so the verification session most likely died between the two waits"
+  case "$refusal" in
+    *"never left 'forming'"*) fail "waiting for 'ready' timed out rather than refusing a logged-out session: $refusal" ;;
+    *"could not be read"*) fail "the verification session died between the two waits: $refusal" ;;
+  esac
+  case "$refusal" in
+    *"wanted one of: onboarding"*) ;;
+    *) fail "the refusal did not name the state it wanted: $refusal" ;;
+  esac
+  case "$refusal" in
+    *"booted to 'logged-out'"*|*"booted to 'ready'"*) ;;
+    *) fail "the refusal did not name the state it actually found: $refusal" ;;
+  esac
+  pass "the wait refuses a state it did not ask for, naming both what it found and what it wanted"
 
   horizon_log "all checks passed"
 }

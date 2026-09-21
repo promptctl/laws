@@ -127,7 +127,102 @@ relaunch binary, must be executable. `diff` compares bytes, not mode bits, and `
 plugin install` materialises symlinked files into real ones, which can drop the
 executable bit; a relaunch binary without it breaks the session handoff silently.
 
-Finally it checks the `lit` binary on `PATH` against the manifest's hash of it.
+It then checks the `lit` binary on `PATH` against the manifest's hash of it.
+
+Finally it **boots a real session** against the config dir it just produced. Everything
+above this point runs `claude plugin list`, which needs neither a credential nor a
+terminal, and that is how the verifier twice went green against a config dir no
+unattended run could actually launch a session in — once stopped at first-run
+onboarding, once at the workspace trust dialog.
+
+The launched session is required to reach `logged-out`, not `ready`, and the difference
+is the check rather than a weakening of it. Claude Code keys its stored credential to
+the config dir's **path**, so a throwaway dir under the verifier's scratch space is
+unauthenticated by construction and nothing this script may do would change that. But
+`logged-out` is reachable only by a session that has drawn its banner and its input box,
+which means onboarding and the trust dialog are both settled — so the check proves
+exactly the instrument's half of booting and claims nothing about the operator's. The
+run asserts `ready`, against its own authenticated dir.
+
+The project it launches in is reached through a **symlink** on purpose. Claude Code
+records a workspace under its resolved path, so the
+`projects[<dir>].hasTrustDialogAccepted` key that settles the trust dialog has to be
+resolved too — written under an unresolved path it never matches, and the value sits in
+`.claude.json` looking correct while the dialog still appears. On this platform that
+needs no mistake by anyone: `/tmp` is `/private/tmp`, and `HORIZON_WORK_DIR` is an
+operator override. The symlink makes that difference exist on every machine instead of
+only where the work dir happens to sit under one.
+
+Both live checks read the pane through one classifier, which turns it into exactly one
+of six states:
+
+| state | what the pane shows | what it means |
+| --- | --- | --- |
+| `ready` | banner **and** a painted status line with no login notice **on that line** | up and accepting input |
+| `logged-out` | banner **and** `Not logged in` / `Login expired` | drew everything, authenticates nothing |
+| `onboarding` | the theme picker, before any banner | boot state never reached this config dir |
+| `untrusted` | the workspace trust dialog | the trust key was written under a path the CLI does not look itself up under |
+| `bypass-disclaimer` | the bypass-permissions warning | the acceptance was written to a key this CLI version does not read |
+| `forming` | nothing recognised yet, **or** a banner whose status line has not painted | still starting — no evidence either way |
+
+`ready` is the only state that turns on something *not* being present, so it is the only
+one that could be reached by looking too early. It requires the status line to have been
+painted before it will read anything into that line being quiet: the mode indicator and
+the login notice share it, so a pane showing the indicator has already had its chance to
+show a notice. A poll landing between the banner and the status line gets `forming` and
+tries again — never `ready` on the strength of evidence that had not arrived yet.
+
+**Where the classifier looks matters as much as what it looks for.** The pane it reads is
+not a static splash: `run-loop.sh` launches session one with the `/goal` wording as its
+prompt, so by the time the run's own wait polls, *an agent is writing into this pane*. A
+pattern matched anywhere in the capture is therefore a pattern the run itself can print —
+an agent checking `gh auth status` and printing `Not logged in`, a grep echoing
+`Accessing workspace:` out of `lib.sh`. Matched loosely, those turn the wait into a fatal
+*false failure*: it dies on any settled state it did not want, so a healthy campaign run
+is killed mid-flight with a confident wrong diagnosis.
+
+Two anchors keep it reading the chrome rather than the content. The banner is tested
+first and the gates only below it, because a pane showing the banner is past onboarding
+and the trust dialog by construction — each of those replaces the whole screen. And the
+login notice is required *on the status line itself*, the row carrying the mode
+indicator, where the two sit left- and right-aligned; an agent would have to print both
+markers on one row to forge it. A window of the last few rows is not enough, which is not
+a guess: a pane holding a `Not logged in` tool result directly above the status line was
+classified `logged-out` by exactly that rule.
+
+`bypass-disclaimer` is the third gate `horizon_write_boot_state` settles, and it is the
+one most likely to come back: the CLI has already moved that acceptance once — from
+`bypassPermissionsModeAccepted` in `.claude.json` to `skipDangerousModePermissionPrompt`
+in `settings.json` — and is expected to move it again. When it does, the key lands where
+nothing reads it and the session stops on that dialog. Without a state of its own that
+stop looked like `forming`: a run burning the full boot timeout and then reporting that
+the pane "drew nothing this script recognises", about a dialog that was on screen the
+whole time and was never going to clear.
+
+A login wording that ever appeared somewhere other than the status line would read as
+`ready` here, and that is the direction to fail in. The run proceeds to
+`horizon_wait_goal_in_force`, which reads the **transcript** rather than the pane and
+refuses within the same timeout with a report of what the session actually did. The cost
+is a worse diagnosis; the cost the other way is a healthy run killed.
+
+`logged-out` exists because readiness used to be a boolean and the boolean was wrong: a
+session whose credential has died draws the banner *and* an input box, so grepping the
+pane for the banner answered "ready" for a run that could never move — a driver then
+watched a login prompt for a whole turn, unable to tell it from an agent thinking hard.
+The banner is still necessary and is no longer sufficient.
+
+`forming` is deliberately kept apart from the three failures rather than folded in with
+them. A pane that has drawn nothing yet is a session still starting, not a broken one,
+and that distinction is what lets the wait refuse a settled gate on the first poll — a
+trust dialog does not clear itself, and a retired credential does not come back —
+without also refusing a slow machine. It is the same rule the transcript classification
+in `sessions.py` follows: a state that claims something needs evidence for it, and the
+absence of evidence is its own state.
+
+Every pattern the classifier matches was read off a real pane captured from a session
+put deliberately into that state, and each state is checked against one of those
+captured panes on every run — a live boot can only ever exhibit one state, so the other
+branches would otherwise never execute.
 
 ## Seeding a run's time zero
 

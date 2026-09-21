@@ -93,7 +93,7 @@ horizon_need() {
 # function, and the five drifting per-script copies this replaced are the worse failure.
 # tar/base64 stay with pin-instrument.sh only because they are reached from nothing
 # else at all.
-HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tr wc)
+HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tail tr wc)
 
 horizon_need_base() {
   local tool
@@ -866,10 +866,55 @@ horizon_remote_branches() {
 # The tmux session the run lives in. A run is launched INSIDE tmux deliberately - see
 # horizon_assert_transport for why that single fact decides whether the run is isolated.
 HORIZON_TMUX_SESSION="horizon-run"
-# Every readiness probe in finalize-session greps the pane for this, so the driver holds
-# itself to the same test rather than inventing a second notion of "up".
-# [LAW:one-source-of-truth] Verified still matching at Claude Code v2.1.226.
+# WHAT A BOOTING PANE CAN SAY. Four states, each with its own evidence, because "is the
+# session up" was a boolean and the boolean was wrong: a session with a dead credential
+# draws the banner AND an input box and then accepts nothing, so the one test below used
+# to answer "ready" for a run that could never move. That is the failure of 2026-09-07,
+# where the driver watched a login prompt for its whole turn and could not tell it from an
+# agent thinking hard. Each pattern here was read off a real pane, captured from a session
+# launched against a config dir put deliberately into that state; none is guessed.
+# [FRAMING:representation] the map gets a symbol per thing the territory actually does.
+#
+# Every readiness probe in finalize-session greps the pane for the banner, so the driver
+# holds itself to the same test rather than inventing a second notion of "up" - but the
+# banner is now necessary and no longer sufficient. [LAW:one-source-of-truth]
+# Verified still matching at Claude Code v2.1.278.
 HORIZON_BANNER_RE='Claude Code v[0-9]'
+# The status line of a session that drew everything and cannot authenticate. Two wordings:
+# `Not logged in` on a config dir that never had a credential, `Login expired` on one whose
+# refresh token the server retired mid-campaign - the second is the one a long baseline
+# hits, because it needs no mistake by anyone, only time.
+HORIZON_LOGIN_NOTICE_RE='Not logged in|Login expired'
+# Positive evidence that the STATUS LINE has been painted, which is the line the login
+# notice would appear on. Without it `ready` would rest on an absence - no notice seen -
+# and a poll landing between the banner being drawn and the status line being drawn would
+# read a dead-credential session as ready, which is the exact hole the states below exist
+# to close. In a real pane the mode indicator and the login notice share that one line,
+# so a pane showing the indicator has already had its chance to show a notice.
+#
+# Matched as plain words rather than by the arrows that precede them: the glyphs are
+# multi-byte and this has to hold whatever locale grep runs under. It is the indicator for
+# `--dangerously-skip-permissions`, which both launch paths pass - the run's in
+# horizon_launch_session and the verifier's in verify-instrument.sh. A session launched
+# without that flag never reaches `ready` here and times out showing its pane, which is
+# loud and reads correctly rather than passing on a technicality.
+HORIZON_STATUS_LINE_RE='bypass permissions on'
+# First-run onboarding: the theme picker, before any banner is drawn.
+HORIZON_ONBOARDING_RE="Choose the text style|Let's get started[.]"
+# The workspace trust dialog. Keyed by the CLI to the project's resolved path - see
+# horizon_write_boot_state, which is what settles it, and which has to spell that path the
+# same way the CLI does or this dialog is what an unattended run stops at.
+HORIZON_UNTRUSTED_RE='Is this a project you created or one you trust[?]|Accessing workspace:'
+# The bypass-permissions disclaimer - the THIRD gate horizon_write_boot_state settles, and
+# for a while the only one with no state here, which meant the one gate most likely to come
+# back was the one that would not be named when it did. That function's own header records
+# the CLI having already MOVED this acceptance once, from `bypassPermissionsModeAccepted`
+# in .claude.json to `skipDangerousModePermissionPrompt` in settings.json, and expects it
+# to move again. When it does, the key is written where nothing reads it, the session stops
+# here, and without a state of its own that stop looked like `forming`: a run burning the
+# full boot timeout and then reporting that the pane "drew nothing this script recognises",
+# about a dialog that was on screen the whole time and was never going to clear.
+HORIZON_BYPASS_GATE_RE='Bypass Permissions mode'
 HORIZON_BOOT_TIMEOUT_SECONDS=120
 HORIZON_POLL_SECONDS=2
 
@@ -989,6 +1034,17 @@ horizon_write_boot_state() {
   local config_dir="$1" project_dir="$2"
   [ -d "$config_dir" ] || horizon_die "horizon_write_boot_state: no config dir at $config_dir"
   [ -d "$project_dir" ] || horizon_die "horizon_write_boot_state: no project dir at $project_dir"
+  # RESOLVED, because this path is a KEY and the CLI writes the lookup side of it. Claude
+  # Code records the workspace under its real path, so a key written under an unresolved
+  # one never matches: the value sits in the file looking correct and the trust dialog
+  # still appears. On this platform that is not exotic - /tmp is /private/tmp and
+  # /var is /private/var, so any work dir under either (HORIZON_WORK_DIR is an operator
+  # override) produces exactly that silent miss. Verified both ways at v2.1.278: same
+  # config dir, same everything, the unresolved key stops at the dialog and the resolved
+  # key boots past it. bundle.py's project.path resolves for the same reason, so the two
+  # agree by construction rather than by coincidence. [LAW:one-source-of-truth]
+  project_dir="$(cd "$project_dir" && pwd -P)" \
+    || horizon_die "horizon_write_boot_state: could not resolve $project_dir"
   python3 - "$config_dir/.claude.json" "$config_dir/settings.json" "$project_dir" <<'PY' \
     || horizon_die "could not write unattended boot state into $config_dir"
 import json, os, sys
@@ -1082,21 +1138,171 @@ horizon_launch_session() {
     || horizon_die "could not launch claude in the run session"
 }
 
-# Usage: horizon_pane  -> the run session's pane contents
+# Usage: horizon_pane <session>  -> that session's pane contents
+#
+# Takes the session rather than reading the run's name from the environment: the verifier
+# boots a throwaway session of its own to check the instrument, and a reader hardwired to
+# the run's singleton would have made it either fight the run lock for that one name or
+# grow a second copy of this. The name is a value. [LAW:dataflow-not-control-flow]
 horizon_pane() {
-  tmux capture-pane -t "$HORIZON_TMUX_SESSION" -p \
-    || horizon_die "could not read the run session's pane (is it still alive?)"
+  local session="$1"
+  tmux capture-pane -t "$session" -p \
+    || horizon_die "could not read the pane of tmux session $session (is it still alive?)"
 }
 
-# Usage: horizon_wait_ready
+# Usage: horizon_boot_state < pane  -> ready | logged-out | onboarding | untrusted | forming
 #
-# Waits for the banner rather than for a fixed sleep: readiness is a state the pane
-# reports, not a duration to bet on. [LAW:no-ambient-temporal-coupling]
-horizon_wait_ready() {
-  local waited=0
+# The one reader of what a booting pane means, and it is pure: text in, one word out, no
+# tmux and no clock, so every state it can report is checked against a captured pane in
+# verify-instrument.sh instead of only against whatever a live boot happens to do today.
+#
+# `forming` is the no-evidence answer and is deliberately NOT folded in with the failures:
+# a pane that has drawn nothing yet is a session still starting, not a broken one, and the
+# distinction is the whole reason this can fail fast on the other three without also
+# failing on a slow machine. Same shape as the transcript classification in sessions.py -
+# a state that claims something needs evidence for it; absence of evidence is its own
+# state. [LAW:parse-dont-validate]
+#
+# WHERE it looks is as load-bearing as what it looks for. The pane this reads is not a
+# static splash: run-loop.sh launches session one with the `/goal` wording as its prompt,
+# so by the time the run's own wait polls, an AGENT IS WRITING TO THIS PANE. A pattern
+# matched anywhere in the capture is therefore a pattern the run itself can print - an
+# agent that runs `gh auth status` and prints `Not logged in`, a grep that echoes
+# `Accessing workspace:` out of this very file - and the wait now DIES on a state it did
+# not want. So an unanchored match would have traded the old false success for a fatal
+# false failure that kills a multi-hour campaign run with a confident wrong diagnosis.
+#
+# Two anchors keep it reading the CHROME rather than the content:
+#
+#   The banner is checked FIRST, and the gates only below it. A pane showing the banner is
+#   a pane past onboarding and the trust dialog by construction - those replace the whole
+#   screen and no banner is drawn while one is up - so the gate patterns cannot be reached
+#   by a session that is merely printing about them.
+#
+#   The login notice is required on the STATUS LINE ITSELF - the row carrying the mode
+#   indicator - not merely somewhere near the bottom. In a real pane the two sit on one
+#   row, left- and right-aligned, and that is an anchor content cannot forge: an agent
+#   would have to print both markers on a single line. A footer window of the last few
+#   rows is NOT enough, which is not a guess - a pane holding `Bash(gh auth status)` above
+#   a `Not logged in` result line and the status line below it was classified `logged-out`
+#   by exactly that rule. Verified against a live pane mid-turn: with a tool actually
+#   running, the status line is still there and still the bottom row.
+#
+#   A wording that ever appeared somewhere OTHER than the status line would read as
+#   `ready` here, and that is the direction to fail in: the run proceeds to
+#   horizon_wait_goal_in_force, which reads the TRANSCRIPT rather than the pane and
+#   refuses within the same timeout with a report of what the session actually did. The
+#   cost is a worse diagnosis. The cost the other way is a healthy campaign run killed.
+#
+# `ready` is the one state that turns on something NOT being there, so it is the one that
+# could be reached by looking too early; it requires the footer to have been painted
+# before it reads anything into that footer being quiet.
+horizon_boot_state() {
+  local pane
+  # Read with the shell's own builtin rather than `cat`, which is not in
+  # HORIZON_BASE_TOOLS and would have made that list - this repo's one answer for what may
+  # be invoked - quietly false. Removing the call beats declaring it: this runs on every
+  # poll of every wait. `read -d ''` stops only at EOF, so it takes the whole pane, and it
+  # reports failure AT that EOF, which is the normal ending here and is why the status is
+  # discarded rather than checked. [LAW:polishing-by-subtraction]
+  IFS= read -r -d '' pane || true
+  # The status line, or empty when it has not been painted yet. `tail -1` because the
+  # mode indicator is drawn once per pane; taking the last occurrence keeps a line of
+  # conversation content that happens to quote it from standing in for the real one.
+  #
+  # `|| true` because this pipeline is EXPECTED to find nothing - every onboarding,
+  # untrusted and blank pane has no status line - and under `set -o pipefail` that is a
+  # non-zero pipeline. Every call site today happens to wrap this function in a command
+  # substitution, where errexit does not reach it, so the gap is invisible; called the way
+  # the usage line above documents, `horizon_boot_state < pane` under `set -euo pipefail`,
+  # it would kill the caller with exit 1 and no output. A function whose safety depends on
+  # which syntax the caller used is not safe, and `shopt -s inherit_errexit` anywhere
+  # above would break all of them at once. [LAW:no-silent-failure]
+  local status
+  status="$(printf '%s\n' "$pane" | grep -E "$HORIZON_STATUS_LINE_RE" | tail -1)" || true
+  if printf '%s\n' "$pane" | grep -qE "$HORIZON_BANNER_RE"; then
+    if [ -n "$status" ] && printf '%s\n' "$status" | grep -qE "$HORIZON_LOGIN_NOTICE_RE"; then
+      printf 'logged-out\n'
+    elif [ -n "$status" ]; then
+      printf 'ready\n'
+    else
+      # Banner drawn, status line not yet. Nothing has been ruled out - the notice that
+      # would make this `logged-out` belongs to the line that has not been painted - so
+      # this is the no-evidence answer and the caller polls again, rather than `ready`
+      # being handed out for the one reason it must never be handed out: that the evidence
+      # against it had not arrived yet.
+      printf 'forming\n'
+    fi
+  elif printf '%s\n' "$pane" | grep -qE "$HORIZON_ONBOARDING_RE"; then
+    printf 'onboarding\n'
+  elif printf '%s\n' "$pane" | grep -qE "$HORIZON_UNTRUSTED_RE"; then
+    printf 'untrusted\n'
+  elif printf '%s\n' "$pane" | grep -qE "$HORIZON_BYPASS_GATE_RE"; then
+    printf 'bypass-disclaimer\n'
+  else
+    printf 'forming\n'
+  fi
+}
+
+# Usage: horizon_boot_state_meaning <state>  -> one line a reader can act on
+#
+# Kept beside the classifier rather than at the two call sites, so a state added above
+# cannot be reported by one caller and left unexplained by the other.
+horizon_boot_state_meaning() {
+  case "$1" in
+    ready) printf 'the session is up and accepting input' ;;
+    logged-out) printf 'the session drew its input box but cannot authenticate, so it would accept the goal and do nothing. Run horizon/login.sh (it needs a browser); the credential is bound to the config dir PATH, so logging in elsewhere will not help' ;;
+    onboarding) printf 'the session stopped at first-run onboarding, which no unattended run can answer - horizon_write_boot_state did not run, or did not reach this config dir' ;;
+    bypass-disclaimer) printf 'the session stopped at the bypass-permissions disclaimer, which no unattended run can answer - the acceptance was written to a key this CLI version does not read. It has moved once already (bypassPermissionsModeAccepted in .claude.json became skipDangerousModePermissionPrompt in settings.json); horizon_write_boot_state is the seam that has to move with it' ;;
+    untrusted) printf 'the session stopped at the workspace trust dialog - horizon_write_boot_state keyed projects[] under a path the CLI does not look itself up under, which is what an unresolved work dir produces' ;;
+    forming) printf 'the session drew nothing this script recognises' ;;
+    *) printf 'unclassified' ;;
+  esac
+}
+
+# Usage: horizon_await_boot_state <session> <wanted-state>...
+#
+# Polls until the pane says something definite, then holds it to <wanted-state>. Waits on a
+# state the pane reports rather than on a duration to bet on.
+# [LAW:no-ambient-temporal-coupling]
+#
+# Only `forming` is waited through. The other states are settled facts - a trust dialog does
+# not clear itself, and a retired credential does not come back - so waiting out the full
+# timeout on one buys nothing and costs a campaign two minutes per run to be told something
+# that was true at the first poll. [LAW:no-silent-failure] it says which state it got.
+horizon_await_boot_state() {
+  local session="$1"
+  shift
+  # One or more ACCEPTABLE states, not one. The run can proceed from exactly one state, so
+  # it names one; the verifier is asking a different question - did this session get past
+  # the gates the instrument owns - which two states both answer, and pinning it to one of
+  # them would fail a good instrument for a reason the criterion never meant to test.
+  # Which states satisfy a caller is the caller's to say. [LAW:dataflow-not-control-flow]
+  local want="$*" waited=0 pane state
   while [ "$waited" -lt "$HORIZON_BOOT_TIMEOUT_SECONDS" ]; do
-    if horizon_pane 2>/dev/null | grep -qE "$HORIZON_BANNER_RE"; then
-      return 0
+    # Captured ONCE per poll, then classified and quoted from that single copy - so the
+    # pane a message shows is the pane the verdict was reached on, and a second tmux call
+    # cannot fail while building the message that explains the first failure.
+    #
+    # Read through an explicit check, never into a bare assignment. Under `set -o
+    # pipefail` a pane that cannot be read makes the substitution non-zero, a bare
+    # assignment trips errexit on it, and the run ends with NO output whatever - the
+    # discarded stderr taking horizon_die's own explanation with it. A session whose pane
+    # cannot be read is one that died during boot, because tmux destroys a session with
+    # its last pane: a thing to report, never a thing to retry quietly.
+    # [LAW:no-silent-failure]
+    pane="$(horizon_pane "$session" 2>&1)" \
+      || horizon_die "the pane of tmux session $session could not be read while waiting for '$want'.
+tmux destroys a session with its last pane, so this is most likely a session that died on
+startup rather than a fault in tmux. tmux said:
+$pane"
+    state="$(printf '%s\n' "$pane" | horizon_boot_state)"
+    if [ "$state" != forming ]; then
+      case " $want " in *" $state "*) return 0 ;; esac
+      horizon_die "session $session booted to '$state', wanted one of: $want.
+$state: $(horizon_boot_state_meaning "$state")
+The pane was showing:
+$(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$')"
     fi
     sleep "$HORIZON_POLL_SECONDS"
     waited=$((waited + HORIZON_POLL_SECONDS))
@@ -1106,9 +1312,16 @@ horizon_wait_ready() {
   # prompt, a crash - and a bare "did not become ready" sends the reader to go find that
   # out by hand, at which point the session may already have been cleaned up. An error
   # should say where to look; this one can simply say what it saw. [LAW:no-silent-failure]
-  horizon_die "session did not reach a ready input box within ${HORIZON_BOOT_TIMEOUT_SECONDS}s.
-The pane was showing:
-$(horizon_pane 2>&1 | grep -v '^[[:space:]]*$')"
+  horizon_die "session $session never left 'forming' within ${HORIZON_BOOT_TIMEOUT_SECONDS}s, so it never became one of: $want.
+The last pane read was showing:
+$(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$')"
+}
+
+# Usage: horizon_wait_ready
+#
+# The run's own wait: its session, and the only state it can proceed from.
+horizon_wait_ready() {
+  horizon_await_boot_state "$HORIZON_TMUX_SESSION" ready
 }
 
 # Usage: horizon_assert_transport
