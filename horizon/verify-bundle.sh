@@ -145,6 +145,37 @@ with open(os.path.join(out_dir, "pr-%s.json" % number), "w") as handle:
 PY
 }
 
+# Writes the helper that makes a transcript report two different usages for one message -
+# the shape that turns billing-once-per-message-id from a count into a floor. Written to a
+# file rather than inlined at the check, because it appends to a real captured transcript
+# and wants the entry shape that transcript already uses.
+write_clash_script() {
+  cat > "$WORK/clash.py" <<'CLASH_PY'
+import json, os, sys
+
+root = sys.argv[1]
+target = next(os.path.join(base, name)
+              for base, _, names in os.walk(root)
+              for name in names if name.endswith(".jsonl"))
+with open(target) as handle:
+    first = json.loads(handle.readline())
+
+
+def block(output):
+    return {"type": "assistant", "sessionId": first["sessionId"], "cwd": first["cwd"],
+            "timestamp": first["timestamp"], "entrypoint": "cli",
+            "message": {"role": "assistant", "id": "clash",
+                        "content": [{"type": "text", "text": "."}],
+                        "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0,
+                                  "cache_read_input_tokens": 0, "output_tokens": output}}}
+
+
+with open(target, "a") as handle:
+    for output in (10, 99):
+        handle.write(json.dumps(block(output)) + "\n")
+CLASH_PY
+}
+
 # Usage: build_bundle <bundle_dir> <config_dir>
 #
 # Everything a run leaves behind before the close-out runs: a seeded project with real git
@@ -174,17 +205,18 @@ build_bundle() {
   ( cd "$project_dir" && lit init >/dev/null )
   ( cd "$project_dir" && lit new --title "Build the CLI boundary" --type feature \
       --topic cli >/dev/null )
-  # A LOCAL origin, and that is the point rather than a convenience. `lit export` syncs
-  # against origin when it cannot settle the backlog from what is on disk - measured
-  # 2026-09-21: an empty local backlog with a github.com origin spent 5.9 seconds on the
-  # network, and the same project with one ticket spent 0.09 and stayed offline. This
-  # fixture creates a ticket, so pointing origin at GitHub happened to be hermetic - by
-  # coincidence, and only until lit changes when it syncs or this fixture stops making
-  # that ticket. A path origin cannot reach the network whatever lit decides to do, so
-  # the guarantee stops depending on either. What the GitHub URL was covering - that
-  # horizon_project_remote_repo turns a remote into `owner/name` - is checked directly
-  # further down instead of incidentally here. [LAW:no-ambient-temporal-coupling]
-  git -C "$project_dir" remote add origin "$WORK/remote.git"
+  # A REAL GitHub origin, so the capture path reads a real `owner/name` - and a transport
+  # that cannot leave this machine, so that is hermetic by construction rather than by
+  # luck. `lit export` syncs against origin when it cannot settle the backlog from what is
+  # on disk: measured 2026-09-21, an empty local backlog with this origin spent 5.9
+  # seconds on the network and printed a blocking error, while the same project holding
+  # one ticket spent 0.09 and stayed offline. This fixture makes a ticket, so the gate was
+  # hermetic only for as long as that stayed true of both lit and this function. Pointing
+  # `core.sshCommand` at /bin/false removes the question: any sync lit attempts fails
+  # locally and instantly, and the fake `gh` on PATH refuses calls nobody expected, so
+  # both routes off this machine are closed. [LAW:no-ambient-temporal-coupling]
+  git -C "$project_dir" config core.sshCommand /bin/false
+  git -C "$project_dir" remote add origin "git@github.com:promptctl/horizon-eval.git"
 
   printf '{\n  "project": {\n    "name": "macklebox"\n  }\n}\n' \
     > "$bundle_dir/seed/seed-manifest.json"
@@ -247,12 +279,13 @@ mkdir -p "$HORIZON_FIXTURE_DIR"
 export HORIZON_FIXTURE_DIR
 
 build_gh_fixture
-git init --quiet --bare "$WORK/remote.git"
+write_clash_script
 build_bundle "$BUNDLE" "$CONFIG"
 
-# What the fixture's local origin no longer exercises, checked head-on rather than as a
-# side effect of something else: both spellings git accepts for a GitHub remote reduce to
-# the one `gh` wants. This is the read the PR capture depends on.
+# Both spellings git accepts for a GitHub remote reduce to the one `gh` wants - and
+# anything else is refused rather than handed on as a slug. What made this worth checking
+# head-on: the old fallback returned whatever it was given, so a path remote came back as
+# `/tmp/x/remote` and went into `gh api repos/.../pulls` looking like a repository.
 URL_PROBE="$WORK/url-probe"
 mkdir -p "$URL_PROBE"
 git -C "$URL_PROBE" init --quiet --initial-branch=master
@@ -262,7 +295,11 @@ git -C "$URL_PROBE" remote add origin "git@github.com:promptctl/horizon-eval.git
 git -C "$URL_PROBE" remote set-url origin "https://github.com/promptctl/horizon-eval.git"
 [ "$(horizon_project_remote_repo "$URL_PROBE")" = "promptctl/horizon-eval" ] \
   || fail "an https remote did not read back as owner/name"
-pass "both spellings of a GitHub remote read back as the owner/name the PR capture needs"
+git -C "$URL_PROBE" remote set-url origin "$WORK/not-github.git"
+if ( horizon_project_remote_repo "$URL_PROBE" ) >/dev/null 2>&1; then
+  fail "a remote that is not a GitHub repository was read back as one anyway"
+fi
+pass "a GitHub remote reads back as owner/name in both spellings, and anything else is refused"
 
 # PR #7 is a LEFTOVER from an earlier run of this shared repository; #8 and #9 are this
 # run's. A capture that ignored the watermark would adopt #7 as this run's work.
@@ -326,7 +363,16 @@ pass "token totals are in loop.json, deduplicated, with subprocess spend counted
   || fail "run.json does not record the path the project ran at - a moved bundle cannot be re-read"
 [ "$(json_field "$BUNDLE/run.json" 'all(s["ok"] for s in d["captured"].values())')" = True ] \
   || fail "a complete run reports a capture that did not land: $(json_field "$BUNDLE/run.json" 'd["captured"]')"
-pass "run.json records the run-time project path and that every capture landed"
+# The inventory reports both numbers because they differ by one on purpose: run.json is
+# written FROM this step's result, so it is the one declared path that cannot be checked.
+# A bare "8 present" against a nine-line layout reads as a bundle short of a file.
+LAYOUT_DETAIL="$(json_field "$BUNDLE/run.json" 'd["captured"]["layout"]["detail"]')"
+DECLARED="$(horizon_bundle_layout_paths | wc -l | tr -d ' ')"
+case "$LAYOUT_DETAIL" in
+  "$((DECLARED - 1)) of $DECLARED declared path(s) present;"*) : ;;
+  *) fail "the inventory does not say how many of how many paths it found: $LAYOUT_DETAIL" ;;
+esac
+pass "run.json records the run-time project path, that every capture landed, and the inventory's own arithmetic"
 
 # The claim the README makes to the next reader, executed rather than trusted: loop.json is
 # recomputable from the bundle alone, using the path run.json records.
@@ -412,7 +458,8 @@ printf 'print("hi")\n' > "$EMPTY_PROJECT/app.py"
 git -C "$EMPTY_PROJECT" add -A
 git -C "$EMPTY_PROJECT" -c commit.gpgsign=false commit --quiet -m "seed"
 ( cd "$EMPTY_PROJECT" && lit init >/dev/null )
-git -C "$EMPTY_PROJECT" remote add origin "$WORK/remote.git"
+git -C "$EMPTY_PROJECT" config core.sshCommand /bin/false
+git -C "$EMPTY_PROJECT" remote add origin "git@github.com:promptctl/horizon-eval.git"
 EMPTY_BUNDLE="$WORK/empty-backlog-bundle"
 mkdir -p "$EMPTY_BUNDLE"
 if ( horizon_capture_backlog "$EMPTY_BUNDLE" "$EMPTY_PROJECT" ) >"$WORK/empty.out" 2>&1; then
@@ -507,5 +554,87 @@ printf '{"data": {"repository": {}}}\n' > "$WORK/shapeless.json"
 refuses_capture "does not have the shape prs.py reads" \
   "$WORK/shapeless.json" 'disagree about the document'
 pass "a short, errored, empty or drifted PR capture is refused by name and writes no index"
+
+# ── 9. A file appears in a bundle only once it is whole ───────────────────────────────
+#
+# A redirect is opened before the command that fills it runs, so every `> file` on a
+# failing path leaves a zero-byte file behind. The layout inventory then counts the path
+# as present and a reader opening it gets nothing - the same empty-loop.json shape this
+# capture was written to remove.
+
+PARTIAL="$WORK/partial-loop"
+mkdir -p "$PARTIAL"
+cp -R "$BUNDLE/transcripts" "$PARTIAL/transcripts"
+# The project is named at its original path, the way run.json records it, so the ONLY
+# reason this analysis fails is the one being tested: there is no goal.md to compare a
+# carried goal against.
+if ( horizon_capture_loop "$PARTIAL" "$BUNDLE/seed/macklebox" ) >/dev/null 2>&1; then
+  fail "the loop capture succeeded with no goal wording to compare against"
+fi
+[ ! -e "$PARTIAL/loop.json" ] \
+  || fail "a failed analysis left an empty loop.json in the bundle"
+[ -z "$(find "$PARTIAL" -name '*.partial')" ] \
+  || fail "a failed capture left its staging file in the bundle"
+pass "a failed analysis leaves no loop.json at all, whole or empty"
+
+PR_PARTIAL="$WORK/pr-partial"
+mkdir -p "$PR_PARTIAL/seed"
+cp -R "$BUNDLE/seed/macklebox" "$PR_PARTIAL/seed/macklebox"
+horizon_record_remote_time_zero "$PR_PARTIAL" "promptctl/horizon-eval" >/dev/null
+# #10 is listed at the remote and has no fixture behind it, so its query fails.
+HORIZON_FIXTURE_PR_NUMBERS="7 8 9 10"
+if ( horizon_capture_prs "$PR_PARTIAL" "$PR_PARTIAL/seed/macklebox" ) >/dev/null 2>&1; then
+  fail "a pull request whose query failed was captured anyway"
+fi
+HORIZON_FIXTURE_PR_NUMBERS="7 8 9"
+[ ! -e "$PR_PARTIAL/prs/pr-0010.json" ] \
+  || fail "a failed PR query left an empty pr-0010.json in the bundle"
+[ -z "$(find "$PR_PARTIAL/prs" -name '*.partial')" ] \
+  || fail "a failed PR capture left its staging file in the bundle"
+pass "a pull request whose query failed leaves no file behind, empty or otherwise"
+
+# ── 10. A second close-out over one bundle is refused, not silently nested ────────────
+#
+# `mv` given an existing directory moves the source INSIDE it. transcripts/projects/<slug>
+# reads as a successful capture - the count even comes out right - while sessions.py globs
+# one level up, matches nothing, and reports a run of zero sessions that spent nothing.
+RECAPTURE="$WORK/recapture"
+mkdir -p "$RECAPTURE/transcripts" "$WORK/cfg2/projects/p"
+printf '{}\n' > "$WORK/cfg2/projects/p/s.jsonl"
+if ( horizon_capture_transcripts "$WORK/cfg2" "$RECAPTURE" ) >"$WORK/recapture.out" 2>&1; then
+  fail "a second capture into a bundle that already had transcripts reported success"
+fi
+[ ! -e "$RECAPTURE/transcripts/projects" ] \
+  || fail "a second capture nested the transcripts where nothing reads them"
+pass "a bundle that already holds transcripts refuses a second capture rather than nesting it"
+
+# ── 11. The close-out invents nothing for a run that never began ──────────────────────
+#
+# The exit handler is installed before the driver creates its work dir, so it also runs
+# for failures that happened first - an unauthenticated config dir, most often. A bundle
+# conjured there is refused by the NEXT run's "work dir already holds a run" guard, about
+# a run that never started.
+NEVER="$WORK/never-began"
+( horizon_capture_bundle "$CONFIG" "$NEVER" "2026-01-01T00:00:00Z" ) >/dev/null 2>&1 \
+  || fail "the close-out treated a run that never began as a failed capture"
+[ ! -e "$NEVER" ] \
+  || fail "the close-out created a work dir for a run that never began, which blocks the next run"
+pass "a run that ended before it made a work dir leaves nothing behind"
+
+# ── 12. Token totals that are a floor say so, and the close-out refuses them ──────────
+
+DISAGREED="$WORK/disagreed"
+mkdir -p "$DISAGREED"
+cp -R "$BUNDLE/transcripts" "$DISAGREED/transcripts"
+cp "$BUNDLE/goal.md" "$DISAGREED/goal.md"
+python3 "$WORK/clash.py" "$DISAGREED/transcripts"
+if ( horizon_capture_loop "$DISAGREED" "$BUNDLE/seed/macklebox" ) >"$WORK/disagreed.out" 2>&1; then
+  fail "a run whose token totals are a floor was captured as if they were a count"
+fi
+grep -q 'usage_disagreements' "$WORK/disagreed.out" \
+  || fail "the refusal does not say where to look: $(cat "$WORK/disagreed.out")"
+[ "$(json_field "$DISAGREED/loop.json" 'd["usage_disagreements"]')" = 1 ] \
+  || fail "the record does not count the disagreement it refused over"
+pass "a disagreed token total is recorded, kept, and refused by the close-out"
 
 printf '\nall checks passed\n'

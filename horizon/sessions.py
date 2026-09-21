@@ -244,12 +244,14 @@ def within(path, root):
     subprocess being the expensive one. FOREIGN has to keep meaning "another project",
     because that reading is what the abort in main() rests on. [LAW:no-silent-failure]
 
-    A prefix test on the realpath, not a string prefix on the raw one: `/a/project-two`
-    starts with `/a/project` and is a different directory. The separator is what makes
-    it a containment test rather than a spelling one.
+    A prefix test on the realpath of BOTH sides, not a string prefix on the raw ones:
+    `/a/project-two` starts with `/a/project` and is a different directory, and a root
+    the caller had not normalised would match nothing at all. The separator is what
+    makes it a containment test rather than a spelling one.
     """
     real = os.path.realpath(path)
-    return real == root or real.startswith(root + os.sep)
+    top = os.path.realpath(root)
+    return real == top or real.startswith(top + os.sep)
 
 
 def read_transcript(path, project_dir):
@@ -268,6 +270,7 @@ def read_transcript(path, project_dir):
     goal_args = []
     tokens = no_tokens()
     billed = {}
+    disagreements = 0
 
     with open(path, errors="replace") as handle:
         for index, entry in enumerate(transcript_entries(handle)):
@@ -292,17 +295,26 @@ def read_transcript(path, project_dir):
                 elif already != usage:
                     # Collapsing on the message id is only lossless while every block of
                     # one message repeats the SAME usage. That held everywhere it was
-                    # measured, but nothing in the schema promises it, and the day it
-                    # stops holding this loop would keep the first block it met and
-                    # under-report the rest - a smaller number, still plausible, with
-                    # nothing anywhere saying it had changed meaning. Checked on every
-                    # entry instead, which costs a comparison and removes the guess.
-                    # [LAW:no-silent-failure]
-                    sys.exit("%s reports two different usages for message %s: %r then %r.\n"
-                             "Blocks of one message repeating one usage is what lets this "
-                             "bill it once; that is no longer true, so the token totals "
-                             "would be wrong rather than merely different."
-                             % (path, key[1], already, usage))
+                    # measured, but nothing in the schema promises it, so the
+                    # disagreement is COUNTED rather than assumed away - a total that
+                    # quietly became a fraction of the truth is the failure being
+                    # guarded against. [LAW:no-silent-failure]
+                    #
+                    # Counted and not raised, because this function also runs on the
+                    # live poll, several times an hour, for the whole length of a run.
+                    # Exiting here would end an eight-hour run over a bookkeeping
+                    # detail that only has to be right at close-out - the driver turns
+                    # any nonzero exit into a dead run. The close-out reads the count
+                    # off the report and refuses THERE, where refusing costs nothing.
+                    #
+                    # The larger of each field is kept, because the shape this would
+                    # most likely take is a partial usage followed by the complete one,
+                    # and of the two available wrong answers a floor beats a fraction.
+                    disagreements += 1
+                    for field in TOKEN_FIELDS:
+                        if usage[field] > already[field]:
+                            tokens[field] += usage[field] - already[field]
+                            already[field] = usage[field]
 
             stamp = parse_time(entry.get("timestamp"))
             if stamp is not None:
@@ -335,6 +347,7 @@ def read_transcript(path, project_dir):
         "has_turn": has_turn,
         "goal_issues": goal_args,
         "tokens": tokens,
+        "usage_disagreements": disagreements,
     }
 
 
@@ -362,12 +375,15 @@ def main():
     sessions = []
     subprocess_tokens = no_tokens()
     foreign = []
+    disagreements = 0
     for path in glob.glob(os.path.join(transcripts_dir, "*", "*.jsonl")):
         transcript = read_transcript(path, project_dir)
         if transcript["kind"] == SESSION:
             sessions.append(transcript)
+            disagreements += transcript["usage_disagreements"]
         elif transcript["kind"] == SUBPROCESS:
             add_tokens(subprocess_tokens, transcript["tokens"])
+            disagreements += transcript["usage_disagreements"]
         else:
             foreign.append(transcript["session_id"])
 
@@ -457,6 +473,12 @@ def main():
             # transcript is foreign, so without this line a run that dropped one
             # transcript's spend would read exactly like a run that had none to drop.
             "foreign_transcripts": len(foreign),
+            # Messages whose content blocks disagreed about what the message cost. Zero
+            # on every transcript ever measured, and reported anyway: the totals below
+            # are billed once per message id, so a number here means they are a floor
+            # rather than a count, and a floor that does not say so is just a wrong
+            # number. The close-out refuses a bundle whose run reports any.
+            "usage_disagreements": disagreements,
             # What the run COST, which is half of what a reviewer comparing two arms is
             # reading the bundle for. Split rather than merged: `sessions` is what the
             # agent itself spent, `subprocesses` what the headless claudes its tools

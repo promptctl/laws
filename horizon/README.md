@@ -407,6 +407,17 @@ is a *value* — `"ok": false` with the reason — never an absent file. An abse
 a reader guess between "this run had none" and "the recording broke", and those are
 opposite findings.
 
+A file in a bundle is whole or it is absent — never present and empty. Shell redirects
+are opened before the command that fills them runs, so `> loop.json` on a failing path
+left a zero-byte file the inventory then counted as present, which is the same
+empty-`loop.json` shape acceptance attempt 1 produced. Both `loop.json` and each
+`prs/pr-NNNN.json` are built outside the bundle and moved in, *outside* rather than
+beside under a `.partial` name, because the analysis ends in a `die` and a die exits —
+so a cleanup written after it never runs. For the same reason the close-out refuses a
+bundle that already holds `transcripts/`: `mv` into an existing directory nests rather
+than replaces, and `transcripts/projects/<slug>/` reads as a clean capture of a run that
+did nothing.
+
 The paths themselves are covered the same way rather than by a second promise. A run that
 died before it was seeded genuinely has no `seed/`, so the close-out's last step
 inventories the bundle against the layout and the `layout` capture *names* whatever is

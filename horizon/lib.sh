@@ -1194,9 +1194,16 @@ horizon_capture_transcripts() {
   local work_dir="$2" source target="$2/transcripts"
   source="$(horizon_live_transcripts_dir "$1")"
   [ -d "$source" ] || horizon_die "no transcripts at $source - the run never booted a session"
-  # The handler that calls this is installed before the work dir is created, and a run
-  # that died in between still has transcripts worth keeping.
   mkdir -p "$work_dir" || horizon_die "could not create $work_dir to capture transcripts into"
+  # REFUSED rather than merged into, and this is the one that hides best: `mv` given an
+  # existing directory moves the source INSIDE it, so a second close-out over the same
+  # bundle produces transcripts/projects/<slug>/*.jsonl. Nothing complains - the count
+  # below recurses and reports the right number - but sessions.py globs */*.jsonl one
+  # level up, matches nothing, and finds neither sessions nor foreign transcripts, so its
+  # own refusal cannot fire either. The bundle ends up recording a run of zero sessions
+  # and zero tokens with every capture marked ok. [LAW:no-silent-failure]
+  [ ! -e "$target" ] \
+    || horizon_die "$target already exists: this bundle has been captured once already, and moving a second set of transcripts in would nest them where nothing reads them"
   mv "$source" "$target" || horizon_die "could not capture transcripts into $target"
   printf '%s transcript(s)\n' "$(find "$target" -name '*.jsonl' | wc -l | tr -d ' ')"
 }
@@ -1400,9 +1407,21 @@ horizon_project_remote_repo() {
   local project_dir="$1" url
   url="$(horizon_project_git "$project_dir" remote get-url origin)" \
     || horizon_die "no origin in $project_dir - the run was never bound to a remote"
-  # Both spellings git accepts for the same remote, reduced to the one `gh` wants.
-  printf '%s\n' "$url" | sed -e 's#^git@github\.com:#=#' -e 's#^https://github\.com/#=#' \
-                             -e 's#^=##' -e 's#\.git$##'
+  # Both spellings git accepts for the same remote, reduced to the one `gh` wants - and
+  # anything else REFUSED rather than passed through. The old fallback returned whatever
+  # it was given, so a path remote came back as `/tmp/x/remote`, which `gh api
+  # repos/$repo/pulls` and the GraphQL owner/name variables then carried as if it were a
+  # repository. A remote this cannot read is a run bound to something the PR capture
+  # cannot describe, and saying so beats inventing a slug for it.
+  # [LAW:parse-dont-validate] what comes back is an owner/name or nothing.
+  local repo
+  repo="$(printf '%s\n' "$url" | sed -n -e 's#^git@github\.com:##p' -e 's#^https://github\.com/##p')"
+  repo="${repo%.git}"
+  case "$repo" in
+    */*/*|"" ) horizon_die "origin in $project_dir is not a GitHub remote this can read: $url" ;;
+    */* ) printf '%s\n' "$repo" ;;
+    * ) horizon_die "origin in $project_dir is not a GitHub remote this can read: $url" ;;
+  esac
 }
 
 # Usage: horizon_remote_highest_pr <repo>  -> the highest PR number, or 0
@@ -1524,10 +1543,19 @@ horizon_capture_prs() {
   local number captured=0
   for number in $numbers; do
     [ "$number" -gt "$watermark" ] || continue
+    # Staged and moved, for the reason the loop capture is: a redirect is opened before
+    # the command runs, so a query that failed left a zero-byte pr-NNNN.json in the
+    # bundle. run.json would record the failure, but prs.py re-run over the archived
+    # bundle months later dies on an empty file instead of on the real cause.
+    local staged
+    staged="$(mktemp "${TMPDIR:-/tmp}/horizon-pr.XXXXXX")" \
+      || horizon_die "could not make a staging file for PR #$number"
     gh api graphql -F owner="${repo%%/*}" -F name="${repo##*/}" -F number="$number" \
         -f query="$HORIZON_PR_QUERY" \
-      > "$prs_dir/pr-$(printf '%04d' "$number").json" \
-      || horizon_die "could not capture PR #$number of $repo"
+      > "$staged" \
+      || { rm -f "$staged"; horizon_die "could not capture PR #$number of $repo"; }
+    mv "$staged" "$prs_dir/pr-$(printf '%04d' "$number").json" \
+      || horizon_die "could not write the capture of PR #$number"
     captured=$((captured + 1))
   done
 
@@ -1727,7 +1755,17 @@ horizon_capture_bundle() {
   local config_dir="$1" bundle_dir="$2" started="$3"
   local status=0 rows=() project_dir ended
 
-  mkdir -p "$bundle_dir" || horizon_die "could not create $bundle_dir to capture into"
+  # NOT created here, and that is the point. This handler is installed the moment the
+  # lock exists, which is before the driver creates its work dir, so it also runs for
+  # failures that happened before there was a run at all - a config dir that could not
+  # authenticate is the common one. Creating the directory then leaves a bundle recording
+  # nothing, and the NEXT invocation refuses to start because `[ ! -e $HORIZON_WORK_DIR ]`
+  # finds it: "work dir already holds a run", about a run that never began. "A refused
+  # invocation leaves nothing behind" has to hold for the close-out too.
+  if [ ! -d "$bundle_dir" ]; then
+    horizon_log "no bundle to capture: the run ended before it created $bundle_dir"
+    return 0
+  fi
 
   # First, and before anything reads them: the transcripts live in the config dir, which is
   # a fixed path the NEXT run wipes, so every later step here is reading a record that only
@@ -1782,7 +1820,10 @@ horizon_check_bundle_layout() {
   done < <(horizon_bundle_layout_paths)
   [ "${#missing[@]}" -eq 0 ] \
     || horizon_die "the bundle is missing declared path(s): ${missing[*]}"
-  printf '%d declared path(s), all present\n' "$present"
+  # Both numbers, because they differ by one on purpose and a bare "8 present" against a
+  # nine-line layout reads as a bundle short of a file until you work out which.
+  printf '%d of %d declared path(s) present; %s is written from this step and cannot inventory itself\n' \
+    "$present" "$(horizon_bundle_layout_paths | wc -l | tr -d ' ')" "$HORIZON_BUNDLE_RECORD"
 }
 
 # Usage: horizon_capture_loop <bundle_dir> <project_dir>  -> a one-line detail
@@ -1805,9 +1846,32 @@ horizon_capture_loop() {
   # zeros is then the truth. [LAW:no-silent-failure]
   [ -d "$bundle_dir/transcripts" ] \
     || horizon_die "no transcripts/ in this bundle - the transcripts capture did not land, so there is nothing to analyse and a zero here would be a fabrication"
+  # Built beside the bundle and moved in, never written through a redirect onto its final
+  # name: bash opens a redirect BEFORE running the command, so `> loop.json` that failed -
+  # a refused analysis, an unreadable git log - left a zero-byte loop.json behind while
+  # the step reported failure. The layout inventory then counts the path as present and a
+  # reader who opens loop.json on its own, which the bundle README invites, gets an empty
+  # file. That is the very shape acceptance attempt 1 produced and this capture exists to
+  # remove, so the file appears only once it is whole. [LAW:no-silent-failure]
+  # Staged OUTSIDE the bundle, not beside the file under a .partial name. horizon_report
+  # ends in horizon_die, and a die exits - so an `|| rm` cleanup after it never runs, and
+  # a staging file inside the bundle would simply stay there under a different name.
+  # Somewhere the bundle does not reach is the only version of this that holds.
+  local staged
+  staged="$(mktemp "${TMPDIR:-/tmp}/horizon-loop.XXXXXX")" \
+    || horizon_die "could not make a staging file for loop.json"
   horizon_report "$bundle_dir/transcripts" "$project_dir" "$bundle_dir/goal.md" \
-    > "$bundle_dir/loop.json" \
-    || horizon_die "could not analyse the run's sessions"
+    > "$staged"
+  mv "$staged" "$bundle_dir/loop.json" || horizon_die "could not write $bundle_dir/loop.json"
+  # Moved into place FIRST and then refused, because this record is not broken - it is
+  # complete, and it says the token totals are unsafe. A reader needs to see it.
+  local disagreements
+  disagreements="$(python3 -c '
+import json, sys
+print(json.load(open(sys.argv[1]))["usage_disagreements"])' "$bundle_dir/loop.json")" \
+    || horizon_die "could not read the token bookkeeping from $bundle_dir/loop.json"
+  [ "$disagreements" = 0 ] \
+    || horizon_die "$disagreements message(s) in this run reported more than one usage, so the token totals are a floor rather than a count - see usage_disagreements in loop.json"
   printf '%s\n' "$(horizon_report_counts < "$bundle_dir/loop.json" \
     | awk '{ printf "%s consecutive committing session(s), %s lost carry/carries", $1, $2 }')"
 }
