@@ -394,6 +394,37 @@ diff "$BUNDLE/loop.json" "$RECOMPUTED" >/dev/null \
   || fail "recomputing loop.json from the bundle gives a different answer than the run recorded"
 pass "loop.json recomputes from the bundle alone, byte for byte"
 
+# Nothing in the bundle that the layout does not declare. Every file in a complete
+# close-out is built outside the bundle and moved in, so a name here that the declaration
+# does not know about is a staging file that outlived the step that made it - and the
+# inventory, which only asks whether each DECLARED path is present, would never mention
+# it. Asserted against the declaration rather than against a list of suffixes a leak
+# might use: the check this replaced globbed for `*.partial`, a name no code path has
+# ever written, and so could not fail. [LAW:one-source-of-truth]
+UNDECLARED=""
+for ENTRY in "$BUNDLE"/* "$BUNDLE"/.*; do
+  NAME="$(basename "$ENTRY")"
+  case "$NAME" in . | .. | '"'"'*'"'"' | '"'"'.*'"'"') continue ;; esac
+  horizon_bundle_layout_paths | sed 's|/$||' | grep -qx "$NAME" \
+    || UNDECLARED="$UNDECLARED $NAME"
+done
+[ -z "$UNDECLARED" ] \
+  || fail "the bundle holds paths the layout does not declare:$UNDECLARED"
+pass "a complete bundle holds nothing the layout declaration does not name"
+
+# And the README goes through that staging path rather than straight onto its name. With
+# nowhere to stage, the render must refuse and leave the name untouched; writing it
+# directly - as this did - would sail through here and, on a render that failed partway,
+# leave a front page trailing off mid-sentence under a name the inventory counts.
+README_STAGE="$WORK/readme-stage"
+mkdir -p "$README_STAGE"
+if ( TMPDIR="$WORK/nowhere" horizon_write_bundle_readme "$README_STAGE" ) >/dev/null 2>&1; then
+  fail "the bundle README was written with nowhere to stage it"
+fi
+[ ! -e "$README_STAGE/README.md" ] \
+  || fail "a README that could not be staged was written to its final name anyway"
+pass "the bundle README is staged and moved, never written straight onto its name"
+
 # ── 2. The shape does not depend on how the run ended ──────────────────────────────────
 
 DIED="$WORK/died"

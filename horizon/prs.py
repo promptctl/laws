@@ -24,6 +24,7 @@ import glob
 import json
 import os
 import sys
+import tempfile
 
 # Where a `pageInfo` can appear in a captured pull request, as a path of keys from the
 # pullRequest object. Listed rather than discovered by walking the document: a walk would
@@ -149,13 +150,26 @@ def main():
         summaries.append(summarise(pull_request))
 
     summaries.sort(key=lambda s: s["number"])
-    with open(os.path.join(prs_dir, "index.json"), "w") as handle:
-        json.dump({"pull_requests": summaries,
-                   "count": len(summaries),
-                   "unresolved_review_threads":
-                       sum(s["review_threads_unresolved"] for s in summaries)},
-                  handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    # Staged and moved, like run.json and like every capture in the close-out. This file
+    # is the one a reviewer opens FIRST to see what the run did to the repository, and a
+    # `json.dump` that stops partway - a full disk, a killed process - would leave it
+    # truncated under the name the layout inventory then counts as present. Whole or
+    # absent, never present and empty. [LAW:no-silent-failure]
+    handle = tempfile.NamedTemporaryFile("w", dir=prs_dir, prefix=".index.json.",
+                                         delete=False)
+    try:
+        with handle:
+            json.dump({"pull_requests": summaries,
+                       "count": len(summaries),
+                       "unresolved_review_threads":
+                           sum(s["review_threads_unresolved"] for s in summaries)},
+                      handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(handle.name, os.path.join(prs_dir, "index.json"))
+    except BaseException:
+        if os.path.exists(handle.name):
+            os.unlink(handle.name)
+        raise
 
 
 if __name__ == "__main__":
