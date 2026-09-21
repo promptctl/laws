@@ -23,9 +23,14 @@ care. Simple is the goal, not a step toward something more impressive.
 
 1. Compatible crafts coexist; incompatible ones do not. A craft loads a whole medium's
    standard, and reading it changes what you do next, by design. Most standards are
-   complementary (code, its ticket, its docs), but an *incompatible* pair stacks and
-   corrupts each other. `hooks/scripts/incompatible-crafts.txt` lists the pairs, and
-   the guard refuses the second of one. A session may hold several compatible crafts, and a
+   complementary (code, its ticket, its docs), but some *orderings* are refused: with one
+   craft engaged, what you write next under another comes out wrong.
+   `hooks/scripts/incompatible-crafts.txt` lists those orderings as directed edges - an
+   edge refuses one direction and says nothing about loading the same two the other way
+   round - and the guard refuses the second load of one. Read them as edges, not as pairs:
+   the file used to hold symmetric pairs, and the reverse direction it refused along the
+   way was a false refusal that cost real conversation to escape.
+   A session may hold several compatible crafts, and a
    session whose whole job is one skill may load that skill's craft and edit it
    directly - holding the whole craft is how a change integrates instead of bolting on.
    When you need a craft that conflicts with one already engaged, you don't load it
@@ -42,8 +47,8 @@ The full order is in `design-docs/working-with-skills.md`. In short:
 1. Say what the skill is for before changing it, and change the skill to match.
 2. If editing this skill is the session's whole job, load its craft and edit directly,
    holding the whole so the change integrates. If the craft is incompatible with one
-   already engaged here, dispatch a subagent that loads only that craft; never stack an
-   incompatible pair in one session.
+   already engaged here, dispatch a subagent that loads only that craft; never stack a
+   refused ordering in one session.
 3. Read the file it produced - not its summary - and check it against what the skill
    is for.
 
