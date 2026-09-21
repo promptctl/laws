@@ -27,11 +27,7 @@
 #
 # Blank lines and lines beginning with '#' are ignored; a trailing '# comment' is stripped.
 
-# code degrades prompts, and the damage runs ONE WAY. Loading laws:code first trains the
-# session on standards that are actively wrong for prompt-as-a-medium, and a prompt written
-# afterwards comes out corrupted — so this ordering is refused. The reverse is fine and is
-# deliberately NOT listed: writing a prompt and then turning to code works, because the
-# prompt craft does not degrade code the way code degrades prompts. (chat, prose, ticket,
-# and application-spec appear in no edge at all, so they mix freely in either order with
-# each other and with both of these.)
+# An edge means: with the first craft engaged, work written under the second comes out
+# wrong. It says nothing about the reverse ordering, and a craft absent from every edge
+# mixes freely with all others.
 code prompt

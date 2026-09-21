@@ -1,7 +1,7 @@
 {
   "name": "laws",
-  "version": "0.27.0",
-  "description": "Universal architectural laws for code work, medium-scoped quality skills (code / prose / prompt), and skill-router hooks that route to the right one at session start, re-engage the laws on every message, and refuse a second medium skill in one session.",
+  "version": "0.28.0",
+  "description": "Universal architectural laws for code work, medium-scoped quality skills, and skill-router hooks that route to the one matching the deliverable's medium at session start, re-engage the laws on every message, and refuse a craft ordering the compatibility policy declares.",
   "author": {
     "name": "Brandon Fryslie"
   },
