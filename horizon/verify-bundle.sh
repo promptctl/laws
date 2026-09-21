@@ -50,6 +50,7 @@ horizon_need cat
 horizon_need chmod
 horizon_need cut
 horizon_need head
+horizon_need dirname
 
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$WORK"' EXIT
@@ -401,13 +402,17 @@ pass "loop.json recomputes from the bundle alone, byte for byte"
 # it. Asserted against the declaration rather than against a list of suffixes a leak
 # might use: the check this replaced globbed for `*.partial`, a name no code path has
 # ever written, and so could not fail. [LAW:one-source-of-truth]
+# Listed with `find` rather than by globbing. A glob that matches nothing is left in the
+# word list literally, so the loop had to carry arms skipping a bare `*` and `.*` - and
+# those arms were written with the single-quote-escaping idiom for a context that was not
+# quoted, so they decoded to `"'*'"` and could never match. Two dead arms guarding a case
+# `find` does not have. [LAW:polishing-by-subtraction]
+DECLARED_NAMES="$(horizon_bundle_layout_paths | sed 's|/$||')"
 UNDECLARED=""
-for ENTRY in "$BUNDLE"/* "$BUNDLE"/.*; do
-  NAME="$(basename "$ENTRY")"
-  case "$NAME" in . | .. | '"'"'*'"'"' | '"'"'.*'"'"') continue ;; esac
-  horizon_bundle_layout_paths | sed 's|/$||' | grep -qx "$NAME" \
+while IFS= read -r NAME; do
+  printf '%s\n' "$DECLARED_NAMES" | grep -qx "$NAME" \
     || UNDECLARED="$UNDECLARED $NAME"
-done
+done < <(cd "$BUNDLE" && find . -mindepth 1 -maxdepth 1 | sed 's|^\./||')
 [ -z "$UNDECLARED" ] \
   || fail "the bundle holds paths the layout does not declare:$UNDECLARED"
 pass "a complete bundle holds nothing the layout declaration does not name"
@@ -424,6 +429,19 @@ fi
 [ ! -e "$README_STAGE/README.md" ] \
   || fail "a README that could not be staged was written to its final name anyway"
 pass "the bundle README is staged and moved, never written straight onto its name"
+
+# The remote watermark is staged too, and it is the one file with no second chance: it is
+# written once at the remote reset, hours before any capture runs, so a half-written copy
+# is carried by the whole run and read back as the boundary between this run's pull
+# requests and the last run's.
+TZ_STAGE="$WORK/time-zero-stage"
+mkdir -p "$TZ_STAGE"
+if ( TMPDIR="$WORK/nowhere" horizon_record_remote_time_zero "$TZ_STAGE" "promptctl/horizon-eval" ) >/dev/null 2>&1; then
+  fail "the remote watermark was written with nowhere to stage it"
+fi
+[ ! -e "$TZ_STAGE/prs/time-zero.json" ] \
+  || fail "a watermark that could not be staged was written to its final name anyway"
+pass "the remote watermark is staged and moved, never written straight onto its name"
 
 # ── 2. The shape does not depend on how the run ended ──────────────────────────────────
 

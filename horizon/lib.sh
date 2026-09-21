@@ -1448,8 +1448,19 @@ horizon_record_remote_time_zero() {
   local bundle_dir="$1" repo="$2" highest
   highest="$(horizon_remote_highest_pr "$repo")"
   mkdir -p "$bundle_dir/prs" || horizon_die "could not create $bundle_dir/prs"
-  printf '{\n  "highest_pr_at_reset": %s\n}\n' "$highest" > "$bundle_dir/prs/time-zero.json" \
-    || horizon_die "could not record the remote's time zero"
+  # Staged and moved like every other file written into a bundle. This one is written once,
+  # at the remote reset, hours before the close-out runs - so unlike the captures there is
+  # nothing later that would overwrite a half-written copy, and the run would carry a
+  # corrupt watermark all the way to the end. The cleanup on the failure path is reachable
+  # here, because `printf` returns a status rather than dying the way the analysis and the
+  # export do. [LAW:no-silent-failure]
+  local staged
+  staged="$(mktemp "${TMPDIR:-/tmp}/horizon-timezero.XXXXXX")" \
+    || horizon_die "could not make a staging file for the remote's time zero"
+  printf '{\n  "highest_pr_at_reset": %s\n}\n' "$highest" > "$staged" \
+    || { rm -f "$staged"; horizon_die "could not record the remote's time zero"; }
+  mv "$staged" "$bundle_dir/prs/time-zero.json" \
+    || horizon_die "could not write $bundle_dir/prs/time-zero.json"
   horizon_log "remote time zero: PRs above #$highest belong to this run"
 }
 
