@@ -1585,8 +1585,15 @@ horizon_capture_backlog() {
   local out="$bundle_dir/backlog/export.json"
   horizon_require_bundle_project "$project_dir"
   mkdir -p "$bundle_dir/backlog" || horizon_die "could not create $bundle_dir/backlog"
-  horizon_lit_export "$project_dir" > "$out" \
-    || horizon_die "could not export the backlog from $project_dir"
+  # Staged outside the bundle and moved in only once it has been read, for the same reason
+  # loop.json and the PR captures are: everything below can refuse, and a refusal that
+  # left the document where it was written would put a well-formed `{"issues": []}` in the
+  # bundle under the name the README sends a reviewer to. They would read "this run
+  # created no tickets" off a file whose own capture said it failed.
+  local staged
+  staged="$(mktemp "${TMPDIR:-/tmp}/horizon-backlog.XXXXXX")" \
+    || horizon_die "could not make a staging file for the backlog export"
+  horizon_lit_export "$project_dir" > "$staged"
   # Indexed, not searched: an export without `issues` is not a thin backlog, it is a
   # document this code does not understand, and the KeyError says so where a `.get` default
   # would report a healthy empty backlog. [LAW:no-silent-failure]
@@ -1610,8 +1617,9 @@ if not issues:
              "this is a broken export rather than an empty one - `lit export` exits 0 on "
              "a sync it cannot resolve and writes exactly this document.")
 print("%d ticket(s), %d comment(s), %d event(s)"
-      % (len(issues), len(comments), len(events)))' "$out" \
-    || horizon_die "$out is not a readable lit export of a seeded project"
+      % (len(issues), len(comments), len(events)))' "$staged" \
+    || horizon_die "the backlog export from $project_dir is not a readable export of a seeded project"
+  mv "$staged" "$out" || horizon_die "could not write $out"
 }
 
 # Usage: horizon_bundle_project_dir <bundle_dir>  -> the project's path, or empty
