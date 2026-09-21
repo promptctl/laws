@@ -1,5 +1,5 @@
 {
-  "description": "Three injection points: SessionStart routes once to the medium-matched skill (laws:code / laws:prompt / laws:prose) and resets the engaged-craft set on a fresh session; UserPromptSubmit re-engages the laws on every user message; PreToolUse on Skill guards craft compatibility, letting compatible crafts coexist but refusing a craft that is incompatible with one already engaged (today: laws:code with laws:prompt).",
+  "description": "Three injection points: SessionStart routes once to the craft skill matching the deliverable's medium and resets the engaged-craft set on a fresh session; UserPromptSubmit re-engages the laws on every user message; PreToolUse on Skill guards craft compatibility, letting compatible crafts coexist but refusing an ordering the policy declares. The orderings live in hooks/scripts/incompatible-crafts.txt and are not restated here - a second copy is a second thing to go stale, and the copy is what a reader believes.",
   "hooks": {
     "SessionStart": [
       {

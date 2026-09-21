@@ -44,13 +44,17 @@ care. Simple is the goal, not a step toward something more impressive.
 
 The full order is in `design-docs/working-with-skills.md`. In short:
 
-1. Say what the skill is for before changing it, and change the skill to match.
+1. Say what the skill is for before changing it. That statement lives in
+   `design-docs/design-goals-<medium>.md`: edit the goals doc first, then change the
+   skill to match it. A new skill gets one before it ships - dropping the fixed
+   three-file shape did not drop this. The spec skill shipped without a goals doc and
+   nothing caught it until a review went looking, which is the whole cost of leaving
+   the rule unwritten.
 2. If editing this skill is the session's whole job, load its craft and edit directly,
    holding the whole so the change integrates. If the craft is incompatible with one
    already engaged here, dispatch a subagent that loads only that craft; never stack a
    refused ordering in one session.
-3. Read the file it produced - not its summary - and check it against what the skill
-   is for.
+3. Read the file it produced - not its summary - and check it against the goals doc.
 
 ## The failure this prevents
 
