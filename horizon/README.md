@@ -407,6 +407,15 @@ is a *value* — `"ok": false` with the reason — never an absent file. An abse
 a reader guess between "this run had none" and "the recording broke", and those are
 opposite findings.
 
+That guarantee starts at the work dir, and the one case outside it is worth naming: a
+run refused before it created one — the config dir failed to authenticate, the lock was
+already held — leaves no bundle, and therefore no `run.json` at all. "A refused
+invocation leaves nothing behind" is the older promise and it wins here, because the
+alternative is a bundle directory conjured by the close-out for a run that never began,
+which the next invocation then refuses to start on top of. No bundle, and a bundle that
+answers every question, are both readable states; a bundle that exists because of how a
+run *ended* is not.
+
 A file in a bundle is whole or it is absent — never present and empty. Shell redirects
 are opened before the command that fills them runs, so `> loop.json` on a failing path
 left a zero-byte file the inventory then counted as present, which is the same

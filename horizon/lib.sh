@@ -1708,10 +1708,18 @@ there is nothing else to consult for it.
 
 **Token totals** - `loop.json`, under `tokens`. `sessions` is what the agent's own sessions
 spent, `subprocesses` what the headless `claude` processes their tools spawned spent (the
-adversarial code reviewer is one, and it is not small), and `total` is the sum. The four
-figures are kept apart rather than added into one number, because a cached read and a
-generated token differ in price by more than an order of magnitude and one combined figure
-would be a lie with a number attached.
+adversarial code reviewer is one, and it is not small), and `total` is the two added
+together. They are reported apart as well as added because a configuration that leans on
+subagents and reviewers would otherwise look free.
+
+Inside each of those sits the same four figures - input, output, cache-read and
+cache-creation tokens - and those are never added into a single "tokens used". A cached
+read and a generated token differ in price by more than an order of magnitude, so one
+combined number would be a lie with a figure attached. A fifth key, `unattributed`, is
+spend found in a transcript that recorded no working directory, so nothing can say whose
+it is; it is deliberately NOT in `total`, and the close-out refuses a run that has any -
+if you are reading a bundle where it is nonzero, `run.json` will show the loop capture
+failed and the totals here are a floor rather than a count.
 
 ## Reading it again later
 
