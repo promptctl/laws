@@ -18,6 +18,8 @@ This skill governs every task whose deliverable is code - writing, editing, revi
 
 **Failures are loud and done has a shape.** `[LAW:no-silent-failure]` and `[LAW:verifiable-goals]` are the process goals: an error must surface rather than be swallowed (`2>/dev/null`, `|| true`, silent fallback data sources are named as bugs on sight), and every goal must have a machine-checkable success criterion that you run yourself rather than handing to the user.
 
+**The cheap on-pattern choice is not neutral.** `[LAW:escape-local-minima]` is the third process goal: a fix defended as "doesn't make anything worse, until we have X" is a local minimum being entered, and recognizing that phrasing mid-task pauses the work, plans the escape (finding Y first if Y is unknown, ending in full law realignment), and hands off to a fresh session. Tickets filed under it carry the label `escape-local-minima` so the pattern can be found and counted.
+
 ## What it deliberately avoids, and why
 
 **It refuses to be read as a checklist.** The skill says outright that the laws are one coherent way of seeing programs, not items to tick off, and its own header comment forbids deduplicating or compressing the file - it states the redundancy is load-bearing and that distilling a previous version is what destroyed it. So the document repeats the same idea across every law on purpose; that's a design choice, not an oversight.
