@@ -115,7 +115,13 @@ read -r -d '' ROUTE_TEXT <<'EOT'
 Before substantive work, identify the medium of your primary deliverable and load the craft skill that matches, if one does.
 EOT
 
-# Read the hook's JSON payload once. Every hook event delivers JSON on stdin
+# Read the hook's JSON payload once. Every hook event delivers JSON on stdin.
+#
+# The newline strip is NOT cosmetic and is not removable: json_field matches with a single
+# `grep -oE`, which is line-oriented, so a pretty-printed payload that puts a key and its
+# value on separate lines would simply fail to match and the field would come back empty.
+# Collapsing first makes extraction independent of whether Claude Code sends compact or
+# pretty-printed JSON, rather than leaving that a latent assumption. [LAW:no-silent-failure]
 INPUT=$(cat | tr -d '\n')
 
 # --- pure-bash field extraction -------------------------------------------------------
