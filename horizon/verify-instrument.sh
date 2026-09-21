@@ -233,8 +233,15 @@ for p in plugins:
   # was logged in when the campaign started and whose refresh token the server retired
   # part way through. It needs no mistake by anyone, only elapsed time, so the run that
   # hits it is a later run of a long campaign - the most expensive possible moment to
-  # discover the pane vocabulary only covered the other spelling. Observed 2026-09-07.
-  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " "  Login expired · Please run /login" | horizon_boot_state)"
+  # discover the pane vocabulary only covered the other spelling.
+  #
+  # The WORDING is recorded, from the run that hit it on 2026-09-07. The PLACEMENT is
+  # inferred: it is put in the same right-hand status-line slot the captured `Not logged
+  # in` occupies, because both are that one widget reporting on one credential. Said
+  # plainly because it is the weakest evidence in this block - and bounded, because if the
+  # real pane puts it elsewhere this reads as `ready` and the run is refused moments later
+  # by horizon_wait_goal_in_force, which reads the transcript instead of the pane.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents      Login expired · Please run /login" | horizon_boot_state)"
   [ "$got" = logged-out ] || fail "an expired-login pane classified as '$got', not logged-out"
   got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents" | horizon_boot_state)"
   [ "$got" = ready ] || fail "an authenticated pane classified as '$got', not ready"
@@ -246,10 +253,27 @@ for p in plugins:
   # the one reason that must never be enough: the evidence against it had not arrived.
   got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "❯ " | horizon_boot_state)"
   [ "$got" = forming ] || fail "a pane whose status line has not painted classified as '$got', not forming"
+  # MID-TURN, captured from a live pane with a tool actually running. run-loop.sh hands
+  # session one the `/goal` wording as its launch prompt, so the run's own wait polls a
+  # pane that is already working - never the idle splash the other fixtures show.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "  ✓ Bash  " "  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #70 · ← 1 agent" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "a pane mid-turn classified as '$got', not ready"
+
+  # AND THE CONVERSE, which is the one that costs a campaign. Every pattern above is a
+  # string the run can legitimately PRINT: an agent checking `gh auth status`, a grep over
+  # this very file. Matched anywhere in the capture they turn the wait into a fatal false
+  # failure - it dies on any settled state it did not want - so a healthy run is killed
+  # mid-flight with a confident wrong diagnosis. Each of these must read as `ready`.
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "  ● Bash(gh auth status)" "    Not logged in" "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "an agent printing 'Not logged in' as tool output classified the session as '$got'"
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "  ● Bash(grep Accessing horizon/lib.sh)" "    lib.sh: Accessing workspace:" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "an agent printing 'Accessing workspace:' as tool output classified the session as '$got'"
+  got="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.278" "  ● the picker says Choose the text style" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_boot_state)"
+  [ "$got" = ready ] || fail "an agent printing 'Choose the text style' as tool output classified the session as '$got'"
   # The one that matters most, and the reason the login notice is tested at all: the SAME
   # banner appears in both, so a classifier that only looked for it would call the dead
   # session ready. That was the behaviour here until 2026-09-21.
-  pass "the pane classifier separates ready from logged-out, onboarding, untrusted and forming"
+  pass "the pane classifier separates ready from logged-out, onboarding, untrusted and forming, and reads the chrome rather than what a run prints into the pane"
 
   # A pane that CANNOT be read must end the wait with a diagnosis rather than in silence.
   # Checked against a session name that does not exist, which needs no session and costs
@@ -296,19 +320,29 @@ for p in plugins:
   # pass or fail this criterion by whether tmux happened to be up. An operator with a
   # reviewer token exported - CLAUDE_CODE_OAUTH_TOKEN is exactly that, and rotating it is
   # routine here - would be told the instrument is broken when their shell is the cause.
-  # Removed from the session's environment rather than asserted about, so the precondition
-  # this criterion rests on is TRUE instead of merely checked.
-  # [LAW:no-ambient-temporal-coupling]
+  # Removed from the session's environment rather than asserted about. This narrows the
+  # vectors; it cannot close them, and the criterion below does NOT rest on it having done
+  # so - a proxy behind ANTHROPIC_BASE_URL or a cloud role could still authenticate, and
+  # no list here would be provably complete. So the scrub is what makes the ordinary
+  # outcome deterministic, and accepting `ready` as well as `logged-out` is what keeps an
+  # exotic one from failing a good instrument. [LAW:no-ambient-temporal-coupling]
   local leaked
-  for leaked in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN; do
+  for leaked in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN \
+                ANTHROPIC_BASE_URL CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX; do
     tmux set-environment -t "$VERIFY_TMUX_SESSION" -u "$leaked" \
       || fail "could not clear $leaked from the verification session's environment"
   done
   tmux respawn-pane -k -t "$VERIFY_TMUX_SESSION" -c "$verify_link" \
     claude --dangerously-skip-permissions \
     || fail "could not launch claude in the verification session"
-  horizon_await_boot_state "$VERIFY_TMUX_SESSION" logged-out
-  pass "a real session against the produced config dir clears onboarding and the trust dialog, leaving only the credential"
+  # EITHER state past the gates, because the question this criterion asks is "did the
+  # session get past the gates the instrument owns" and both answer it - both require the
+  # banner and a painted status line, which onboarding and the trust dialog each preclude.
+  # Demanding `logged-out` alone would conflate that question with "and it has no
+  # credential", which is a fact about the operator's environment rather than about the
+  # instrument, and would fail a good instrument on a machine that happens to carry one.
+  horizon_await_boot_state "$VERIFY_TMUX_SESSION" logged-out ready
+  pass "a real session against the produced config dir clears onboarding and the trust dialog"
 
   # The SAME live session, asked for the state the RUN asks for. Without this the wait is
   # only ever exercised on the path where it agrees, so a wait that returned success for
@@ -316,9 +350,13 @@ for p in plugins:
   # dead session through a whole run - the exact defect this ticket exists for, reinstated
   # with the gate still green. Here the discriminator has to do its job in the failing
   # direction, on a real pane, and say which state it actually found.
+  # Asked for a state this session provably is NOT - it has a banner, so it is past
+  # onboarding by construction. Chosen over asking for `ready` so the check does not
+  # depend on whether the session came up logged-out or authenticated: it exercises the
+  # discriminator itself, on a real pane, under either outcome above.
   local refusal=""
-  if refusal="$( horizon_await_boot_state "$VERIFY_TMUX_SESSION" ready 2>&1 )"; then
-    fail "waiting for 'ready' accepted a session that is only 'logged-out' - the run would launch into a session that accepts nothing"
+  if refusal="$( horizon_await_boot_state "$VERIFY_TMUX_SESSION" onboarding 2>&1 )"; then
+    fail "the wait accepted a booted session as 'onboarding' - it would accept any state at all, and the run would launch into a session that accepts nothing"
   fi
   # A non-zero exit is not by itself evidence of the RIGHT refusal. The same wait also
   # exits non-zero when the session has died between the two calls - and that one comes
@@ -333,14 +371,14 @@ for p in plugins:
     *"could not be read"*) fail "the verification session died between the two waits: $refusal" ;;
   esac
   case "$refusal" in
-    *"booted to 'logged-out'"*"wanted 'ready'"*) ;;
-    *) fail "the refusal did not name the state it found and the state it wanted: $refusal" ;;
+    *"wanted one of: onboarding"*) ;;
+    *) fail "the refusal did not name the state it wanted: $refusal" ;;
   esac
   case "$refusal" in
-    *"horizon/login.sh"*) ;;
-    *) fail "the refusal did not tell the operator how to fix a logged-out config dir: $refusal" ;;
+    *"booted to 'logged-out'"*|*"booted to 'ready'"*) ;;
+    *) fail "the refusal did not name the state it actually found: $refusal" ;;
   esac
-  pass "waiting for 'ready' refuses a logged-out session, naming both states and the fix"
+  pass "the wait refuses a state it did not ask for, naming both what it found and what it wanted"
 
   horizon_log "all checks passed"
 }
