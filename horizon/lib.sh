@@ -1153,10 +1153,40 @@ horizon_pane() {
 # a state that claims something needs evidence for it; absence of evidence is its own
 # state. [LAW:parse-dont-validate]
 #
-# Gates are tested BEFORE the banner because they precede it on screen and the banner is
-# absent while one is up; `ready` is the only answer given on an absence - no login notice
-# - and it is the one state that cannot be captured here, because proving it needs a live
-# credential and this library must never require one to be read.
+# WHERE it looks is as load-bearing as what it looks for. The pane this reads is not a
+# static splash: run-loop.sh launches session one with the `/goal` wording as its prompt,
+# so by the time the run's own wait polls, an AGENT IS WRITING TO THIS PANE. A pattern
+# matched anywhere in the capture is therefore a pattern the run itself can print - an
+# agent that runs `gh auth status` and prints `Not logged in`, a grep that echoes
+# `Accessing workspace:` out of this very file - and the wait now DIES on a state it did
+# not want. So an unanchored match would have traded the old false success for a fatal
+# false failure that kills a multi-hour campaign run with a confident wrong diagnosis.
+#
+# Two anchors keep it reading the CHROME rather than the content:
+#
+#   The banner is checked FIRST, and the gates only below it. A pane showing the banner is
+#   a pane past onboarding and the trust dialog by construction - those replace the whole
+#   screen and no banner is drawn while one is up - so the gate patterns cannot be reached
+#   by a session that is merely printing about them.
+#
+#   The login notice is required on the STATUS LINE ITSELF - the row carrying the mode
+#   indicator - not merely somewhere near the bottom. In a real pane the two sit on one
+#   row, left- and right-aligned, and that is an anchor content cannot forge: an agent
+#   would have to print both markers on a single line. A footer window of the last few
+#   rows is NOT enough, which is not a guess - a pane holding `Bash(gh auth status)` above
+#   a `Not logged in` result line and the status line below it was classified `logged-out`
+#   by exactly that rule. Verified against a live pane mid-turn: with a tool actually
+#   running, the status line is still there and still the bottom row.
+#
+#   A wording that ever appeared somewhere OTHER than the status line would read as
+#   `ready` here, and that is the direction to fail in: the run proceeds to
+#   horizon_wait_goal_in_force, which reads the TRANSCRIPT rather than the pane and
+#   refuses within the same timeout with a report of what the session actually did. The
+#   cost is a worse diagnosis. The cost the other way is a healthy campaign run killed.
+#
+# `ready` is the one state that turns on something NOT being there, so it is the one that
+# could be reached by looking too early; it requires the footer to have been painted
+# before it reads anything into that footer being quiet.
 horizon_boot_state() {
   local pane
   # Read with the shell's own builtin rather than `cat`, which is not in
@@ -1166,14 +1196,15 @@ horizon_boot_state() {
   # reports failure AT that EOF, which is the normal ending here and is why the status is
   # discarded rather than checked. [LAW:polishing-by-subtraction]
   IFS= read -r -d '' pane || true
-  if printf '%s\n' "$pane" | grep -qE "$HORIZON_ONBOARDING_RE"; then
-    printf 'onboarding\n'
-  elif printf '%s\n' "$pane" | grep -qE "$HORIZON_UNTRUSTED_RE"; then
-    printf 'untrusted\n'
-  elif printf '%s\n' "$pane" | grep -qE "$HORIZON_BANNER_RE"; then
-    if printf '%s\n' "$pane" | grep -qE "$HORIZON_LOGIN_NOTICE_RE"; then
+  # The status line, or empty when it has not been painted yet. `tail -1` because the
+  # mode indicator is drawn once per pane; taking the last occurrence keeps a line of
+  # conversation content that happens to quote it from standing in for the real one.
+  local status
+  status="$(printf '%s\n' "$pane" | grep -E "$HORIZON_STATUS_LINE_RE" | tail -1)"
+  if printf '%s\n' "$pane" | grep -qE "$HORIZON_BANNER_RE"; then
+    if [ -n "$status" ] && printf '%s\n' "$status" | grep -qE "$HORIZON_LOGIN_NOTICE_RE"; then
       printf 'logged-out\n'
-    elif printf '%s\n' "$pane" | grep -qE "$HORIZON_STATUS_LINE_RE"; then
+    elif [ -n "$status" ]; then
       printf 'ready\n'
     else
       # Banner drawn, status line not yet. Nothing has been ruled out - the notice that
@@ -1183,6 +1214,10 @@ horizon_boot_state() {
       # against it had not arrived yet.
       printf 'forming\n'
     fi
+  elif printf '%s\n' "$pane" | grep -qE "$HORIZON_ONBOARDING_RE"; then
+    printf 'onboarding\n'
+  elif printf '%s\n' "$pane" | grep -qE "$HORIZON_UNTRUSTED_RE"; then
+    printf 'untrusted\n'
   else
     printf 'forming\n'
   fi
@@ -1203,7 +1238,7 @@ horizon_boot_state_meaning() {
   esac
 }
 
-# Usage: horizon_await_boot_state <session> <wanted-state>
+# Usage: horizon_await_boot_state <session> <wanted-state>...
 #
 # Polls until the pane says something definite, then holds it to <wanted-state>. Waits on a
 # state the pane reports rather than on a duration to bet on.
@@ -1214,7 +1249,14 @@ horizon_boot_state_meaning() {
 # timeout on one buys nothing and costs a campaign two minutes per run to be told something
 # that was true at the first poll. [LAW:no-silent-failure] it says which state it got.
 horizon_await_boot_state() {
-  local session="$1" want="$2" waited=0 pane state
+  local session="$1"
+  shift
+  # One or more ACCEPTABLE states, not one. The run can proceed from exactly one state, so
+  # it names one; the verifier is asking a different question - did this session get past
+  # the gates the instrument owns - which two states both answer, and pinning it to one of
+  # them would fail a good instrument for a reason the criterion never meant to test.
+  # Which states satisfy a caller is the caller's to say. [LAW:dataflow-not-control-flow]
+  local want="$*" waited=0 pane state
   while [ "$waited" -lt "$HORIZON_BOOT_TIMEOUT_SECONDS" ]; do
     # Captured ONCE per poll, then classified and quoted from that single copy - so the
     # pane a message shows is the pane the verdict was reached on, and a second tmux call
@@ -1234,8 +1276,8 @@ startup rather than a fault in tmux. tmux said:
 $pane"
     state="$(printf '%s\n' "$pane" | horizon_boot_state)"
     if [ "$state" != forming ]; then
-      [ "$state" = "$want" ] && return 0
-      horizon_die "session $session booted to '$state', wanted '$want'.
+      case " $want " in *" $state "*) return 0 ;; esac
+      horizon_die "session $session booted to '$state', wanted one of: $want.
 $state: $(horizon_boot_state_meaning "$state")
 The pane was showing:
 $(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$')"
@@ -1248,7 +1290,7 @@ $(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$')"
   # prompt, a crash - and a bare "did not become ready" sends the reader to go find that
   # out by hand, at which point the session may already have been cleaned up. An error
   # should say where to look; this one can simply say what it saw. [LAW:no-silent-failure]
-  horizon_die "session $session never left 'forming' within ${HORIZON_BOOT_TIMEOUT_SECONDS}s, so it never became '$want'.
+  horizon_die "session $session never left 'forming' within ${HORIZON_BOOT_TIMEOUT_SECONDS}s, so it never became one of: $want.
 The last pane read was showing:
 $(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$')"
 }

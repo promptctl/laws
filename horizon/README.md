@@ -158,7 +158,7 @@ of five states:
 
 | state | what the pane shows | what it means |
 | --- | --- | --- |
-| `ready` | banner **and** a painted status line, with no login notice on it | up and accepting input |
+| `ready` | banner **and** a painted status line with no login notice **on that line** | up and accepting input |
 | `logged-out` | banner **and** `Not logged in` / `Login expired` | drew everything, authenticates nothing |
 | `onboarding` | the theme picker, before any banner | boot state never reached this config dir |
 | `untrusted` | the workspace trust dialog | the trust key was written under a path the CLI does not look itself up under |
@@ -170,6 +170,30 @@ painted before it will read anything into that line being quiet: the mode indica
 the login notice share it, so a pane showing the indicator has already had its chance to
 show a notice. A poll landing between the banner and the status line gets `forming` and
 tries again — never `ready` on the strength of evidence that had not arrived yet.
+
+**Where the classifier looks matters as much as what it looks for.** The pane it reads is
+not a static splash: `run-loop.sh` launches session one with the `/goal` wording as its
+prompt, so by the time the run's own wait polls, *an agent is writing into this pane*. A
+pattern matched anywhere in the capture is therefore a pattern the run itself can print —
+an agent checking `gh auth status` and printing `Not logged in`, a grep echoing
+`Accessing workspace:` out of `lib.sh`. Matched loosely, those turn the wait into a fatal
+*false failure*: it dies on any settled state it did not want, so a healthy campaign run
+is killed mid-flight with a confident wrong diagnosis.
+
+Two anchors keep it reading the chrome rather than the content. The banner is tested
+first and the gates only below it, because a pane showing the banner is past onboarding
+and the trust dialog by construction — each of those replaces the whole screen. And the
+login notice is required *on the status line itself*, the row carrying the mode
+indicator, where the two sit left- and right-aligned; an agent would have to print both
+markers on one row to forge it. A window of the last few rows is not enough, which is not
+a guess: a pane holding a `Not logged in` tool result directly above the status line was
+classified `logged-out` by exactly that rule.
+
+A login wording that ever appeared somewhere other than the status line would read as
+`ready` here, and that is the direction to fail in. The run proceeds to
+`horizon_wait_goal_in_force`, which reads the **transcript** rather than the pane and
+refuses within the same timeout with a report of what the session actually did. The cost
+is a worse diagnosis; the cost the other way is a healthy run killed.
 
 `logged-out` exists because readiness used to be a boolean and the boolean was wrong: a
 session whose credential has died draws the banner *and* an input box, so grepping the
