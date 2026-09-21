@@ -23,14 +23,17 @@
 #      all - which is how a run reached an interactive dialog no unattended driver can
 #      answer, twice. The check below boots one and reads the pane.
 #
-#      It asserts the session reaches `logged-out`, not `ready`, and that is the whole
-#      point rather than a weakened test: Claude Code keys its credential to the config
-#      dir's PATH, so a throwaway dir under $WORK is unauthenticated BY CONSTRUCTION and
-#      no verification can make it otherwise without touching a credential store, which
-#      this script will not do. `logged-out` is reached only by a session that drew its
-#      banner and its input box, which means onboarding and the trust dialog are both
-#      settled - so it proves exactly the instrument's half and claims nothing about the
-#      operator's. The run asserts `ready` instead, against its own authenticated dir.
+#      It asserts the session reaches a state PAST those gates - `logged-out` OR `ready` -
+#      and which of the two it gets is deliberately not the question. Both are reached
+#      only by a session that drew its banner and its input box, which means onboarding
+#      and the trust dialog are each settled, so either one proves exactly the
+#      instrument's half and claims nothing about the operator's. Ordinarily it is
+#      `logged-out`: Claude Code keys its credential to the config dir's PATH, so a
+#      throwaway dir under $WORK is unauthenticated BY CONSTRUCTION, and no verification
+#      can make it otherwise without touching a credential store, which this script will
+#      not do. Demanding `logged-out` ALONE would promote that ordinary outcome into a
+#      requirement and fail a sound instrument on a machine that happens to authenticate
+#      some other way. The run asserts `ready`, against its own authenticated dir.
 #   5. The HARNESS is pinned and recorded: the model the run's sessions use, and the
 #      Claude Code binary itself. Both are properties of this machine rather than of
 #      something fetched, so both are checked against the machine rather than against a
@@ -173,7 +176,10 @@ print(json.load(open(sys.argv[1])).get("model", ""))
   # The PINNED binary interrogates the pinned config dir, for the same reason provisioning
   # uses it: the plugin cache's shape belongs to the CLI version that wrote it, so reading
   # it back with a different one asks a question about a config dir nobody built.
-  plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" "$WORK/run2/bin/claude" plugin list --json)" \
+  # DISABLE_AUTOUPDATER for the same reason provisioning sets it: this is the real CLI
+  # against the live install, and an update it triggers can prune the version run2 pinned
+  # out from under the criteria below that check run2 against what was recorded.
+  plugin_list="$(CLAUDE_CONFIG_DIR="$config_dir" DISABLE_AUTOUPDATER=1 "$WORK/run2/bin/claude" plugin list --json)" \
     || fail "could not read claude plugin list --json from the isolated config dir"
   admitted="$(horizon_marketplace_plugins "$pinned_dir")"
 

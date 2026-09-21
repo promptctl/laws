@@ -200,8 +200,10 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # been opened the session has been working for a beat and tmux would hand back a pane
   # that has moved on. [LAW:no-ambient-temporal-coupling]
   # Checked rather than bare, for the reason stated at recorded_version below: horizon_die
-  # inside a command substitution exits the subshell, so an unchecked assignment leaves
-  # errexit to end the run on the next statement instead of here. [LAW:no-silent-failure]
+  # inside a command substitution exits only the SUBSHELL, so the wait's own refusal
+  # becomes an ordinary non-zero assignment here. Errexit would end the run on it either
+  # way; what the explicit check adds is a line saying which wait failed, rather than a
+  # bare exit 1 under the wait's message. [LAW:no-silent-failure]
   local booted_pane
   booted_pane="$(horizon_wait_ready)" \
     || horizon_die "session one never became ready - the wait's diagnosis is above"

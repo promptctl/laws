@@ -187,14 +187,17 @@ terminal, and that is how the verifier twice went green against a config dir no
 unattended run could actually launch a session in — once stopped at first-run
 onboarding, once at the workspace trust dialog.
 
-The launched session is required to reach `logged-out`, not `ready`, and the difference
-is the check rather than a weakening of it. Claude Code keys its stored credential to
-the config dir's **path**, so a throwaway dir under the verifier's scratch space is
-unauthenticated by construction and nothing this script may do would change that. But
-`logged-out` is reachable only by a session that has drawn its banner and its input box,
-which means onboarding and the trust dialog are both settled — so the check proves
-exactly the instrument's half of booting and claims nothing about the operator's. The
-run asserts `ready`, against its own authenticated dir.
+The launched session is required to reach a state **past those gates** — `logged-out` or
+`ready` — and which of the two it lands on is deliberately not the question. Either is
+reachable only by a session that has drawn its banner and its input box, which means
+onboarding and the trust dialog are both settled, so either proves exactly the
+instrument's half of booting and claims nothing about the operator's. In the ordinary
+case it is `logged-out`: Claude Code keys its stored credential to the config dir's
+**path**, so a throwaway dir under the verifier's scratch space is unauthenticated by
+construction and nothing this script may do would change that. Requiring `logged-out`
+alone would promote that ordinary case into a requirement and fail a sound instrument on
+a machine that authenticates some other way. The run asserts `ready`, against its own
+authenticated dir.
 
 The project it launches in is reached through a **symlink** on purpose. Claude Code
 records a workspace under its resolved path, so the

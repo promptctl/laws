@@ -116,7 +116,7 @@ horizon_need() {
 # function, and the five drifting per-script copies this replaced are the worse failure.
 # tar/base64 stay with pin-instrument.sh only because they are reached from nothing
 # else at all.
-HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tail tr wc)
+HORIZON_BASE_TOOLS=(awk cp find grep head mkdir mktemp mv rm sed sleep sort tail tr wc)
 
 horizon_need_base() {
   local tool
@@ -386,12 +386,20 @@ horizon_provision_config_dir() {
     || horizon_die "horizon_provision_config_dir: no pinned claude at $claude_path"
   rm -rf "$config_dir"
   mkdir -p "$config_dir"
-  CLAUDE_CONFIG_DIR="$config_dir" "$claude_path" plugin marketplace add "$pinned_dir" \
+  # DISABLE_AUTOUPDATER on every one of these, not only on the tmux session the run is
+  # launched into. These are the FIRST invocations of the real CLI a run makes, and the
+  # most numerous - one per plugin - and they run against the live install. An update
+  # triggered here repoints the `claude` on PATH for the whole machine, and because the
+  # installer keeps only a few versions side by side it can prune the very executable
+  # bin/claude was pinned to. The run would then die at horizon_launch_session's
+  # executable check, AFTER this function has already wiped the config dir - killed by the
+  # only CLI invocations the pin left unguarded. [LAW:single-enforcer]
+  CLAUDE_CONFIG_DIR="$config_dir" DISABLE_AUTOUPDATER=1 "$claude_path" plugin marketplace add "$pinned_dir" \
     >/dev/null || horizon_die "failed to add pinned marketplace at $pinned_dir"
   # stdin is /dev/null inside the loop: the loop reads the plugin names from its own
   # stdin, and a claude that read stdin would swallow the names still waiting there.
   while read -r name; do
-    CLAUDE_CONFIG_DIR="$config_dir" "$claude_path" plugin install \
+    CLAUDE_CONFIG_DIR="$config_dir" DISABLE_AUTOUPDATER=1 "$claude_path" plugin install \
       "${name}@${HORIZON_MARKETPLACE_NAME}" --scope user \
       </dev/null >/dev/null || horizon_die "failed to install ${name}@${HORIZON_MARKETPLACE_NAME}"
   done <<<"$names"
@@ -1378,7 +1386,8 @@ horizon_pane() {
     || horizon_die "could not read the pane of tmux session $session (is it still alive?)"
 }
 
-# Usage: horizon_boot_state < pane  -> ready | logged-out | onboarding | untrusted | forming
+# Usage: horizon_boot_state < pane
+#   -> ready | logged-out | onboarding | untrusted | bypass-disclaimer | forming
 #
 # The one reader of what a booting pane means, and it is pure: text in, one word out, no
 # tmux and no clock, so every state it can report is checked against a captured pane in
