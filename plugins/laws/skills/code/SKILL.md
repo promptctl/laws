@@ -1025,9 +1025,10 @@ verification mean anything.
 
 ## [LAW:escape-local-minima] - if you are not part of the solution, you are part of the problem
 
-**Every law can be satisfied more than one way. The cheapest way that "doesn't make
-anything worse" is a local minimum, and the moment you recognize you are choosing it,
-the current work pauses and escaping the minimum becomes the work.**
+**Every law can be satisfied more than one way. When the cheapest way is defended as
+"doesn't make anything worse, until we have X", you are choosing a local minimum - and
+the moment you recognize that, the current work pauses and escaping the minimum
+becomes the work. A cheap fix that needs no such defense is just a fix.**
 
 A local minimum is a shape the code settles into where every step out costs more than
 staying, so no single change ever justifies leaving - and the code stays there forever.
@@ -1038,11 +1039,10 @@ worse" was true of every step that got you here, which is why you are here.
 Recognize it by its phrasing. The first half sounds like: *"this is cheap, it follows
 the existing pattern, it doesn't make anything worse, so it's fine until we have X."*
 The second half, if it comes, sounds like: *"when we have X, we'll do Y to fix this
-properly."* Either half alone is the pattern. The first half alone is, at minimum, a
-ticket to find Y - worked as a minion on a worktree, so the finding does not consume the
-session that noticed. Both halves together flip every verdict under every law against
-the "doesn't make anything worse" case: you have just named the real fix and chosen not
-to do it. Code that only "doesn't make anything worse" is code being carried, and
+properly."* The first half alone is the pattern; you do not yet know Y, and the
+procedure below starts at finding it. Both halves together flip every verdict under
+every law against the "doesn't make anything worse" case: you have just named the real
+fix and chosen not to do it. Code that only "doesn't make anything worse" is code being carried, and
 carrying it is the cost - `[LAW:carrying-cost]` is the price of what you keep, not what
 you build.
 
@@ -1052,18 +1052,20 @@ procedure is mandatory:
 1. **Pause the current work.** Comment the ticket with where it stops and what is in
    play, and groom the backlog so the work is picked up again after the escape lands.
 2. **Plan the escape.** If you know what Y is, Y is the work. If you do not, step zero
-   is finding Y. The plan is a ticket or an epic, ranked to the top, structured so the
-   paused work resumes after it. It ends with a full law realignment across everything
+   is finding Y: a ticket to investigate, worked as a minion on a worktree so the
+   finding does not consume the session that noticed. The plan is a ticket or an epic,
+   ranked to the top, structured so the paused work resumes after it. It ends with a full law realignment across everything
    the escape touches, with no leftovers - that may mean nested epics, and they are
    worked, not filed and forgotten. `[LAW:polishing-by-subtraction]` is slow here and
-   that is fine; it arcs toward the diamond.
+   that is the pace: the escape subtracts the minimum, it does not patch over it.
 3. **Hand off to a fresh session** with the escape as its next work. Each session
    carries its own task and nothing else; trust the process to bring the paused work
    back.
 
-Every ticket filed under this law carries the label `escape-local-minima`. The label
-is the token: it is how the pattern is found again, counted, and documented wherever
-it recurs.
+This law is cited where its decision lands: on the paused ticket's comment and on the
+escape ticket, not in a source file. Every ticket filed under it carries the label
+`escape-local-minima`. The label is the token: it is how the pattern is found again,
+counted, and documented wherever it recurs.
 
 The temptation arrives sounding like prudence: *"YAGNI - don't build the big thing on
 spec."* YAGNI is about features with real carrying cost. It has nothing to say about
@@ -1145,17 +1147,17 @@ state; `[LAW:effects-at-boundaries]` keeps the fire in the hearth.
 values so that `[LAW:composability]` can turn N blocks into N² capability - and
 `[LAW:carrying-cost]` is why the payoff, not the build price, is the number that
 matters. `[LAW:polishing-by-subtraction]` is how you know a pass got you there: it left
-less code than it found.
+less code than it found. `[LAW:escape-local-minima]` is what you do when the cheap
+on-pattern choice is the one you are reaching for: the work pauses and the escape
+becomes the work.
 
 **Observable correctness** - `[LAW:verifiable-goals]` gives done a shape,
 `[LAW:behavior-not-structure]` tests the contract not the plumbing, and
 `[LAW:no-silent-failure]` guarantees that when reality disagrees, you hear it.
-`[LAW:escape-local-minima]` says that when the cheap on-pattern choice is the one you
-are reaching for, the work pauses and the escape becomes the work.
 
 Run your hand over the code before you leave it. Anything that snags - a bespoke
 type, a guard with no else, a papers-check far from any border, a comment doing a
 type's job, a copy that can drift, a flag with no deletion date, an error told to be
-quiet - is a rough bit, and the task is not done while your hand still catches. When
+quiet, an "until we have X" in a comment or commit - is a rough bit, and the task is not done while your hand still catches. When
 you are uncertain which law applies, return to the two framings and ask: **where is
 the seam, and is the map true?**
