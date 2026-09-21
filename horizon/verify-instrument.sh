@@ -45,6 +45,15 @@
 #      An unset campaign pin is recorded as null and checked to be null: a reader decides
 #      from that field whether a campaign's runs are comparable, so "recorded but not
 #      held" must be unmistakable rather than inferred.
+#   6. The run refuses to start when the REVIEWER's credential is absent. The reviewer is
+#      a controlled variable, and a run that merges every pull request without one measured
+#      a workflow the campaign does not claim - silently, because a pull request nobody
+#      reviewed looks in the record exactly like one a reviewer had nothing to say about.
+#      The credential is half of "the reviewer runs"; installing the workflow is the other
+#      half, and it is not the instrument's job yet - see horizon_assert_reviewer_credential.
+#      Driven from fixtures, not against the live repository: the verdict must be about
+#      the instrument rather than about whether an operator's secret store is set up, and
+#      both directions of the gate have to run whatever that store holds.
 #
 # [LAW:verifiable-goals] this script IS the machine-checkable "done" for the ticket;
 # exit 0 means every criterion held on this run, exit nonzero says which one didn't.
@@ -561,6 +570,150 @@ print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
     *) fail "the refusal did not name the state it actually found: $refusal" ;;
   esac
   pass "the wait refuses a state it did not ask for, naming both what it found and what it wanted"
+
+  # Criterion 6: the reviewer-credential gate, driven from fixtures rather than against the
+  # live repository. Asking GitHub here would make this verdict depend on an operator's
+  # secret store - a machine with the secret unset would be told the INSTRUMENT is broken -
+  # and it would exercise only whichever direction that store happened to be in. Both
+  # directions are the point, and the refusing one is the one the .3 run needed.
+  #
+  # `gh` is replaced on PATH inside subshells and never in this script's own environment:
+  # every criterion above reaches the real GitHub, and a stub leaking past this block would
+  # quietly answer for them too. [LAW:no-ambient-temporal-coupling]
+  local gh_stub="$WORK/gh-stub"
+  mkdir -p "$gh_stub" || fail "could not create $gh_stub"
+  # Serves exactly the two calls the gate makes and refuses anything else BY NAME, so a
+  # gate that grows a third question fails here rather than being waved through by a stub
+  # that says yes to everything. The two listings are answered SEPARATELY, because the
+  # whole point of there being two is that they hold different names. `!` makes a listing
+  # itself fail, which is a different answer from "the secret is absent" and has to stay
+  # different.
+  #
+  # It checks the WHOLE call shape - arity, `--paginate`, and the jq filter - and not just
+  # the subcommand, because a stub that answers any shape lets the real call drift beneath a
+  # green verdict. Change the filter to `.[].name` and every fixture below still passes,
+  # while the live gate takes gh's nonzero exit for an unreadable listing and refuses every
+  # run there is: a verifier certifying an instrument that cannot start. Dropping
+  # `--paginate` is the same failure with a rarer trigger. The cost is that a
+  # semantically-identical rewrite of the filter fails here too, and that is the trade
+  # taken deliberately - this fixture's contract is "I am gh, and I answer these two calls".
+  # [LAW:no-silent-failure]
+  cat > "$gh_stub/gh" <<'GH_FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+answer() {
+  if [ "$1" = "!" ]; then
+    printf 'gh fixture: HTTP 403\n' >&2; exit 1
+  fi
+  printf '%s\n' $1
+}
+if [ "$#" -ne 5 ] || [ "$1" != "api" ] || [ "$2" != "--paginate" ] \
+    || [ "$4" != "--jq" ] || [ "$5" != ".secrets[].name" ]; then
+  printf 'gh fixture: unexpected call shape: %s\n' "$*" >&2; exit 1
+fi
+case "$3" in
+  repos/*/actions/organization-secrets)
+    answer "${HORIZON_FIXTURE_ORG_SECRETS:-}" ;;
+  repos/*/actions/secrets)
+    answer "${HORIZON_FIXTURE_REPO_SECRETS:-}" ;;
+  *)
+    printf 'gh fixture: unexpected endpoint: %s\n' "$3" >&2; exit 1 ;;
+esac
+GH_FIXTURE
+  chmod +x "$gh_stub/gh" || fail "could not make the gh fixture executable"
+  # Sourced into a fresh bash rather than called here, because horizon_die EXITS: called in
+  # this shell it would end the verifier mid-criterion with no FAIL line, which is the
+  # invisible shape this file checks for elsewhere. [LAW:no-silent-failure]
+  # The repository comes in as an argument rather than spelled here, so this exercises the
+  # name a run actually passes instead of a second copy of it. [LAW:one-source-of-truth]
+  # Single-quoted deliberately: $1 and $2 are the inner shell's positional parameters, set
+  # by the arguments after `bash -c`, and expanding them here would substitute this
+  # script's own instead.
+  # shellcheck disable=SC2016
+  local gate='. "$1" && horizon_assert_reviewer_credential "$2"'
+
+  # The refusing direction first: both listings answer, and neither carries this name.
+  local no_secret=""
+  if no_secret="$( PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="SOME_OTHER_SECRET" \
+      HORIZON_FIXTURE_ORG_SECRETS="OPENAI_API_KEY" \
+      bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" 2>&1 )"; then
+    fail "the reviewer gate accepted a repository carrying no $REVIEWER_SECRET - every run would merge its pull requests unreviewed"
+  fi
+  case "$no_secret" in
+    *"$REVIEWER_SECRET"*) ;;
+    *) fail "the refusal did not name the secret it wanted: $no_secret" ;;
+  esac
+  case "$no_secret" in
+    *"$HORIZON_RUN_REPO"*) ;;
+    *) fail "the refusal did not name the repository it read: $no_secret" ;;
+  esac
+
+  # A name this one is a PREFIX of, which is the near miss that actually exists on this
+  # fleet: the keychain items holding reviewer tokens are named
+  # CLAUDE_CODE_OAUTH_TOKEN_<ACCOUNT>, so a repository secret copied from one carries the
+  # account suffix. The action reads the bare name and would find nothing, so a membership
+  # test that matched on substring would pass a run straight into the silent failure this
+  # gate exists to stop.
+  if PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="${REVIEWER_SECRET}_SOMEACCOUNT" \
+      bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1; then
+    fail "the reviewer gate accepted ${REVIEWER_SECRET}_SOMEACCOUNT as $REVIEWER_SECRET - the action reads the bare name and would find nothing"
+  fi
+
+  # EITHER listing failing is an unknown, not an absent secret. The two want opposite fixes
+  # - fix gh access versus set a secret - so a refusal that blamed the wrong one would send
+  # an operator to the wrong place with a message that reads certain. Both listings are
+  # exercised, because a guard on only one of them is a guard with a hole exactly where
+  # nobody looked. [LAW:no-silent-failure]
+  local unreadable=""
+  if unreadable="$( PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="!" \
+      HORIZON_FIXTURE_ORG_SECRETS="" \
+      bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" 2>&1 )"; then
+    fail "the reviewer gate treated a failed repository secret listing as a pass"
+  fi
+  case "$unreadable" in
+    *"is unknown here"*) ;;
+    *) fail "a failed repository secret listing was reported as an absent secret: $unreadable" ;;
+  esac
+  if unreadable="$( PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="" \
+      HORIZON_FIXTURE_ORG_SECRETS="!" \
+      bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" 2>&1 )"; then
+    fail "the reviewer gate treated a failed organization secret listing as a pass"
+  fi
+  case "$unreadable" in
+    *"is unknown here"*) ;;
+    *) fail "a failed organization secret listing was reported as an absent secret: $unreadable" ;;
+  esac
+
+  # And the two accepting directions, so the gate is not simply refusing everything - and
+  # so the ORG one has a check of its own. An organization secret shared with the repo
+  # authenticates the action exactly as a repository secret does, and it appears in a
+  # listing the repository call knows nothing about: a gate reading only the first would
+  # refuse a healthy run and blame a credential that was set. Confirmed disjoint on the
+  # live remote before this was written.
+  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="SOME_OTHER_SECRET $REVIEWER_SECRET" \
+    HORIZON_FIXTURE_ORG_SECRETS="OPENAI_API_KEY" \
+    bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
+    || fail "the reviewer gate refused a repository that does carry $REVIEWER_SECRET"
+  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="SOME_OTHER_SECRET" \
+    HORIZON_FIXTURE_ORG_SECRETS="$REVIEWER_SECRET" \
+    bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
+    || fail "the reviewer gate refused a repository whose $REVIEWER_SECRET is shared from the organization - the action would have authenticated and the run was blocked for a cause that was not true"
+  # An unreadable listing is an UNKNOWN, and an unknown is only worth refusing over when no
+  # listing produced the name. A gate that died on the first failing call would abort runs
+  # whose credential was sitting in the listing that answered perfectly well, and blame a
+  # credential that was set - the wrong-cause refusal again, this time triggered by a
+  # transient 403 rather than by a missing secret. Both directions, because the gate stops
+  # at the first listing that carries the name, so the failing call falls on the other side
+  # each time. [LAW:no-silent-failure]
+  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="!" \
+    HORIZON_FIXTURE_ORG_SECRETS="$REVIEWER_SECRET" \
+    bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
+    || fail "the reviewer gate refused a run over an unreadable repository listing while the organization listing carried $REVIEWER_SECRET - the action would have authenticated and the run was blocked for a cause that was not true"
+  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="$REVIEWER_SECRET" \
+    HORIZON_FIXTURE_ORG_SECRETS="!" \
+    bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
+    || fail "the reviewer gate refused a run over an unreadable organization listing while the repository itself carried $REVIEWER_SECRET - the action would have authenticated and the run was blocked for a cause that was not true"
+  pass "the reviewer gate accepts $REVIEWER_SECRET from either the repository or the organization, refuses its absence and a suffixed near-miss, tells an unreadable listing from an absent secret, and lets neither listing's failure override a credential the other one proved"
 
   horizon_log "all checks passed"
 }
