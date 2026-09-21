@@ -190,8 +190,16 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_goal_wording_file "$repo_root" "$goal_sha" "$goal_file"
 
   horizon_log "launching session one with the pinned /goal wording as its prompt"
-  horizon_launch_session "$config_dir" "$project_dir" "$goal_file"
+  # The pinned binary, not the bare name: the symlink pin-instrument.sh wrote is this
+  # run's handle on its harness version, and horizon_assert_transport's in-place guarantee
+  # means this one process is every session the run will have. [LAW:one-source-of-truth]
+  horizon_launch_session "$config_dir" "$project_dir" "$goal_file" \
+    "$instrument_dir/bin/claude"
   horizon_wait_ready
+  # Asked of the session rather than of the driver: manifest.json records a version read
+  # from a file on disk, and this is the only reading taken from the process running it.
+  horizon_assert_booted_version "$HORIZON_TMUX_SESSION" \
+    "$(horizon_manifest_field "$instrument_dir/manifest.json" claude version)"
   # The isolation guarantee, checked rather than assumed - see horizon_assert_transport.
   horizon_assert_transport
   horizon_log "handoff transport verified: in-place reset, config dir preserved"

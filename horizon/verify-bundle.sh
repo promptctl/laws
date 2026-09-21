@@ -230,7 +230,7 @@ build_bundle() {
   # this one. What this gate needs from it is that the path is part of a captured bundle
   # and the record accounts for it.
   mkdir -p "$bundle_dir/instrument/pinned"
-  printf '{\n  "schema_version": 3\n}\n' > "$bundle_dir/instrument/manifest.json"
+  printf '{\n  "schema_version": 4\n}\n' > "$bundle_dir/instrument/manifest.json"
 
   # Two sessions, both in the project's cwd, each spending tokens - and one headless
   # `claude -p` a tool inside a session spawned, which is real spend and not a session.
