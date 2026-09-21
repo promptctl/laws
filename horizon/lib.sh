@@ -1873,13 +1873,27 @@ horizon_capture_loop() {
   mv "$staged" "$bundle_dir/loop.json" || horizon_die "could not write $bundle_dir/loop.json"
   # Moved into place FIRST and then refused, because this record is not broken - it is
   # complete, and it says the token totals are unsafe. A reader needs to see it.
-  local disagreements
-  disagreements="$(python3 -c '
+  #
+  # Two ways a total stops being a count and becomes a floor, refused together because
+  # they are one fact about the record: a message whose blocks disagreed about what it
+  # cost, and spend in a transcript nothing could attribute. Both are zero on every run
+  # measured, and both are the kind of zero that must be checked rather than assumed.
+  local floor
+  floor="$(python3 -c '
 import json, sys
-print(json.load(open(sys.argv[1]))["usage_disagreements"])' "$bundle_dir/loop.json")" \
+doc = json.load(open(sys.argv[1]))
+reasons = []
+if doc["usage_disagreements"]:
+    reasons.append("%d message(s) reported more than one usage"
+                   % doc["usage_disagreements"])
+unattributed = sum(doc["tokens"]["unattributed"].values())
+if unattributed:
+    reasons.append("%d token(s) spent in transcript(s) that recorded no working directory"
+                   % unattributed)
+print("; ".join(reasons))' "$bundle_dir/loop.json")" \
     || horizon_die "could not read the token bookkeeping from $bundle_dir/loop.json"
-  [ "$disagreements" = 0 ] \
-    || horizon_die "$disagreements message(s) in this run reported more than one usage, so the token totals are a floor rather than a count - see usage_disagreements in loop.json"
+  [ -z "$floor" ] \
+    || horizon_die "this run's token totals are a floor rather than a count: $floor - see usage_disagreements and tokens.unattributed in loop.json"
   printf '%s\n' "$(horizon_report_counts < "$bundle_dir/loop.json" \
     | awk '{ printf "%s consecutive committing session(s), %s lost carry/carries", $1, $2 }')"
 }

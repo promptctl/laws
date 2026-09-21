@@ -170,13 +170,15 @@ def message_key(entry, line_number):
     The message id is the discriminator, and collapsing on it loses nothing only while
     the duplicates report identical usage - so read_transcript checks that rather than
     trusting it, and stops if it ever stops being true. An entry with no id cannot be
-    matched to any other, so it counts once on its own line - the direction that can
-    only ever UNDER-collapse, because a schema that stopped writing ids must not
-    silently start billing at a fraction of the truth.
+    matched to any other, so it counts once on its own - the direction that can only
+    ever UNDER-collapse, because a schema that stopped writing ids must not silently
+    start billing at a fraction of the truth.
     """
     message = entry.get("message")
     identifier = message.get("id") if isinstance(message, dict) else None
-    return ("id", identifier) if identifier else ("line", line_number)
+    # ("entry", n), not ("line", n): n counts PARSED entries, and transcript_entries skips
+    # unparseable lines, so it is not a file line number and must not be read as one.
+    return ("id", identifier) if identifier else ("entry", line_number)
 
 
 def transcript_entries(handle):
@@ -390,6 +392,7 @@ def main():
     subprocess_tokens = no_tokens()
     foreign = []
     forming = []
+    unattributed_tokens = no_tokens()
     disagreements = 0
     for path in glob.glob(os.path.join(transcripts_dir, "*", "*.jsonl")):
         transcript = read_transcript(path, project_dir)
@@ -402,7 +405,14 @@ def main():
         elif transcript["kind"] == FOREIGN:
             foreign.append(transcript["session_id"])
         else:
+            # Counted, not dropped. A forming transcript is normally a stub that spent
+            # nothing, but "normally" is not a reason to discard a number: dropping it
+            # would make the totals quietly smaller in exactly the way the disagreement
+            # count above exists to prevent. Kept apart rather than added in, because
+            # nothing here can say whose spend it is. [LAW:no-silent-failure]
             forming.append(transcript["session_id"])
+            add_tokens(unattributed_tokens, transcript["tokens"])
+            disagreements += transcript["usage_disagreements"]
 
     # Transcripts exist and not one of them is this project's. That is never a run: it is
     # a <project-dir> that does not match the cwd the transcripts recorded - the shape an
@@ -512,6 +522,12 @@ def main():
             "tokens": {
                 "sessions": session_tokens,
                 "subprocesses": subprocess_tokens,
+                # Spend in transcripts that recorded no working directory, so nothing
+                # could attribute it. Zero on every run yet measured. NOT folded into
+                # `total`, because `total` is what this analysis can stand behind, and a
+                # number here means `total` is a floor - which the close-out refuses
+                # rather than publishing.
+                "unattributed": unattributed_tokens,
                 "total": add_tokens(dict(session_tokens), subprocess_tokens),
             },
         },

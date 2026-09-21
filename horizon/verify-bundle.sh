@@ -519,6 +519,19 @@ fi
 grep -q 'malformed capture row' "$WORK/malformed.err" \
   || fail "the refusal does not name the problem: $(cat "$WORK/malformed.err")"
 
+# Two rows under one name would collapse into one entry, leaving run.json holding fewer
+# captures than the close-out ran - in the file whose whole contract is that every
+# capture has an entry.
+mkdir -p "$WORK/doubled"
+if printf 'backlog\t1\tone\nbacklog\t0\tanother\n' \
+     | python3 "$SCRIPT_DIR/bundle.py" "$WORK/doubled" run.json \
+         "2026-01-01T00:00:00Z" "2026-01-01T01:00:00Z" "$BUNDLE/seed/macklebox" \
+         2>"$WORK/doubled.err"; then
+  fail "two capture rows sharing a name collapsed into one entry without complaint"
+fi
+grep -q 'both named' "$WORK/doubled.err" \
+  || fail "the refusal does not name the collision: $(cat "$WORK/doubled.err")"
+
 # An unreadable clock must read back as null, never as a duration of zero: one is a claim
 # about the record and the other is a claim about the run.
 mkdir -p "$WORK/clockless"
@@ -528,7 +541,7 @@ printf 'transcripts\t1\t3 transcript(s)\n' \
   || fail "an unreadable clock took down the whole record"
 [ "$(json_field "$WORK/clockless/run.json" 'd["duration_seconds"]')" = None ] \
   || fail "an unreadable clock became a duration instead of null"
-pass "run.json refuses a malformed row, and records an unreadable clock as null"
+pass "run.json refuses a malformed row and a duplicated one, and records an unreadable clock as null"
 
 # ── 8. Every way a PR capture can come back unusable is refused ───────────────────────
 #
@@ -644,5 +657,28 @@ grep -q 'usage_disagreements' "$WORK/disagreed.out" \
 [ "$(json_field "$DISAGREED/loop.json" 'd["usage_disagreements"]')" = 1 ] \
   || fail "the record does not count the disagreement it refused over"
 pass "a disagreed token total is recorded, kept, and refused by the close-out"
+
+# The other way a total stops being a count: a transcript that recorded no working
+# directory and still spent tokens. Nothing can say whose that spend is, so it is kept
+# out of the total - and a total that is a floor must not be published as a count.
+ORPHANED="$WORK/orphaned"
+mkdir -p "$ORPHANED"
+cp -R "$BUNDLE/transcripts" "$ORPHANED/transcripts"
+cp "$BUNDLE/goal.md" "$ORPHANED/goal.md"
+ORPHAN_DIR="$(dirname "$(find "$ORPHANED/transcripts" -name '*.jsonl' | head -1)")"
+printf '%s\n' \
+  '{"type": "last-prompt", "sessionId": "orphan"}' \
+  '{"type": "assistant", "message": {"role": "assistant", "id": "orphan-1", "content": [{"type": "text", "text": "."}], "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 4242}}}' \
+  > "$ORPHAN_DIR/orphan.jsonl"
+if ( horizon_capture_loop "$ORPHANED" "$BUNDLE/seed/macklebox" ) >"$WORK/orphaned.out" 2>&1; then
+  fail "a run with spend nobody could attribute was captured as if the totals were complete"
+fi
+grep -q 'unattributed' "$WORK/orphaned.out" \
+  || fail "the refusal does not say where to look: $(cat "$WORK/orphaned.out")"
+[ "$(json_field "$ORPHANED/loop.json" 'd["tokens"]["unattributed"]["output_tokens"]')" = 4242 ] \
+  || fail "the record does not carry the spend it refused over"
+[ "$(json_field "$ORPHANED/loop.json" 'd["tokens"]["total"]["output_tokens"]')" = 3500 ] \
+  || fail "unattributed spend was folded into the total the analysis stands behind"
+pass "spend nothing can attribute is kept out of the total, recorded, and refused by the close-out"
 
 printf '\nall checks passed\n'
