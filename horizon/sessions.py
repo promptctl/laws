@@ -12,11 +12,18 @@ is a separate program and not a few lines inside run-loop.sh:
   [LAW:effects-at-boundaries]
 
 * It owns reading transcripts outright. Nothing else in horizon/ parses them, so
-  there is no second reader to disagree with this one about what a session is.
-  [LAW:one-source-of-truth]
+  there is no second reader to disagree with this one about what a session is - and
+  none about what a session COST, which is why the token totals are computed here
+  rather than by a second pass over the same files. [LAW:one-source-of-truth]
 
 Usage:
-    sessions.py <config-dir> <project-dir> <goal-file> < commits.tsv
+    sessions.py <transcripts-dir> <project-dir> <goal-file> < commits.tsv
+
+<transcripts-dir> holds one directory per project slug, each holding one .jsonl per
+session. That is the shape Claude Code writes at <config-dir>/projects, and the shape
+the driver moves into a bundle at <bundle>/transcripts - one directory naming, so the
+"recomputed from an archive months later" claim above is true of an archive and not
+only of a live config dir. Pointing this at <config-dir> is the bug that made it false.
 
 where commits.tsv is `<sha>\\t<committer-date-ISO8601>` per line, oldest first.
 Prints one JSON object on stdout.
@@ -110,6 +117,67 @@ def message_text(entry):
     return ""
 
 
+# The usage fields Claude Code records on every assistant message. Kept under the
+# transcript's own names rather than translated into prettier ones: a translation layer
+# is a second naming of one fact, and the day the schema gains a field the translation
+# is where it goes missing. [LAW:one-source-of-truth]
+#
+# Deliberately NOT summed into a single "total tokens". Cached reads and fresh output
+# differ by more than an order of magnitude in price, so one number adding them is a
+# lie with a number attached - and this file's whole job is being the record a human
+# trusts. Four honest counts beat one comfortable one.
+TOKEN_FIELDS = ("input_tokens", "cache_creation_input_tokens",
+                "cache_read_input_tokens", "output_tokens")
+
+
+def no_tokens():
+    return dict.fromkeys(TOKEN_FIELDS, 0)
+
+
+def add_tokens(into, more):
+    for field in TOKEN_FIELDS:
+        into[field] += more[field]
+    return into
+
+
+def usage_of(entry):
+    """The token usage an assistant entry reports, or None when it reports none.
+
+    None means "this entry carries no usage" - never "this entry cost nothing". The
+    caller must be able to tell a boot entry from a free turn, and there are no free
+    turns.
+    """
+    if entry.get("type") != "assistant":
+        return None
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return None
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    return {field: usage.get(field) or 0 for field in TOKEN_FIELDS}
+
+
+def message_key(entry, line_number):
+    """What makes two assistant entries the same billed message.
+
+    A transcript records ONE entry PER CONTENT BLOCK, and every one of them repeats the
+    whole message's usage. Summing entries therefore bills a message once per block:
+    measured against a real 475-entry transcript on 2026-09-21, that reported 356,255
+    output tokens where the true figure was 134,647 - a 2.6x overstatement, in the
+    direction that flatters nothing and misleads everything.
+
+    The message id is the discriminator, and duplicates carrying it were checked to
+    report identical usage, so collapsing on it loses nothing. An entry with no id
+    cannot be matched to any other, so it counts once on its own line - the direction
+    that can only ever UNDER-collapse, because a schema that stopped writing ids must
+    not silently start billing at a fraction of the truth.
+    """
+    message = entry.get("message")
+    identifier = message.get("id") if isinstance(message, dict) else None
+    return ("id", identifier) if identifier else ("line", line_number)
+
+
 def transcript_entries(handle):
     """The JSON objects in a transcript, one per line; every other line is skipped.
 
@@ -153,13 +221,23 @@ def is_run_session(session_id, entrypoints, has_turn):
     return entrypoints <= {INTERACTIVE_ENTRYPOINT}
 
 
-def read_session(path, project_dir):
-    """One transcript reduced to the facts the acceptance criterion asks about.
+# What a transcript found in the run's directory turned out to be. Three outcomes, named,
+# because the caller needs all three and they are not interchangeable: a SESSION counts
+# toward the acceptance, a SUBPROCESS cost real tokens the run must be billed for but is
+# not a session of it, and a FOREIGN transcript belongs to another project entirely and
+# must not be billed at all. Returning None for the last two - as this once did - collapses
+# "the run spawned a reviewer" and "somebody else was working in this config dir" into one
+# value, and the bundle then under-reports what the run spent with nothing to show for it.
+# [LAW:parse-dont-validate] the classification is the proof, kept, rather than a check
+# thrown away at the door.
+SESSION, SUBPROCESS, FOREIGN = "session", "subprocess", "foreign"
 
-    Returns None when the transcript is not one of the run's sessions: another project's
-    (the cwd recorded inside the file is the authority on what it belongs to, so the
-    caller never re-derives Claude Code's directory-naming rule), or a headless claude
-    some tool spawned inside a session (see is_run_session).
+
+def read_transcript(path, project_dir):
+    """One transcript reduced to the facts the run's record asks about, and what it is.
+
+    The cwd recorded inside the file is the authority on which project it belongs to, so
+    no caller re-derives Claude Code's directory-naming rule.
     """
     want = os.path.realpath(project_dir)
     session_id = os.path.splitext(os.path.basename(path))[0]
@@ -169,9 +247,11 @@ def read_session(path, project_dir):
     first_time = None
     last_time = None
     goal_args = []
+    tokens = no_tokens()
+    billed = set()
 
     with open(path, errors="replace") as handle:
-        for entry in transcript_entries(handle):
+        for index, entry in enumerate(transcript_entries(handle)):
             cwd = entry.get("cwd")
             if cwd and os.path.realpath(cwd) == want:
                 belongs = True
@@ -179,6 +259,15 @@ def read_session(path, project_dir):
                 entrypoints.add(entry["entrypoint"])
             if entry.get("type") == "assistant" and not entry.get("isSidechain"):
                 has_turn = True
+
+            # Sidechain entries ARE billed even though they are not the session's own
+            # turns: a subagent's tokens are spent by the session that dispatched it, and
+            # a configuration that leans on subagents would otherwise look cheap.
+            usage = usage_of(entry)
+            key = message_key(entry, index)
+            if usage is not None and key not in billed:
+                billed.add(key)
+                add_tokens(tokens, usage)
 
             stamp = parse_time(entry.get("timestamp"))
             if stamp is not None:
@@ -194,10 +283,15 @@ def read_session(path, project_dir):
             if found is not None:
                 goal_args.append(found)
 
-    if not (belongs and is_run_session(session_id, entrypoints, has_turn)):
-        return None
+    if not belongs:
+        kind = FOREIGN
+    elif is_run_session(session_id, entrypoints, has_turn):
+        kind = SESSION
+    else:
+        kind = SUBPROCESS
 
     return {
+        "kind": kind,
         "session_id": session_id,
         "started": first_time.isoformat() if first_time else None,
         "ended": last_time.isoformat() if last_time else None,
@@ -205,6 +299,7 @@ def read_session(path, project_dir):
         "_end": last_time,
         "has_turn": has_turn,
         "goal_issues": goal_args,
+        "tokens": tokens,
     }
 
 
@@ -224,16 +319,35 @@ def read_commits(stream):
 def main():
     if len(sys.argv) != 4:
         sys.exit(__doc__)
-    config_dir, project_dir, goal_file = sys.argv[1:]
+    transcripts_dir, project_dir, goal_file = sys.argv[1:]
 
     with open(goal_file) as handle:
         pinned_goal = handle.read().strip()
 
     sessions = []
-    for path in glob.glob(os.path.join(config_dir, "projects", "*", "*.jsonl")):
-        session = read_session(path, project_dir)
-        if session is not None:
-            sessions.append(session)
+    subprocess_tokens = no_tokens()
+    foreign = []
+    for path in glob.glob(os.path.join(transcripts_dir, "*", "*.jsonl")):
+        transcript = read_transcript(path, project_dir)
+        if transcript["kind"] == SESSION:
+            sessions.append(transcript)
+        elif transcript["kind"] == SUBPROCESS:
+            add_tokens(subprocess_tokens, transcript["tokens"])
+        else:
+            foreign.append(transcript["session_id"])
+
+    # Transcripts exist and not one of them is this project's. That is never a run: it is
+    # a <project-dir> that does not match the cwd the transcripts recorded - the shape an
+    # ARCHIVED run takes, whose transcripts still name the path the run used while the
+    # bundle now sits somewhere else. Reported rather than returned, because "no session
+    # belonged to this project" and "the run did nothing" produce identical output, and
+    # the wrong one of those is a quiet zero a reader has no reason to doubt.
+    # [LAW:no-silent-failure]
+    if foreign and not sessions:
+        sys.exit("no transcript in %s belongs to %s (%d found, all another project's).\n"
+                 "An archived run records the path it ran at, not where the bundle now "
+                 "sits - pass project.path from the bundle's run.json."
+                 % (transcripts_dir, project_dir, len(foreign)))
 
     # Ordered by when they ran. Session ids are uuids and sort meaninglessly, and the
     # acceptance criterion is about CONSECUTIVE sessions, so the order has to be real.
@@ -259,8 +373,11 @@ def main():
         else:
             owner.setdefault("commits", []).append(sha)
 
+    session_tokens = no_tokens()
     for session in sessions:
         session.setdefault("commits", [])
+        add_tokens(session_tokens, session["tokens"])
+        session.pop("kind")
         issues = session.pop("goal_issues")
         session["goal_issued"] = bool(issues)
         # The carry is only intact if the wording that arrived is the wording that was
@@ -300,6 +417,17 @@ def main():
             # executed would look like a run with nothing to carry yet.
             "session_one_goal_in_force": bool(sessions) and sessions[0]["goal_matches_pinned"],
             "unattributed_commits": unattributed,
+            # What the run COST, which is half of what a reviewer comparing two arms is
+            # reading the bundle for. Split rather than merged: `sessions` is what the
+            # agent itself spent, `subprocesses` what the headless claudes its tools
+            # spawned spent - the adversarial reviewer is one - and a configuration that
+            # leans on those would look free if the two were not counted apart. `total`
+            # is their sum, so nothing downstream re-adds them and gets it wrong.
+            "tokens": {
+                "sessions": session_tokens,
+                "subprocesses": subprocess_tokens,
+                "total": add_tokens(dict(session_tokens), subprocess_tokens),
+            },
         },
         sys.stdout,
         indent=2,

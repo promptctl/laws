@@ -74,7 +74,7 @@ def carried_goal(text):
     )
 
 
-def write_session(config_dir, slug, session_id, cwd, start, end,
+def write_session(transcripts_dir, slug, session_id, cwd, start, end,
                   goal_text=None, commands=(), goal_builder=None,
                   bracket_type="assistant", extra=(), entrypoint="cli"):
     """bracket_type is the type of the first and last entries: "assistant" is a session
@@ -82,7 +82,7 @@ def write_session(config_dir, slug, session_id, cwd, start, end,
     between them as given. entrypoint is stamped on every user and assistant entry the
     way Claude Code v2.1.263 records it: "cli" for an interactive session, "sdk-cli" for
     a headless `claude -p`; None writes entries with no entrypoint at all."""
-    directory = os.path.join(config_dir, "projects", slug)
+    directory = os.path.join(transcripts_dir, slug)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, "%s.jsonl" % session_id)
     lines = [entry(session_id, cwd, start, type=bracket_type)]
@@ -104,10 +104,33 @@ def write_session(config_dir, slug, session_id, cwd, start, end,
     return path
 
 
-def run(config_dir, project_dir, goal_file, commits):
+def assistant_block(message_id, output=0, input_tokens=0, cache_creation=0, cache_read=0):
+    """One assistant entry, as Claude Code writes ONE PER CONTENT BLOCK.
+
+    Every block of a message repeats that message's whole usage, so a message billed
+    three blocks appears three times here carrying the same numbers - which is the
+    fixture the token totals have to survive, not an artificial one.
+    """
+    return {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "id": message_id,
+            "content": [{"type": "text", "text": "."}],
+            "usage": {
+                "input_tokens": input_tokens,
+                "cache_creation_input_tokens": cache_creation,
+                "cache_read_input_tokens": cache_read,
+                "output_tokens": output,
+            },
+        },
+    }
+
+
+def run(transcripts_dir, project_dir, goal_file, commits):
     payload = "".join("%s\t%s\n" % (sha, when) for sha, when in commits)
     result = subprocess.run(
-        [sys.executable, SESSIONS, config_dir, project_dir, goal_file],
+        [sys.executable, SESSIONS, transcripts_dir, project_dir, goal_file],
         input=payload, capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -117,7 +140,7 @@ def run(config_dir, project_dir, goal_file, commits):
 
 def build(tmp):
     """A run of three sessions: two that commit, then one that does not."""
-    config_dir = os.path.join(tmp, "config")
+    transcripts_dir = os.path.join(tmp, "transcripts")
     project_dir = os.path.join(tmp, "project")
     other_dir = os.path.join(tmp, "other")
     os.makedirs(project_dir)
@@ -127,30 +150,30 @@ def build(tmp):
     with open(goal_file, "w") as handle:
         handle.write(PINNED_GOAL + "\n")
 
-    write_session(config_dir, "proj", "s1", project_dir,
+    write_session(transcripts_dir, "proj", "s1", project_dir,
                   "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
                   goal_text=PINNED_GOAL)
-    write_session(config_dir, "proj", "s2", project_dir,
+    write_session(transcripts_dir, "proj", "s2", project_dir,
                   "2026-01-01T02:00:00+00:00", "2026-01-01T03:00:00+00:00",
                   goal_text=PINNED_GOAL)
-    write_session(config_dir, "proj", "s3", project_dir,
+    write_session(transcripts_dir, "proj", "s3", project_dir,
                   "2026-01-01T04:00:00+00:00", "2026-01-01T05:00:00+00:00",
                   goal_text="just do whatever seems good")
     # A session carrying ONLY a /clear. finalize-session issues one on every single
     # handoff, so if any command envelope were read as a goal this would be the common
     # case, and a run whose goal never carried would report itself perfectly healthy.
-    write_session(config_dir, "proj", "s4", project_dir,
+    write_session(transcripts_dir, "proj", "s4", project_dir,
                   "2026-01-01T06:00:00+00:00", "2026-01-01T07:00:00+00:00",
                   commands=[("/clear", "")])
     # A session of a DIFFERENT project, sharing the same config dir.
-    write_session(config_dir, "other", "s9", other_dir,
+    write_session(transcripts_dir, "other", "s9", other_dir,
                   "2026-01-01T00:30:00+00:00", "2026-01-01T00:45:00+00:00")
     # A headless `claude -p` a tool inside s2 spawned - the address-pr-reviews adversarial
     # provider runs its reviewer this way - with the SAME config dir and cwd as the run.
     # It takes turns and carries no goal, so read as a session it is a lost carry that
     # stops a healthy run (acceptance attempt 2, 2026-09-08). Its user entries say what
     # it is: entrypoint "sdk-cli", where the run's own sessions record "cli".
-    write_session(config_dir, "proj", "r1", project_dir,
+    write_session(transcripts_dir, "proj", "r1", project_dir,
                   "2026-01-01T02:10:00+00:00", "2026-01-01T02:20:00+00:00",
                   entrypoint="sdk-cli",
                   extra=[user_text("# Adversarial code review\n\nYou are a hostile reviewer.")])
@@ -159,13 +182,13 @@ def build(tmp):
         ("aaa1", "2026-01-01T00:30:00+00:00"),   # inside s1
         ("bbb2", "2026-01-01T02:30:00+00:00"),   # inside s2
     ]
-    return config_dir, project_dir, goal_file, commits
+    return transcripts_dir, project_dir, goal_file, commits
 
 
 def main():
     with tempfile.TemporaryDirectory() as tmp:
-        config_dir, project_dir, goal_file, commits = build(tmp)
-        report = run(config_dir, project_dir, goal_file, commits)
+        transcripts_dir, project_dir, goal_file, commits = build(tmp)
+        report = run(transcripts_dir, project_dir, goal_file, commits)
 
         ids = [s["session_id"] for s in report["sessions"]]
 
@@ -218,7 +241,7 @@ def main():
 
         # A commit outside every session window must be surfaced, not dropped: silently
         # discarding it would let a broken window calculation read as a clean run.
-        report2 = run(config_dir, project_dir, goal_file,
+        report2 = run(transcripts_dir, project_dir, goal_file,
                       commits + [("ccc3", "2026-06-01T00:00:00+00:00")])
         check("a commit outside every session window is reported, not dropped",
               report2["unattributed_commits"] == ["ccc3"],
@@ -227,16 +250,16 @@ def main():
         # An idle session BETWEEN two committing ones must break the streak - a loop
         # that stalled and resumed is precisely what "consecutive" excludes.
         with tempfile.TemporaryDirectory() as tmp2:
-            cfg = os.path.join(tmp2, "config")
+            transcripts = os.path.join(tmp2, "transcripts")
             proj = os.path.join(tmp2, "project")
             os.makedirs(proj)
             gf = os.path.join(tmp2, "g.md")
             with open(gf, "w") as handle:
                 handle.write(PINNED_GOAL + "\n")
-            write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00")
-            write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00", "2026-01-01T03:00:00+00:00")
-            write_session(cfg, "p", "c", proj, "2026-01-01T04:00:00+00:00", "2026-01-01T05:00:00+00:00")
-            gap = run(cfg, proj, gf, [("x", "2026-01-01T00:30:00+00:00"),
+            write_session(transcripts, "p", "a", proj, "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00")
+            write_session(transcripts, "p", "b", proj, "2026-01-01T02:00:00+00:00", "2026-01-01T03:00:00+00:00")
+            write_session(transcripts, "p", "c", proj, "2026-01-01T04:00:00+00:00", "2026-01-01T05:00:00+00:00")
+            gap = run(transcripts, proj, gf, [("x", "2026-01-01T00:30:00+00:00"),
                                       ("y", "2026-01-01T04:30:00+00:00")])
             check("an idle session between two committing ones breaks the streak",
                   gap["consecutive_with_commits"] == 1,
@@ -246,17 +269,17 @@ def main():
     # not for a successor, and not for session one. Attempt 3 was exactly this shape: the
     # driver's own pasted /goal, which this reader then counted as issued.
     with tempfile.TemporaryDirectory() as tmp2:
-        cfg = os.path.join(tmp2, "config")
+        transcripts = os.path.join(tmp2, "transcripts")
         proj = os.path.join(tmp2, "project")
         os.makedirs(proj)
         gf = os.path.join(tmp2, "g.md")
         with open(gf, "w") as handle:
             handle.write(PINNED_GOAL + "\n")
-        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+        write_session(transcripts, "p", "a", proj, "2026-01-01T00:00:00+00:00",
                       "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL, goal_builder=raw_goal)
-        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+        write_session(transcripts, "p", "b", proj, "2026-01-01T02:00:00+00:00",
                       "2026-01-01T03:00:00+00:00", goal_text=PINNED_GOAL, goal_builder=raw_goal)
-        pasted = run(cfg, proj, gf, [])
+        pasted = run(transcripts, proj, gf, [])
         check("a /goal recorded only as pasted plain text is not a goal in force",
               pasted["sessions"][1]["goal_issued"] is False
               and pasted["goal_carries_expected"] == 1
@@ -274,18 +297,18 @@ def main():
     for label, builder in (("envelope", lambda t: slash_command("/goal", t)),
                            ("carried Stop-hook condition", carried_goal)):
         with tempfile.TemporaryDirectory() as tmp2:
-            cfg = os.path.join(tmp2, "config")
+            transcripts = os.path.join(tmp2, "transcripts")
             proj = os.path.join(tmp2, "project")
             os.makedirs(proj)
             gf = os.path.join(tmp2, "g.md")
             with open(gf, "w") as handle:
                 handle.write(PINNED_GOAL + "\n")
-            write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+            write_session(transcripts, "p", "a", proj, "2026-01-01T00:00:00+00:00",
                           "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL)
-            write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+            write_session(transcripts, "p", "b", proj, "2026-01-01T02:00:00+00:00",
                           "2026-01-01T03:00:00+00:00", goal_text=PINNED_GOAL,
                           goal_builder=builder)
-            seen = run(cfg, proj, gf, [])
+            seen = run(transcripts, proj, gf, [])
             check("a goal recorded as %s is recognised" % label,
                   seen["goal_carries_intact"] == 1,
                   "goal_carries_intact=%s goal_received=%r"
@@ -295,17 +318,17 @@ def main():
     # carried goal is announced several entries in, so judging it now would read a carry
     # that has not happened yet as one that failed - and stop a healthy run.
     with tempfile.TemporaryDirectory() as tmp2:
-        cfg = os.path.join(tmp2, "config")
+        transcripts = os.path.join(tmp2, "transcripts")
         proj = os.path.join(tmp2, "project")
         os.makedirs(proj)
         gf = os.path.join(tmp2, "g.md")
         with open(gf, "w") as handle:
             handle.write(PINNED_GOAL + "\n")
-        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+        write_session(transcripts, "p", "a", proj, "2026-01-01T00:00:00+00:00",
                       "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL)
-        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+        write_session(transcripts, "p", "b", proj, "2026-01-01T02:00:00+00:00",
                       "2026-01-01T02:00:01+00:00", bracket_type="file-history-snapshot")
-        forming = run(cfg, proj, gf, [])
+        forming = run(transcripts, proj, gf, [])
         check("a successor with no turn yet is not judged for its carry",
               forming["session_count"] == 2
               and forming["goal_carries_expected"] == 0
@@ -319,25 +342,25 @@ def main():
     # received the carry and died before turning, and one that received the carry and
     # then re-goaled itself with a paraphrase.
     with tempfile.TemporaryDirectory() as tmp2:
-        cfg = os.path.join(tmp2, "config")
+        transcripts = os.path.join(tmp2, "transcripts")
         proj = os.path.join(tmp2, "project")
         os.makedirs(proj)
         gf = os.path.join(tmp2, "g.md")
         with open(gf, "w") as handle:
             handle.write(PINNED_GOAL + "\n")
-        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+        write_session(transcripts, "p", "a", proj, "2026-01-01T00:00:00+00:00",
                       "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL)
-        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+        write_session(transcripts, "p", "b", proj, "2026-01-01T02:00:00+00:00",
                       "2026-01-01T02:00:01+00:00", bracket_type="file-history-snapshot",
                       extra=[{"type": "assistant", "isSidechain": True}])
-        write_session(cfg, "p", "c", proj, "2026-01-01T03:00:00+00:00",
+        write_session(transcripts, "p", "c", proj, "2026-01-01T03:00:00+00:00",
                       "2026-01-01T03:00:01+00:00", bracket_type="file-history-snapshot",
                       goal_text=PINNED_GOAL, goal_builder=carried_goal)
-        write_session(cfg, "p", "d", proj, "2026-01-01T04:00:00+00:00",
+        write_session(transcripts, "p", "d", proj, "2026-01-01T04:00:00+00:00",
                       "2026-01-01T05:00:00+00:00", goal_text=PINNED_GOAL,
                       goal_builder=carried_goal,
                       commands=[("/goal", "just keep going")])
-        judged = run(cfg, proj, gf, [])
+        judged = run(transcripts, proj, gf, [])
         by_id = {s["session_id"]: s for s in judged["sessions"]}
         check("a subagent's assistant entry is not a turn of the session's own",
               judged["goal_carries_expected"] == 2,
@@ -357,18 +380,18 @@ def main():
     # that stops at the first quote reports a faithful carry as a paraphrase.
     quoted = 'Ship the "macklebox" seed.\n\nThen say "done".'
     with tempfile.TemporaryDirectory() as tmp2:
-        cfg = os.path.join(tmp2, "config")
+        transcripts = os.path.join(tmp2, "transcripts")
         proj = os.path.join(tmp2, "project")
         os.makedirs(proj)
         gf = os.path.join(tmp2, "g.md")
         with open(gf, "w") as handle:
             handle.write(quoted + "\n")
-        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+        write_session(transcripts, "p", "a", proj, "2026-01-01T00:00:00+00:00",
                       "2026-01-01T01:00:00+00:00", goal_text=quoted)
-        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+        write_session(transcripts, "p", "b", proj, "2026-01-01T02:00:00+00:00",
                       "2026-01-01T03:00:00+00:00", goal_text=quoted,
                       goal_builder=carried_goal)
-        seen = run(cfg, proj, gf, [])
+        seen = run(transcripts, proj, gf, [])
         check("a carried goal containing a double quote is read whole",
               seen["goal_carries_intact"] == 1
               and seen["sessions"][1]["goal_received"] == quoted,
@@ -377,19 +400,19 @@ def main():
     # The drift this eval exists to catch: a carry that ARRIVES but has been paraphrased.
     # "A goal was carried" must not be the claim being tested - the wording is.
     with tempfile.TemporaryDirectory() as tmp2:
-        cfg = os.path.join(tmp2, "config")
+        transcripts = os.path.join(tmp2, "transcripts")
         proj = os.path.join(tmp2, "project")
         os.makedirs(proj)
         gf = os.path.join(tmp2, "g.md")
         with open(gf, "w") as handle:
             handle.write(PINNED_GOAL + "\n")
         paraphrase = "Keep the loop going until the backlog is done."
-        write_session(cfg, "p", "a", proj, "2026-01-01T00:00:00+00:00",
+        write_session(transcripts, "p", "a", proj, "2026-01-01T00:00:00+00:00",
                       "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL)
-        write_session(cfg, "p", "b", proj, "2026-01-01T02:00:00+00:00",
+        write_session(transcripts, "p", "b", proj, "2026-01-01T02:00:00+00:00",
                       "2026-01-01T03:00:00+00:00", goal_text=paraphrase,
                       goal_builder=carried_goal)
-        drift = run(cfg, proj, gf, [])
+        drift = run(transcripts, proj, gf, [])
         check("a carried goal that was paraphrased is reported as drift",
               drift["goal_carries_intact"] == 0,
               "goal_carries_intact=%s" % drift["goal_carries_intact"])
@@ -401,16 +424,16 @@ def main():
     # malformed stamp per line, so the whole report has to tolerate a session made only
     # of them: one such transcript must not take down the analysis of every other.
     with tempfile.TemporaryDirectory() as tmp3:
-        cfg = os.path.join(tmp3, "config")
+        transcripts = os.path.join(tmp3, "transcripts")
         proj = os.path.join(tmp3, "project")
         os.makedirs(proj)
         gf = os.path.join(tmp3, "g.md")
         with open(gf, "w") as handle:
             handle.write(PINNED_GOAL + "\n")
-        write_session(cfg, "p", "timed", proj,
+        write_session(transcripts, "p", "timed", proj,
                       "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00")
-        write_session(cfg, "p", "untimed", proj, "not-a-time", "not-a-time")
-        report4 = run(cfg, proj, gf, [])
+        write_session(transcripts, "p", "untimed", proj, "not-a-time", "not-a-time")
+        report4 = run(transcripts, proj, gf, [])
         ids4 = [s["session_id"] for s in report4["sessions"]]
         check("a session with no readable timestamp is kept, and sorts after the timed ones",
               ids4 == ["timed", "untimed"], "got %s" % ids4)
@@ -418,13 +441,13 @@ def main():
     # Lines that are not JSON objects at all: a torn write, a bare scalar, an array. The
     # session they sit in is still read, and so is every other.
     with tempfile.TemporaryDirectory() as tmp4:
-        cfg = os.path.join(tmp4, "config")
+        transcripts = os.path.join(tmp4, "transcripts")
         proj = os.path.join(tmp4, "project")
         os.makedirs(proj)
         gf = os.path.join(tmp4, "g.md")
         with open(gf, "w") as handle:
             handle.write(PINNED_GOAL + "\n")
-        path = write_session(cfg, "p", "torn", proj,
+        path = write_session(transcripts, "p", "torn", proj,
                              "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00")
         with open(path) as handle:
             lines = handle.readlines()
@@ -434,7 +457,7 @@ def main():
             handle.write("42\n")
             handle.write("[1, 2]\n")
             handle.write("".join(lines[1:]))
-        report5 = run(cfg, proj, gf, [])
+        report5 = run(transcripts, proj, gf, [])
         check("a transcript with non-object lines is still read, and has its turn",
               [s["session_id"] for s in report5["sessions"]] == ["torn"]
               and report5["sessions"][0]["has_turn"],
@@ -445,22 +468,111 @@ def main():
     # misreading above on the next Claude Code version that renames the field; the
     # report refuses instead, and horizon_report turns that refusal into a stopped run.
     with tempfile.TemporaryDirectory() as tmp5:
-        cfg = os.path.join(tmp5, "config")
+        transcripts = os.path.join(tmp5, "transcripts")
         proj = os.path.join(tmp5, "project")
         os.makedirs(proj)
         gf = os.path.join(tmp5, "g.md")
         with open(gf, "w") as handle:
             handle.write(PINNED_GOAL + "\n")
-        write_session(cfg, "p", "unlabelled", proj, "2026-01-01T00:00:00+00:00",
+        write_session(transcripts, "p", "unlabelled", proj, "2026-01-01T00:00:00+00:00",
                       "2026-01-01T01:00:00+00:00", goal_text=PINNED_GOAL, entrypoint=None)
         result = subprocess.run(
-            [sys.executable, SESSIONS, cfg, proj, gf],
+            [sys.executable, SESSIONS, transcripts, proj, gf],
             input="", capture_output=True, text=True,
         )
         check("a transcript with turns but no entrypoint is refused, naming the transcript",
               result.returncode != 0 and "unlabelled" in result.stderr
               and "entrypoint" in result.stderr,
               "rc=%s stderr=%r" % (result.returncode, result.stderr))
+
+    # ── What the run COST ───────────────────────────────────────────────────────────
+    # The bundle reports token totals so two arms can be compared on price as well as on
+    # outcome, which makes every one of these a number a human will quote. Each check
+    # below guards a way the count has already been shown to be wrong on real data.
+    with tempfile.TemporaryDirectory() as tmp6:
+        transcripts = os.path.join(tmp6, "transcripts")
+        proj = os.path.join(tmp6, "project")
+        other = os.path.join(tmp6, "other")
+        os.makedirs(proj)
+        os.makedirs(other)
+        gf = os.path.join(tmp6, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+
+        # One message billed across three blocks, plus a second message. A reader that
+        # sums entries reports 3000+500; the truth is 1000+500. Measured on a real
+        # 475-entry transcript on 2026-09-21, that error was 2.6x.
+        write_session(transcripts, "p", "one", proj,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
+                      goal_text=PINNED_GOAL,
+                      extra=[assistant_block("m1", output=1000, cache_read=7),
+                             assistant_block("m1", output=1000, cache_read=7),
+                             assistant_block("m1", output=1000, cache_read=7),
+                             assistant_block("m2", output=500, input_tokens=3)])
+        # A subagent the session dispatched. Its tokens are spent BY this session, so
+        # they belong to it - a configuration that leans on subagents must not look free.
+        write_session(transcripts, "p", "two", proj,
+                      "2026-01-01T02:00:00+00:00", "2026-01-01T03:00:00+00:00",
+                      goal_text=PINNED_GOAL,
+                      extra=[assistant_block("m3", output=40),
+                             dict(assistant_block("m4", output=60), isSidechain=True)])
+        # A headless `claude -p` the run spawned: not a session, but real spend.
+        write_session(transcripts, "p", "reviewer", proj,
+                      "2026-01-01T02:10:00+00:00", "2026-01-01T02:20:00+00:00",
+                      entrypoint="sdk-cli",
+                      extra=[assistant_block("m5", output=7000)])
+        # Another project sharing the directory: not this run's spend at all.
+        write_session(transcripts, "elsewhere", "stranger", other,
+                      "2026-01-01T00:30:00+00:00", "2026-01-01T00:45:00+00:00",
+                      extra=[assistant_block("m6", output=999999)])
+
+        cost = run(transcripts, proj, gf, [])
+        by_id = {s["session_id"]: s for s in cost["sessions"]}
+
+        check("a message billed across several blocks is counted once",
+              by_id["one"]["tokens"]["output_tokens"] == 1500,
+              "got %s" % by_id["one"]["tokens"])
+        check("every usage field is carried, not just output",
+              by_id["one"]["tokens"]["cache_read_input_tokens"] == 7
+              and by_id["one"]["tokens"]["input_tokens"] == 3,
+              "got %s" % by_id["one"]["tokens"])
+        check("a subagent's tokens are billed to the session that dispatched it",
+              by_id["two"]["tokens"]["output_tokens"] == 100,
+              "got %s" % by_id["two"]["tokens"])
+        check("session totals are the sum of the sessions",
+              cost["tokens"]["sessions"]["output_tokens"] == 1600,
+              "got %s" % cost["tokens"]["sessions"])
+        check("a headless subprocess is billed to the run, apart from the sessions",
+              cost["tokens"]["subprocesses"]["output_tokens"] == 7000
+              and cost["tokens"]["total"]["output_tokens"] == 8600,
+              "got subprocesses=%s total=%s"
+              % (cost["tokens"]["subprocesses"], cost["tokens"]["total"]))
+        check("another project's tokens are not billed to this run",
+              cost["tokens"]["total"]["output_tokens"] == 8600,
+              "got %s" % cost["tokens"]["total"])
+
+    # Every transcript belonging to somewhere else, and none to the project: the shape an
+    # archived run takes when it is handed the path the BUNDLE sits at rather than the
+    # path the run used. It reads as a run in which nothing ever happened, so it is
+    # refused instead - the zero is the dangerous answer, not the error.
+    with tempfile.TemporaryDirectory() as tmp7:
+        transcripts = os.path.join(tmp7, "transcripts")
+        proj = os.path.join(tmp7, "project")
+        other = os.path.join(tmp7, "elsewhere")
+        os.makedirs(proj)
+        os.makedirs(other)
+        gf = os.path.join(tmp7, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(transcripts, "p", "moved", other,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00")
+        moved = subprocess.run(
+            [sys.executable, SESSIONS, transcripts, proj, gf],
+            input="", capture_output=True, text=True,
+        )
+        check("transcripts that all belong elsewhere are refused, not reported as a quiet zero",
+              moved.returncode != 0 and "run.json" in moved.stderr,
+              "rc=%s stderr=%r" % (moved.returncode, moved.stderr))
 
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))
