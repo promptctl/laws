@@ -1087,39 +1087,58 @@ horizon_remote_branches() {
 # into a refusal naming the wrong cause, and the two want opposite fixes.
 # [LAW:no-silent-failure]
 horizon_assert_reviewer_credential() {
-  local repo="$1" repo_secrets org_secrets names
-  # BOTH listings, because the question is what this repository's workflows can SEE, and
-  # the two answers are disjoint: `gh secret list` reports only secrets set ON the repo,
-  # while an organization secret shared with it authenticates the action just as well and
-  # appears in neither that listing nor any subset of it. Asking only the first would
-  # refuse a healthy run and name a cause that was not true - the same wrong-cause failure
-  # the unreadable-listing branch below exists to avoid, arrived at from the other side.
-  # Checked here on the live remote: the repo listing and the org-shared listing came back
-  # with one name each and no overlap.
+  local repo="$1" endpoint names unreadable=""
+  # TWO listings, and the run passes on the FIRST that carries the name, because the
+  # question is what this repository's workflows can SEE and both answers grant exactly
+  # that: a secret set on the repository and an organization secret shared with the
+  # repository authenticate the action identically. The two are disjoint - actions/secrets
+  # never reports an org-shared name, actions/organization-secrets never reports a
+  # repository one - so a gate asking only one of them would refuse a healthy run and name
+  # a cause that was not true. Checked on the live remote: one name each, no overlap.
   #
-  # `actions/organization-secrets` is scoped to THIS REPOSITORY rather than to the org, so
-  # what it returns is what the repo can actually use. `gh secret list --org` would answer
-  # a different question - every secret the organization holds, including ones shared with
+  # `organization-secrets` is scoped to THIS REPOSITORY rather than to the organization, so
+  # what it returns is what the repo can actually use. `gh secret list --org` would answer a
+  # different question - every secret the organization holds, including ones shared with
   # other repositories only - and a gate built on it would pass a run whose repository
   # cannot see the credential at all. [LAW:parse-dont-validate]
-  repo_secrets="$(gh secret list --repo "$repo" --json name --jq '.[].name')" \
-    || horizon_die "could not list the repository Actions secrets on $repo - whether the reviewer has a credential is unknown here, which is not the same as false"
-  org_secrets="$(gh api "repos/$repo/actions/organization-secrets" --jq '.secrets[].name')" \
-    || horizon_die "could not list the organization secrets shared with $repo - whether the reviewer has a credential is unknown here, which is not the same as false"
-  names="$repo_secrets"$'\n'"$org_secrets"
-  # Whole-line membership, in the shell, over the joined list. `grep -qxF` would do the
-  # same job and bring one more exit code to read: its 2 means grep itself failed, and
-  # folding that into 1 would undo, one line later, the care the two refusals above take
-  # to keep "could not read" apart from "absent". The line anchors are what rules out
-  # ${REVIEWER_SECRET}_<ACCOUNT>, which is exactly how the keychain items holding these
-  # tokens are named - the action reads the bare name and would find nothing.
-  case $'\n'"$names"$'\n' in
-    *$'\n'"$REVIEWER_SECRET"$'\n'*) ;;
-    *) horizon_die "$repo carries no $REVIEWER_SECRET secret - not on the repository, and none shared with it from the organization - so the reviewer Action cannot authenticate and this run would merge every pull request unreviewed.
+  #
+  # They are a LIST rather than two branches because they differ in one value, the endpoint
+  # that answers them, and nothing downstream cares which one did. That is also why
+  # `--paginate` below is written once instead of twice.
+  # [LAW:dataflow-not-control-flow]
+  #
+  # `--paginate` is load-bearing, not decoration: the REST default is 30 per page and a
+  # truncated page is indistinguishable from a complete one, so without it a repository
+  # holding 31 secrets would be refused with "carries no ..." while the credential sat on
+  # page two - the same wrong-cause refusal the rest of this function is built to avoid,
+  # arrived at from a third side. [LAW:no-silent-failure]
+  for endpoint in secrets organization-secrets; do
+    # A listing that cannot be read is recorded and stepped over rather than refused on the
+    # spot, so the happy path stays unindented and the other endpoint still gets its turn.
+    names="$(gh api --paginate "repos/$repo/actions/$endpoint" --jq '.secrets[].name')" \
+      || { unreadable="${unreadable:+$unreadable, and }repos/$repo/actions/$endpoint"; continue; }
+    # Whole-line membership, in the shell. `grep -qxF` would do the same job and bring one
+    # more exit code to read: its 2 means grep itself failed, and folding that into 1 would
+    # undo, one line later, the care this function takes to keep "could not read" apart from
+    # "absent". The line anchors are what rules out ${REVIEWER_SECRET}_<ACCOUNT>, which is
+    # exactly how the keychain items holding these tokens are named - the action reads the
+    # bare name and would find nothing.
+    case $'\n'"$names"$'\n' in
+      *$'\n'"$REVIEWER_SECRET"$'\n'*) return 0 ;;
+    esac
+  done
+  # A listing that FAILED is worth reporting only once no listing has produced the name: a
+  # credential already found is a credential whatever the other call did. Refusing the
+  # moment a call fails - which is what reading these in the other order amounts to - aborts
+  # runs whose secret was sitting in the listing that answered, and blames a credential that
+  # was set. [LAW:no-silent-failure]
+  if [ -n "$unreadable" ]; then
+    horizon_die "could not list $unreadable - whether the reviewer has a credential is unknown here, which is not the same as false"
+  fi
+  horizon_die "$repo carries no $REVIEWER_SECRET secret - not on the repository, and none shared with it from the organization - so the reviewer Action cannot authenticate and this run would merge every pull request unreviewed.
 Set it once - it survives the reset that begins every run. The fleet's copy of this
 credential is owned by the agent-code-review-setup skill's install.sh, whose SECRETS
-table names the keychain item to read it from." ;;
-  esac
+table names the keychain item to read it from."
 }
 
 # ══ THE UNATTENDED LOOP: /goal to completion across resets (promptctl-horizon-7ry.3) ═

@@ -283,14 +283,27 @@ Last, and unlike everything above it, a check that touches no GitHub at all: the
 **reviewer-credential gate** `run-loop.sh` opens with. It is driven from a `gh` fixture, so
 the verdict is about the instrument rather than about whether this machine's secret store
 happens to be set up — and so both directions of the gate run whatever that store holds,
-where the live remote could only ever exhibit the one it is currently in. Six fixtures: the
-credential absent, present on the repository, present as an **organization secret shared
+where the live remote could only ever exhibit the one it is currently in. Eight fixtures:
+the credential absent, present on the repository, present as an **organization secret shared
 with the repository** (a different listing entirely, and one the action authenticates from
 just as well), a **suffixed near-miss** — `CLAUDE_CODE_OAUTH_TOKEN_<ACCOUNT>` is exactly how
-the keychain items holding these tokens are named, and the action reads the bare name — and
+the keychain items holding these tokens are named, and the action reads the bare name —
 each of the two listings failing outright, which has to be reported as an unknown rather
-than as an absent secret. The fixture answers those two calls and refuses any other by
-name, so a gate that grows a third question fails here instead of being waved through.
+than as an absent secret, and each of them failing *while the other one carries the
+credential*, which must not refuse at all. A listing that could not be read only decides
+anything once no listing has produced the name; refusing the moment a call fails would abort
+a run whose credential was sitting in the listing that answered, and blame a credential that
+was set.
+
+The fixture answers those two calls and refuses any other by name, so a gate that grows a
+third question fails here instead of being waved through — and it matches the whole call
+shape, arity and `--paginate` and the jq filter, not merely the subcommand. A stub that
+answered any shape would let the real call drift beneath a green verdict: change the filter
+and every fixture above still passes, while the live gate reads gh's nonzero exit as an
+unreadable listing and refuses every run there is. `--paginate` earns its place in that list
+because the REST default is thirty names per page and a truncated page is indistinguishable
+from a complete one — the credential would sit on page two while the run was refused for not
+having one.
 
 ## Seeding a run's time zero
 

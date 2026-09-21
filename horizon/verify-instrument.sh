@@ -588,6 +588,16 @@ print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
   # whole point of there being two is that they hold different names. `!` makes a listing
   # itself fail, which is a different answer from "the secret is absent" and has to stay
   # different.
+  #
+  # It checks the WHOLE call shape - arity, `--paginate`, and the jq filter - and not just
+  # the subcommand, because a stub that answers any shape lets the real call drift beneath a
+  # green verdict. Change the filter to `.[].name` and every fixture below still passes,
+  # while the live gate takes gh's nonzero exit for an unreadable listing and refuses every
+  # run there is: a verifier certifying an instrument that cannot start. Dropping
+  # `--paginate` is the same failure with a rarer trigger. The cost is that a
+  # semantically-identical rewrite of the filter fails here too, and that is the trade
+  # taken deliberately - this fixture's contract is "I am gh, and I answer these two calls".
+  # [LAW:no-silent-failure]
   cat > "$gh_stub/gh" <<'GH_FIXTURE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -597,13 +607,17 @@ answer() {
   fi
   printf '%s\n' $1
 }
-case "$*" in
-  "secret list "*)
-    answer "${HORIZON_FIXTURE_REPO_SECRETS:-}" ;;
-  "api repos/"*"/actions/organization-secrets"*)
+if [ "$#" -ne 5 ] || [ "$1" != "api" ] || [ "$2" != "--paginate" ] \
+    || [ "$4" != "--jq" ] || [ "$5" != ".secrets[].name" ]; then
+  printf 'gh fixture: unexpected call shape: %s\n' "$*" >&2; exit 1
+fi
+case "$3" in
+  repos/*/actions/organization-secrets)
     answer "${HORIZON_FIXTURE_ORG_SECRETS:-}" ;;
+  repos/*/actions/secrets)
+    answer "${HORIZON_FIXTURE_REPO_SECRETS:-}" ;;
   *)
-    printf 'gh fixture: unexpected call: %s\n' "$*" >&2; exit 1 ;;
+    printf 'gh fixture: unexpected endpoint: %s\n' "$3" >&2; exit 1 ;;
 esac
 GH_FIXTURE
   chmod +x "$gh_stub/gh" || fail "could not make the gh fixture executable"
@@ -684,7 +698,22 @@ GH_FIXTURE
     HORIZON_FIXTURE_ORG_SECRETS="$REVIEWER_SECRET" \
     bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
     || fail "the reviewer gate refused a repository whose $REVIEWER_SECRET is shared from the organization - the action would have authenticated and the run was blocked for a cause that was not true"
-  pass "the reviewer gate accepts $REVIEWER_SECRET from either the repository or the organization, refuses its absence and a suffixed near-miss, and tells an unreadable listing from an absent secret"
+  # An unreadable listing is an UNKNOWN, and an unknown is only worth refusing over when no
+  # listing produced the name. A gate that died on the first failing call would abort runs
+  # whose credential was sitting in the listing that answered perfectly well, and blame a
+  # credential that was set - the wrong-cause refusal again, this time triggered by a
+  # transient 403 rather than by a missing secret. Both directions, because the gate stops
+  # at the first listing that carries the name, so the failing call falls on the other side
+  # each time. [LAW:no-silent-failure]
+  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="!" \
+    HORIZON_FIXTURE_ORG_SECRETS="$REVIEWER_SECRET" \
+    bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
+    || fail "the reviewer gate refused a run over an unreadable repository listing while the organization listing carried $REVIEWER_SECRET - the action would have authenticated and the run was blocked for a cause that was not true"
+  PATH="$gh_stub:$PATH" HORIZON_FIXTURE_REPO_SECRETS="$REVIEWER_SECRET" \
+    HORIZON_FIXTURE_ORG_SECRETS="!" \
+    bash -c "$gate" _ "$SCRIPT_DIR/lib.sh" "$HORIZON_RUN_REPO" >/dev/null 2>&1 \
+    || fail "the reviewer gate refused a run over an unreadable organization listing while the repository itself carried $REVIEWER_SECRET - the action would have authenticated and the run was blocked for a cause that was not true"
+  pass "the reviewer gate accepts $REVIEWER_SECRET from either the repository or the organization, refuses its absence and a suffixed near-miss, tells an unreadable listing from an absent secret, and lets neither listing's failure override a credential the other one proved"
 
   horizon_log "all checks passed"
 }
