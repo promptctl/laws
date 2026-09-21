@@ -74,6 +74,10 @@ main() {
   local seed_dir="${1:-$SCRIPT_DIR/seeds/macklebox}" memento_ref="${2:-}" lit_ref="${3:-}"
 
   horizon_need_base
+  # Read at both ends of the run - the start below, and the end from the close-out - so a
+  # machine without it fails here by name rather than with a bare "command not found"
+  # from inside the exit trap, where the run is already over.
+  horizon_need date
   horizon_need git
   horizon_need lit
   horizon_need python3
