@@ -1,6 +1,6 @@
 {
   "name": "promptctl",
-  "description": "Prompt- and guidance-engineering plugins: the universal architectural laws with medium-scoped quality skills for code, prose and prompts.",
+  "description": "Prompt- and guidance-engineering plugins: the universal architectural laws with a quality skill scoped to each medium they cover.",
   "owner": {
     "name": "Brandon Fryslie"
   },
@@ -8,7 +8,7 @@
     {
       "name": "laws",
       "source": "./plugins/laws",
-      "description": "Universal architectural laws for code work, medium-scoped quality skills (code / prose / prompt), and a skill-router hook that loads the right one for each task."
+      "description": "Universal architectural laws for code work, medium-scoped quality skills, and a skill-router hook that loads the one matching each task's medium."
     }
   ]
 }
