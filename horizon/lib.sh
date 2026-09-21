@@ -1537,7 +1537,7 @@ query($owner:String!, $name:String!, $number:Int!) {
 # [LAW:no-silent-failure]
 horizon_require_bundle_project() {
   [ -n "$1" ] && [ -d "$1" ] \
-    || horizon_die "no project to read in this bundle: seed/seed-manifest.json names none, either because the run ended before seeding finished or because the manifest it wrote cannot be read - seed/ is in the bundle, look there for which"
+    || horizon_die "no project to read in this bundle: no readable project.name in seed/seed-manifest.json. Check whether seed/ exists at all - absent means the run never began seeding, present means seeding got partway and left a manifest that will not read"
 }
 
 horizon_capture_prs() {

@@ -169,7 +169,10 @@ def message_key(entry, line_number):
 
     The message id is the discriminator, and collapsing on it loses nothing only while
     the duplicates report identical usage - so read_transcript checks that rather than
-    trusting it, and stops if it ever stops being true. An entry with no id cannot be
+    trusting it. It does not stop there, and must not: this runs on the live poll, where
+    a nonzero exit is a dead run. A disagreement is COUNTED, the larger figure kept, and
+    reported as `usage_disagreements` for the close-out to refuse - see the handling
+    itself for the full reasoning. An entry with no id cannot be
     matched to any other, so it counts once on its own - the direction that can only
     ever UNDER-collapse, because a schema that stopped writing ids must not silently
     start billing at a fraction of the truth.
@@ -441,10 +444,18 @@ def main():
     # another project's" about a set that demonstrably was not. The predicate has to be
     # the claim the sentence makes. [LAW:one-source-of-truth]
     if foreign and not sessions and not subprocesses:
-        sys.exit("no transcript in %s belongs to %s (%d found, all another project's).\n"
+        # Forming transcripts are named separately rather than folded into the count. They
+        # are not evidence of anything: they recorded no working directory, so "all another
+        # project's" is a claim about the foreign ones alone, and the operator reading this
+        # is debugging precisely the question of which transcripts belong where.
+        also = ""
+        if forming:
+            also = (" %d more recorded no working directory at all, so nothing can place "
+                    "them either way." % len(forming))
+        sys.exit("no transcript in %s belongs to %s (%d found, all another project's).%s\n"
                  "An archived run records the path it ran at, not where the bundle now "
                  "sits - pass project.path from the bundle's run.json."
-                 % (transcripts_dir, project_dir, len(foreign)))
+                 % (transcripts_dir, project_dir, len(foreign), also))
 
     # Ordered by when they ran. Session ids are uuids and sort meaninglessly, and the
     # acceptance criterion is about CONSECUTIVE sessions, so the order has to be real.

@@ -812,6 +812,37 @@ def main():
               siblings["tokens"]["total"]["output_tokens"] == 10,
               "got %s" % siblings["tokens"]["total"])
 
+    # Foreign and forming together at the abort. The operator who sees this is debugging
+    # "which transcripts belong where", so counting the unplaceable ones in with the ones
+    # proved to be elsewhere answers that question wrongly in the one message written to
+    # answer it. The two states are not interchangeable and the sentence may not merge them.
+    with tempfile.TemporaryDirectory() as tmp15:
+        transcripts = os.path.join(tmp15, "transcripts")
+        proj = os.path.join(tmp15, "project")
+        other = os.path.join(tmp15, "elsewhere")
+        os.makedirs(proj)
+        os.makedirs(other)
+        os.makedirs(os.path.join(transcripts, "p"))
+        gf = os.path.join(tmp15, "g.md")
+        with open(gf, "w") as handle:
+            handle.write(PINNED_GOAL + "\n")
+        write_session(transcripts, "elsewhere", "stranger3", other,
+                      "2026-01-01T00:00:00+00:00", "2026-01-01T01:00:00+00:00",
+                      extra=[assistant_block("m1", output=5)])
+        with open(os.path.join(transcripts, "p", "booting2.jsonl"), "w") as handle:
+            handle.write(json.dumps({"type": "last-prompt", "sessionId": "booting2"}) + "\n")
+        mixed_abort = subprocess.run(
+            [sys.executable, SESSIONS, transcripts, proj, gf],
+            input="", capture_output=True, text=True,
+        )
+        check("an archived bundle with nothing that belongs is still refused",
+              mixed_abort.returncode != 0,
+              "rc=%s stderr=%r" % (mixed_abort.returncode, mixed_abort.stderr))
+        check("the refusal counts the unplaceable transcripts apart from the foreign ones",
+              "1 found, all another project's" in mixed_abort.stderr
+              and "1 more recorded no working directory" in mixed_abort.stderr,
+              "stderr=%r" % mixed_abort.stderr)
+
     if FAILURES:
         print("\n%d check(s) failed" % len(FAILURES))
         return 1

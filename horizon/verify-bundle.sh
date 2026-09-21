@@ -644,8 +644,10 @@ case "$UNREADABLE_LOG" in
 esac
 UNREADABLE_REFUSAL="$( ( horizon_require_bundle_project "$(horizon_bundle_project_dir "$UNREADABLE")" ) 2>&1 )" \
   && fail "a bundle whose manifest will not read was accepted as having a project"
+# The refusal must not presuppose which of the two causes it is, and must not presuppose
+# seed/ is even there to look at - the died-before-seeding bundle above has no seed/ at all.
 case "$UNREADABLE_REFUSAL" in
-  *"cannot be read"*) : ;;
+  *"Check whether seed/ exists at all"*) : ;;
   *) fail "the refusal still asserts a cause it did not check: $UNREADABLE_REFUSAL" ;;
 esac
 pass "a seed manifest that exists and will not read is refused without inventing a cause"
