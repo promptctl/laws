@@ -158,11 +158,18 @@ of five states:
 
 | state | what the pane shows | what it means |
 | --- | --- | --- |
-| `ready` | banner, input box, no login notice | up and accepting input |
+| `ready` | banner **and** a painted status line, with no login notice on it | up and accepting input |
 | `logged-out` | banner **and** `Not logged in` / `Login expired` | drew everything, authenticates nothing |
 | `onboarding` | the theme picker, before any banner | boot state never reached this config dir |
 | `untrusted` | the workspace trust dialog | the trust key was written under a path the CLI does not look itself up under |
-| `forming` | nothing recognised yet | still starting — no evidence either way |
+| `forming` | nothing recognised yet, **or** a banner whose status line has not painted | still starting — no evidence either way |
+
+`ready` is the only state that turns on something *not* being present, so it is the only
+one that could be reached by looking too early. It requires the status line to have been
+painted before it will read anything into that line being quiet: the mode indicator and
+the login notice share it, so a pane showing the indicator has already had its chance to
+show a notice. A poll landing between the banner and the status line gets `forming` and
+tries again — never `ready` on the strength of evidence that had not arrived yet.
 
 `logged-out` exists because readiness used to be a boolean and the boolean was wrong: a
 session whose credential has died draws the banner *and* an input box, so grepping the
