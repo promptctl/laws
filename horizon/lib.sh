@@ -93,7 +93,7 @@ horizon_need() {
 # function, and the five drifting per-script copies this replaced are the worse failure.
 # tar/base64 stay with pin-instrument.sh only because they are reached from nothing
 # else at all.
-HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tr wc)
+HORIZON_BASE_TOOLS=(awk cp find grep mkdir mktemp mv rm sed sleep sort tail tr wc)
 
 horizon_need_base() {
   local tool
@@ -905,6 +905,16 @@ HORIZON_ONBOARDING_RE="Choose the text style|Let's get started[.]"
 # horizon_write_boot_state, which is what settles it, and which has to spell that path the
 # same way the CLI does or this dialog is what an unattended run stops at.
 HORIZON_UNTRUSTED_RE='Is this a project you created or one you trust[?]|Accessing workspace:'
+# The bypass-permissions disclaimer - the THIRD gate horizon_write_boot_state settles, and
+# for a while the only one with no state here, which meant the one gate most likely to come
+# back was the one that would not be named when it did. That function's own header records
+# the CLI having already MOVED this acceptance once, from `bypassPermissionsModeAccepted`
+# in .claude.json to `skipDangerousModePermissionPrompt` in settings.json, and expects it
+# to move again. When it does, the key is written where nothing reads it, the session stops
+# here, and without a state of its own that stop looked like `forming`: a run burning the
+# full boot timeout and then reporting that the pane "drew nothing this script recognises",
+# about a dialog that was on screen the whole time and was never going to clear.
+HORIZON_BYPASS_GATE_RE='Bypass Permissions mode'
 HORIZON_BOOT_TIMEOUT_SECONDS=120
 HORIZON_POLL_SECONDS=2
 
@@ -1199,8 +1209,17 @@ horizon_boot_state() {
   # The status line, or empty when it has not been painted yet. `tail -1` because the
   # mode indicator is drawn once per pane; taking the last occurrence keeps a line of
   # conversation content that happens to quote it from standing in for the real one.
+  #
+  # `|| true` because this pipeline is EXPECTED to find nothing - every onboarding,
+  # untrusted and blank pane has no status line - and under `set -o pipefail` that is a
+  # non-zero pipeline. Every call site today happens to wrap this function in a command
+  # substitution, where errexit does not reach it, so the gap is invisible; called the way
+  # the usage line above documents, `horizon_boot_state < pane` under `set -euo pipefail`,
+  # it would kill the caller with exit 1 and no output. A function whose safety depends on
+  # which syntax the caller used is not safe, and `shopt -s inherit_errexit` anywhere
+  # above would break all of them at once. [LAW:no-silent-failure]
   local status
-  status="$(printf '%s\n' "$pane" | grep -E "$HORIZON_STATUS_LINE_RE" | tail -1)"
+  status="$(printf '%s\n' "$pane" | grep -E "$HORIZON_STATUS_LINE_RE" | tail -1)" || true
   if printf '%s\n' "$pane" | grep -qE "$HORIZON_BANNER_RE"; then
     if [ -n "$status" ] && printf '%s\n' "$status" | grep -qE "$HORIZON_LOGIN_NOTICE_RE"; then
       printf 'logged-out\n'
@@ -1218,6 +1237,8 @@ horizon_boot_state() {
     printf 'onboarding\n'
   elif printf '%s\n' "$pane" | grep -qE "$HORIZON_UNTRUSTED_RE"; then
     printf 'untrusted\n'
+  elif printf '%s\n' "$pane" | grep -qE "$HORIZON_BYPASS_GATE_RE"; then
+    printf 'bypass-disclaimer\n'
   else
     printf 'forming\n'
   fi
@@ -1232,6 +1253,7 @@ horizon_boot_state_meaning() {
     ready) printf 'the session is up and accepting input' ;;
     logged-out) printf 'the session drew its input box but cannot authenticate, so it would accept the goal and do nothing. Run horizon/login.sh (it needs a browser); the credential is bound to the config dir PATH, so logging in elsewhere will not help' ;;
     onboarding) printf 'the session stopped at first-run onboarding, which no unattended run can answer - horizon_write_boot_state did not run, or did not reach this config dir' ;;
+    bypass-disclaimer) printf 'the session stopped at the bypass-permissions disclaimer, which no unattended run can answer - the acceptance was written to a key this CLI version does not read. It has moved once already (bypassPermissionsModeAccepted in .claude.json became skipDangerousModePermissionPrompt in settings.json); horizon_write_boot_state is the seam that has to move with it' ;;
     untrusted) printf 'the session stopped at the workspace trust dialog - horizon_write_boot_state keyed projects[] under a path the CLI does not look itself up under, which is what an unresolved work dir produces' ;;
     forming) printf 'the session drew nothing this script recognises' ;;
     *) printf 'unclassified' ;;
