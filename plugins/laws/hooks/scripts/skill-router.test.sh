@@ -535,5 +535,47 @@ case "$(cat "$crlfpol/err.txt")" in
 esac
 rm -rf "$crlfpol"
 
+# 15. The routing text reaches the agent VERBATIM. Tests 15a-15d asserted the rendered
+#     conflict clause and were removed with the renderer, which also removed the only
+#     assertions on the session-start emission itself - leaving the routing prose, the one
+#     string every session actually receives, covered by nothing.
+rt_out=$(run session-start "$(start_payload RT1 startup)")
+case "$rt_out" in
+  *'"hookEventName":"SessionStart"'*) ok "session-start emits a SessionStart payload";;
+  *) bad "session-start emits a SessionStart payload (got: $rt_out)";;
+esac
+case "$rt_out" in
+  *'identify the medium of your primary deliverable'*) ok "  ... carrying the routing text";;
+  *) bad "  ... carrying the routing text (got: $rt_out)";;
+esac
+
+# 15a. And the prose survives shell-special characters. ROUTE_TEXT's heredoc was unquoted
+#      while it interpolated the conflict clause; with that gone it is quoted, and this is
+#      what says so. Unquote it again and a reworded line containing a $ or a backtick
+#      expands at hook launch - or breaks the JSON - and every other test here stays green.
+#      Only mutating the shipped file can see that; reading the heredoc cannot.
+rtmut=$(mktemp -d)
+cp "$ROUTER" "$rtmut/skill-router.sh"
+cp "$HERE/incompatible-crafts.txt" "$rtmut/incompatible-crafts.txt"
+mutant='Load the craft for $HOME and `id` and note the cost.'
+awk -v repl="$mutant" '
+  /^read -r -d .. ROUTE_TEXT <</ { print; getline; print repl; next }
+  { print }
+' "$rtmut/skill-router.sh" > "$rtmut/mutated.sh"
+mv "$rtmut/mutated.sh" "$rtmut/skill-router.sh"
+chmod +x "$rtmut/skill-router.sh"
+# The mutation must have landed, or the assertion below passes without testing anything.
+if grep -qF 'and `id` and note the cost.' "$rtmut/skill-router.sh"; then
+  ok "  ... (routing-text mutation applied)"
+else
+  bad "routing-text mutation did not apply - the next assertion would pass vacuously"
+fi
+rt_mut_out=$(printf '%s' "$(start_payload RT2 startup)" | "$rtmut/skill-router.sh" session-start 2>/dev/null)
+case "$rt_mut_out" in
+  *'$HOME'*'`id`'*) ok "  ... and shell-special characters in it are emitted verbatim";;
+  *) bad "  ... and shell-special characters in it are emitted verbatim (expanded or mangled: $rt_mut_out)";;
+esac
+rm -rf "$rtmut"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

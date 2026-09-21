@@ -1,3 +1,8 @@
+---
+name: laws
+description: Rules for editing the laws skills in THIS repo - which content belongs in which file, and which rules stay inside one medium. Use when creating, editing, or reviewing any `skills/*/SKILL.md`, any file under a skill's `references/`, or any `design-docs/design-goals-*.md`. How to write the prose well is laws:prompt's job, not this skill's.
+---
+
 # Editing the laws skills
 
 Each medium is one skill. A skill takes whatever shape makes it most effective for

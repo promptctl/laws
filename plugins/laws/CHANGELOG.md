@@ -1,5 +1,12 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.28.0 - 2026-09-21
+
+- laws(spec): add the spec medium - PRD, FSD, and Technical Spec templates tied by a traceability matrix (#67)
+- laws: restore the laws skill's frontmatter, without which the skill did not register (#67)
+- laws: describe craft incompatibility generically, so no comment names one craft against another (#67)
+- laws(router): drop the dead conflict-clause renderer; the deny message carries the subagent brief (#67)
+
 ## v0.27.0 - 2026-09-21
 
 - laws(code): add [LAW:escape-local-minima] - the cheap "doesn't make anything worse, until we have X" choice pauses the work and the escape becomes the work (#68)
