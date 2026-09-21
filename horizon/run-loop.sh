@@ -195,7 +195,16 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # means this one process is every session the run will have. [LAW:one-source-of-truth]
   horizon_launch_session "$config_dir" "$project_dir" "$goal_file" \
     "$instrument_dir/bin/claude"
-  horizon_wait_ready
+  # The pane the wait settled on, kept rather than re-fetched: the banner is on screen
+  # because THIS capture is what `ready` was read out of, and by the time the manifest has
+  # been opened the session has been working for a beat and tmux would hand back a pane
+  # that has moved on. [LAW:no-ambient-temporal-coupling]
+  # Checked rather than bare, for the reason stated at recorded_version below: horizon_die
+  # inside a command substitution exits the subshell, so an unchecked assignment leaves
+  # errexit to end the run on the next statement instead of here. [LAW:no-silent-failure]
+  local booted_pane
+  booted_pane="$(horizon_wait_ready)" \
+    || horizon_die "session one never became ready - the wait's diagnosis is above"
   # Asked of the session rather than of the driver: manifest.json records a version read
   # from a file on disk, and this is the only reading taken from the process running it.
   #
@@ -207,7 +216,7 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   local recorded_version
   recorded_version="$(horizon_manifest_field "$instrument_dir/manifest.json" claude version)" \
     || horizon_die "could not read claude.version from $instrument_dir/manifest.json"
-  horizon_assert_booted_version "$HORIZON_TMUX_SESSION" "$recorded_version"
+  horizon_assert_booted_version "$HORIZON_TMUX_SESSION" "$recorded_version" <<<"$booted_pane"
   # The isolation guarantee, checked rather than assumed - see horizon_assert_transport.
   horizon_assert_transport
   horizon_log "handoff transport verified: in-place reset, config dir preserved"

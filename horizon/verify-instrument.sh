@@ -273,7 +273,8 @@ for p in plugins:
   # Asked of the binary the symlink points at, so a manifest version copied from anywhere
   # else - an install path, an earlier run - cannot pass. [LAW:one-source-of-truth]
   local link_version
-  link_version="$(horizon_claude_version "$pinned_link")"
+  link_version="$(horizon_claude_version "$pinned_link")" \
+    || fail "could not read a version out of the pinned claude symlink at $pinned_link"
   [ "$link_version" = "$recorded_claude_version" ] \
     || fail "the pinned binary reports $link_version but the manifest records $recorded_claude_version"
   pass "the pinned claude symlink, the recorded path and the recorded version all describe one binary ($recorded_claude_version)"
@@ -392,12 +393,21 @@ print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
   # banner is the running version; the first is history.
   ver="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.1.263" " (reset)" " ▐▛███▛█   Claude Code v2.1.278" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_pane_version)"
   [ "$ver" = 2.1.278 ] || fail "a pane carrying two banners read as '$ver', not the later 2.1.278"
+  # A version carrying a suffix reads out WHOLE. This is the half the two readers have to
+  # agree on: horizon_claude_version records what the binary says, this reads what the
+  # banner shows, and horizon_assert_booted_version compares them for equality - so a
+  # banner pattern that stopped at the first non-digit would record `2.2.0-rc.1`, read
+  # back `2.2.0`, and refuse every run on a pre-release with a message blaming the pin.
+  # Both patterns are built from HORIZON_VERSION_RE now; this is what says so.
+  ver="$(printf '%s\n' " ▐▛███▛█   Claude Code v2.2.0-rc.1" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_pane_version)"
+  [ "$ver" = 2.2.0-rc.1 ] \
+    || fail "a suffixed banner version read as '$ver', not the whole 2.2.0-rc.1 - the banner and binary version grammars have drifted apart again"
   # Emptiness is the honest answer when the banner has scrolled off, and it must be
   # distinguishable from a version: horizon_assert_booted_version treats it as "proves
   # nothing" rather than as a mismatch, and that branch only exists if this returns empty.
   ver="$(printf '%s\n' "  ● Bash(echo hi)" "  ⏵⏵ bypass permissions on (shift+tab to cycle)" | horizon_pane_version)"
   [ -z "$ver" ] || fail "a pane with no banner reported version '$ver' instead of nothing"
-  pass "the pane version reader takes the running session's banner, prefers the latest after a reset, and reports absence as absence"
+  pass "the pane version reader takes the running session's banner, prefers the latest after a reset, reads a suffixed version whole, and reports absence as absence"
 
   # A pane that CANNOT be read must end the wait with a diagnosis rather than in silence.
   # Checked against a session name that does not exist, which needs no session and costs
@@ -463,6 +473,14 @@ print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
     tmux set-environment -t "$VERIFY_TMUX_SESSION" -r "$leaked" \
       || fail "could not clear $leaked from the verification session's environment"
   done
+  # Suppressed here too, for the same reason horizon_launch_session suppresses it: this is
+  # a real Claude Code booting against a live install, and an auto-update it triggers
+  # repoints the `claude` on PATH for the whole machine. It would land between run1's pin
+  # and the criteria below that compare run2 against what was recorded, failing a sound
+  # instrument for something the verifier itself caused. The run is guarded and its
+  # verification was not, which is the guard having a hole exactly where it is tested.
+  tmux set-environment -t "$VERIFY_TMUX_SESSION" DISABLE_AUTOUPDATER 1 \
+    || fail "could not disable the auto-updater in the verification session"
   # THE PINNED SYMLINK, exactly as run-loop.sh launches it, not a bare `claude`. Launching
   # the bare name here would verify a binary the run does not execute and leave the pin
   # itself - the one new thing this criterion exists to exercise - never run at all.
@@ -475,7 +493,19 @@ print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
   # Demanding `logged-out` alone would conflate that question with "and it has no
   # credential", which is a fact about the operator's environment rather than about the
   # instrument, and would fail a good instrument on a machine that happens to carry one.
-  horizon_await_boot_state "$VERIFY_TMUX_SESSION" logged-out ready
+  # Kept, not discarded: criterion 5f reads its version out of THIS capture, the one the
+  # wait reached its verdict on, rather than going back to tmux for a pane that has moved
+  # on. A bare call would also spill the whole pane into this script's own output, which
+  # is a column of PASS lines. [LAW:no-ambient-temporal-coupling]
+  #
+  # Checked, because a command substitution swallows the exit: horizon_die inside one ends
+  # the SUBSHELL, and errexit would then abort this script on the assignment having
+  # printed no FAIL line at all - the same invisible shape the unreadable-pane criterion
+  # above exists to catch. The wait's own diagnosis still reaches stderr; this adds the
+  # accounting. [LAW:no-silent-failure]
+  local verify_pane
+  verify_pane="$(horizon_await_boot_state "$VERIFY_TMUX_SESSION" logged-out ready)" \
+    || fail "the verification session never reached 'logged-out' or 'ready' - its diagnosis is above"
   pass "a real session against the produced config dir clears onboarding and the trust dialog"
 
   # Criterion 5f: the booted session reports the version the manifest recorded. Every
@@ -487,7 +517,7 @@ print(json.dumps(json.load(open(sys.argv[1]))["claude"]["version_pin"]))
   local booted_expected
   booted_expected="$(horizon_manifest_field "$WORK/run2/manifest.json" claude version)" \
     || fail "could not read claude.version from run2/manifest.json"
-  horizon_assert_booted_version "$VERIFY_TMUX_SESSION" "$booted_expected"
+  horizon_assert_booted_version "$VERIFY_TMUX_SESSION" "$booted_expected" <<<"$verify_pane"
   pass "the booted session runs the version the manifest records ($booted_expected)"
 
   # The SAME live session, asked for the state the RUN asks for. Without this the wait is

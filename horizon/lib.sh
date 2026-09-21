@@ -489,6 +489,18 @@ horizon_claude_path() {
     || horizon_die "could not resolve the claude binary at $p"
 }
 
+# What a Claude Code version string looks like, spelled ONCE for the two readers that
+# have to agree about it: this file asks the binary, and horizon_pane_version reads the
+# banner of the session that booted, and horizon_assert_booted_version then compares the
+# two for equality. Spelled separately they agree only on the versions both happen to
+# parse the same way: a release carrying a suffix - `2.2.0-rc.1` - would be recorded in
+# full here and truncated to `2.2.0` by a banner pattern that stopped at the first
+# non-digit, and every run would then die claiming the pinned symlink and the booted
+# binary had diverged, which is a false diagnosis pointing the operator at a healthy
+# instrument. The suffix is taken to the first whitespace, because a version is one
+# token and the banner draws nothing after it on the line. [LAW:one-source-of-truth]
+HORIZON_VERSION_RE='[0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*'
+
 # Usage: horizon_claude_version <claude_path>  -> e.g. 2.1.278
 #
 # The binary's own answer, not the version parsed out of its install path: a claude
@@ -505,10 +517,17 @@ horizon_claude_version() {
   # manifest as its harness version.
   out="$("$path" --version 2>/dev/null)" \
     || horizon_die "could not read the version of the claude binary at $path"
-  # MATCHED, not taken as "the first token". `--version` prints "2.1.278 (Claude Code)",
-  # but `${out%% *}` stops at the first space and not at a newline, so one stray line
-  # above it would yield "warning\n2.1.278" and pass a non-empty check.
-  version="$(printf '%s\n' "$out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*' | head -1)" || true
+  # MATCHED against the shape of a version, not taken as "the first token". `--version`
+  # prints "2.1.278 (Claude Code)", but `${out%% *}` stops at the first space and not at a
+  # newline, so a stray line above it would yield "warning:\n2.1.278" and pass a non-empty
+  # check. The guarantee the match buys is exactly that noise which is not version-SHAPED
+  # is skipped rather than recorded; it is NOT that the first version-shaped token in the
+  # output is the right one, and `head -1` would take a version quoted inside a warning if
+  # the CLI ever emitted one on stdout above its own answer. Narrowing further would mean
+  # this reader deciding which line of an unexpected stdout to believe, which is a guess
+  # dressed as a parse - what keeps that scenario out of reach is the `2>/dev/null` above,
+  # which is where the CLI's warnings actually go.
+  version="$(printf '%s\n' "$out" | grep -oE "$HORIZON_VERSION_RE" | head -1)" || true
   [ -n "$version" ] \
     || horizon_die "the claude binary at $path reported no version this could parse: $out"
   printf '%s\n' "$version"
@@ -1043,19 +1062,28 @@ HORIZON_TMUX_SESSION="horizon-run"
 # banner is now necessary and no longer sufficient. [LAW:one-source-of-truth]
 # Verified still matching at Claude Code v2.1.278.
 #
-# The banner wording is spelled ONCE and the other two patterns are built from it. The
-# classifier asks whether a banner is present, horizon_pane_version reads the version out
-# of that same banner, and the reader strips the same prefix - three uses that must agree
-# about what a banner looks like. Spelled separately they can drift apart on the day the
-# wording changes, and the failure is quiet in the worst direction: the classifier would
-# still find the banner and call the session `ready` while the version parse silently
-# returned nothing, degrading the cross-check into a no-op. [LAW:one-source-of-truth]
+# The banner wording is spelled ONCE and the other two patterns are built from it, the
+# version half of the second coming from HORIZON_VERSION_RE so that what this file calls a
+# version and what horizon_claude_version calls a version cannot be two different
+# grammars. The classifier asks whether a banner is present, horizon_pane_version reads
+# the version out of that same banner, and the reader strips the same prefix - three uses
+# that must agree about what a banner looks like. Spelled separately they can drift apart
+# on the day the wording changes, and the failure is quiet in the worst direction: the
+# classifier would still find the banner and call the session `ready` while the version
+# parse silently returned nothing, degrading the cross-check into a no-op.
+# [LAW:one-source-of-truth]
+#
+# The classifier's own pattern stays deliberately looser than the version grammar - one
+# digit, not a full version - because it answers "has the banner been drawn", and a banner
+# whose version this file cannot parse is still a banner. Tightening it would make such a
+# session read as `forming` and time out after two minutes with no explanation, where
+# today it reaches horizon_assert_booted_version and is refused by name.
 #
 # Braced, because `"$VAR[0-9]"` reads as an array subscript to both shellcheck and a
 # human even though bash expands it as the scalar followed by a literal bracket.
 HORIZON_BANNER_PREFIX='Claude Code v'
 HORIZON_BANNER_RE="${HORIZON_BANNER_PREFIX}[0-9]"
-HORIZON_BANNER_VERSION_RE="${HORIZON_BANNER_PREFIX}[0-9][0-9.]*"
+HORIZON_BANNER_VERSION_RE="${HORIZON_BANNER_PREFIX}${HORIZON_VERSION_RE}"
 # The status line of a session that drew everything and cannot authenticate. Two wordings:
 # `Not logged in` on a config dir that never had a credential, `Login expired` on one whose
 # refresh token the server retired mid-campaign - the second is the one a long baseline
@@ -1473,23 +1501,29 @@ horizon_pane_version() {
   printf '%s\n' "${version#"$HORIZON_BANNER_PREFIX"}"
 }
 
-# Usage: horizon_assert_booted_version <session> <expected_version>
+# Usage: horizon_assert_booted_version <session> <expected_version> < pane
 #
 # Closes the loop between what was recorded and what booted.
 #
+# THE PANE COMES IN, it is not fetched. The one the wait settled on is the one this is
+# entitled to reason about; `tmux capture-pane -p` reads the visible pane and no
+# scrollback, so a fresh capture taken a beat later is a different pane that may no longer
+# be showing the banner - and the session argument is here only to name the subject in a
+# message. [LAW:no-ambient-temporal-coupling]
+#
 # AN EMPTY READING IS A FAILURE HERE, even though horizon_pane_version reports emptiness
-# as a legitimate answer. Every caller of this function asks it immediately after a wait
-# that only returns on a state requiring the banner to be on screen - `ready` for the run,
-# `logged-out`-or-`ready` for the verifier. So at these call sites the banner IS present,
-# and an empty parse cannot mean "it scrolled off": it means the parse stopped working.
-# Treating it as "proves nothing" and returning 0 would turn the one reading taken from
-# the running process into a no-op that passes on every version, forever, while the
-# fixtures stayed green against the old wording. [LAW:no-silent-failure]
+# as a legitimate answer. A wait only returns on a state requiring the banner to be on
+# screen - `ready` for the run, `logged-out`-or-`ready` for the verifier - and it hands
+# back the capture it read that state out of. So in the pane this is given the banner IS
+# present, and an empty parse cannot mean "it scrolled off": it means the parse stopped
+# working. Treating it as "proves nothing" and returning 0 would turn the one reading
+# taken from the running process into a no-op that passes on every version, forever, while
+# the fixtures stayed green against the old wording. [LAW:no-silent-failure]
 horizon_assert_booted_version() {
   local session="$1" expected="$2" observed
   [ -n "$expected" ] \
     || horizon_die "horizon_assert_booted_version: no recorded version to check against"
-  observed="$(horizon_pane "$session" | horizon_pane_version)"
+  observed="$(horizon_pane_version)"
   [ -n "$observed" ] || horizon_die \
     "session $session is past its boot gates, so its banner is on screen, but no version
 could be read from it. The banner wording has moved away from what
@@ -1517,7 +1551,7 @@ horizon_boot_state_meaning() {
   esac
 }
 
-# Usage: horizon_await_boot_state <session> <wanted-state>...
+# Usage: horizon_await_boot_state <session> <wanted-state>...  -> the pane it settled on
 #
 # Polls until the pane says something definite, then holds it to <wanted-state>. Waits on a
 # state the pane reports rather than on a duration to bet on.
@@ -1555,7 +1589,16 @@ startup rather than a fault in tmux. tmux said:
 $pane"
     state="$(printf '%s\n' "$pane" | horizon_boot_state)"
     if [ "$state" != forming ]; then
-      case " $want " in *" $state "*) return 0 ;; esac
+      # The settling pane goes back to the caller, not just the verdict. Everything a
+      # caller knows about a session at this moment - that the banner has been drawn, that
+      # the status line has been painted - it knows because THIS capture said so, and a
+      # caller that goes back to tmux for its own copy is asking a pane that has moved on
+      # since. horizon_assert_booted_version rests its whole "an empty parse means the
+      # parse broke" reading on the banner being present, so it has to be handed the
+      # capture that reading is true of rather than trusting the two to be milliseconds
+      # apart. stdout is free to carry it: horizon_log and horizon_die both write to
+      # stderr. [LAW:no-ambient-temporal-coupling] [LAW:dataflow-not-control-flow]
+      case " $want " in *" $state "*) printf '%s\n' "$pane"; return 0 ;; esac
       horizon_die "session $session booted to '$state', wanted one of: $want.
 $state: $(horizon_boot_state_meaning "$state")
 The pane was showing:
@@ -1574,7 +1617,7 @@ The last pane read was showing:
 $(printf '%s\n' "$pane" | grep -v '^[[:space:]]*$')"
 }
 
-# Usage: horizon_wait_ready
+# Usage: horizon_wait_ready  -> the pane it settled on
 #
 # The run's own wait: its session, and the only state it can proceed from.
 horizon_wait_ready() {
