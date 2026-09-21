@@ -37,9 +37,9 @@ HORIZON_GOAL_PROMPT_REL_PATH="horizon/GOAL_PROMPT.md"
 # unmetered on public repositories.
 #
 # It is scratch space, not a record. A run's PRs and review threads are captured onto disk
-# as part of the run bundle (promptctl-horizon-7ry.4); leaving them to live in a GitHub
-# repo would make the bundle depend on that repo surviving untouched forever, which is
-# exactly the fragility capture exists to remove.
+# into the run bundle by horizon_capture_prs; leaving them to live in a GitHub repo would
+# make the bundle depend on that repo surviving untouched forever, which is exactly the
+# fragility capture exists to remove.
 HORIZON_RUN_REPO="promptctl/horizon-eval"
 
 # ── Where a run lives on this machine ──────────────────────────────────────────────
@@ -1191,16 +1191,26 @@ if not any(reaches_pane(p) for p in claudes):
 # line. After the session is ended, so the record is final when it moves.
 # [LAW:no-silent-failure]
 horizon_capture_transcripts() {
-  local work_dir="$2" source="$1/projects" target="$2/transcripts"
-  [ -d "$source" ] || return 0
+  local work_dir="$2" source target="$2/transcripts"
+  source="$(horizon_live_transcripts_dir "$1")"
+  [ -d "$source" ] || horizon_die "no transcripts at $source - the run never booted a session"
   # The handler that calls this is installed before the work dir is created, and a run
   # that died in between still has transcripts worth keeping.
   mkdir -p "$work_dir" || horizon_die "could not create $work_dir to capture transcripts into"
   mv "$source" "$target" || horizon_die "could not capture transcripts into $target"
-  horizon_log "transcripts captured: $target"
+  printf '%s transcript(s)\n' "$(find "$target" -name '*.jsonl' | wc -l | tr -d ' ')"
 }
 
-# Usage: horizon_report <config_dir> <project_dir> <goal_file>  -> the run's JSON report
+# Usage: horizon_live_transcripts_dir <config_dir>  -> where Claude Code writes them
+#
+# Claude Code's own layout, named once. Both the capture above and the analysis below reach
+# it, and a second spelling of `projects` is a second claim about a directory this codebase
+# does not own. [LAW:one-source-of-truth]
+horizon_live_transcripts_dir() {
+  printf '%s/projects\n' "$1"
+}
+
+# Usage: horizon_report <transcripts_dir> <project_dir> <goal_file>  -> the run's JSON report
 #
 # The project's commits are gathered here and handed to sessions.py, which reads the
 # transcripts and does the analysis. The split is deliberate: this side is the effect
@@ -1210,12 +1220,17 @@ horizon_capture_transcripts() {
 #
 # %cI is strict ISO-8601 and %H the full sha - a fixed, machine-oriented format rather
 # than whatever the operator's log.date or format.pretty config would otherwise impose.
+# The transcripts are named by DIRECTORY rather than by config dir, because this is read
+# from two places whose transcripts sit in different trees: live, out of the config dir the
+# run is writing into, and afterwards out of the bundle the close-out moved them to. One
+# function, one meaning, and an archived run is genuinely recomputable rather than only
+# claimed to be. [LAW:composability]
 horizon_report() {
-  local config_dir="$1" project_dir="$2" goal_file="$3" commits
+  local transcripts_dir="$1" project_dir="$2" goal_file="$3" commits
   commits="$(horizon_project_git "$project_dir" log --reverse --format='%H%x09%cI')" \
     || horizon_die "could not read the project's commit log in $project_dir"
   printf '%s\n' "$commits" \
-    | python3 "$HORIZON_LIB_DIR/sessions.py" "$config_dir" "$project_dir" "$goal_file" \
+    | python3 "$HORIZON_LIB_DIR/sessions.py" "$transcripts_dir" "$project_dir" "$goal_file" \
     || horizon_die "could not analyse the run's sessions"
 }
 
@@ -1247,7 +1262,7 @@ horizon_wait_goal_in_force() {
   local config_dir="$1" project_dir="$2" goal_file="$3"
   local report counts reached drifted in_force waited=0
   while :; do
-    report="$(horizon_report "$config_dir" "$project_dir" "$goal_file")"
+    report="$(horizon_report "$(horizon_live_transcripts_dir "$config_dir")" "$project_dir" "$goal_file")"
     # Assigned, then split: a reader that dies inside a here-string is not seen by errexit.
     counts="$(printf '%s' "$report" | horizon_report_counts)"
     read -r reached drifted in_force <<<"$counts"
@@ -1282,7 +1297,7 @@ horizon_observe() {
   local report counts reached=0 drifted in_force last_seen=-1
 
   while [ "$SECONDS" -lt "$deadline" ]; do
-    report="$(horizon_report "$config_dir" "$project_dir" "$goal_file")"
+    report="$(horizon_report "$(horizon_live_transcripts_dir "$config_dir")" "$project_dir" "$goal_file")"
     counts="$(printf '%s' "$report" | horizon_report_counts)"
     read -r reached drifted in_force <<<"$counts"
 
@@ -1322,4 +1337,422 @@ arrives as plain text and leaves exactly this."
 
   printf '%s\n' "$report"
   horizon_die "run hit its ${max_minutes}-minute ceiling with $reached/$target consecutive committing sessions"
+}
+
+# ══ THE RUN BUNDLE: identically-structured, complete, reviewable (promptctl-horizon-7ry.4) ═
+#
+# With no scored layer anywhere in this eval, the BUNDLE IS THE OUTPUT. A human opens one
+# run beside another and reads them; nothing downstream turns either into a verdict. So
+# reviewability is not packaging around the product - it is the product, and the two
+# things it has to be are COMPLETE (the record outlives the machine that made it) and
+# IDENTICAL IN SHAPE (two bundles are comparable because the same fact is in the same
+# place in both).
+#
+# THE SHAPE IS A FIXED RECORD, NOT A FIXED SET OF FILES. A run that died while seeding and
+# a run that finished the backlog leave the same paths and the same keys; only the VALUES
+# differ, and a capture that could not run is a value - `"ok": false` with the reason -
+# rather than an absent file. That distinction is the whole design: an absent file makes a
+# reader guess between "this run had none" and "the capture broke", and those are opposite
+# findings. [LAW:dataflow-not-control-flow] [LAW:no-silent-failure]
+
+# THE LAYOUT, DECLARED ONCE, as data. Three consumers read this and only this: the capture
+# below creates what it names, the bundle's own README renders it for the human, and
+# verify-bundle.sh checks a bundle against it. A second list anywhere - a path spelled
+# again in the verifier, a line hand-written into the README - is the two-clocks failure
+# with a directory tree for a face. [LAW:one-source-of-truth]
+#
+# The bundle's own record of the capture, named here because two things need to agree on
+# it: the close-out writes it, and the inventory step has to skip it - a step whose result
+# is one of the rows that file is built from cannot check that the file is there.
+HORIZON_BUNDLE_RECORD="run.json"
+
+# Tab-separated `<path><TAB><what it holds>`, one per line.
+HORIZON_BUNDLE_LAYOUT='README.md	this file: what each path below holds, and where the three things reviewers come for live
+run.json	when the run ran, what it drove, and which of the captures below landed
+goal.md	the exact /goal wording this run issued, byte for byte
+loop.json	what the run did: its sessions, their commits, whether the goal survived each handoff, and what it all cost in tokens
+instrument/	the pinned environment - manifest.json names every controlled variable, pinned/ is the plugin snapshots it names
+seed/	time zero AND the produced repo: the project is seeded here and then worked in place, so its git history is the whole build
+transcripts/	one directory per project slug, one .jsonl per session - the primary record of what the agent actually did
+prs/	every pull request this run opened, each with its review threads, plus the PR number the run started above
+backlog/	the lit backlog as it stood when the run ended - every ticket, its state, and its comments'
+
+# Usage: horizon_bundle_layout_paths  -> one bundle-relative path per line
+#
+# The projection the verifier needs. Derived from the declaration rather than typed out
+# beside it, so a path added above is checked below without anyone remembering to.
+horizon_bundle_layout_paths() {
+  printf '%s\n' "$HORIZON_BUNDLE_LAYOUT" | awk -F'\t' 'NF { print $1 }'
+}
+
+# Usage: horizon_project_remote_repo <project_dir>  -> `owner/name`
+#
+# The project's own git config is the authority on which repository this run drove -
+# horizon_bind_remote set it and deliberately recorded it nowhere else. Read here rather
+# than copied into the bundle, so the bundle cannot come to disagree with the repo it
+# describes. [LAW:one-source-of-truth]
+horizon_project_remote_repo() {
+  local project_dir="$1" url
+  url="$(horizon_project_git "$project_dir" remote get-url origin)" \
+    || horizon_die "no origin in $project_dir - the run was never bound to a remote"
+  # Both spellings git accepts for the same remote, reduced to the one `gh` wants.
+  printf '%s\n' "$url" | sed -e 's#^git@github\.com:#=#' -e 's#^https://github\.com/#=#' \
+                             -e 's#^=##' -e 's#\.git$##'
+}
+
+# Usage: horizon_remote_highest_pr <repo>  -> the highest PR number, or 0
+#
+# Pull requests can be closed but never deleted, so a shared repository's PR numbers climb
+# across runs and run five does not start at #1. This is read at time zero, right after the
+# reset, and everything numbered above it is THIS run's work - by construction, not by
+# guessing from a creation timestamp that a slow clock or a long queue can put on the wrong
+# side of the line. [LAW:parse-dont-validate] the watermark is the proof, kept.
+horizon_remote_highest_pr() {
+  local repo="$1"
+  gh api "repos/$repo/pulls?state=all&per_page=1&sort=created&direction=desc" \
+    --jq '(.[0].number // 0)' \
+    || horizon_die "could not read the highest PR number in $repo"
+}
+
+# Usage: horizon_record_remote_time_zero <bundle_dir> <repo>
+#
+# Called once, immediately after the remote is reset, because the fact it records is only
+# true at that moment: afterwards the run's own PRs are indistinguishable from the previous
+# run's leavings by number alone. Recorded INTO the bundle rather than held in a variable
+# so that a run which dies mid-flight still says where its PRs begin.
+horizon_record_remote_time_zero() {
+  local bundle_dir="$1" repo="$2" highest
+  highest="$(horizon_remote_highest_pr "$repo")"
+  mkdir -p "$bundle_dir/prs" || horizon_die "could not create $bundle_dir/prs"
+  printf '{\n  "highest_pr_at_reset": %s\n}\n' "$highest" > "$bundle_dir/prs/time-zero.json" \
+    || horizon_die "could not record the remote's time zero"
+  horizon_log "remote time zero: PRs above #$highest belong to this run"
+}
+
+# One query per pull request, and it is one query on purpose: a PR's body, its reviews and
+# its review threads are read together or they are read at inconsistent moments, and a
+# thread resolved between two REST calls would be captured as both open and closed.
+#
+# GraphQL rather than REST because `isResolved` exists nowhere else, and a review thread's
+# resolution is not decoration here - the workflow under measurement is one where an agent
+# answers review findings, so "was this thread ever settled" is the observation.
+#
+# The DIFF is deliberately absent: the produced repository is in the bundle with its whole
+# history, so the authority on what a PR changed is already captured, and a second copy of
+# it could only ever disagree. [LAW:one-source-of-truth]
+HORIZON_PR_QUERY='
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      number title url state isDraft merged createdAt mergedAt closedAt
+      baseRefName headRefName headRefOid body
+      author { login }
+      commits(first:100) {
+        totalCount
+        pageInfo { hasNextPage }
+        nodes { commit { oid messageHeadline committedDate } }
+      }
+      comments(first:100) {
+        pageInfo { hasNextPage }
+        nodes { author { login } createdAt body }
+      }
+      reviews(first:100) {
+        pageInfo { hasNextPage }
+        nodes { author { login } state submittedAt body }
+      }
+      reviewThreads(first:100) {
+        pageInfo { hasNextPage }
+        nodes {
+          isResolved isOutdated path line
+          comments(first:100) {
+            pageInfo { hasNextPage }
+            nodes { author { login } createdAt body }
+          }
+        }
+      }
+    }
+  }
+}'
+
+# Usage: horizon_capture_prs <bundle_dir> <project_dir>  -> a one-line detail on success
+#
+# Every pull request the run opened, written one file per PR beside an index. Scoped by the
+# watermark horizon_record_remote_time_zero wrote, so a shared repository's older PRs are
+# never adopted as this run's work.
+#
+# TRUNCATION IS A FAILURE, NOT A TRIM. Each connection above is fetched at the API's
+# maximum page and every `hasNextPage` is checked: a PR with more than 100 review comments
+# stops the capture rather than being written short. A bundle that silently holds most of a
+# review thread is worse than one that holds none, because only the second announces
+# itself. [LAW:no-silent-failure]
+horizon_capture_prs() {
+  local bundle_dir="$1" project_dir="$2"
+  local prs_dir="$bundle_dir/prs" time_zero="$bundle_dir/prs/time-zero.json"
+  [ -n "$project_dir" ] && [ -d "$project_dir" ] \
+    || horizon_die "no project in this bundle - the run ended before seeding finished"
+  [ -f "$time_zero" ] \
+    || horizon_die "no $time_zero: the remote was never reset, so which PRs are this run's is unknowable"
+
+  local repo watermark
+  repo="$(horizon_project_remote_repo "$project_dir")"
+  watermark="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["highest_pr_at_reset"])' "$time_zero")" \
+    || horizon_die "could not read the PR watermark from $time_zero"
+
+  # state=all: a run's closed-without-merging PRs are part of what it did, and reading only
+  # the open ones would quietly drop exactly the PRs a review rejected.
+  local numbers
+  numbers="$(gh api --paginate "repos/$repo/pulls?state=all&per_page=100" --jq '.[].number')" \
+    || horizon_die "could not list the pull requests of $repo"
+
+  local number captured=0
+  for number in $numbers; do
+    [ "$number" -gt "$watermark" ] || continue
+    gh api graphql -F owner="${repo%%/*}" -F name="${repo##*/}" -F number="$number" \
+        -f query="$HORIZON_PR_QUERY" \
+      > "$prs_dir/pr-$(printf '%04d' "$number").json" \
+      || horizon_die "could not capture PR #$number of $repo"
+    captured=$((captured + 1))
+  done
+
+  python3 "$HORIZON_LIB_DIR/prs.py" "$prs_dir" \
+    || horizon_die "could not index the captured pull requests"
+  printf '%d pull request(s) above #%s\n' "$captured" "$watermark"
+}
+
+# Usage: horizon_capture_backlog <bundle_dir> <project_dir>  -> a one-line detail
+#
+# The backlog as it stood when the run ended: every ticket the agent created, closed, or
+# left behind, with its comments. lit's own export format, not a private one, so nothing
+# here can drift from what lit means by a ticket.
+#
+# The HISTORY comes with it: a lit export carries `events` beside `issues` and `comments`,
+# so every state change a ticket went through is in this one document. That is why there is
+# no second capture for it - and why reaching into lit's git store to reconstruct the same
+# history would be a second reading of a fact lit already states. [LAW:one-source-of-truth]
+horizon_capture_backlog() {
+  local bundle_dir="$1" project_dir="$2"
+  # Its own statement, and not a style preference: bash expands every word of a `local`
+  # before it assigns any of them, so `out="$bundle_dir/..."` on the line above would read
+  # whatever `bundle_dir` meant in the CALLER, bash being dynamically scoped. This function
+  # wrote to `/backlog/export.json` when called on its own and silently worked when called
+  # from horizon_capture_bundle, which happens to use that same name - so renaming a local
+  # in the caller would have moved this file without a word. [LAW:no-shared-mutable-globals]
+  local out="$bundle_dir/backlog/export.json"
+  [ -n "$project_dir" ] && [ -d "$project_dir" ] \
+    || horizon_die "no project in this bundle - the run ended before seeding finished"
+  mkdir -p "$bundle_dir/backlog" || horizon_die "could not create $bundle_dir/backlog"
+  horizon_lit_export "$project_dir" > "$out" \
+    || horizon_die "could not export the backlog from $project_dir"
+  # Indexed, not searched: an export without `issues` is not a thin backlog, it is a
+  # document this code does not understand, and the KeyError says so where a `.get` default
+  # would report a healthy empty backlog. [LAW:no-silent-failure]
+  python3 -c '
+import json, sys
+doc = json.load(open(sys.argv[1]))
+print("%d ticket(s), %d comment(s), %d event(s)"
+      % (len(doc["issues"]), len(doc["comments"]), len(doc["events"])))' "$out" \
+    || horizon_die "$out is not a lit export this code can read"
+}
+
+# Usage: horizon_bundle_project_dir <bundle_dir>  -> the project's path, or empty
+#
+# The name seed-run.sh recorded, never a basename re-derived here. A bundle whose run died
+# before seeding has no project, and that is a real state rather than an error: it reads
+# back as empty, and the captures that need a project refuse by name.
+# [LAW:one-source-of-truth]
+horizon_bundle_project_dir() {
+  local bundle_dir="$1" seed_manifest="$1/seed/seed-manifest.json" name
+  [ -f "$seed_manifest" ] || return 0
+  name="$(horizon_manifest_field "$seed_manifest" project name)" || return 0
+  printf '%s/seed/%s\n' "$bundle_dir" "$name"
+}
+
+# Usage: horizon_write_bundle_readme <bundle_dir>  -> a one-line detail
+#
+# The bundle's own front page, rendered from HORIZON_BUNDLE_LAYOUT so the map cannot drift
+# from the territory it describes: a path added to the declaration appears here without
+# anyone remembering to write it twice. [LAW:one-source-of-truth]
+#
+# This file is what the ticket's acceptance actually rests on - "a reviewer locates any
+# run's PR review threads, ticket history, and token totals WITHOUT READING HARNESS CODE" -
+# so those three are named explicitly further down rather than left to be inferred from a
+# directory listing.
+horizon_write_bundle_readme() {
+  local bundle_dir="$1"
+  {
+    cat <<'EOT'
+# A horizon run bundle
+
+One run of the long-horizon eval: an agent was handed a seeded repository and a `/goal`,
+and then built on it across session boundaries with no human input. Everything that run
+produced or consumed is in this directory, and nothing outside it is needed to read the
+run - not the machine it ran on, not the GitHub repository it pushed to, not the harness.
+
+There is no score here and there is not meant to be one. The bundle is the eval's output:
+a person reads it, and reads another beside it. `loop.json` and `prs/index.json` count
+things, and counting is all they do - no file in this bundle renders a verdict.
+
+## What is in here
+
+EOT
+    printf '%s\n' "$HORIZON_BUNDLE_LAYOUT" | awk -F'\t' 'NF { printf "- `%s` - %s\n", $1, $2 }'
+    cat <<'EOT'
+
+Every path above is in every bundle, for every run, whether the run finished the backlog or
+died in its first minute. When a capture could not run, its entry in `run.json` says so and
+says why - so an empty result here always means the run produced nothing, never that the
+recording failed.
+
+## The three things people come here for
+
+**PR review threads** - `prs/index.json` lists every pull request the run opened, with how
+many review threads each drew and how many were never resolved. The threads themselves,
+comment by comment, are in `prs/pr-NNNN.json` under `reviewThreads`, each carrying
+`isResolved`. `prs/time-zero.json` records the PR number the run started above: the eval
+drives one shared repository, so lower numbers belong to earlier runs.
+
+**Ticket history** - `backlog/export.json` is the `lit` backlog as the run left it. Its
+`issues` are the tickets, `comments` what was said on them, and `events` every state change
+each one went through - created, started, closed - in order. That is the ticket history;
+there is nothing else to consult for it.
+
+**Token totals** - `loop.json`, under `tokens`. `sessions` is what the agent's own sessions
+spent, `subprocesses` what the headless `claude` processes their tools spawned spent (the
+adversarial code reviewer is one, and it is not small), and `total` is the sum. The four
+figures are kept apart rather than added into one number, because a cached read and a
+generated token differ in price by more than an order of magnitude and one combined figure
+would be a lie with a number attached.
+
+## Reading it again later
+
+`loop.json` can be recomputed from this bundle alone:
+
+    horizon/sessions.py <bundle>/transcripts <project-path> <bundle>/goal.md < commits.tsv
+
+where `<project-path>` is `project.path` from `run.json` - the absolute path the project
+had WHILE THE RUN RAN, not where this bundle now sits. Transcripts record the directory
+they were written in, so a moved bundle needs the original path to match them up; pass the
+wrong one and the tool says so rather than reporting a run in which nothing happened.
+
+`prs/index.json` can be rebuilt the same way, with `horizon/prs.py <bundle>/prs`.
+EOT
+  } > "$bundle_dir/README.md" \
+    || horizon_die "could not write $bundle_dir/README.md"
+  printf '%s path(s) described\n' "$(horizon_bundle_layout_paths | wc -l | tr -d ' ')"
+}
+
+# Usage: horizon_capture_step <name> <command> [args...]  -> `<name><TAB><1|0><TAB><detail>`
+#
+# One captured part of the bundle, reduced to a row. Output and errors are merged on
+# purpose: on the failing path the step's `horizon_die` message IS the detail, and routing
+# it anywhere but into the record would leave `run.json` saying a capture failed without
+# saying why - which is the same as not recording it. [LAW:no-silent-failure]
+horizon_capture_step() {
+  local name="$1"; shift
+  local detail status
+  detail="$("$@" 2>&1)"
+  status=$?
+  # Flattened to one line, because the row is tab-separated and a detail containing either
+  # a tab or a newline would silently become a different number of fields.
+  detail="$(printf '%s' "$detail" | tr '\n\t' '  ')"
+  if [ "$status" -eq 0 ]; then
+    printf '%s\t1\t%s\n' "$name" "${detail:-captured}"
+  else
+    printf '%s\t0\t%s\n' "$name" "${detail:-failed with no message}"
+  fi
+  return "$status"
+}
+
+# Usage: horizon_capture_bundle <config_dir> <bundle_dir> <started_iso>
+#
+# THE ONE CLOSE-OUT. Called from the driver's exit handler on every path there is -
+# success, a failed assertion, a dead session, the wall-clock ceiling - because the run
+# most worth reading is the one that died, and it never reaches its own last line.
+#
+# Every step below runs on every path. None of them is skipped for a run that got no
+# further than the lock: a step with nothing to capture records WHY, and `run.json` ends up
+# with the same keys either way. That is what makes two bundles comparable - not that they
+# hold the same things, but that they answer the same questions. [LAW:dataflow-not-control-flow]
+#
+# A failed step fails the run. The transcripts, the record, the reviews and the backlog are
+# the entire product of a run, so a run whose product did not land is not a success however
+# well the agent worked. [LAW:no-silent-failure]
+horizon_capture_bundle() {
+  local config_dir="$1" bundle_dir="$2" started="$3"
+  local status=0 rows=() project_dir ended
+
+  mkdir -p "$bundle_dir" || horizon_die "could not create $bundle_dir to capture into"
+
+  # First, and before anything reads them: the transcripts live in the config dir, which is
+  # a fixed path the NEXT run wipes, so every later step here is reading a record that only
+  # exists because this one moved it.
+  rows+=("$(horizon_capture_step transcripts \
+              horizon_capture_transcripts "$config_dir" "$bundle_dir")") || status=1
+
+  project_dir="$(horizon_bundle_project_dir "$bundle_dir")"
+
+  rows+=("$(horizon_capture_step loop \
+              horizon_capture_loop "$bundle_dir" "$project_dir")") || status=1
+  rows+=("$(horizon_capture_step prs \
+              horizon_capture_prs "$bundle_dir" "$project_dir")") || status=1
+  rows+=("$(horizon_capture_step backlog \
+              horizon_capture_backlog "$bundle_dir" "$project_dir")") || status=1
+  rows+=("$(horizon_capture_step readme \
+              horizon_write_bundle_readme "$bundle_dir")") || status=1
+  # Last, so it sees everything the steps above produced. Two of the declared paths -
+  # instrument/ and seed/ - are written by the pin and the seed rather than by any capture,
+  # so without this the record would account for the parts this function happens to own and
+  # stay silent about the rest. A bundle's inventory has to cover the whole bundle.
+  rows+=("$(horizon_capture_step layout \
+              horizon_check_bundle_layout "$bundle_dir")") || status=1
+
+  ended="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || horizon_die "could not read the clock"
+  printf '%s\n' "${rows[@]}" \
+    | python3 "$HORIZON_LIB_DIR/bundle.py" "$bundle_dir" "$HORIZON_BUNDLE_RECORD" "$started" "$ended" "$project_dir" \
+    || horizon_die "could not write $bundle_dir/run.json"
+
+  horizon_log "bundle captured: $bundle_dir"
+  return "$status"
+}
+
+# Usage: horizon_check_bundle_layout <bundle_dir>  -> a one-line detail
+#
+# The bundle's inventory, taken against the one declaration of its shape. This is what
+# makes "identically structured" a fact a reader can check rather than a promise the
+# instrument makes about itself: a path the layout declares and the bundle lacks is named
+# here, in the bundle's own record, on the run it went missing. [LAW:verifiable-goals]
+horizon_check_bundle_layout() {
+  local bundle_dir="$1" path missing=() present=0
+  while read -r path; do
+    # The record cannot inventory itself: this check is one of the steps whose results
+    # that file is written FROM, so at this moment it does not exist yet and never can.
+    # Skipped by the one name lib.sh holds for it, not by a second spelling here.
+    [ "$path" = "$HORIZON_BUNDLE_RECORD" ] && continue
+    if [ -e "$bundle_dir/$path" ]; then
+      present=$((present + 1))
+    else
+      missing+=("$path")
+    fi
+  done < <(horizon_bundle_layout_paths)
+  [ "${#missing[@]}" -eq 0 ] \
+    || horizon_die "the bundle is missing declared path(s): ${missing[*]}"
+  printf '%d declared path(s), all present\n' "$present"
+}
+
+# Usage: horizon_capture_loop <bundle_dir> <project_dir>  -> a one-line detail
+#
+# The run's record, written here rather than by the observer's stdout redirect. The
+# redirect only produced a file when the observer got far enough to print one: acceptance
+# attempt 1 was stopped by hand four minutes in and left `loop.json` empty, and a run that
+# died before the observer started left none at all. The record of a run that failed is the
+# record most worth having, so it is written from the close-out like everything else.
+horizon_capture_loop() {
+  local bundle_dir="$1" project_dir="$2"
+  [ -n "$project_dir" ] && [ -d "$project_dir" ] \
+    || horizon_die "no project in this bundle - the run ended before seeding finished"
+  horizon_report "$bundle_dir/transcripts" "$project_dir" "$bundle_dir/goal.md" \
+    > "$bundle_dir/loop.json" \
+    || horizon_die "could not analyse the run's sessions"
+  printf '%s\n' "$(horizon_report_counts < "$bundle_dir/loop.json" \
+    | awk '{ printf "%s consecutive committing session(s), %s lost carry/carries", $1, $2 }')"
 }

@@ -30,17 +30,15 @@
 # record can never be confused with the last one's. Those two lifetimes cannot share a
 # tree; lib.sh defines both paths and explains the split.
 #
-# Produces, under the work dir:
-#   instrument/   pin-instrument.sh's output (pinned/, manifest.json)
-#   seed/         seed-run.sh's output (the project, backlog-shape.json, seed-manifest.json)
-#   goal.md       the /goal wording this run issued, as read from the pinned commit
-#   loop.json     what this run observed: sessions, their commits, and how it ended
-#   transcripts/  the session transcripts, moved out of the config dir - which is a fixed
-#                 path the NEXT run wipes, so this is the only copy that outlives the run
+# The work dir IS the run bundle - the eval's actual output, since nothing here renders a
+# verdict and a human reads the bundle instead. horizon_capture_bundle owns its shape;
+# HORIZON_BUNDLE_LAYOUT in lib.sh declares every path it holds, and the bundle's own
+# README.md renders that declaration for whoever opens it. Not restated here, because a
+# second listing of the layout is a second thing to keep true. [LAW:one-source-of-truth]
 #
-# The two halves get their own subdirectories because pin-instrument.sh and seed-run.sh
-# each refuse a run-dir that already exists - a guard worth keeping, so they are given
-# one directory each rather than being loosened to share.
+# instrument/ and seed/ get their own subdirectories because pin-instrument.sh and
+# seed-run.sh each refuse a run-dir that already exists - a guard worth keeping, so they
+# are given one directory each rather than being loosened to share.
 
 set -euo pipefail
 
@@ -55,20 +53,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # rather than as a process nobody remembers starting. [LAW:no-silent-failure]
 : "${HORIZON_MAX_MINUTES:=480}"
 
-# Usage: end_run <config_dir> <work_dir>  - the ONE exit handler
+# Usage: end_run <config_dir> <work_dir> <started_iso>  - the ONE exit handler
 #
 # Every exit path - success, a failed assertion, a dead session, the wall-clock ceiling -
 # leaves the same state behind: the session ended, so the agent cannot keep working after
-# loop.json is the final record, and then the transcripts moved out of the config dir.
-# The status is the one the script was exiting with; a capture that fails replaces it
-# with failure on purpose, because the transcripts are the record and a run whose record
-# did not land is not a success. [LAW:no-silent-failure]
+# the record is taken, and then the whole bundle is captured. The status is the one the
+# script was exiting with; a capture that fails replaces it with failure on purpose,
+# because the bundle IS the run's product and a run whose product did not land is not a
+# success. [LAW:no-silent-failure]
 end_run() {
-  local status=$? config_dir="$1" work_dir="$2"
+  local status=$? config_dir="$1" work_dir="$2" started="$3"
   # Each in a subshell, so a die in one cannot end the handler before the other runs;
   # either failing is a failed run.
   ( horizon_release_run_lock ) || status=1
-  ( horizon_capture_transcripts "$config_dir" "$work_dir" ) || status=1
+  ( horizon_capture_bundle "$config_dir" "$work_dir" "$started" ) || status=1
   exit "$status"
 }
 
@@ -106,13 +104,19 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # only record of that would be the run stopping. [LAW:no-ambient-temporal-coupling]
   horizon_take_run_lock
   local config_dir="$HORIZON_CONFIG_DIR"
+  # The run's start, read once at the moment the lock makes this THE run, and baked into
+  # the handler below. Taken here rather than computed at the end from the earliest
+  # transcript: the time spent pinning, provisioning and seeding is the run's time too,
+  # and a start derived from session one would silently omit all of it.
+  local started
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || horizon_die "could not read the clock"
   # The handler is installed the moment there is a lock to release; it is the only
   # `trap ... EXIT` in this script, because a second one anywhere below would silently
   # replace it rather than add to it. Arguments are baked in now: a handler cannot read
   # a function-scoped variable at exit time. %q, not hand-placed quotes: both paths are
   # operator-overridable, and a quote inside one would break the handler itself.
   local trap_cmd
-  printf -v trap_cmd 'end_run %q %q' "$config_dir" "$HORIZON_WORK_DIR"
+  printf -v trap_cmd 'end_run %q %q %q' "$config_dir" "$HORIZON_WORK_DIR" "$started"
   # shellcheck disable=SC2064
   trap "$trap_cmd" EXIT
 
@@ -155,6 +159,11 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # rather than by this line staying where it is.
   horizon_log "binding the run to $HORIZON_RUN_REPO"
   horizon_bind_remote "$project_dir"
+  # Immediately after the reset, because this is the one moment the fact is true: the eval
+  # drives ONE shared repository whose PR numbers keep climbing across runs, and afterwards
+  # nothing distinguishes this run's pull requests from the last run's except that they
+  # are numbered above this line. [LAW:no-ambient-temporal-coupling]
+  horizon_record_remote_time_zero "$HORIZON_WORK_DIR" "$HORIZON_RUN_REPO"
 
   horizon_log "recording unattended boot state"
   horizon_write_boot_state "$config_dir" "$project_dir"
@@ -178,11 +187,15 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_log "session one's pinned /goal is in force"
 
   horizon_log "run is live; observing until ${HORIZON_TARGET_SESSIONS} sessions of committed work"
+  # NOT redirected into loop.json any more. The close-out writes that file on every exit
+  # path, and a redirect here would make this the second writer of it - the one that won
+  # only when the observer got far enough to print. Acceptance attempt 1 was stopped by
+  # hand four minutes in and left an empty loop.json behind, which is precisely the shape
+  # of a record that exists because of how a run ENDED rather than because it ran.
+  # [LAW:one-source-of-truth] The report still prints here, where it is diagnostic output
+  # beside the failure that produced it.
   horizon_observe "$config_dir" "$project_dir" "$goal_file" \
-    "$HORIZON_TARGET_SESSIONS" "$HORIZON_MAX_MINUTES" \
-    > "$HORIZON_WORK_DIR/loop.json"
-
-  horizon_log "run recorded: $HORIZON_WORK_DIR/loop.json"
+    "$HORIZON_TARGET_SESSIONS" "$HORIZON_MAX_MINUTES"
 }
 
 main "$@"
