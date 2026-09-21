@@ -33,7 +33,7 @@ The rows shown are examples. Each row is one product requirement.
 The matrix holds IDs and short labels only. The full text stays in the source document, so that nothing is maintained in two places.
 
 ## 4. Coverage checks
-Run these after every iteration.
+Run these once the three documents are updated, before the build starts.
 
 | Check | Finding | Action |
 |---|---|---|
@@ -46,7 +46,7 @@ Run these after every iteration.
 | A validated requirement with a prototype component | Hardening is overdue | Promote the component to production maturity |
 
 ## 5. Maintenance
-- Update the matrix as the last step of each iteration, after the PRD, FSD, and Spec.
+- Update the matrix after the PRD, FSD, and Spec, and before the build — it is the last of the four documents, not the last step of the iteration.
 - An ID is never reused or renumbered. Rejected and deprecated rows remain in the matrix with their status.
 - A change to any of the three documents that adds, removes, or re-links an ID requires a matching update here.
 - If the matrix and a source document disagree, the source document is correct and the matrix is fixed.
