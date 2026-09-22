@@ -163,8 +163,71 @@ so an empty namespace still shows up as absence. `Bun.stdin` came back with only
 bundle found only `YAML` and `TOML` still read through an absent namespace without a guard. The
 other absent namespaces (`ant`, `Image`, `WebView`) are read inside `try` or behind an `in` check.
 An empty namespace would not help `YAML` or `TOML`. `Bun.YAML.parse(text)` has no `?.` on the call,
-so it would throw "not a function" instead of "reading 'parse'". The fix is a real parser behind
-each member, tracked in promptctl-injector-jeq.
+so it would throw "not a function" instead of "reading 'parse'".
+
+## The surface, completed
+
+As of 2.1.278 every name in the graph's Bun census is either implemented or deliberately absent with
+a stated reason. The census is one command — `grep -ohE '\bBun\.[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)?'`
+over the split module sources — and it is the list to re-run first on any new version.
+
+Implemented, with what each one costs when absent:
+
+| Member | Reader | Absent means |
+| --- | --- | --- |
+| `YAML.parse` / `YAML.stringify` (`yaml.js`) | m00142, every skill/command/agent/plugin manifest | a session with none of them loaded |
+| `ant.CellSegmenter` (`cell-segmenter.js`) | src/ink | the TUI paints once and hangs |
+| `sliceAnsi` (`bun-surface.js`) | the renderer, m00398 | frames drawn a column off |
+| `TOML.parse` (`toml.js`) | `claude import`, m00861 | nothing today — that subcommand is behind `P("tengu_import", false)` |
+| `listen` / `connect` (`sockets.js`) | the agent proxy, m01352 and m01414 | no proxy, and inference is force-tunneled through it |
+| `Transpiler` (`bun-surface.js`) | a plugin's `hooks/register.ts`, m00079 | no TypeScript hooks module ships |
+| `hash.xxHash64` (`bun-surface.js`) | m00319, as an identifier | identifiers that disagree with the shipped binary's |
+| `Image` header metadata (`image.js`) | m00311 | images read or pasted lose their dimensions |
+
+Deliberately absent, each because the app already degrades cleanly and an implementation would be a
+guess: `Terminal` (the app prints "Bun.Terminal unavailable (running under Node?)" itself),
+`WebView` (read behind `"WebView" in Bun`), `SQL` (demands a native binary), `JSONL`
+(optional-chained), `generateHeapSnapshot`, `unsafe.setJITPolicy` (node has no JIT tier-up knob),
+and `ant.getPeerPid` / `getPeerUid` / `memoryPressureLevel` / `waitForUrlEvent` (each behind a
+`typeof` check or a `try`). `Image`'s pixel operations — `resize`, `png`, `jpeg`, `toBuffer` — and
+the two clipboard statics are in the same category: they need an image codec, and m00311's own
+fallback reads the dimensions out of the file header and sends the original.
+
+Two of those decisions look like over-reach until you see why, and both were settled by measurement
+rather than by reading a spec — public Bun 1.2.23 is installed here and is the reference every claim
+below was checked against. (It is NOT the build the binary carries, which is a private
+`@anthropic-ai/bun-internal`; where the two could differ, that is said.)
+
+**`Bun.YAML` is deliberately STRICTER than Bun.** Bun accepts three shapes and returns a wrong value
+for each: `description: Use it when: X` becomes `{description: "Use it when", null: "X"}`,
+`title: {{TITLE}}` becomes `{"[object Object]": null}`, and `argument-hint: [a] [b]` silently drops
+the `[b]`. m00142 CATCHES a parse error and retries with the offending values quoted (`Tnr` → `M`),
+so refusing is what reaches the retry the app already ships for exactly those documents — and the
+retry's answer is the right one. Over every YAML file and markdown frontmatter block on this
+machine, 1713 of 1732 resolve identically to Bun and all 19 of the rest are those three shapes.
+
+**`Bun.TOML` is deliberately MORE PERMISSIVE than Bun**, and for the mirror-image reason: its caller
+has no retry, so a refusal is a lost import with nothing downstream to recover it. The rule there is
+never refuse a document Bun accepts. 389 of 400 `.toml` files on this machine parse identically; the
+whole of the rest is Bun defects (a multi-line string keeping the newline after its `"""`, `\t`
+arriving as a form feed, `inf` as the string `"inf"`, every date-time refused) that this declines to
+reproduce.
+
+Two socket semantics are load-bearing and neither is visible in the shape of the code. Bun BINDS
+SYNCHRONOUSLY — m01352 reads `.port` on the next line and publishes it as the proxy address, so
+node's asynchronous `listen` would hand it 0; `net._createServerHandle` binds in the calling frame,
+and its absence is a named refusal rather than a fall back to the asynchronous path. And Bun's
+`socket.write` RETURNS HOW MANY BYTES IT TOOK, which is the whole of the proxy's flow control;
+answering "always the whole length" would silently move an unbounded buffer from its queue into
+node's. Both were checked by running the same scenario under Bun and under the shim: same six 64 KiB
+writes accepted before the refusal, same `drain`, same recovery.
+
+A useful way to verify the frontmatter path end to end, without a session: link the graph under
+`bun-runtime.mjs`, take the namespace of the module whose source matches
+`function iL(e){return Bun.YAML.parse(e)}`, and drive its exported `ts` and `Sle` over real files.
+That is the SHIPPED reader and writer running against this surface. Of the 900 markdown files here,
+742 carry frontmatter and 741 parse and re-render identically through it; the one that does not is
+refused by Bun too, for the same reason.
 
 ## The boot self-check: observations in the host, the verdict in the launcher
 
@@ -205,10 +268,11 @@ Verified live on 2.1.258, in a real PTY under tmux, not a pipe:
   stub plans and never the real bundle.
 
 Tests: `bun-graph.test.js` (21 — synthetic containers for every named absence, plus a live read of
-the installed binary), `embedded-fs.test.js` (22), `bun-surface.test.js` (32),
+the installed binary), `embedded-fs.test.js` (22), `bun-surface.test.js` (42), `yaml.test.js` (47),
+`toml.test.js` (21), `sockets.test.js` (12, real loopback), `image.test.js` (10),
 `bun-runtime.test.mjs` (20), `boot-channel.test.js` (7), `boot-guard.test.js` (5) and
-`launch.test.js` (32, stub plans) — 139 in all. 111 deliberate source mutations across the seven
-modules were each killed by a test.
+`launch.test.js` (32, stub plans), alongside the switch and seam suites — 396 across the directory.
+111 deliberate source mutations across the original seven modules were each killed by a test.
 
 Run the mutation sweep against a COPY of this directory, never the working tree. A sweep that edits
 the sources in place leaves a defect on disk that reads as source if it crashes or if two runs
