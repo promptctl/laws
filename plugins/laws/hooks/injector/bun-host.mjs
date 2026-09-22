@@ -50,6 +50,8 @@ import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import childProcess from 'node:child_process';
 import http from 'node:http';
+import nodeModule from 'node:module';
+import net from 'node:net';
 import { Readable } from 'node:stream';
 const require_ = createRequire(import.meta.filename);
 const { readGraphFromFile } = require_('./bun-graph.js');
@@ -85,7 +87,10 @@ const embedded = createEmbeddedFs(graph.modules, {
 // the moment it is seen rather than at the end, because the failure worth diagnosing is the one
 // where this process never reaches an end to report from.
 globalThis.Bun = createBunSurface({
-  embedded, realFs: fs, childProcess, crypto, zlib, http,
+  embedded, realFs: fs, childProcess, crypto, zlib, http, net,
+  // node's TypeScript stripper, which is what `Bun.Transpiler` is built over. Passed in like every
+  // other capability so the surface's own suite can drive it without node's experimental warning.
+  stripTypeScriptTypes: (source) => nodeModule.stripTypeScriptTypes(source),
   env: process.env, platform: process.platform, entryName: graph.entryName, stdin: process.stdin,
   onAbsentApi: (name) => channel.absentApi(name),
 });

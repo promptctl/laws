@@ -449,7 +449,7 @@ class BlockReader {
     // content after them keeps its original column and can then be read as an ordinary node at that
     // column. That is YAML's own model of those indicators, and it is why a sequence of mappings
     // needs no special case anywhere below. [LAW:dataflow-not-control-flow]
-    this.lines = text.replace(/^﻿/, '').split(/\r\n|\r|\n/);
+    this.lines = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
     // The empty element a final newline leaves behind is not a line of the document. Keeping it
     // would add one to every count of the blank lines at the end of a `|+` block scalar, which is
     // the one construct whose value depends on exactly how many there were.

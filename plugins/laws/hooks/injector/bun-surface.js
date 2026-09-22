@@ -16,6 +16,10 @@
 const { Readable } = require('stream');
 const { CellSegmenter } = require('./cell-segmenter.js');
 const YAML = require('./yaml.js');
+const TOML = require('./toml.js');
+const { recording } = require('./recording.js');
+const { createSockets } = require('./sockets.js');
+const { createImage } = require('./image.js');
 
 const ENOENT_SIZE = 0;
 
@@ -39,6 +43,54 @@ const fnv1a64 = (input, seed = 0) => {
   for (const b of bytes) h = ((h ^ BigInt(b)) * 0x100000001b3n) & MASK64;
   return h;
 };
+// XXH64, the real one. Unlike `Bun.hash`'s default — a bucketing function whose exact algorithm is
+// not reproducible here and does not need to be — this one is a NAMED algorithm with one answer, and
+// the graph turns its result into an identifier (`Bun.hash.xxHash64(e).toString(36)` in m00319). An
+// identifier that differs from the one the shipped binary computes for the same input is a wrong
+// answer with nothing to catch it, so this is XXH64 to the letter, seed and all.
+const rotl64 = (x, r) => ((x << r) | (x >> (64n - r))) & MASK64;
+const XXH_P1 = 0x9e3779b185ebca87n, XXH_P2 = 0xc2b2ae3d27d4eb4fn, XXH_P3 = 0x165667b19e3779f9n;
+const XXH_P4 = 0x85ebca77c2b2ae63n, XXH_P5 = 0x27d4eb2f165667c5n;
+const xxhRound = (acc, input) => (rotl64((acc + input * XXH_P2) & MASK64, 31n) * XXH_P1) & MASK64;
+const xxhMerge = (acc, value) => ((((acc ^ xxhRound(0n, value)) & MASK64) * XXH_P1) + XXH_P4) & MASK64;
+const xxHash64 = (input, seed = 0) => {
+  const bytes = asBuffer(input);
+  const s = BigInt(seed) & MASK64;
+  const len = bytes.length;
+  let i = 0;
+  let h;
+  if (len >= 32) {
+    let v1 = (s + XXH_P1 + XXH_P2) & MASK64, v2 = (s + XXH_P2) & MASK64, v3 = s, v4 = (s - XXH_P1) & MASK64;
+    for (; i <= len - 32; i += 32) {
+      v1 = xxhRound(v1, bytes.readBigUInt64LE(i));
+      v2 = xxhRound(v2, bytes.readBigUInt64LE(i + 8));
+      v3 = xxhRound(v3, bytes.readBigUInt64LE(i + 16));
+      v4 = xxhRound(v4, bytes.readBigUInt64LE(i + 24));
+    }
+    h = (rotl64(v1, 1n) + rotl64(v2, 7n) + rotl64(v3, 12n) + rotl64(v4, 18n)) & MASK64;
+    h = xxhMerge(xxhMerge(xxhMerge(xxhMerge(h, v1), v2), v3), v4);
+  } else {
+    h = (s + XXH_P5) & MASK64;
+  }
+  h = (h + BigInt(len)) & MASK64;
+  for (; i + 8 <= len; i += 8) {
+    h = (h ^ xxhRound(0n, bytes.readBigUInt64LE(i))) & MASK64;
+    h = ((rotl64(h, 27n) * XXH_P1) + XXH_P4) & MASK64;
+  }
+  if (i + 4 <= len) {
+    h = (h ^ ((BigInt(bytes.readUInt32LE(i)) * XXH_P1) & MASK64)) & MASK64;
+    h = ((rotl64(h, 23n) * XXH_P2) + XXH_P3) & MASK64;
+    i += 4;
+  }
+  for (; i < len; i++) {
+    h = (h ^ ((BigInt(bytes[i]) * XXH_P5) & MASK64)) & MASK64;
+    h = (rotl64(h, 11n) * XXH_P1) & MASK64;
+  }
+  h = (h ^ (h >> 33n)) * XXH_P2 & MASK64;
+  h = (h ^ (h >> 29n)) * XXH_P3 & MASK64;
+  return (h ^ (h >> 32n)) & MASK64;
+};
+
 const crc32 = (() => {
   const table = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -93,28 +145,79 @@ const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'
 // name beats answering with somebody else's bytes.
 const HASH_ALGORITHMS = new Set(['sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', 'md5', 'blake2b512']);
 
+// How many terminal columns ONE code point occupies. Every width question in this file resolves
+// here — `stringWidth` sums it and `sliceAnsi` counts with it — because a slice that measures
+// columns differently from the function that measured the line would cut in the wrong place.
+// [LAW:one-source-of-truth]
+const codePointWidth = (c) => {
+  // Combining marks and zero-width characters take no column. U+0300–U+036F is only the first of
+  // several such ranges, and stopping there overcounts every script that uses the others.
+  const combining = (c >= 0x300 && c <= 0x36f) || (c >= 0x483 && c <= 0x489)
+    || (c >= 0x591 && c <= 0x5bd) || (c >= 0x610 && c <= 0x61a) || (c >= 0x64b && c <= 0x65f)
+    || (c >= 0x1ab0 && c <= 0x1aff) || (c >= 0x1dc0 && c <= 0x1dff) || (c >= 0x20d0 && c <= 0x20f0)
+    || (c >= 0xfe00 && c <= 0xfe0f) || (c >= 0xfe20 && c <= 0xfe2f)
+    || c === 0x200b || c === 0x200c || c === 0x200d || c === 0xfeff;
+  if (combining) return 0;
+  const wide = c >= 0x1100 && (c <= 0x115f || c === 0x2329 || c === 0x232a
+    || (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff)
+    || (c >= 0xfe30 && c <= 0xfe4f) || (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6)
+    || (c >= 0x1f300 && c <= 0x1faff));
+  return wide ? 2 : 1;
+};
+
 const stringWidth = (s) => {
   let width = 0;
-  for (const ch of String(s ?? '')) {
-    const c = ch.codePointAt(0);
-    const wide = c >= 0x1100 && (c <= 0x115f || c === 0x2329 || c === 0x232a
-      || (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff)
-      || (c >= 0xfe30 && c <= 0xfe4f) || (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6)
-      || (c >= 0x1f300 && c <= 0x1faff));
-      // Combining marks and zero-width characters take no column. U+0300–U+036F is only the first
-      // of several such ranges, and stopping there overcounts every script that uses the others.
-      const combining = (c >= 0x300 && c <= 0x36f) || (c >= 0x483 && c <= 0x489)
-        || (c >= 0x591 && c <= 0x5bd) || (c >= 0x610 && c <= 0x61a) || (c >= 0x64b && c <= 0x65f)
-        || (c >= 0x1ab0 && c <= 0x1aff) || (c >= 0x1dc0 && c <= 0x1dff) || (c >= 0x20d0 && c <= 0x20f0)
-        || (c >= 0xfe00 && c <= 0xfe0f) || (c >= 0xfe20 && c <= 0xfe2f)
-        || c === 0x200b || c === 0x200c || c === 0x200d || c === 0xfeff;
-    width += combining ? 0 : (wide ? 2 : 1);
-  }
+  for (const ch of String(s ?? '')) width += codePointWidth(ch.codePointAt(0));
   return width;
 };
 
 const ANSI = new RegExp('[\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PRZcf-ntqry=><~]))', 'g');
 const stripANSI = (s) => String(s ?? '').replace(ANSI, '');
+
+// Is this escape sequence one that turns styling OFF? Only an SGR sequence whose parameters are all
+// zero (or absent) does; a cursor move or a hyperlink says nothing about style.
+const SGR = /^[\u001B\u009B]\[([0-9;]*)m$/;
+const isStyleReset = (sequence) => {
+  const sgr = SGR.exec(sequence);
+  return sgr !== null && sgr[1].split(';').every((code) => code === '' || Number(code) === 0);
+};
+
+// `Bun.sliceAnsi(line, start, end)` — a slice measured in DISPLAY COLUMNS rather than in code units,
+// with the escape sequences carried through. This is what the renderer cuts every line with
+// (m00398), so getting it wrong does not throw: it draws the frame one column off and keeps going.
+//
+// Two rules decide everything here. Escapes encountered before the window are EMITTED, because the
+// colour a slice starts in was set somewhere to its left and dropping it would repaint half the
+// screen. And a character is emitted only when it fits ENTIRELY inside the window, because half of a
+// two-column glyph is not a thing a terminal can draw — the caller's own loop (`vo` in m00398)
+// shrinks its end column until the widths agree, and it can only do that if a wide character at the
+// edge is dropped rather than smuggled through.
+const sliceAnsi = (input, start = 0, end = Infinity) => {
+  const str = String(input ?? '');
+  const from = Number.isFinite(start) ? Math.max(0, Math.trunc(start)) : 0;
+  const to = Number.isFinite(end) ? Math.trunc(end) : Infinity;
+  if (to <= from) return '';
+  const escapes = new RegExp(ANSI.source, 'g');
+  let out = '', column = 0, styled = false, at = 0;
+  const text = (chunk) => {
+    for (const ch of chunk) {
+      if (column >= to) return;
+      const width = codePointWidth(ch.codePointAt(0));
+      if (column >= from && column + width <= to) out += ch;
+      column += width;
+    }
+  };
+  for (let match = escapes.exec(str); match !== null; match = escapes.exec(str)) {
+    text(str.slice(at, match.index));
+    // An escape past the end of the window belongs to the text after the slice, not to the slice.
+    if (column < to) { out += match[0]; styled = !isStyleReset(match[0]); }
+    at = match.index + match[0].length;
+  }
+  text(str.slice(at));
+  // The reset the slice cut off. Without it the style the last kept escape opened runs on into
+  // whatever the caller writes next, which on a composited screen is somebody else's cell.
+  return styled ? out + '\u001B[0m' : out;
+};
 
 const wrapAnsi = (str, columns, options) => {
   const cols = columns > 0 ? columns : 80;
@@ -318,7 +421,56 @@ function serveOver(http, options = {}) {
 }
 
 // Build the surface. `onAbsentApi` is called for every name the graph asks for that is not here.
-function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, env, platform, entryName, stdin, onAbsentApi }) {
+// `Bun.Transpiler`, over node's own TypeScript type stripper.
+//
+// WHAT THE GRAPH ASKS FOR. m00079 compiles a plugin's `hooks/register.ts` with exactly one call:
+//     new Bun.Transpiler({loader, macro:false}).transformSync(`${pragma}${source}`)
+// where the loader comes off the file extension — `js`/`mjs`/`cjs` never reach here (the caller
+// returns them untouched), leaving `ts`, `tsx` and `jsx`.
+//
+// WHERE THIS STOPS, AND WHY IT STOPS LOUDLY. node strips types; it does not COMPILE them, and it
+// carries no JSX at all. So `.ts` hooks modules — which is what the extension resolver reaches for
+// first and what essentially every one of them is — work, and the constructs node's stripper
+// refuses (an `enum`, a `namespace`, a constructor parameter property) and the two JSX loaders are
+// refused BY NAME. That refusal is not a degrade smuggled in: m00079 wraps this call in a try/catch
+// that turns the message into "the hooks module of <plugin> cannot ship: <reason>", so the reason
+// reaches the user with the plugin's name attached. A transformSync that returned the source
+// unchanged would ship a `.tsx` file to the runtime as JavaScript and fail somewhere else entirely.
+// [LAW:no-silent-failure]
+const TRANSPILER_LOADERS = new Set(['js', 'ts', 'tsx', 'jsx']);
+const transpilerOver = (stripTypeScriptTypes, onAbsentApi) => class Transpiler {
+  constructor(options = {}) {
+    // A Bun macro runs arbitrary code at transpile time through Bun's own bundler. There is nothing
+    // to approximate, so a caller asking for one is told, rather than quietly getting no macros.
+    if (options.macro) throw new Error('Transpiler: this host does not run Bun macros');
+    this.loader = options.loader ?? 'js';
+    if (!TRANSPILER_LOADERS.has(this.loader)) throw new Error(`Transpiler: this host does not know the loader ${JSON.stringify(this.loader)}`);
+    // `scan` and `scanImports` are Bun's other two methods and they need a real parser; absent, and
+    // recorded by name if anything ever reaches for them.
+    return recording('Transpiler', this, onAbsentApi);
+  }
+
+  transformSync(source, loader = this.loader) {
+    const text = String(source);
+    if (loader === 'js') return text;
+    if (loader !== 'ts') {
+      throw new Error(`Transpiler: the ${loader} loader needs a JSX compiler, which this host does not carry — write the module as .ts, or ship it already compiled`);
+    }
+    try {
+      return stripTypeScriptTypes(text);
+    } catch (e) {
+      // node's own message already names the construct ("TypeScript enum is not supported in
+      // strip-only mode"); the prefix says whose limitation it is so the plugin author is not left
+      // thinking their TypeScript is invalid.
+      throw new Error(`Transpiler: this host strips TypeScript types rather than compiling them — ${e && e.message}`);
+    }
+  }
+
+  async transform(source, loader) { return this.transformSync(source, loader); }
+};
+
+function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, net, stripTypeScriptTypes, env, platform, entryName, stdin, onAbsentApi }) {
+  const sockets = createSockets({ net, onAbsentApi });
   // A member the graph reads THROUGH — `Bun.unsafe.setJITPolicy?.(1)` — needs its namespace present,
   // because `?.` guards the last step and not the one before it. The namespace records its own absent
   // members by dotted name, exactly as the surface records top-level ones, so an empty namespace is
@@ -337,13 +489,7 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
     // themselves. CellSegmenter is the exception: src/ink demands it outright, and its absence is
     // the difference between a rendering TUI and one that paints once and hangs forever.
     ant: { CellSegmenter },
-  }).map(([name, members]) => [name, new Proxy(members, {
-    get(target, key) {
-      if (key in target) return target[key];
-      onAbsentApi(name + '.' + String(key));
-      return undefined;
-    },
-  })]));
+  }).map(([name, members]) => [name, recording(name, members, onAbsentApi)]));
   const surface = {
     version: '1.3.14', revision: '0', main: entryName, env,
     get argv() { return process.argv; },
@@ -379,7 +525,7 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
 
     hash: Object.assign((x, seed) => fnv1a64(x, seed), {
       wyhash: (x, seed) => fnv1a64(x, seed),
-      crc32,
+      crc32, xxHash64,
       adler32: (x, seed = 1) => { let a = seed & 0xffff, b = (seed >>> 16) & 0xffff; for (const byte of asBuffer(x)) { a = (a + byte) % 65521; b = (b + a) % 65521; } return ((b << 16) | a) >>> 0; },
     }),
     CryptoHasher: class {
@@ -392,11 +538,15 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
       digest(enc) { return enc ? this.h.digest(enc) : this.h.digest(); }
     },
 
-    stringWidth, stripANSI, wrapAnsi, semver, deepEquals,
+    stringWidth, stripANSI, sliceAnsi, wrapAnsi, semver, deepEquals,
     // Boot-critical: m00142 reads every skill, command and plugin manifest's frontmatter through
     // this, so an absent YAML is a session with none of them. Only `parse` and `stringify` are
     // exposed because those are the two the graph names.
-    YAML: { parse: YAML.parse, stringify: YAML.stringify },
+    YAML: recording('YAML', { parse: YAML.parse, stringify: YAML.stringify }, onAbsentApi),
+    // `.mcp.toml` and nothing else (m00861). Bun's own TOML has `parse` alone, so there is no
+    // `stringify` to be missing here.
+    TOML: recording('TOML', { parse: TOML.parse }, onAbsentApi),
+    Transpiler: transpilerOver(stripTypeScriptTypes, onAbsentApi),
     escapeHTML: (s) => String(s).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     // Actually blocks. A no-op would return instantly from a call whose entire purpose is not to.
@@ -409,6 +559,13 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
     pathToFileURL: (p) => require('url').pathToFileURL(p),
     fileURLToPath: (u) => require('url').fileURLToPath(u),
     serve: (options) => serveOver(http, options),
+    // The agent proxy's listener, its direct dials and its startup self-check (m01352). See
+    // sockets.js for the two semantics a naive wrapper gets wrong: the synchronous bind and the
+    // short write.
+    listen: sockets.listen, connect: sockets.connect,
+    // Header metadata is real; every pixel operation is absent and says so. See image.js for why
+    // the line falls there and what the app does on each side of it.
+    Image: createImage({ realFs, onAbsentApi }),
   };
 
   // An unknown key returns the undefined-yielding stub Bun's absence would produce anyway, and is
@@ -426,4 +583,4 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
   });
 }
 
-module.exports = { createBunSurface, serveOver, withBunChildShape, deepEquals, stringWidth, stripANSI, wrapAnsi, semver, fnv1a64, crc32, whichVia, spawnArgs, asBuffer, HASH_ALGORITHMS };
+module.exports = { createBunSurface, serveOver, transpilerOver, withBunChildShape, deepEquals, stringWidth, stripANSI, sliceAnsi, wrapAnsi, semver, fnv1a64, crc32, xxHash64, whichVia, spawnArgs, asBuffer, HASH_ALGORITHMS };

@@ -50,6 +50,7 @@ function surface(overrides = {}) {
     // Shaped like a ChildProcess so the Bun-child affordances can be attached, while still
     // recording what node was actually asked for.
     childProcess: { spawn: (...a) => ({ spawned: a, on: () => {} }), spawnSync: (...a) => ({ spawnedSync: a }) },
+    net: require('net'), stripTypeScriptTypes: require('module').stripTypeScriptTypes,
     env: { PATH: '/usr/bin:/bin' }, platform: 'darwin', entryName: '/$bunfs/root/cli',
     stdin: require('stream').Readable.from([Buffer.from('{"edit":1}')]),
     onAbsentApi: (n) => absent.push(n), ...overrides,
@@ -353,6 +354,93 @@ t('stripANSI removes escapes and leaves the text', () => {
 t('wrapAnsi wraps on width, not on byte count', () => {
   assert.strictEqual(S.wrapAnsi('aaa bbb ccc', 7), 'aaa bbb\nccc');
   assert.strictEqual(S.wrapAnsi('[31maaa[39m bbb', 3), '[31maaa[39m\nbbb', 'escapes take no columns');
+});
+
+t('sliceAnsi cuts by display column and carries the styling across the cut', () => {
+  const red = '\u001B[31m', reset = '\u001B[0m';
+  assert.strictEqual(S.sliceAnsi('hello world', 0, 5), 'hello');
+  assert.strictEqual(S.sliceAnsi('hello world', 6, 11), 'world');
+  // The escape that set the colour is to the LEFT of the window. Dropping it would repaint the
+  // rest of the line in whatever the terminal happened to be in.
+  assert.strictEqual(S.sliceAnsi('ab' + red + 'cd' + reset + 'ef', 1, 5), 'b' + red + 'cd' + reset + 'e');
+  // A style still open at the cut is closed, so it cannot bleed into the next cell on a
+  // composited screen.
+  assert.strictEqual(S.sliceAnsi(red + 'abcd', 0, 2), red + 'ab' + reset);
+});
+
+t('sliceAnsi measures columns, not code units, and never splits a wide glyph', () => {
+  assert.strictEqual(S.sliceAnsi('\u65e5\u672c\u8a9e', 0, 4), '\u65e5\u672c');
+  // Column 1 falls INSIDE the first glyph, so it is dropped rather than half-drawn — which is what
+  // lets the renderer's own loop shrink its end column until the widths agree.
+  assert.strictEqual(S.sliceAnsi('\u65e5\u672c\u8a9e', 1, 4), '\u672c');
+  assert.strictEqual(S.stringWidth(S.sliceAnsi('\u65e5\u672c\u8a9e', 0, 3)), 2);
+  assert.strictEqual(S.sliceAnsi('abc', 2, 2), '');
+  assert.strictEqual(S.sliceAnsi('abc', 0, Infinity), 'abc');
+});
+
+t('xxHash64 is the real XXH64, seed and all', () => {
+  // These are Bun's own answers, read off `Bun.hash.xxHash64`. The graph turns this into an
+  // identifier (`.toString(36)`), so a value that merely looks like a hash is a wrong answer that
+  // nothing downstream can catch.
+  assert.strictEqual(S.xxHash64('').toString(), '17241709254077376921');
+  assert.strictEqual(S.xxHash64('abc').toString(), '4952883123889572249');
+  assert.strictEqual(S.xxHash64('abc', 42).toString(), '1423657621850124518');
+  assert.strictEqual(typeof S.xxHash64('x'), 'bigint', 'a 64-bit hash cannot be a JS number');
+  // 32 bytes is where the algorithm switches to its four-accumulator path; both sides of that
+  // boundary have to agree with Bun or long inputs quietly diverge from short ones.
+  assert.strictEqual(S.xxHash64('y'.repeat(32)).toString(), '7267155159012462182');
+  assert.strictEqual(S.xxHash64('z'.repeat(33)).toString(), '14205499275651973736');
+});
+
+t('TOML is present under the name the graph reads', () => {
+  const { bun, absent } = surface();
+  assert.deepStrictEqual(bun.TOML.parse('[a]\nb = 1\n'), { a: { b: 1 } });
+  assert.deepStrictEqual(absent, []);
+});
+
+t('Transpiler strips TypeScript, passes JavaScript through, and refuses JSX by name', () => {
+  const { bun } = surface();
+  assert.strictEqual(new bun.Transpiler({ loader: 'js' }).transformSync('const x = 1;'), 'const x = 1;');
+  assert.match(new bun.Transpiler({ loader: 'ts' }).transformSync('const x: number = 1;'), /const x\s+= 1;/);
+  // Loud, and named: m00079 turns this message into "the hooks module of <plugin> cannot ship".
+  assert.throws(() => new bun.Transpiler({ loader: 'tsx' }).transformSync('const a = <div/>;'), /needs a JSX compiler/);
+  assert.throws(() => new bun.Transpiler({ loader: 'ts' }).transformSync('enum E { A }'), /strips TypeScript types rather than compiling/);
+  assert.throws(() => new bun.Transpiler({ loader: 'ts', macro: true }), /does not run Bun macros/);
+  assert.throws(() => new bun.Transpiler({ loader: 'wasm' }), /does not know the loader/);
+});
+
+t('Transpiler records the members it does not carry', () => {
+  const { bun, absent } = surface();
+  const transpiler = new bun.Transpiler({ loader: 'ts' });
+  assert.strictEqual(transpiler.scan, undefined);
+  assert.deepStrictEqual(absent, ['Transpiler.scan']);
+});
+
+t('Image reads a header for real and records every pixel operation as absent', () => {
+  const { bun, absent } = surface();
+  // A minimal but genuine PNG header: signature, then IHDR carrying 40x26.
+  const png = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+  png.write('IHDR', 12, 'latin1');
+  png.writeUInt32BE(40, 16); png.writeUInt32BE(26, 20);
+  const image = new bun.Image(png);
+  return image.metadata().then((meta) => {
+    assert.deepStrictEqual(meta, { format: 'png', width: 40, height: 26 });
+    assert.strictEqual(image.resize, undefined);
+    assert.deepStrictEqual(absent, ['Image.resize'], 'the absence has to reach the boot report by name');
+  });
+});
+
+t('Image refuses bytes it cannot read a header from, rather than answering emptily', () => {
+  const { bun } = surface();
+  return assert.rejects(new bun.Image(Buffer.from('not an image')).metadata(), /not a PNG, JPEG, GIF or WebP/);
+});
+
+t('the clipboard statics are absent and say so', () => {
+  const { bun, absent } = surface();
+  assert.strictEqual(bun.Image.hasClipboardImage, undefined);
+  assert.strictEqual(bun.Image.fromClipboard, undefined);
+  assert.deepStrictEqual(absent, ['Image.hasClipboardImage', 'Image.fromClipboard']);
 });
 
 t('YAML is present on the surface and never recorded as absent', () => {
