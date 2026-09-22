@@ -15,6 +15,7 @@
 
 const { Readable } = require('stream');
 const { CellSegmenter } = require('./cell-segmenter.js');
+const YAML = require('./yaml.js');
 
 const ENOENT_SIZE = 0;
 
@@ -392,6 +393,10 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
     },
 
     stringWidth, stripANSI, wrapAnsi, semver, deepEquals,
+    // Boot-critical: m00142 reads every skill, command and plugin manifest's frontmatter through
+    // this, so an absent YAML is a session with none of them. Only `parse` and `stringify` are
+    // exposed because those are the two the graph names.
+    YAML: { parse: YAML.parse, stringify: YAML.stringify },
     escapeHTML: (s) => String(s).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     // Actually blocks. A no-op would return instantly from a call whose entire purpose is not to.

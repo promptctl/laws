@@ -355,6 +355,16 @@ t('wrapAnsi wraps on width, not on byte count', () => {
   assert.strictEqual(S.wrapAnsi('[31maaa[39m bbb', 3), '[31maaa[39m\nbbb', 'escapes take no columns');
 });
 
+t('YAML is present on the surface and never recorded as absent', () => {
+  // m00142 reads every skill and command's frontmatter through these two at boot. The surface's own
+  // job here is only that they are REACHABLE under the name the graph uses — yaml.test.js is where
+  // the parsing itself is pinned.
+  const { bun, absent } = surface();
+  assert.deepStrictEqual(bun.YAML.parse('name: foo\ntools:\n  - Read\n'), { name: 'foo', tools: ['Read'] });
+  assert.strictEqual(bun.YAML.stringify({ a: 1 }, null, 2), 'a: 1\n');
+  assert.deepStrictEqual(absent, [], 'reading YAML must not record an absent API');
+});
+
 t('semver orders and matches ranges', () => {
   assert.strictEqual(S.semver.order('2.1.258', '2.1.226'), 1);
   assert.strictEqual(S.semver.order('2.1.226', '2.1.226'), 0);
