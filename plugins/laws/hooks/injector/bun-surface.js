@@ -14,6 +14,7 @@
 'use strict';
 
 const { Readable } = require('stream');
+const { CellSegmenter } = require('./cell-segmenter.js');
 
 const ENOENT_SIZE = 0;
 
@@ -329,6 +330,12 @@ function createBunSurface({ embedded, realFs, childProcess, crypto, zlib, http, 
     unsafe: {},
     // `claude edit-hook` reads its edit as `new Response(Bun.stdin.stream()).text()`.
     stdin: { stream: () => Readable.toWeb(stdin) },
+    // `Bun.ant` is @anthropic-ai/bun-internal, a PRIVATE Anthropic Bun build — not public Bun. Its
+    // other members (getPeerPid, getPeerUid, memoryPressureLevel, waitForUrlEvent) are each reached
+    // behind a typeof check or a try/catch and degrade cleanly, so they stay absent and record
+    // themselves. CellSegmenter is the exception: src/ink demands it outright, and its absence is
+    // the difference between a rendering TUI and one that paints once and hangs forever.
+    ant: { CellSegmenter },
   }).map(([name, members]) => [name, new Proxy(members, {
     get(target, key) {
       if (key in target) return target[key];
