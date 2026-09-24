@@ -10,12 +10,12 @@ single ticket is written; that is the ticket skill's job.
 A backlog is the project's agenda. It is written in one session and pulled from by
 many later sessions that were not in the room when it was planned. The skill exists so
 that those later sessions find work they can build, in a shape that serves the
-project's whole scope, and not a plan written past what anyone knew at the time.
+project's whole scope, stated no more confidently than anyone knew at the time.
 
 The skill serves seeding an empty backlog and extending one after a layer of work has
-landed. Both are the same act: from where the project stands now, plan the next work
-we know how to do. Seeding is the first turn of that cycle, not a one-time plan for
-the whole project.
+landed. Both are the same act: from where the project stands now, plan forward from
+what is known, at the detail it supports. Seeding is the first turn of that cycle, not
+a one-time plan for the whole project.
 
 It is distinct from inventing work by reading a codebase for unfinished migrations or
 missing features. That is what the fill-backlog skill does. This skill starts from what
@@ -23,14 +23,24 @@ the project intends, usually a founding document, and plans forward from what is
 
 ## The ideas it carries
 
-**Plan the work we know how to do.** A ticket is written only when its destination can
-be stated with confidence today, from what we already know. Work whose shape depends on
-something not yet learned is not planned. The reason is that goals and requirements
-change as the project is built, so a ticket written past our knowledge is not early, it
-is fiction, and a session that pulls it later will build the fiction. The foundation of
-a project is not the rule; it is what falls out of the rule, because the foundation is
-the part we already know how to build. When that lands, more is known, and the backlog
-is extended from the new position.
+**Plan the whole arc, at the detail you have.** Everything the project intends goes
+into the backlog, from the founding document's first stage to its last. What varies is
+how much each piece says, not whether it exists. Near work carries a concrete
+destination. Far work carries the goal it serves, what is known now, and what has to
+be learned before it can be pinned down. The reason is that goals and requirements
+change as the project is built, so a far ticket written in the confident voice of a
+near one is fiction, and a session that pulls it later will build the fiction. The
+remedy is to match the voice to the knowledge, not to leave the work out: a backlog
+missing five of six stages does not fail loudly either, it just has no plan for most of
+the project.
+
+**Unknowns are resolved up front, by their own tickets.** Where a stage cannot be
+pinned down because something has not been learned, the learning is a ticket, ranked
+ahead of the work it gates. That ticket answers its question and writes the tickets
+that follow from the answer. It does not also build; a ticket that investigates and
+builds in one body forces the builder to stop and plan mid-work, which is the
+interruption this rule exists to prevent. The foundation is still what comes out
+concrete first; that is a consequence of where the knowledge is, not a rule to plan to.
 
 **The foundation is built as reusable bricks.** The first layer has to support the
 scale and scope of the project's whole goals, so its parts are built to be used from
