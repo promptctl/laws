@@ -15,9 +15,9 @@ landed. Both are the same act from a different position.
 
 Everything the project intends goes into the backlog, first stage to last. What
 varies is how much each ticket says. Near work carries a destination you could stake a
-claim on today. Far work carries the goal it serves, what is known now, and what has
-to be learned before its destination can be stated. Both are in the backlog. Neither
-pretends to be the other.
+claim on today. Far work carries its destination as far as it can be stated, and the
+question that has to be answered before it can be stated further. Both are in the
+backlog. Neither pretends to be the other.
 
 The reason is that goals and requirements change as a project is built. Things are
 learned at every step, and some of them change what the next step should be. A far
@@ -27,8 +27,8 @@ it, reads a confident destination, and builds it. So the test for each ticket is
 "do I know the destination?" but "does what this ticket claims match what we actually
 know?" A ticket that says where it ends, and why, without a guess: write it that way.
 A ticket whose end depends on something not yet learned: write it with the destination
-stated as far as it can be, name the thing that has to be learned, and name the ticket
-that will learn it. The tell is a hedge. An "if" about a result nobody has seen, a
+stated as far as it can be, and name the question ticket it waits on. Nothing more; the
+sharpening comes later. The tell is a hedge. An "if" about a result nobody has seen, a
 "probably" about a shape nobody has measured, belongs only in a ticket that also names
 the question ticket resolving it. A hedge in a ticket that reads as ready is a guess
 wearing a confident voice.
@@ -54,15 +54,15 @@ the questions ahead get answered, and the far tickets get sharpened.
   single hump, and file whatever follows." Two kinds of work in one body. The builder
   finishes the detector and is now planning instead of building.
 - GOOD: "Determine whether the return map has a single hump, using the loop runner on
-  the founding document's first template. Record the answer and sharpen the scaling
-  measurement ticket from it." One question, its answer, and the far ticket it
-  sharpens. Ranked in the foundation epic, right after the loop runner it needs.
+  the founding document's first template. Answer it by sharpening the scaling
+  measurement ticket." One question, and the far ticket its answer sharpens. Ranked in the foundation epic, right after the loop runner it needs.
 - GOOD: "A loop runner that takes any template, any model, and any knob value, runs
   the loop for N steps from a given start, and records every state." Every word of
   that is known today.
-- GOOD, far: "Scaling measurement across models. Serves the founding document's stage
-  four (path). Not yet pinnable: depends on whether the constant appears in one model
-  (see the single-hump question ahead of this). Sharpen once that is answered."
+- GOOD, far: "Scaling measurement across models, per `docs/founding.md` stage four.
+  Not yet pinnable: depends on whether the constant appears in one model. Waits on the
+  single-hump question ahead of this." A destination as far as it goes, and the
+  question it waits on.
 
 The temptation arrives as honesty: *"I don't know how that stage will go, so I'll
 leave it out and we'll add it when we know more."* Nobody adds it. There is no ticket
