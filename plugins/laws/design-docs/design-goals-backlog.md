@@ -2,8 +2,9 @@
 
 The backlog skill is for deciding what work goes into a project's backlog, and how
 much is said about each piece. It governs the set of tickets as a whole: what shape
-the work takes, how confidently each piece speaks, and how each piece proves itself. It does not govern how a
-single ticket is written; that is the ticket skill's job.
+the work takes, how confidently each piece speaks, and how each piece proves itself.
+Deciding that a far ticket exists and speaks only as far as it knows is this skill's
+call; how any ticket's text is then written is the ticket skill's job.
 
 ## What it is for
 
@@ -26,8 +27,8 @@ the project intends, usually a founding document, and plans forward from what is
 **Plan the whole arc, at the detail you have.** Everything the project intends goes
 into the backlog, from the founding document's first stage to its last. What varies is
 how much each piece says, not whether it exists. Near work carries a concrete
-destination. Far work carries the goal it serves, what is known now, and what has to
-be learned before it can be pinned down. The reason is that goals and requirements
+destination. Far work carries its destination as far as it can be stated, and the
+question it waits on. The reason is that goals and requirements
 change as the project is built, so a far ticket written in the confident voice of a
 near one is fiction, and a session that pulls it later will build the fiction. The
 remedy is to match the voice to the knowledge, not to leave the work out: a backlog
