@@ -1,6 +1,6 @@
 ---
 name: backlog
-description: "Guidance for deciding what work goes into a project's backlog - seeding an empty one from a founding document, or extending one after a layer of work has landed. Governs the set of tickets as a whole: what is planned now, what shape it takes, how each epic proves itself. Use when the deliverable is a slate of epics and issues. Do not apply to writing a single ticket's text (use the ticket skill) or to inventing work by reading a codebase (use fill-backlog)."
+description: "Guidance for deciding what work goes into a project's backlog - seeding an empty one from a founding document, or extending one after a layer of work has landed. Governs the set of tickets as a whole: what is planned and at what detail, what shape it takes, how each epic proves itself. Use when the deliverable is a slate of epics and issues. Do not apply to writing a single ticket's text (use the ticket skill) or to inventing work by reading a codebase (use fill-backlog)."
 ---
 
 # Producing this artifact

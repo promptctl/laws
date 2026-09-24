@@ -4,52 +4,71 @@ A backlog is the project's agenda. You write it in one session, from a founding
 document and what the project knows so far, and it is pulled from by many later
 sessions that were not here. Each of those sessions takes the top ticket and builds it,
 trusting that it was planned by someone who knew what they were doing. The craft here
-is about earning that trust: plan only what is known, plan it in a shape that serves
-the whole project, and give every piece a way to prove itself to a person.
+is about earning that trust: plan the whole arc at the detail you have, plan it in a
+shape that serves the whole project, and give every piece a way to prove itself to a
+person.
 
 This applies equally to seeding an empty backlog and to extending one after work has
 landed. Both are the same act from a different position.
 
-## Plan the work you know how to do
+## Plan the whole arc, at the detail you have
 
-A ticket goes into the backlog only if its destination can be stated with confidence
-today, from what is already known. Not what will probably be true after the next layer
-lands. Not what the founding document hopes for. What you could stake a claim on now.
+Everything the project intends goes into the backlog, first stage to last. What
+varies is how much each ticket says. Near work carries a destination you could stake a
+claim on today. Far work carries its destination as far as it can be stated, and the
+question that has to be answered before it can be stated further. Both are in the
+backlog. Neither pretends to be the other.
 
 The reason is that goals and requirements change as a project is built. Things are
-learned at every step, and some of them change what the next step should be. A ticket
-written past the edge of what is known is not an early plan, it is fiction, and it does
-not fail tonight. It fails weeks later when a session with no memory of this one pulls
-it, reads a confident destination, and builds the fiction. Nobody traces that back to
-the night the backlog was seeded.
+learned at every step, and some of them change what the next step should be. A far
+ticket written in the same confident voice as a near one is fiction, and it does not
+fail tonight. It fails weeks later when a session with no memory of this one pulls
+it, reads a confident destination, and builds it. So the test for each ticket is not
+"do I know the destination?" but "does what this ticket claims match what we actually
+know?" A ticket that says where it ends, and why, without a guess: write it that way.
+A ticket whose end depends on something not yet learned: write it with the destination
+stated as far as it can be, and name the question ticket it waits on. Nothing more; the
+sharpening comes later. The tell is a hedge. An "if" about a result nobody has seen, a
+"probably" about a shape nobody has measured, belongs only in a ticket that also names
+the question ticket resolving it. A hedge in a ticket that reads as ready is a guess
+wearing a confident voice.
 
-So the test for each candidate is: can I write where this ends, and why, without
-guessing at something we have not yet learned? If writing it requires an "if" about a
-result that does not exist yet, or a "probably" about a shape nobody has seen, it is
-not written. It waits.
+What has to be learned is its own ticket. It asks one question, and when it is
+answered the far tickets that named it get sharpened; new tickets are written only
+for work the answer revealed that nothing had planned. It does not also build. A
+ticket that investigates and builds in one body makes the builder stop and plan
+halfway through, which is the interruption the backlog exists to prevent. It is
+placed where it will be pulled before the work it gates: in the earliest epic that
+can answer it, or in its own epic ranked ahead of the gated one. Never inside the far
+epic it unblocks, where it sits at the top of a list nobody reaches. Resolve the
+unknowns first, so the work behind them runs uninterrupted.
 
-What falls out of this test is the foundation. The first layer of a project is the part
-that is already known how to build, so the first slate is naturally the foundation and
-nothing above it. That is a consequence, not a rule to apply. Do not plan "the
-foundation" as a category and stop; plan what is known and notice that it is the
-foundation. When it lands, more is known, and the backlog is extended from that new
-position with the same test.
+The foundation comes out concrete first because that is where the knowledge is. That
+is a consequence, not a category to plan and stop at. When it lands, more is known,
+the questions ahead get answered, and the far tickets get sharpened.
 
-- BAD: "Measure the scaling constant across three models." The project has not yet
-  shown that the constant exists in one model, or that the measurement it plans will
-  see it. The destination is borrowed from the founding document's hopes.
-- BAD: "Investigate whether the return map has a single hump." An investigation is not
-  a destination; it is the admission that the destination is unknown. If the work is
-  finding out, it is not yet plannable as a build ticket.
-- GOOD: "A loop runner that takes any template, any model, and any knob value, runs the
-  loop for N steps from a given start, and records every state." Every word of that is
-  known today. What the runner will reveal is not, and nothing here depends on it.
+- BAD: "Measure the scaling constant across three models," written as if the constant
+  were established. The project has not shown it exists in one model. The voice is
+  borrowed from the founding document's hopes.
+- BAD: "Build the period detector, then investigate whether the return map has a
+  single hump, and file whatever follows." Two kinds of work in one body. The builder
+  finishes the detector and is now planning instead of building.
+- GOOD: "Determine whether the return map has a single hump, using the loop runner on
+  the founding document's first template. Answer it by sharpening the scaling
+  measurement ticket." One question, and the far ticket its answer sharpens. Ranked in the foundation epic, right after the loop runner it needs.
+- GOOD: "A loop runner that takes any template, any model, and any knob value, runs
+  the loop for N steps from a given start, and records every state." Every word of
+  that is known today.
+- GOOD, far: "Scaling measurement across models, per `docs/founding.md` stage four.
+  Not yet pinnable: depends on whether the constant appears in one model. Waits on the
+  single-hump question ahead of this." A destination as far as it goes, and the
+  question it waits on.
 
-The temptation arrives as thoroughness: *"the founding doc lays out six stages, and a
-backlog with only the first one looks thin."* Thin is correct. A backlog that plans the
-first stage well and stops is a backlog every later session can trust. One that plans
-all six is one where five are guesses wearing the same confident voice as the one that
-is not, and the pulling session cannot tell them apart.
+The temptation arrives as honesty: *"I don't know how that stage will go, so I'll
+leave it out and we'll add it when we know more."* Nobody adds it. There is no ticket
+marking the gap, so no session sees a gap, and the backlog quietly plans one stage of
+six. Leaving it out is not honest; the honest move is a ticket that says exactly how
+little is known.
 
 ## Build the foundation as bricks
 
