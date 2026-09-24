@@ -1,8 +1,8 @@
 # Design goals: the backlog skill
 
-The backlog skill is for deciding what work goes into a project's backlog, and what
-stays out. It governs the set of tickets as a whole: which work is planned now, what
-shape that work takes, and how each piece proves itself. It does not govern how a
+The backlog skill is for deciding what work goes into a project's backlog, and how
+much is said about each piece. It governs the set of tickets as a whole: what shape
+the work takes, how confidently each piece speaks, and how each piece proves itself. It does not govern how a
 single ticket is written; that is the ticket skill's job.
 
 ## What it is for
@@ -35,9 +35,10 @@ missing five of six stages does not fail loudly either, it just has no plan for 
 the project.
 
 **Unknowns are resolved up front, by their own tickets.** Where a stage cannot be
-pinned down because something has not been learned, the learning is a ticket, ranked
-ahead of the work it gates. That ticket answers its question and writes the tickets
-that follow from the answer. It does not also build; a ticket that investigates and
+pinned down because something has not been learned, the learning is a ticket, placed
+where it is pulled before the work it gates, never inside the far epic it unblocks.
+When it is answered, the far tickets that named it are sharpened; new tickets are
+written only for work the answer revealed. It does not also build; a ticket that investigates and
 builds in one body forces the builder to stop and plan mid-work, which is the
 interruption this rule exists to prevent. The foundation is still what comes out
 concrete first; that is a consequence of where the knowledge is, not a rule to plan to.

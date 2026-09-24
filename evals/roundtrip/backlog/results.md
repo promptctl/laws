@@ -1,5 +1,10 @@
 # Backlog: results
 
+Recorded against the craft as of v0.26.0. v0.29.0 inverted the planning rule (plan the
+whole arc at the detail you have; unknowns get their own tickets), so `spec.md` and
+`craft-roundtrip.md` here no longer describe the current craft. A rerun starts from a
+fresh distill.
+
 The task was to write the first backlog for `pocketlog`, a small command-line notebook,
 from a short founding document. Every arm and both judges ran on Opus 5, with one output
 per arm.

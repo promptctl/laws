@@ -26,18 +26,26 @@ fail tonight. It fails weeks later when a session with no memory of this one pul
 it, reads a confident destination, and builds it. So the test for each ticket is not
 "do I know the destination?" but "does what this ticket claims match what we actually
 know?" A ticket that says where it ends, and why, without a guess: write it that way.
-A ticket whose end depends on something not yet learned: write it, name the thing
-that has to be learned, and stop there.
+A ticket whose end depends on something not yet learned: write it with the destination
+stated as far as it can be, name the thing that has to be learned, and name the ticket
+that will learn it. The tell is a hedge. An "if" about a result nobody has seen, a
+"probably" about a shape nobody has measured, belongs only in a ticket that also names
+the question ticket resolving it. A hedge in a ticket that reads as ready is a guess
+wearing a confident voice.
 
-What has to be learned is its own ticket, ranked ahead of the work it gates. It asks
-one question, answers it, and writes the tickets that follow from the answer. It does
-not also build. A ticket that investigates and builds in one body makes the builder
-stop and plan halfway through, which is the interruption the backlog exists to
-prevent. Resolve the unknowns first, so the work behind them runs uninterrupted.
+What has to be learned is its own ticket. It asks one question, and when it is
+answered the far tickets that named it get sharpened; new tickets are written only
+for work the answer revealed that nothing had planned. It does not also build. A
+ticket that investigates and builds in one body makes the builder stop and plan
+halfway through, which is the interruption the backlog exists to prevent. It is
+placed where it will be pulled before the work it gates: in the earliest epic that
+can answer it, or in its own epic ranked ahead of the gated one. Never inside the far
+epic it unblocks, where it sits at the top of a list nobody reaches. Resolve the
+unknowns first, so the work behind them runs uninterrupted.
 
 The foundation comes out concrete first because that is where the knowledge is. That
 is a consequence, not a category to plan and stop at. When it lands, more is known,
-the far tickets get sharpened, and the questions ahead of them get answered.
+the questions ahead get answered, and the far tickets get sharpened.
 
 - BAD: "Measure the scaling constant across three models," written as if the constant
   were established. The project has not shown it exists in one model. The voice is
@@ -46,9 +54,9 @@ the far tickets get sharpened, and the questions ahead of them get answered.
   single hump, and file whatever follows." Two kinds of work in one body. The builder
   finishes the detector and is now planning instead of building.
 - GOOD: "Determine whether the return map has a single hump, using the loop runner on
-  the founding document's first template. Record the answer in the ticket and write
-  the tickets for the scaling measurement that follow from it." One question, its
-  answer, and the tickets it spawns.
+  the founding document's first template. Record the answer and sharpen the scaling
+  measurement ticket from it." One question, its answer, and the far ticket it
+  sharpens. Ranked in the foundation epic, right after the loop runner it needs.
 - GOOD: "A loop runner that takes any template, any model, and any knob value, runs
   the loop for N steps from a given start, and records every state." Every word of
   that is known today.

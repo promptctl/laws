@@ -2,7 +2,7 @@ Each version's section is written in the PR that bumps `.claude-plugin/plugin.js
 
 ## v0.29.0 - 2026-09-24
 
-- laws(backlog): plan the whole arc at the detail you have - far work is a ticket that states what is unknown, and each unknown is its own ticket ranked ahead of the work it gates, never mixed with build work
+- laws(backlog): plan the whole arc at the detail you have - far work is a ticket that states what is unknown, and each unknown is its own ticket ranked ahead of the work it gates, never mixed with build work (#74)
 
 ## v0.28.0 - 2026-09-21
 
