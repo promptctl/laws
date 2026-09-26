@@ -178,9 +178,8 @@ EOF
 }
 
 # --- emitters -------------------------------------------------------------------------
-# Escaping a value for inclusion in a JSON string. Every emitter and every file this script
-# writes goes through here, so the rule has one home instead of a copy per call site that
-# can drift - the divergence [LAW:one-source-of-truth] exists to prevent. Backslash first,
+# Escaping a value for inclusion in a JSON string. Every emitter goes through here, so the
+# rule has one home instead of a copy per call site that can drift - the divergence [LAW:one-source-of-truth] exists to prevent. Backslash first,
 # or it would re-escape the escapes the other substitutions introduce.
 json_escape() {
   local s=$1
@@ -255,7 +254,8 @@ case "$HOOK_TYPE" in
     fi
 
     slot=$(slot_dir_for "$sid" "$aid")
-    marker="$slot/$(sanitize "$craft")"
+    craft_marker=$(sanitize "$craft")
+    marker="$slot/$craft_marker"
 
     # Re-loading a craft already engaged is idempotent (e.g. re-routing to it after a
     # compaction): its marker is already present, nothing to add or refuse.
@@ -288,7 +288,7 @@ case "$HOOK_TYPE" in
     for other in "$slot"/*; do
       [ -e "$other" ] || continue
       other=${other##*/}
-      [ "$other" = "$(sanitize "$craft")" ] && continue
+      [ "$other" = "$craft_marker" ] && continue
       # (engaged, incoming) — $other is the marker already on disk, $craft is the load being
       # attempted. Passing these the other way round asks whether the INCOMING craft would
       # forbid the engaged one, which is a different question with a different answer.

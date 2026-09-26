@@ -3,7 +3,9 @@
 The code that let a running session retire one craft and take up another was
 removed from this repo under `promptctl-injector-wih`. It is preserved, complete and
 runnable, on the branch `keep/craft-switch` and the tag `craft-switch-preserved`, both
-at commit `eea4ecc`. This note says what that code
+at commit `eea4ecc`. That commit is not on master: it is master's injector plus the four
+commits that finished the Bun surface (PR #73, never merged). The tree exactly as it was
+deleted is the parent of the removing PR's merge, `5d61c1f`. This note says what that code
 did, why it is going, what was known to be wrong with it, and how to get it back.
 
 ## What it was
