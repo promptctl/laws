@@ -32,12 +32,6 @@
 # tool_input.skill are a UUID, a hex id, a lowercase word, or a skill name like
 # "laws:code", none of which can contain a quote, backslash, or newline that would need
 # real JSON decoding.
-#
-# transcript_path is the one field that is NOT such a token: it is an absolute filesystem
-# path, and a quote or backslash in it truncates json_field's "[^"]*" grammar mid-value.
-# The read is therefore treated as untrusted rather than assumed exact - the guard requires
-# the extracted path to name an existing file before it will act on it, so a mangled read
-# withholds the switch offer instead of writing a corrupt one. See the guard branch below.
 
 HOOK_TYPE="$1"
 
@@ -50,20 +44,18 @@ read -r -d '' ENGAGE_TEXT <<'EOT'
 For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.
 EOT
 
-# The incompatibility policy is DATA, and it lives in one file read by BOTH enforcers -
-# this guard AND the runtime gate (laws-excise.js) - so the rule has a single home
-# ([LAW:one-source-of-truth], the divergence the two used to risk). This script hard-codes
-# no craft name; changing the policy is editing incompatible-crafts.txt. Comments (#) and
-# blank lines are stripped HERE, so conflicts_with below sees only "a b" pair lines,
-# exactly the shape the former inline heredoc handed it - the read is re-derived every
+# The incompatibility policy is DATA, and it lives in one file, incompatible-crafts.txt, so
+# the rule has a single home ([LAW:one-source-of-truth]). This script hard-codes no craft
+# name; changing the policy is editing that file. Comments (#) and blank lines are stripped
+# HERE, so conflicts_with below sees only "a b" pair lines - the read is re-derived every
 # process launch, so the file is the source and this variable is just its cache, never a
 # second copy that can drift.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POLICY_FILE="$SCRIPT_DIR/incompatible-crafts.txt"
 INCOMPATIBLE=""
-# A carriage return is whitespace, as it is to parsePolicy's trim and \s+ split. `read` does not
-# split on it, so a CRLF line "a b" would otherwise parse with to="b\r": two tokens, no
-# warning, and an edge that never matches while the JS gate enforces it. [LAW:single-enforcer]
+# A carriage return is whitespace. `read` does not split on it, so a CRLF line "a b" would
+# otherwise parse with to="b\r": two tokens, no warning, and an edge that never matches.
+# [LAW:no-silent-failure]
 [ -r "$POLICY_FILE" ] && INCOMPATIBLE="$(tr '\r' ' ' < "$POLICY_FILE" | sed -E 's/#.*$//' | grep -E '[^[:space:]]')"
 # THE policy parser for this script - run once, at launch, so every consumer downstream reads
 # the same normalized edge list instead of re-reading the raw file with a parser of its own.
@@ -71,11 +63,9 @@ INCOMPATIBLE=""
 #
 # EXACTLY TWO TOKENS, or the line is not an edge and the operator is told. `read -r from to`
 # alone silently swallows a third word INTO $to ("a b extra-note" -> to="b
-# extra-note"), which can never equal an incoming craft name - so the edge quietly became a
-# permanent no-op here while parsePolicy in laws-excise.js truncated the same line to a live
-# a->b edge and enforced it. Two enforcers, one file, opposite rules, no symptom. The
-# third field exists solely to catch what a two-field read would otherwise hide.
-# [LAW:single-enforcer] [LAW:no-silent-failure]
+# extra-note"), which can never equal an incoming craft name - so the edge quietly becomes a
+# permanent no-op. The third field exists solely to catch what a two-field read would hide.
+# [LAW:no-silent-failure]
 parse_edges() {
   local from to extra
   while read -r from to extra; do
@@ -169,16 +159,13 @@ slot_dir_for() {
 # It reads the policy data and hard-codes
 # no craft name, so changing the rule is editing INCOMPATIBLE, never this function.
 #
-# THE ARGUMENT ORDER IS THE CONTRACT. This was symmetric once, and under symmetry the two
-# enforcers could - and did - pass their arguments in opposite orders with no symptom, because
-# the predicate was incapable of telling them apart. Mirrors conflictsWith(engaged, incoming) in
-# laws-excise.js exactly; if these two ever disagree about the order, the guard and the gate
-# enforce opposite rules. [LAW:single-enforcer] [LAW:types-are-the-program]
+# THE ARGUMENT ORDER IS THE CONTRACT. This was symmetric once, and under symmetry a caller
+# could pass its arguments in the wrong order with no symptom, because the predicate was
+# incapable of telling them apart. [LAW:types-are-the-program]
 conflicts_with() {
   local engaged=$1 incoming=$2 from to
   # Reads EDGES, the already-parsed well-formed pairs - malformed lines were rejected once, at
-  # launch, by the one parser. This used to re-parse the raw file itself, which is how a
-  # three-token line came to mean one thing here and another in laws-excise.js.
+  # launch, by the one parser, so no consumer re-reads the raw file with a parser of its own.
   while read -r from to; do
     [ -n "$from" ] || continue
     if [ "$from" = "$engaged" ] && [ "$to" = "$incoming" ]; then
@@ -295,10 +282,8 @@ case "$HOOK_TYPE" in
     # direction: never silently co-engage a conflicting ordering.
     #
     # THE WHOLE SET IS COLLECTED BEFORE DENYING, rather than denying on the first marker the glob
-    # returns. The gate retires EVERY conflicting craft (laws-excise decide()), so naming only the
-    # first - whichever the filesystem happened to order first - would promise the user a different
-    # outcome than the switch delivers. One decision, one rule, both enforcers.
-    # [LAW:one-source-of-truth] [LAW:single-enforcer]
+    # returns: the refusal names every craft the load clashes with, not whichever one the
+    # filesystem happened to order first. [LAW:no-silent-failure]
     conflicts=""
     for other in "$slot"/*; do
       [ -e "$other" ] || continue
@@ -315,118 +300,12 @@ case "$HOOK_TYPE" in
         # Rendered once, for every message below: "laws:code" or "laws:code, laws:prose".
         conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
-        # The switch is an extra ROUTE OUT of the deny, offered only to a HOSTED session - the only
-        # kind that can enact the choice against its own live conversation. Built as a VALUE - empty
-        # when unavailable - and always appended, so the deny path itself is the same code every
-        # time. [LAW:dataflow-not-control-flow]
-        switch_offer=""
-        # ONLY THE SESSION THESE VARS WERE PINNED FOR MAY BE OFFERED THE SWITCH, and the test is
-        # identity, not inference. `bin/claude-laws` is what sets both: it mints the session id,
-        # pins it onto the launch with --session-id so claude reports that exact id back in this
-        # payload, and exports it alongside the handoff directory. A session started any other way
-        # has neither, and correctly gets no offer.
-        #
-        # Everything else that reaches this code inherits LAWS_SWITCH_DIR from that environment
-        # and would otherwise look eligible:
-        #   - a dispatched SUBAGENT shares the owning session_id and is told apart only by
-        #     agent_id, which is why the id check alone is not enough;
-        #   - a NESTED `claude` started from a Bash call is its own top-level session - own
-        #     session_id, no agent_id at all - so an "am I not a subagent" test lets it straight
-        #     through.
-        # Either one writing pending.json overwrites the HOSTING session's offer, and the host reads
-        # the offer rather than the request - so it would recompute the switch from a transcript that
-        # is not its own and then apply the result to its own live conversation. The subagent escape
-        # hatch this very deny recommends would rewind its own caller to a point that never existed
-        # there.
-        # [LAW:composability] the dependence on being the host's own session is checked, never
-        # assumed from the ambient environment.
-        if [ -n "${LAWS_SWITCH_SESSION:-}" ] && [ "$sid" = "${LAWS_SWITCH_SESSION:-}" ] \
-           && [ -z "$aid" ] && [ -n "${LAWS_SWITCH_DIR:-}" ] && [ -d "${LAWS_SWITCH_DIR:-}" ]; then
-          transcript=$(json_field transcript_path)
-          # A transcript path is not a constrained token (see the header), so the extraction is
-          # not assumed exact - it has to name a file that is really there. A path truncated at
-          # an embedded quote fails this and the deny goes out with no switch, rather than
-          # advertising one backed by a corrupt pending.json. [LAW:parse-dont-validate] the check
-          # yields a path known to resolve, not a promise that it does.
-          if [ -f "$transcript" ]; then
-            # `current` carries the whole conflicting set, comma-joined. `bin/laws-switch` is its
-            # only reader - it splits it back for the reject message, while the session recomputes
-            # its own from the transcript. Craft names are media slugs, so ',' cannot occur in one.
-            # Written beside its final name and renamed into place. A rename within one directory is
-            # atomic, so a writer interrupted mid-write cannot leave a partial pending.json: a reader
-            # sees the previous offer or this one, never half of one. A directory in its place is
-            # refused first: mv would move the offer into it and report success.
-            pending_tmp="$LAWS_SWITCH_DIR/.pending.json.$$"
-            if [ ! -d "$LAWS_SWITCH_DIR/pending.json" ] && printf '{"sessionId":"%s","transcript":"%s","current":"%s","incomingMedium":"%s"}\n' \
-                 "$(json_escape "$sid")" "$(json_escape "$transcript")" \
-                 "$(json_escape "$conflicts")" "$(json_escape "$craft")" \
-                 > "$pending_tmp" && mv -f "$pending_tmp" "$LAWS_SWITCH_DIR/pending.json"; then
-              switch_offer=" OR SWITCH: this session can move to laws:$craft by retiring $conflicts_pretty, keeping your work on disk either way. Run 'laws-switch <option>': reject (stay in $conflicts_pretty, change nothing); tombstone (keep the whole conversation, retire the $conflicts_pretty guidance in place - cheapest to reason about, most expensive when the session is deep); rewind_summarize --summary '<what you did since $conflicts_pretty loaded>' (rewind to that point and carry your work forward as a summary you write now, because after the rewind only you know it - summarize YOUR WORK ONLY and carry none of $conflicts_pretty's guidance into it, or you re-inject the guidance this switch exists to retire); rewind_discard (rewind to just before $conflicts_pretty loaded and drop the conversation since). Files you have written are never reverted by any option. Ask the user which they want unless they have already said."
-            else
-              # The offer is only made when the decision it depends on was actually recorded.
-              # Advertising it after a failed write would send the agent to laws-switch to be told
-              # "no pending craft switch" - which contradicts the deny it is holding and points it
-              # at the wrong diagnosis. Withhold the offer and say why, matching the empty-session_id
-              # and unwritable-lock branches above. [LAW:no-silent-failure]
-              # A failed write or rename leaves the temp file behind; nothing reads it, so it goes.
-              rm -f "$pending_tmp"
-              echo "laws skill-router guard: could not record the pending craft switch in $LAWS_SWITCH_DIR; denying without a switch offer" >&2
-            fi
-          else
-            # A withheld offer has two very different causes that look identical from outside: this
-            # gate legitimately not offering one (subagent, nested claude, unpinned session),
-            # and THIS - a transcript_path that did not survive extraction, which the header's own
-            # example of a path truncated at an embedded quote produces. Falling through silently
-            # collapses a parsing failure onto the shape of a deliberate decision, so the reader
-            # cannot tell a broken hook from a working one. Say which it was, matching the
-            # write-failure branch above. [LAW:no-silent-failure]
-            echo "laws skill-router guard: transcript_path did not resolve to a readable file (got '$transcript'); denying without a switch offer" >&2
-          fi
-        fi
-        deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft after it is refused: laws:$craft work written in this ordering comes out wrong (design-docs/working-with-skills.md). Do the laws:$craft work in a fresh subagent that loads only that skill - not a fork, not any subagent that inherits this conversation, since either carries the engaged craft where the guard cannot see it. The subagent sees only its prompt, so put in it: the requester's requirements in their own words, the exact output path, what a correct result looks like, and an instruction to read its artifact back against those before reporting. Keep only its answer. If this session's whole job has become laws:$craft, run /clear and load it clean.$switch_offer"
+        # There is no way to move a running session from one craft to another - the refusal names
+        # the one honest alternative, a fresh session. [LAW:no-mode-explosion]
+        deny "Craft already engaged this session: $conflicts_pretty. Loading laws:$craft after it is refused: laws:$craft work written in this ordering comes out wrong (design-docs/working-with-skills.md). Do the laws:$craft work in a fresh subagent that loads only that skill - not a fork, not any subagent that inherits this conversation, since either carries the engaged craft where the guard cannot see it. The subagent sees only its prompt, so put in it: the requester's requirements in their own words, the exact output path, what a correct result looks like, and an instruction to read its artifact back against those before reporting. Keep only its answer. If this session's whole job has become laws:$craft, there is no in-session switch: start fresh with /clear and load it clean."
         exit 0
     fi
     exit 0
-    ;;
-
-  retire-craft)
-    # The lock half of retiring a craft, and the reason a switch takes effect at all.
-    #
-    # Retiring a craft is ONE job with two halves: the transcript surgery removes the craft's
-    # guidance, and this releases the engagement marker. Ship only the first and the resumed
-    # session refuses the very load the switch existed to permit - the conversation says the craft
-    # is gone while the lock still says it is engaged. The session never restarts, so the lock is
-    # the SAME slot the guard already refused from. Both halves or neither.
-    # [LAW:composability] one complete job, no hidden strings - the same lesson rewindTo records.
-    #
-    # The lock layout (LOCK_ROOT, sanitize, slot_dir_for) lives in this file and only here, so
-    # laws-switch asks for the release instead of rebuilding the path and drifting from it.
-    # [LAW:one-source-of-truth]
-    #
-    # It releases only; it never pre-claims the incoming craft. A marker means "this craft
-    # actually loaded", and the guard writes it when the load really happens - pre-claiming
-    # would make the marker mean something weaker and lie whenever the load never came.
-    sid=$(json_field session_id)
-    aid=$(json_field agent_id)
-    craft=$(json_field craft)
-    if [ -z "$sid" ] || [ -z "$craft" ]; then
-      echo "laws skill-router retire-craft: need both session_id and craft" >&2
-      exit 2
-    fi
-    marker="$(slot_dir_for "$sid" "$aid")/$(sanitize "$craft")"
-    # Two different facts, kept apart rather than collapsed into one exit code. An absent marker
-    # means the postcondition already holds (the store was cleared, or the guard degraded and
-    # never wrote one) - note it and succeed. A marker that will not delete means the guard will
-    # still refuse the incoming craft, so the switch silently did nothing: that is a failure and
-    # it exits loudly. [LAW:no-silent-failure]
-    if [ ! -e "$marker" ]; then
-      echo "laws skill-router retire-craft: laws:$craft was not engaged; nothing to release" >&2
-      exit 0
-    fi
-    if ! rm -f "$marker"; then
-      echo "laws skill-router retire-craft: could not release laws:$craft ($marker)" >&2
-      exit 1
-    fi
     ;;
 
   *)

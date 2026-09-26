@@ -1,5 +1,10 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.30.0 - 2026-09-26
+
+- laws: remove the hosted-session injector, the `claude-laws` launcher, `install-launcher`, `laws-switch`, and `laws-excise.js` - the in-session craft switch moved out of this repo (owner decision 2026-09-24; preserved on `keep/craft-switch`, see design-docs/craft-switch-preserved.md) (promptctl-injector-wih)
+- laws(router): the compatibility refusal no longer offers a switch; it names a fresh session as the way to the other craft (promptctl-injector-wih)
+
 ## v0.29.0 - 2026-09-24
 
 - laws(backlog): plan the whole arc at the detail you have - far work is a ticket that states what is unknown, and each unknown is its own ticket ranked ahead of the work it gates, never mixed with build work (#74)

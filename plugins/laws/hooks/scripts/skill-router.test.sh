@@ -89,14 +89,12 @@ assert_deny "laws:prompt refused against code+prose+ticket, naming code" \
   "$(run guard "$(skill_payload S9 laws:prompt)")" "laws:code" "laws:prompt"
 
 # 5c. DIRECTION: the conflict edge runs ONE WAY. code degrades prompts, so code-then-prompt is
-#     refused (5b above) - but prompt-then-code is ordinary work and must be ALLOWED. This is the
-#     guard's half of the asymmetry, and it is the direction where a wrong answer costs the most:
-#     a false refusal here also offers a tombstone-or-rewind switch, so the user can spend real
-#     conversation escaping a conflict that never existed.
+#     refused (5b above) - but prompt-then-code is ordinary work and must be ALLOWED. A false
+#     refusal here costs the user a fresh session to escape a conflict that never existed.
 #
-#     It is also the assertion that pins the ARGUMENT ORDER at the callsite. Under the old
-#     symmetric predicate the guard passed (incoming, engaged) while the gate passed
-#     (engaged, incoming), and nothing could tell; reversing them now inverts this exact case.
+#     It is also the assertion that pins the ARGUMENT ORDER at the callsite: under the old
+#     symmetric predicate a reversed (incoming, engaged) call could not be told apart from the
+#     right one; reversing them now inverts this exact case.
 run guard "$(skill_payload S10 laws:prompt)" >/dev/null
 assert_allow "laws:code after laws:prompt is allowed (the edge runs one way)" \
   "$(run guard "$(skill_payload S10 laws:code)")"
@@ -167,288 +165,16 @@ rm -rf "$nopolicy"
 assert_allow "missing policy file still allows the load (degraded)" "$out"
 case "$err" in *"no craft pairs readable"*) ok "missing policy file warns on stderr";; *) bad "missing policy file did not warn (got: $err)";; esac
 
-# 9. The switch offer. It is an EXTRA route out of the deny, available only when the session was
-#    launched by the laws launcher (only a hosted session can enact a choice against its own live
-#    conversation). The deny itself must be identical either way - the switch never weakens the
-#    refusal.
-switch_payload() { # <session_id> <skill> <transcript_path>
-  printf '{"session_id":"%s","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$1" "$3" "$2"
-}
-
-swdir=$(mktemp -d)
-# The transcript must really exist: the guard now refuses to advertise a switch backed by a
-# path it cannot resolve, so a fixture pointing at a nonexistent file would test the refusal
-# rather than the offer.
-sw1=$(mktemp "$TMPDIR/sw1.XXXXXX.jsonl")
-run guard "$(skill_payload SW1 laws:code)" >/dev/null            # engage code
-out=$(printf '%s' "$(switch_payload SW1 laws:prompt "$sw1")" | LAWS_SWITCH_DIR="$swdir" LAWS_SWITCH_SESSION=SW1 "$ROUTER" guard 2>/dev/null)
-assert_deny "under the launcher, the deny still refuses and also offers the switch" \
-  "$out" "laws:code" "laws:prompt" "laws-switch" "rewind_summarize"
+# 9. The refusal offers no way to switch. Nothing in this plugin can enact a switch against a
+#    live conversation any more, so an offer to do so would send the agent to a command that does
+#    not exist. The one honest alternative is a fresh session, and the refusal names it.
+run guard "$(skill_payload SW1 laws:code)" >/dev/null
+out=$(run guard "$(skill_payload SW1 laws:prompt)")
+assert_deny "the refusal names a fresh session as the way to the other craft" "$out" "/clear"
 case "$out" in
-  *"fresh subagent"*) ok "  ... and keeps the subagent escape hatch";;
-  *) bad "  ... lost the subagent escape hatch (got: $out)";;
-esac
-if [ -f "$swdir/pending.json" ]; then
-  ok "  ... and records the pending decision for the hosted session to read"
-  pend=$(cat "$swdir/pending.json")
-  case "$pend" in
-    *'"current":"code"'*'"incomingMedium":"prompt"'*) ok "  ... naming the engaged craft and the incoming one";;
-    *) bad "  ... pending.json has the wrong shape (got: $pend)";;
-  esac
-  case "$pend" in
-    *"$sw1"*) ok "  ... and the transcript the switch must be computed against";;
-    *) bad "  ... pending.json is missing the transcript path (got: $pend)";;
-  esac
-  if [ "$(ls -A "$swdir")" = "pending.json" ]; then
-    ok "  ... and leaves nothing of the write beside it"
-  else
-    bad "  ... but left something of the write beside it (got: $(ls -A "$swdir"))"
-  fi
-else
-  bad "  ... but wrote no pending.json"
-  bad "  ... (shape check skipped)"
-  bad "  ... (transcript check skipped)"
-  bad "  ... (leftover check skipped)"
-fi
-rm -rf "$swdir"
-
-# 9a. A directory where pending.json belongs cannot hold an offer. mv would move the write into it
-#     and succeed, so the guard must refuse before writing and withhold the offer loudly.
-swdir=$(mktemp -d)
-mkdir "$swdir/pending.json"
-swerr=$(mktemp)
-out=$(printf '%s' "$(switch_payload SW1 laws:prompt "$sw1")" | LAWS_SWITCH_DIR="$swdir" LAWS_SWITCH_SESSION=SW1 "$ROUTER" guard 2>"$swerr")
-assert_deny "a directory in pending.json's place still denies the load" "$out" "laws:code" "laws:prompt"
-case "$out" in
-  *"laws-switch"*) bad "  ... but offers a switch it never recorded (got: $out)";;
+  *"laws-switch"*|*"SWITCH"*|*"tombstone"*|*"rewind"*) bad "  ... but still offers a switch nothing can enact (got: $out)";;
   *) ok "  ... and offers no switch";;
 esac
-case "$(cat "$swerr")" in
-  *"could not record the pending craft switch"*) ok "  ... and says the offer could not be recorded";;
-  *) bad "  ... without saying the offer could not be recorded (got: $(cat "$swerr"))";;
-esac
-if [ -z "$(ls -A "$swdir/pending.json")" ] && [ "$(ls -A "$swdir")" = "pending.json" ]; then
-  ok "  ... and writes nothing into it or beside it"
-else
-  bad "  ... but left a write behind (inside: $(ls -A "$swdir/pending.json"); beside: $(ls -A "$swdir"))"
-fi
-rm -rf "$swdir" "$swerr"
-
-# 9b. Without the launcher there is nothing that could enact a switch, so it must not be advertised.
-run guard "$(skill_payload SW2 laws:code)" >/dev/null
-out=$(run guard "$(switch_payload SW2 laws:prompt /tmp/sw2.jsonl)")
-assert_deny "without the launcher, the deny is unchanged" "$out" "laws:code" "laws:prompt"
-case "$out" in
-  *"laws-switch"*) bad "  ... but offered a switch that cannot be enacted";;
-  *) ok "  ... and offers no switch it cannot enact";;
-esac
-
-# 10. retire-craft: the lock half of the switch. These assert the ARC a real switch travels
-#     - deny, retire, load - because that arc is where the two halves meet and where each half's
-#     own suite stops looking. The session never restarts, so the load lands in the SAME lock slot
-#     the guard just refused from.
-retire_payload() { # <session_id> <craft>
-  printf '{"session_id":"%s","craft":"%s"}' "$1" "$2"
-}
-
-# 10a. The whole point: after a switch, the craft that was refused must actually load.
-run guard "$(skill_payload R1 laws:code)" >/dev/null
-out=$(run guard "$(skill_payload R1 laws:prompt)")
-assert_deny "arc: the incompatible load is refused first" "$out" "laws:code"
-printf '%s' "$(retire_payload R1 code)" | "$ROUTER" retire-craft 2>/dev/null
-ok_retire=$?
-[ "$ok_retire" -eq 0 ] && ok "arc: retire-craft releases the engaged craft" \
-  || bad "arc: retire-craft failed (exit $ok_retire)"
-run session-start "$(start_payload R1 resume)" >/dev/null
-assert_allow "arc: after the switch the incoming craft loads" \
-  "$(run guard "$(skill_payload R1 laws:prompt)")"
-
-# 10b. It retires ONE craft, not the whole set. Under the shipped policy a surviving laws:prose
-#      is INVISIBLE - nothing is incompatible with prose, so no guard decision can reveal whether
-#      it is still engaged, and an assertion built on the shipped policy would pass just as
-#      happily against a retire-craft that cleared the entire slot. So this runs a router copy
-#      whose policy ALSO makes prose incompatible with prompt: now prose's survival has an
-#      observable consequence, and clearing the set would show up as prompt being allowed.
-twopair=$(mktemp -d)
-cp "$ROUTER" "$twopair/skill-router.sh"
-printf 'code prompt\nprose prompt\n' > "$twopair/incompatible-crafts.txt"
-tp() { printf '%s' "$2" | "$twopair/skill-router.sh" "$1" 2>/dev/null; }
-tp guard "$(skill_payload R2 laws:code)" >/dev/null
-tp guard "$(skill_payload R2 laws:prose)" >/dev/null
-printf '%s' "$(retire_payload R2 code)" | "$twopair/skill-router.sh" retire-craft 2>/dev/null
-out=$(tp guard "$(skill_payload R2 laws:prompt)")
-assert_deny "retire-craft leaves the crafts it was not asked to retire engaged" "$out" "laws:prose"
-# ... and the one it WAS asked to retire is gone: nothing in that deny names laws:code.
-case "$out" in
-  *"laws:code"*) bad "  ... but the retired craft is still engaged too";;
-  *) ok "  ... while the named craft is released";;
-esac
-
-# 10b-ii. When MORE THAN ONE engaged craft conflicts, the deny names them ALL. The gate retires the
-#         whole conflicting set, so a deny naming only the first marker the glob returned would
-#         promise the user a different outcome than the switch delivers - and which one it named
-#         would depend on filesystem ordering. Same session, nothing retired: both are still
-#         engaged. [LAW:one-source-of-truth]
-tp guard "$(skill_payload R2b laws:code)" >/dev/null
-tp guard "$(skill_payload R2b laws:prose)" >/dev/null
-out=$(tp guard "$(skill_payload R2b laws:prompt)")
-assert_deny "a deny names every conflicting craft, not just the first" "$out" "laws:code"
-case "$out" in
-  *"laws:prose"*) ok "  ... including the one the glob did not reach first";;
-  *) bad "  ... but laws:prose is missing from the deny (got: $out)";;
-esac
-rm -rf "$twopair"
-
-# 10c. Releasing what was never engaged is the postcondition already holding, not a failure -
-#      the store may have been cleared, or the guard may have degraded and written no marker.
-printf '%s' "$(retire_payload R3 code)" | "$ROUTER" retire-craft 2>/dev/null
-[ $? -eq 0 ] && ok "retire-craft succeeds when the craft was never engaged" \
-  || bad "retire-craft failed on an unengaged craft"
-
-# 10d. Incomplete instructions are refused rather than silently retiring nothing.
-printf '{"session_id":"R4"}' | "$ROUTER" retire-craft >/dev/null 2>&1
-[ $? -eq 2 ] && ok "retire-craft refuses a request with no craft" \
-  || bad "retire-craft accepted a request with no craft"
-printf '{"craft":"code"}' | "$ROUTER" retire-craft >/dev/null 2>&1
-[ $? -eq 2 ] && ok "retire-craft refuses a request with no session_id" \
-  || bad "retire-craft accepted a request with no session_id"
-
-# 10e. A craft name is interpolated into a path, so it must not be able to reach outside its own
-#      slot. The traversal is aimed from a DIFFERENT session at R5's marker - "../../R5/main/code"
-#      resolves to exactly the path R5's own marker occupies - because a traversal that lands
-#      somewhere harmless would pass whether or not the name is sanitized.
-run guard "$(skill_payload R5 laws:code)" >/dev/null
-# R5x must be a real session with a real slot, or the ".." never resolves and the traversal fails
-# for a reason that has nothing to do with sanitizing.
-run guard "$(skill_payload R5x laws:prose)" >/dev/null
-printf '%s' "$(retire_payload R5x ../../R5/main/code)" | "$ROUTER" retire-craft >/dev/null 2>&1
-assert_deny "a traversal craft name cannot release another session's marker" \
-  "$(run guard "$(skill_payload R5 laws:prompt)")" "laws:code"
-
-# 11. The switch is offered ONLY where it can be enacted. Each case below is a session that
-#     would be told to run laws-switch and then find no route - the offer must be withheld
-#     instead, and the deny itself must survive intact every time.
-sub_payload() { # <session_id> <agent_id> <skill> <transcript_path>
-  printf '{"session_id":"%s","agent_id":"%s","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$1" "$2" "$4" "$3"
-}
-
-# 11a. A SUBAGENT must never be offered it. It shares the parent's session_id, so its offer would
-#      overwrite the parent's and the parent's host would then rewind the parent's live conversation
-#      against the subagent's transcript. The escape hatch the deny recommends would corrupt its own
-#      caller.
-swdir2=$(mktemp -d); sw2=$(mktemp "$TMPDIR/sw2.XXXXXX.jsonl")
-printf '%s' "$(sub_payload SUB1 AGENT7 laws:code "$sw2")"   | LAWS_SWITCH_DIR="$swdir2" LAWS_SWITCH_SESSION=SUB1 "$ROUTER" guard >/dev/null 2>&1
-out=$(printf '%s' "$(sub_payload SUB1 AGENT7 laws:prompt "$sw2")" | LAWS_SWITCH_DIR="$swdir2" LAWS_SWITCH_SESSION=SUB1 "$ROUTER" guard 2>/dev/null)
-assert_deny "a subagent is still refused the incompatible craft" "$out" "laws:code" "laws:prompt"
-case "$out" in
-  *"laws-switch"*) bad "  ... but was offered a switch that would corrupt its parent session";;
-  *) ok "  ... and is offered no switch that would corrupt its parent session";;
-esac
-[ -f "$swdir2/pending.json" ] && bad "  ... and wrote a pending decision the parent would enact" \
-                              || ok "  ... and wrote no pending decision for the parent to enact"
-rm -rf "$swdir2"
-
-# 11b. A transcript path that does not resolve. json_field's grammar truncates at an embedded
-#      quote, so a mangled read reaches here as a path to nothing; acting on it would write a
-#      pending.json naming a transcript nothing can read.
-swdir3=$(mktemp -d)
-run guard "$(skill_payload SW3 laws:code)" >/dev/null
-out=$(printf '%s' "$(switch_payload SW3 laws:prompt "$TMPDIR/does-not-exist.jsonl")" | LAWS_SWITCH_DIR="$swdir3" LAWS_SWITCH_SESSION=SW3 "$ROUTER" guard 2>/dev/null)
-assert_deny "an unresolvable transcript path still refuses the load" "$out" "laws:code"
-case "$out" in
-  *"laws-switch"*) bad "  ... but offered a switch backed by a transcript that does not exist";;
-  *) ok "  ... and offers no switch backed by a transcript that does not exist";;
-esac
-rm -rf "$swdir3"
-
-# 11c. A quote in a real transcript path must land ESCAPED, so pending.json stays parseable.
-#      This is the case the old json_field contract comment wrongly claimed could not arise.
-swdir4=$(mktemp -d); qdir=$(mktemp -d)
-qpath="$qdir/say\"hi\".jsonl"; : > "$qpath"
-run guard "$(skill_payload SW4 laws:code)" >/dev/null
-printf '{"session_id":"SW4","transcript_path":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}' \
-  "$(printf '%s' "$qpath" | sed 's/"/\\"/g')" | LAWS_SWITCH_DIR="$swdir4" LAWS_SWITCH_SESSION=SW4 "$ROUTER" guard >/dev/null 2>&1
-if [ -f "$swdir4/pending.json" ]; then
-  if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$swdir4/pending.json" 2>/dev/null; then
-    ok "pending.json stays valid JSON when the transcript path contains a quote"
-  else
-    bad "pending.json is unparseable with a quote in the path (got: $(cat "$swdir4/pending.json"))"
-  fi
-else
-  # Withholding the offer is also correct here - what must never happen is a corrupt file.
-  ok "pending.json stays valid JSON when the transcript path contains a quote (offer withheld)"
-fi
-rm -rf "$swdir4" "$qdir"
-
-# 11d. An unwritable switch dir. The directory existing does not make it writable, and an
-#      offer whose decision never landed sends the agent to "no pending craft switch".
-swdir5=$(mktemp -d); sw5=$(mktemp "$TMPDIR/sw5.XXXXXX.jsonl"); chmod 500 "$swdir5"
-run guard "$(skill_payload SW5 laws:code)" >/dev/null
-out=$(printf '%s' "$(switch_payload SW5 laws:prompt "$sw5")" | LAWS_SWITCH_DIR="$swdir5" LAWS_SWITCH_SESSION=SW5 "$ROUTER" guard 2>/dev/null)
-err=$(printf '%s' "$(switch_payload SW5 laws:prompt "$sw5")" | LAWS_SWITCH_DIR="$swdir5" LAWS_SWITCH_SESSION=SW5 "$ROUTER" guard 2>&1 >/dev/null)
-case "$out" in
-  *"laws-switch"*) bad "an unwritable switch dir still advertised the switch";;
-  *) ok "an unwritable switch dir offers no switch";;
-esac
-case "$err" in
-  *"could not record the pending craft switch"*) ok "  ... and says so on stderr rather than failing quietly";;
-  *) bad "  ... and warned nothing (got: $err)";;
-esac
-chmod 700 "$swdir5"; rm -rf "$swdir5"
-
-# 11e. A transcript_path that does not resolve. 11c reaches this same branch through a quoted path,
-#      but it accepts either outcome because the grammar decides which - so nothing there pins the
-#      REPORT. Here the path is simply absent, which is deterministic, and the assertion is that a
-#      resolution failure is distinguishable from the guard legitimately withholding the offer
-#      (subagent, nested claude, unpinned session). Both look like "deny, no switch" to the reader;
-#      only the stderr line tells them whether the hook is broken.
-swdir6=$(mktemp -d)
-run guard "$(skill_payload SW6 laws:code)" >/dev/null
-gone="$TMPDIR/definitely-not-here.$$.jsonl"; rm -f "$gone"
-out=$(printf '%s' "$(switch_payload SW6 laws:prompt "$gone")" | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=SW6 "$ROUTER" guard 2>/dev/null)
-err=$(printf '%s' "$(switch_payload SW6 laws:prompt "$gone")" | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=SW6 "$ROUTER" guard 2>&1 >/dev/null)
-case "$out" in
-  *"laws-switch"*) bad "an unresolvable transcript still advertised the switch";;
-  *) ok "an unresolvable transcript offers no switch";;
-esac
-case "$err" in
-  *"transcript_path did not resolve"*) ok "  ... and says so on stderr rather than falling through silently";;
-  *) bad "  ... and warned nothing, so a broken hook reads as a deliberate withhold (got: $err)";;
-esac
-if [ -f "$swdir6/pending.json" ]; then
-  bad "an unresolvable transcript still recorded a pending decision"
-else
-  ok "  ... and records no pending decision to be found later"
-fi
-rm -rf "$swdir6"
-
-# 12. A NESTED claude is the case an "am I a subagent" test cannot see: its own session_id, no
-#     agent_id, and it inherits LAWS_SWITCH_DIR from the launcher's environment. Were it offered
-#     the switch it would overwrite the owning session's pending decision, and the host reads the
-#     offer rather than the request - so the owning session would rewind itself against a transcript
-#     that is not its own.
-swdir6=$(mktemp -d); sw6=$(mktemp "$TMPDIR/sw6.XXXXXX.jsonl")
-printf '%s' "$(switch_payload NESTED laws:code "$sw6")"   | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=OWNER "$ROUTER" guard >/dev/null 2>&1
-out=$(printf '%s' "$(switch_payload NESTED laws:prompt "$sw6")" | LAWS_SWITCH_DIR="$swdir6" LAWS_SWITCH_SESSION=OWNER "$ROUTER" guard 2>/dev/null)
-assert_deny "a nested claude session is still refused the incompatible craft" "$out" "laws:code"
-case "$out" in
-  *"laws-switch"*) bad "  ... but was offered the owning session's switch";;
-  *) ok "  ... and is offered no switch belonging to the session that launched it";;
-esac
-[ -f "$swdir6/pending.json" ] && bad "  ... and overwrote the owning session's pending decision" \
-                              || ok "  ... and left the owning session's pending decision alone"
-rm -rf "$swdir6"
-
-# 12b. With no pinned session at all (any plain `claude` has never had one), the offer must not
-#      appear even though the inherited switch dir exists.
-swdir7=$(mktemp -d); sw7=$(mktemp "$TMPDIR/sw7.XXXXXX.jsonl")
-run guard "$(skill_payload SW7 laws:code)" >/dev/null
-out=$(printf '%s' "$(switch_payload SW7 laws:prompt "$sw7")" | LAWS_SWITCH_DIR="$swdir7" "$ROUTER" guard 2>/dev/null)
-case "$out" in
-  *"laws-switch"*) bad "an unpinned session was offered the switch";;
-  *) ok "an unpinned session is offered no switch";;
-esac
-rm -rf "$swdir7"
 
 # 13. A policy file that is READABLE but names no pairs disables enforcement exactly as an
 #     unreadable one does, so it must warn exactly as loudly. An unchecked grep exit status
@@ -469,11 +195,9 @@ esac
 rm -rf "$emptypol"
 
 # 14. A MALFORMED policy line (three or more tokens) is not an edge, and it is not silent.
-#     This is the divergence case: `read -r from to` swallowed the third token into $to, so the
-#     line was a permanent no-op here while laws-excise.js truncated it to a live code->prompt
-#     edge and enforced it - two enforcers, one policy file, opposite rules, no symptom. The
-#     matching row in laws-excise.test.js asserts the SAME line is rejected there, and neither
-#     test is worth anything without the other. [LAW:single-enforcer]
+#     `read -r from to` swallows the third token into $to, so without the extra field the line
+#     was a permanent no-op with no symptom - a typo in the policy silently turned the guard off
+#     for that edge. [LAW:no-silent-failure]
 badpol=$(mktemp -d)
 cp "$ROUTER" "$badpol/skill-router.sh"
 printf 'code prompt extra-note\n' > "$badpol/incompatible-crafts.txt"
@@ -515,10 +239,9 @@ case "$(cat "$mixpol/err.txt")" in
 esac
 rm -rf "$mixpol"
 
-# 14b. A CRLF policy file is enforced here exactly as laws-excise.js enforces it. `read` does not
-#      split on \r, so the edge used to parse as to="prompt\r": two tokens, no warning, never a
-#      match - while the gate enforced the same line. The same text is parsed in
-#      laws-excise.test.js; one fixture alone cannot catch the two disagreeing. [LAW:single-enforcer]
+# 14b. A CRLF policy file is an edge, not a typo. `read` does not split on \r, so the edge used
+#      to parse as to="prompt\r": two tokens, no warning, never a match - a policy saved from a
+#      Windows editor would silently disable the guard.
 crlfpol=$(mktemp -d)
 cp "$ROUTER" "$crlfpol/skill-router.sh"
 # The code->prompt line carries no comment on purpose: a comment strip would take the \r with it
