@@ -171,10 +171,26 @@ case "$err" in *"no craft pairs readable"*) ok "missing policy file warns on std
 run guard "$(skill_payload SW1 laws:code)" >/dev/null
 out=$(run guard "$(skill_payload SW1 laws:prompt)")
 assert_deny "the refusal names a fresh session as the way to the other craft" "$out" "/clear"
+assert_deny "  ... and keeps the subagent escape hatch" "$out" "fresh subagent"
+# The deny legitimately says "no in-session switch", so the negative test is on the vocabulary of
+# the removed offer - its command and its choices - not on the word itself.
 case "$out" in
-  *"laws-switch"*|*"SWITCH"*|*"tombstone"*|*"rewind"*) bad "  ... but still offers a switch nothing can enact (got: $out)";;
+  *"laws-switch"*|*"tombstone"*|*"rewind"*|*"Run '"*) bad "  ... but still offers a switch nothing can enact (got: $out)";;
   *) ok "  ... and offers no switch";;
 esac
+
+# 9b. When MORE THAN ONE engaged craft conflicts, the deny names them ALL, not whichever marker the
+#     glob returned first. Under the shipped policy nothing but code conflicts with prompt, so this
+#     runs a router copy whose policy also makes prose incompatible with prompt. [LAW:no-silent-failure]
+twopair=$(mktemp -d)
+cp "$ROUTER" "$twopair/skill-router.sh"
+printf 'code prompt\nprose prompt\n' > "$twopair/incompatible-crafts.txt"
+tp() { printf '%s' "$2" | "$twopair/skill-router.sh" "$1" 2>/dev/null; }
+tp guard "$(skill_payload R2b laws:code)" >/dev/null
+tp guard "$(skill_payload R2b laws:prose)" >/dev/null
+out=$(tp guard "$(skill_payload R2b laws:prompt)")
+assert_deny "a deny names every conflicting craft, not just the first" "$out" "laws:code" "laws:prose"
+rm -rf "$twopair"
 
 # 13. A policy file that is READABLE but names no pairs disables enforcement exactly as an
 #     unreadable one does, so it must warn exactly as loudly. An unchecked grep exit status

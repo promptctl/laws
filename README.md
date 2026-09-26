@@ -79,8 +79,7 @@ the point of the plugin. It's what keeps the point from eating itself.
 ```
 
 That gives you the skills and the craft-compatibility hooks. The hooks are pure bash -
-no dependencies, nothing to configure. Nothing else is required, and most people want
-only this.
+no dependencies, nothing to configure. Nothing else is required.
 
 ## Looking for memento?
 
