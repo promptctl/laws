@@ -83,4 +83,6 @@ history, but they cannot run there because `laws-excise.js` is absent. The branc
 the only runnable copy, and the only home of `bin/laws-switch`.
 
 The tag is what pins the commit; the branch is there for convenience. The former
-`bun-surface` and `injector-retire-bun-inspect` branches are contained in it and can go.
+`bun-surface` branch is this same commit and can go. `injector-retire-bun-inspect` was
+squash-merged as `c8ef89c` in PR #47, so its content is on master but its commits are
+not ancestors of anything; delete it with `git branch -D`, not `-d`.
