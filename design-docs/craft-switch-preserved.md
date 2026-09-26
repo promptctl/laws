@@ -1,9 +1,11 @@
 # The in-session craft switch, preserved on a branch
 
-The code that let a running session retire one craft and take up another is being
-removed from this repo under `promptctl-injector-wih`. Before that lands it is
-preserved, complete and runnable, on the branch `keep/craft-switch` and the tag
-`craft-switch-preserved`, both at commit `eea4ecc`. This note says what that code
+The code that let a running session retire one craft and take up another was
+removed from this repo under `promptctl-injector-wih`. It is preserved, complete and
+runnable, on the branch `keep/craft-switch` and the tag `craft-switch-preserved`, both
+at commit `eea4ecc`. That commit is not on master: it is master's injector plus the four
+commits that finished the Bun surface (PR #73, never merged). The tree as it stood on master
+before the removal is `5d61c1f`. This note says what that code
 did, why it is going, what was known to be wrong with it, and how to get it back.
 
 ## What it was
@@ -29,10 +31,11 @@ this repo, and the hosted-only condition on the offer is why.
 The owner decided on 2026-09-24 that the injector was too much complexity for a
 repository whose job is guidance. The hosting machinery moved to `~/code/cc-extra`, a
 repo built for augmenting Claude Code, and this plugin will not depend on it. With no
-injector there is nothing to enact a switch, so the offer goes too: after the teardown
-the gate refuses and names a fresh session as the alternative. Removing the offer, the
-launcher, the injector directory, and the dead half of `laws-excise.js` is the work of
-`promptctl-injector-wih`. Until it merges, master still carries all of it.
+injector there is nothing to enact a switch, so the offer went too: the gate refuses and
+names a fresh session as the alternative. `promptctl-injector-wih` removed the offer, the
+launcher, the injector directory, and the whole of `laws-excise.js` - once nothing enacts
+a switch, its policy half has no caller either, and `skill-router.sh` is the one reader
+of `incompatible-crafts.txt`.
 
 ## What was known to be wrong
 
@@ -64,8 +67,8 @@ switch together with everything it ran on:
   switch: reads the pending offer, re-runs `decide()` against the transcript as it
   stands, and refuses by name when nothing is pending or the conflict has lapsed.
 - `plugins/laws/bin/laws-switch` is the command the offer pointed at.
-- `plugins/laws/hooks/scripts/laws-excise.js` carries the policy and the on-disk half:
-  `decide()`, `rewindTo`, `exciseAt`, `writeAtomic`, and the `SWITCH_ACTIONS` bodies.
+- `plugins/laws/hooks/scripts/laws-excise.js` carries the policy reader and the on-disk
+  half: `decide()`, `rewindTo`, `exciseAt`, `writeAtomic`, and the `SWITCH_ACTIONS` bodies.
 - The rest of `plugins/laws/hooks/injector/`, and `SEAMS.md` there, which records every
   seam the switch relied on and how each was measured.
 
