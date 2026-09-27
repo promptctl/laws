@@ -27,13 +27,15 @@ built.
 
 ## What replaces it
 
-The long-horizon eval: an agent builds a real project from scratch, autonomously,
-across many sessions, under the repo's actual workflow — and the artifact is judged
-where the laws' value actually lives. See the `horizon` epic in the tracker.
+Nothing yet. The long-horizon eval (an agent builds a real project from scratch across
+many sessions; the `horizon` epic, closed) was the planned replacement, and the owner
+dropped it on 2026-09-27: a five-run baseline was days of continuous Opus usage, too
+much for what it returned. A cheaper method is still to be worked out. This decision
+does not reopen single-session evals.
 
 ## Salvage
 
 The deleted tree's isolation layer (isolated logged-in profile) and tmux
-session-driver were transport, not single-task apparatus. If the long-horizon
-harness wants them, recover from git history at this file's introducing commit
-rather than rebuilding blind.
+session-driver were transport, not single-task apparatus. Recover them from git history at this file's introducing commit rather than
+rebuilding blind. The long-horizon harness's scripts are still in `horizon/`; its
+reference seed was deleted in the commit for PR #78 and is recoverable from `35effb3`.
