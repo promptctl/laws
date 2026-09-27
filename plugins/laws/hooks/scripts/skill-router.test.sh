@@ -99,6 +99,15 @@ run guard "$(skill_payload S10 laws:prompt)" >/dev/null
 assert_allow "laws:code after laws:prompt is allowed (the edge runs one way)" \
   "$(run guard "$(skill_payload S10 laws:code)")"
 
+# 5c'. laws:code-observability is held beside laws:code and written in its register, so it
+#      carries the same edge: prompt after it is refused, and the refusal names it.
+run guard "$(skill_payload S13 laws:code-observability)" >/dev/null
+assert_deny "laws:prompt refused after laws:code-observability" \
+  "$(run guard "$(skill_payload S13 laws:prompt)")" "laws:code-observability" "laws:prompt"
+run guard "$(skill_payload S14 laws:code)" >/dev/null
+assert_allow "laws:code-observability coexists with laws:code" \
+  "$(run guard "$(skill_payload S14 laws:code-observability)")"
+
 # 5d. laws:chat is in no incompatible pair, so it coexists with everything, both directions.
 run guard "$(skill_payload S11 laws:prompt)" >/dev/null
 assert_allow "laws:chat coexists with laws:prompt" "$(run guard "$(skill_payload S11 laws:chat)")"
