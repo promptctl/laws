@@ -13,16 +13,24 @@
 # lost carry is reported, loudly, and the run stops. [LAW:no-silent-failure]
 #
 # Usage:
-#   horizon/run-loop.sh [seed-dir] [memento-ref] [lit-ref]
+#   horizon/run-loop.sh [seed-dir] [memento-ref] [lit-ref] [reviewer-sha] [goal-ref]
 #
 # [seed-dir]     the seed bundle to start from. Defaults to horizon/seeds/macklebox,
 #                the reference seed.
 # [memento-ref]  git ref to pin memento at, resolved against the repository that OWNS
 #                memento (promptctl/memento) and passed straight to pin-instrument.sh.
 #                Defaults to that repo's default branch; a campaign pins it explicitly
-#                on every run. The /goal wording is pinned at this checkout's HEAD.
+#                on every run.
 # [lit-ref]      git ref to pin lit's Claude plugin (the /next skill) at, resolved
 #                against lit's repository (promptctl/links-issue-tracker) the same way.
+# [reviewer-sha] the reviewer commit to pin, passed straight to pin-instrument.sh. Left
+#                empty, the reviewer's moving `v1` tag is resolved live for this run, so
+#                two runs minutes apart can legitimately disagree; a campaign resolves
+#                it once and passes the same sha to every run (campaign.sh does).
+# [goal-ref]     the commit of THIS repository to take the /goal wording from, passed
+#                straight to pin-instrument.sh. Left empty, this checkout's HEAD at the
+#                moment of the run - which moves under a campaign whenever anyone
+#                commits or switches branches here, so campaign.sh pins it once too.
 #
 # THE CONFIG DIR IS AT A FIXED PATH AND THE WORK DIR IS NOT INSIDE IT. Claude Code keys
 # its stored credential to the config directory's PATH, so the config dir has to be the
@@ -47,7 +55,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib.sh"
 
 # How many consecutive sessions of committed work the run is watched for. The ticket's
-# acceptance is three; a campaign that wants the whole backlog raises it.
+# acceptance is three; a campaign that wants the whole backlog raises it past what the
+# backlog can produce and lets the backlog-complete end state (horizon_observe) end the run.
 : "${HORIZON_TARGET_SESSIONS:=3}"
 # Wall-clock ceiling. A run that stops making progress must end as a reported stall
 # rather than as a process nobody remembers starting. [LAW:no-silent-failure]
@@ -72,6 +81,7 @@ end_run() {
 
 main() {
   local seed_dir="${1:-$SCRIPT_DIR/seeds/macklebox}" memento_ref="${2:-}" lit_ref="${3:-}"
+  local reviewer_sha="${4:-}" goal_ref="${5:-}"
 
   horizon_need_base
   # Read at both ends of the run - the start below, and the end from the close-out - so a
@@ -164,8 +174,9 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
 
   horizon_log "pinning the instrument"
   # Empty refs are passed through as empty: pin-instrument.sh reads an empty argument as
-  # that argument's default, and the reviewer and goal refs are always left to theirs.
-  "$SCRIPT_DIR/pin-instrument.sh" "$instrument_dir" "$memento_ref" "" "" "$lit_ref" \
+  # that argument's default: this checkout's HEAD for the goal wording, the reviewer's
+  # tag resolved live. A campaign passes both pinned.
+  "$SCRIPT_DIR/pin-instrument.sh" "$instrument_dir" "$memento_ref" "$reviewer_sha" "$goal_ref" "$lit_ref" \
     || horizon_die "pin-instrument.sh failed"
 
   # Here, under the lock, and not inside the pin: this is the one shared thing the pin
@@ -242,7 +253,7 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_wait_goal_in_force "$config_dir" "$project_dir" "$goal_file"
   horizon_log "session one's pinned /goal is in force"
 
-  horizon_log "run is live; observing until ${HORIZON_TARGET_SESSIONS} sessions of committed work"
+  horizon_log "run is live; observing until ${HORIZON_TARGET_SESSIONS} sessions of committed work, or the backlog is complete"
   # NOT redirected into loop.json any more. The close-out writes that file on every exit
   # path, and a redirect here would make this the second writer of it - the one that won
   # only when the observer got far enough to print. Acceptance attempt 1 was stopped by
