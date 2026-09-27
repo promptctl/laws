@@ -1,12 +1,13 @@
 # Observability, written at law altitude
 
-**2026-09-13, draft. Not in the craft.** This is `design-docs/observability.md`
-rewritten in the shape and register of a law entry in laws:code, so the owner can judge
-the wording against the real thing before any of it enters the craft. The brainstorm
-doc stays the source of intent; this file is the candidate expression. The token below
-is proposed, not canonical, and nothing here is citable until the owner approves it.
-The retrofit procedure appears once, as a binding section shared by every domain, which
-answers the brainstorm doc's last open question by example.
+**2026-09-13, draft. Enacted 2026-09-27 in laws v0.31.0.** This is
+`design-docs/observability.md` rewritten in the shape and register of a law entry in
+laws:code. The owner ungated it on 2026-09-27 rather than approving a wording, so the
+implementing session decided: the token `nothing-unseen` is canonical, the law entry
+below went into `plugins/laws/skills/code/SKILL.md` as written, the domain bindings
+were folded into the existing per-domain lists there, and the retrofit procedure is one
+shared block at the end of the bindings. That SKILL.md is now the source; this file is
+the record of the draft it came from.
 
 ---
 

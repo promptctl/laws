@@ -299,8 +299,11 @@ Three questions were open before wording. The owner settled them as follows.
 Also decided: the fail-loud collision under tensions. The retrofit section above is a
 proposal from the same date, awaiting owner review.
 
-## Still open
+## Resolved, 2026-09-27
 
-- The law's wording. Proposed separately, approved before it enters the craft.
-- Whether the retrofit procedure belongs in each domain binding or in a single
-  binding-level section that every domain shares, with per-domain chokepoint lists.
+The owner removed the approval gate on 2026-09-27 and left the remaining decisions to
+the implementing session. Enacted in laws v0.31.0, `plugins/laws/skills/code/SKILL.md`:
+
+- The wording is `design-docs/observability-law.md`'s entry, token `nothing-unseen`.
+- The retrofit procedure is a single block shared by every domain, placed after the
+  per-domain bindings; each domain's own binding names its substrate.
