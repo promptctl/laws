@@ -662,6 +662,13 @@ read back from `campaign.json`, the next run number follows the last `run-N/` pr
 the loop stops once `[runs]` exist. That is what keeps a restarted campaign the *same*
 campaign rather than a second one with fresh pins.
 
+**Stopping.** `touch <campaign-dir>/STOP`: the run in progress finishes and is archived,
+and no further run starts; remove the file to resume. To end the run in progress as
+well, send `run-loop.sh` a TERM *after* the stop file exists and let its exit handler
+finish the capture. Do not kill the campaign's tmux session first: that sends SIGHUP into
+a capture in progress and the bundle comes out without `run.json`, and the campaign,
+if it survives, starts the next run on top of it.
+
 **What each run leaves.** Its bundle, moved from `HORIZON_WORK_DIR` into
 `<campaign-dir>/run-N/` the moment the driver exits, on every exit status. Beside it,
 outside the bundle so `verify-bundle.sh`'s layout stays exactly what it checks:
