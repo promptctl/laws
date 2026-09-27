@@ -417,7 +417,7 @@ run, loudly.
 Every run drives one repository that already exists: **`promptctl/horizon-eval`**. The
 driver never creates a repository and never deletes one, so nothing in this eval needs a
 credential that could destroy either. At the start of a run it resets that repo to the
-seed — closes every open PR, deletes every branch but `master`, force-pushes the seeded
+seed — closes every open PR, deletes every ref but `master` (branches, tags, and the `refs/dolt/data` ref lit syncs its backlog on), force-pushes the seeded
 history — and points the project's `origin` at it.
 
 The goal wording drives the agent to carry every unit of work to a merged PR, so it needs
