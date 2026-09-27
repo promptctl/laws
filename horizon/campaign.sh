@@ -296,12 +296,15 @@ main() {
   while [ "$number" -le "$runs" ]; do
     status=0
     campaign_run_one "$dir" "$number" "$seed_dir" || status=$?
-    # A driver that exited without leaving a bundle was refused before it began - an
-    # unauthenticated config dir, a held lock, a missing reviewer credential. Nothing about
-    # the next run would differ, so the campaign stops here and says so rather than
-    # spending four more refusals. [LAW:no-silent-failure]
-    [ -d "$dir/run-$number" ] \
-      || horizon_die "run $number left no bundle (driver exit $status); see $dir/run-$number.log"
+    # A run that never became live - refused before it created a work dir (an
+    # unauthenticated config dir, a held lock, a missing reviewer credential), or refused
+    # while pinning or seeding (a fetch that failed) - is not a run, and nothing about the
+    # next one would differ, so the campaign stops here and says so rather than spending
+    # the remaining slots on the same refusal. A run counts once it was seeded and its
+    # close-out wrote run.json; a bundle missing either is a stopped campaign, whatever
+    # the driver's exit status. [LAW:no-silent-failure]
+    [ -d "$dir/run-$number/seed" ] && [ -f "$dir/run-$number/run.json" ] \
+      || horizon_die "run $number never became a run (driver exit $status, no seeded project or no run.json in $dir/run-$number); see $dir/run-$number.log"
     python3 "$SCRIPT_DIR/campaign-index.py" "$dir" \
       || horizon_die "could not render the campaign index after run $number"
     number=$((number + 1))
