@@ -969,19 +969,22 @@ horizon_bind_remote() {
       || horizon_die "could not close leftover PR #$pr in $repo"
   done
 
-  # Listed after the PRs are closed, so this is what survived --delete-branch rather
-  # than a list that names branches the loop above already removed.
-  branches="$(horizon_remote_branches "$repo")"
-  # Branches an agent pushed without ever opening a PR are left behind by the loop above.
-  # master is skipped rather than attempted-and-forgiven: GitHub refuses to delete a
-  # default branch, and letting that refusal pass would be indistinguishable from a real
-  # permission failure going unnoticed. [LAW:no-silent-failure]
-  local branch
-  for branch in $branches; do
-    [ "$branch" = "master" ] && continue
-    horizon_log "deleting leftover branch $branch"
-    gh api -X DELETE "repos/$repo/git/refs/heads/$branch" \
-      || horizon_die "could not delete leftover branch $branch in $repo"
+  # EVERY ref but master, not only branches. lit keeps the backlog it syncs on a ref of
+  # its own (`refs/dolt/data`), which a branch listing never shows and a force-push of
+  # master never touches - so the previous run's whole backlog survived the reset, and
+  # the next run's first `lit` command found a remote store sharing no history with its
+  # seeded one and told the agent, at every command, that it was BLOCKED. Time zero is
+  # "master at the seeded HEAD and nothing else", so the reset removes whatever else the
+  # remote holds rather than naming the kinds of ref it knows about. Listed after the PRs
+  # are closed, so this is what survived --delete-branch. master is never in the list:
+  # GitHub refuses to delete a default branch, and letting that refusal pass would be
+  # indistinguishable from a real permission failure. [LAW:no-ambient-temporal-coupling]
+  local refs ref
+  refs="$(horizon_remote_leftover_refs "$repo")"
+  for ref in $refs; do
+    horizon_log "deleting leftover ref $ref"
+    gh api -X DELETE "repos/$repo/git/$ref" \
+      || horizon_die "could not delete leftover ref $ref in $repo"
   done
 
   horizon_project_git "$project_dir" remote add origin "git@github.com:${repo}.git" \
@@ -1026,27 +1029,33 @@ horizon_assert_remote_at_time_zero() {
   [ -z "$open_prs" ] \
     || horizon_die "$repo still has open PR(s) #${open_prs//$'\n'/, #} - the run would inherit a previous run's work as its own"
 
-  local extra_branches
-  extra_branches="$(horizon_remote_branches "$repo" | sed '/^master$/d')"
-  [ -z "$extra_branches" ] \
-    || horizon_die "$repo still carries branches from a previous run: ${extra_branches//$'\n'/, }"
+  local extra_refs
+  extra_refs="$(horizon_remote_leftover_refs "$repo")"
+  [ -z "$extra_refs" ] \
+    || horizon_die "$repo still carries refs from a previous run: ${extra_refs//$'\n'/, }"
 }
 
 # Usage: horizon_remote_open_prs <repo>  -> open PR numbers, one per line
-# Usage: horizon_remote_branches <repo>  -> branch names, one per line
+# Usage: horizon_remote_leftover_refs <repo>  -> every ref that is not time zero, one per line
 #
-# Paginated, so "every open PR" and "every branch" mean what they say past the API's
+# Paginated, so "every open PR" and "every ref" mean what they say past the API's
 # default page; the reset and the time-zero assertion both read through these, so they
 # cannot disagree about what the remote holds. [LAW:one-source-of-truth]
+#
+# Time zero is refs/heads/master plus GitHub's own undeletable refs/pull/*; everything
+# else - branches, tags, lit's refs/dolt/data, whatever a future tool adds - is a previous
+# run's leftover. Listed by exclusion so a new kind of ref is caught rather than quietly
+# inherited. matching-refs with an empty pattern is GitHub's listing of every ref.
 horizon_remote_open_prs() {
   local repo="$1"
   gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].number' \
     || horizon_die "could not list open PRs in $repo"
 }
-horizon_remote_branches() {
+horizon_remote_leftover_refs() {
   local repo="$1"
-  gh api --paginate "repos/$repo/branches?per_page=100" --jq '.[].name' \
-    || horizon_die "could not list branches in $repo"
+  gh api --paginate "repos/$repo/git/matching-refs/?per_page=100" \
+    --jq '.[].ref | select(. != "refs/heads/master" and (startswith("refs/pull/") | not))' \
+    || horizon_die "could not list refs in $repo"
 }
 
 # Usage: horizon_assert_reviewer_credential <repo>
@@ -1468,6 +1477,13 @@ Re-run pin-instrument.sh to pin the version now installed, or reinstall the pinn
     || horizon_die "could not bind CLAUDE_CONFIG_DIR into the run session"
   tmux set-environment -t "$HORIZON_TMUX_SESSION" DISABLE_AUTOUPDATER 1 \
     || horizon_die "could not disable the auto-updater in the run session"
+  # PATH too, for the same reason as CLAUDE_CONFIG_DIR: a pane on an already-running
+  # server inherits the SERVER's environment, so a campaign's frozen `lit` (first on the
+  # driver's PATH) would otherwise reach the pin, which records its hash, and not the
+  # sessions, which would run whatever the machine has - a control recorded and not
+  # applied. [LAW:one-source-of-truth]
+  tmux set-environment -t "$HORIZON_TMUX_SESSION" PATH "$PATH" \
+    || horizon_die "could not bind PATH into the run session"
   tmux respawn-pane -k -t "$HORIZON_TMUX_SESSION" -c "$project_dir" \
     "$claude_path" --dangerously-skip-permissions "/goal $(<"$goal_file")" \
     || horizon_die "could not launch claude in the run session"
@@ -1904,10 +1920,73 @@ $report"
   done
 }
 
+# Usage: horizon_backlog_open_count <project_dir>  -> number of open or in-progress tickets
+#
+# Counted from lit's store in the project itself, the only store that knows. A lit that
+# fails is a die, never a zero: zero is the run's success condition, and a broken lit
+# reading as "backlog complete" would end a live run early while reporting it finished.
+# [LAW:no-silent-failure]
+#
+# READ-ONLY, THROUGH `lit ls --at <storage_dir>`, NOT `lit ls` IN THE WORKSPACE. A
+# workspace listing syncs first, and syncing takes the store's commit lock - so an
+# observer polling every 30s was a second actor on the store under measurement, and it
+# queued behind the agent's own `lit sync` (run 1 of the baseline campaign logged it
+# waiting on the lock the agent's mirror held). `--at` reads the storage directory the
+# workspace names and takes part in no sync. The observer only ever READS.
+#
+# And a store that lists NOTHING is refused the same way, for the reason
+# horizon_capture_backlog refuses an export with no tickets: every run is seeded with a
+# backlog, so an empty listing of every status is a broken store, not a finished one.
+# One listing serves both facts - the store can list, and how many tickets are not
+# closed - so the store is opened once per pass rather than twice.
+horizon_backlog_open_count() {
+  local project_dir="$1" storage_dir listing
+  storage_dir="$(cd "$project_dir" && lit workspace | awk '/^storage_dir:/{print $2}')" \
+    || horizon_die "lit workspace failed in $project_dir while locating its store"
+  [ -n "$storage_dir" ] \
+    || horizon_die "lit workspace in $project_dir names no storage_dir"
+  # Every status named explicitly: `lit ls` hides closed tickets by default, so an
+  # unfiltered listing of a project whose every ticket is closed is empty - and that is
+  # the exact state this function exists to recognise, not a broken store.
+  listing="$(cd "$project_dir" && lit ls --at "$storage_dir" --status open,in_progress,closed --format lines --columns id,state)" \
+    || horizon_die "lit ls --at $storage_dir failed while counting tickets"
+  [ -n "$listing" ] \
+    || horizon_die "lit lists no tickets at all in $storage_dir. A run's project is seeded with a backlog, so this is an unreadable store rather than an empty one"
+  # Each line is `<id> | <state>`; the count is the lines whose state is not closed.
+  printf '%s\n' "$listing" | awk -F' \\| *' '$2 != "closed"' | grep -c . || true
+}
+
+# How long the transcripts must go unwritten before a completed run is ended.
+: "${HORIZON_QUIET_SECONDS:=180}"
+
+# Usage: horizon_wait_quiet <transcripts_dir> <deadline_seconds>
+#
+# Returns 0 once no file under the transcripts dir has been written for
+# HORIZON_QUIET_SECONDS, and 1 when the deadline (a value of $SECONDS) passes first - the
+# caller's ceiling still applies, so a session that never goes quiet ends when the run
+# would have, and the caller hears which of the two happened rather than reading both as
+# "quiet". [LAW:no-silent-failure]
+#
+# Recency is read with `find -mmin`, which BSD and GNU find share; `stat` does not share
+# a flag between them, and a silenced stat would have read every pass as "written just
+# now" and waited out the whole ceiling.
+horizon_wait_quiet() {
+  local dir="$1" deadline="$2" minutes recent
+  minutes=$(( (HORIZON_QUIET_SECONDS + 59) / 60 ))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    recent="$(find "$dir" -type f -name '*.jsonl' -mmin "-$minutes")" \
+      || horizon_die "could not read transcript write times under $dir"
+    [ -n "$recent" ] || return 0
+    sleep 30
+  done
+  return 1
+}
+
 # Usage: horizon_observe <config_dir> <project_dir> <goal_file> <target_sessions> <max_minutes>
 #
 # Watches until the run has produced <target_sessions> consecutive sessions of committed
-# work, or the wall-clock ceiling stops it. Prints the final report to stdout.
+# work, or the project's backlog holds no open ticket, or the wall-clock ceiling stops it.
+# Prints the final report to stdout.
 #
 # The two limits are arguments rather than globals the caller happens to have set: a
 # function that silently reads its caller's variables only works for that one caller,
@@ -1951,6 +2030,45 @@ arrives as plain text and leaves exactly this."
     fi
     if [ "$reached" -ge "$target" ]; then
       printf '%s\n' "$report"
+      return 0
+    fi
+    # THE BACKLOG BEING DONE IS THE RUN'S NATURAL END. The goal wording tells the agent to
+    # keep going "until the backlog, or the current epic, is done", so once every ticket is
+    # closed the session has nothing left to do and sits at an idle prompt; watching it
+    # until the wall-clock ceiling would end a finished build as a reported stall. Read from
+    # the project's own backlog, which is the one thing that knows. A ticket is closed only
+    # once its PR is merged (that is what the wording asks for), so zero open tickets means
+    # the work is integrated, not merely written. [LAW:one-source-of-truth]
+    # Captured into a checked assignment: a die inside a command substitution exits only
+    # the subshell, and `[ "" -eq 0 ]` is a bash error the loop would repeat every pass
+    # until the ceiling, not the named refusal. [LAW:no-silent-failure]
+    local open_count
+    open_count="$(horizon_backlog_open_count "$project_dir")" \
+      || horizon_die "could not count the project's open tickets - the refusal is above"
+    if [ "$open_count" -eq 0 ]; then
+      # Not ended on the spot: the last ticket closes BEFORE the agent writes its handoff
+      # and relaunches, and a kill there truncates the final transcript mid close-out.
+      # The session is given until it goes quiet - no transcript written for
+      # HORIZON_QUIET_SECONDS - and the wall-clock ceiling still bounds the wait.
+      horizon_log "the backlog is complete: no open or in-progress ticket remains; waiting for the session to go quiet"
+      local quiet=0
+      horizon_wait_quiet "$(horizon_live_transcripts_dir "$config_dir")" "$deadline" || quiet=$?
+      # The report is read AGAIN after the wait, and the carry checked again on it: the
+      # last ticket closes before the agent hands off and relaunches, so the boundary
+      # that wait covered is one the loop above never saw. The one outcome this design
+      # refuses - a run recorded clean with a lost carry - is exactly what reading only
+      # the pre-wait report would allow. [LAW:no-silent-failure]
+      report="$(horizon_report "$(horizon_live_transcripts_dir "$config_dir")" "$project_dir" "$goal_file")"
+      counts="$(printf '%s' "$report" | horizon_report_counts)"
+      read -r reached drifted in_force <<<"$counts"
+      printf '%s\n' "$report"
+      if [ "$drifted" -gt 0 ]; then
+        horizon_die "the backlog completed, but the pinned goal did not survive $drifted session boundary/boundaries after the last ticket closed; see goal_received above"
+      fi
+      if [ "$quiet" -ne 0 ]; then
+        horizon_die "the backlog completed after $reached consecutive committing session(s), but the session was still writing transcripts when the ${max_minutes}-minute ceiling ended the run: its final transcript may be truncated"
+      fi
+      horizon_log "ending the run: backlog complete, session quiet, after $reached consecutive committing session(s)"
       return 0
     fi
     # The session dying is not the same fact as the target being met, and only one of

@@ -382,15 +382,23 @@ while the hook never fires: no hook of the operator's runs against a seed commit
 ## Driving a run unattended
 
 ```sh
-horizon/run-loop.sh [seed-dir] [memento-ref] [lit-ref]
+horizon/run-loop.sh [seed-dir] [memento-ref] [lit-ref] [reviewer-sha] [goal-ref]
 ```
 
 Builds time zero with the two commands above, launches session one with the pinned
 `/goal` wording as claude's prompt, waits until that session's transcript records the
 goal executed, and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`;
-`memento-ref` and `lit-ref` go straight to `pin-instrument.sh`, and the reviewer and goal
-refs are left to their defaults.
+the four refs go straight to `pin-instrument.sh`, and each one left empty takes that
+argument's default there - which for the reviewer and the goal wording means *resolved
+live for this run* (the `v1` tag, this checkout's HEAD). A campaign passes all four.
 Every session after the first is produced by memento's own relaunch.
+
+A run ends in one of three ways, and the observer reports which: the target number of
+consecutive committing sessions was reached; the project's backlog holds no open or
+in-progress ticket (the goal wording tells the agent to keep going until the backlog is
+done, so this is the run's natural end and a finished build is not watched until the
+ceiling as if it had stalled); or the wall-clock ceiling stopped it. A lost goal carry and
+a dead session end it too, as failures.
 
 The goal is the launch prompt because a `/goal` typed or pasted into the input box does
 not reliably run. Pasted at the pinned wording's size, Claude Code collapses it into a
@@ -409,7 +417,7 @@ run, loudly.
 Every run drives one repository that already exists: **`promptctl/horizon-eval`**. The
 driver never creates a repository and never deletes one, so nothing in this eval needs a
 credential that could destroy either. At the start of a run it resets that repo to the
-seed — closes every open PR, deletes every branch but `master`, force-pushes the seeded
+seed — closes every open PR, deletes every ref but `master` (branches, tags, and the `refs/dolt/data` ref lit syncs its backlog on), force-pushes the seeded
 history — and points the project's `origin` at it.
 
 The goal wording drives the agent to carry every unit of work to a merged PR, so it needs
@@ -612,6 +620,76 @@ refuses afterwards, because the record is not broken: it is complete, and what i
 that the totals are unsafe.
 
 Tests: `horizon/sessions.test.py`.
+
+## Running a campaign
+
+```sh
+horizon/campaign.sh <campaign-dir> [runs] [seed-dir]
+```
+
+A campaign is N runs of one configuration, serially, and its product is the *spread*
+those runs show. The spread is only readable if the runs differ in nothing but the agent's
+own choices, and `run-loop.sh` on its own does not guarantee that: each run pins its own
+instrument, and every ref left to its default is resolved live - memento's default
+branch, lit's default branch, the reviewer's moving `v1` tag, this checkout's HEAD for
+the goal wording. Two runs hours apart can legitimately disagree, and each manifest would
+record its own value as pinned. `campaign.sh` resolves every one of them **once**, on
+the first invocation, records them in `<campaign-dir>/campaign.json`, and passes the same
+values to every run.
+
+Two controlled variables are not refs at all, and the campaign holds them differently:
+
+- **The `lit` binary.** Its sha256 goes into each manifest from whatever is on `PATH` at
+  run time, so an upgrade landing on the machine mid-campaign would silently move it. The
+  binary is *copied* into `<campaign-dir>/bin/lit` on the first invocation and every run
+  starts with that directory first on `PATH`. A resume whose copy no longer matches the
+  recorded hash is refused.
+- **Claude Code's version.** The version resolved on the first invocation becomes the
+  campaign's `HORIZON_CLAUDE_VERSION_PIN`, the gate `run-loop.sh` applies before it creates
+  anything; a machine that has moved past it refuses to run rather than straddling two
+  harnesses.
+
+**Budget.** `HORIZON_MAX_MINUTES` and `HORIZON_TARGET_SESSIONS` are recorded once too. The
+campaign's defaults - 600 minutes, a session target of 40 - are set against the `.3`
+acceptance attempts, where one ticket went from pickup to a merged PR in about 22 minutes
+on the reference seed's backlog of 4 epics and 15 tickets. The session target is deliberately past what
+the backlog can produce, so a run ends when the backlog is complete rather than at a
+session count; the ceiling is the budget cap, and a run that hits it is reported as such.
+
+**Resuming.** A campaign spans many hours and the process driving it will not always
+survive that. Invoking `campaign.sh` on an existing campaign dir resumes it: the pins are
+read back from `campaign.json`, the next run number follows the last `run-N/` present, and
+the loop stops once `[runs]` exist. A resume is refused while the last run present is one
+the driver refused - a `run-N/` with no seeded project or no `run.json`, or a `run-N.log`
+and outcome with no bundle - so a refusal is read and moved aside rather than skipped. That is what keeps a restarted campaign the *same*
+campaign rather than a second one with fresh pins.
+
+**Stopping.** `touch <campaign-dir>/STOP`: the run in progress finishes and is archived,
+and no further run starts; remove the file to resume. To end the run in progress as
+well, send `run-loop.sh` a TERM *after* the stop file exists and let its exit handler
+finish the capture. Do not kill the campaign's tmux session first: that sends SIGHUP into
+a capture in progress and the bundle comes out without `run.json`, and the campaign,
+if it survives, starts the next run on top of it.
+
+**What each run leaves.** Its bundle, moved from `HORIZON_WORK_DIR` into
+`<campaign-dir>/run-N/` the moment the driver exits, on every exit status. Beside it,
+outside the bundle so `verify-bundle.sh`'s layout stays exactly what it checks:
+`run-N.log`, the driver's whole output, and `run-N.outcome.json`, the driver's exit
+status, the commit of the working tree the driver ran from and whether that tree was
+dirty, and the last line the driver printed before its close-out. A run the driver refused before it created a
+work dir leaves no bundle, and that ends the campaign rather than looping on a refusal.
+
+**The index.** `campaign-index.py <campaign-dir>` renders every run into `index.json` and
+`index.md`: duration, session count, goal carries, PRs opened and merged, review counts,
+tickets closed, token totals, and how the driver said each run ended. It is run after
+every run and can be re-run at any time. It is *descriptive*: every value is read off a
+bundle's own records, a fact a bundle does not hold is shown as absent rather than as
+zero, and nothing in it is a verdict - the person reading the bundles is.
+
+**What is not held constant, and is recorded instead:** the driver. `run-loop.sh` and
+`lib.sh` execute from the working tree, so each run's outcome file records that tree's
+commit and cleanliness. Drive a campaign from a checkout nothing else is switching -
+a worktree of its own.
 
 ## The run bundle
 

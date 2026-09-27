@@ -182,6 +182,42 @@ print(f"verified {len(seed)} seeded issues and {len(expected_deps)} dependency e
 PY
   pass "the seeded backlog matches the seed bundle (tickets, parentage, blocks edges)"
 
+  # The observer's natural end state reads the open-ticket count off the project's own
+  # backlog (horizon_backlog_open_count); a seeded project is the one state where that
+  # number is known in advance, so it is checked here against the seed: every seeded
+  # ticket is open, and none is in progress. A lit that could not be read is a die in
+  # that function, never a zero - checked by pointing it at a directory with no store.
+  local open_count seeded_count
+  open_count="$(horizon_backlog_open_count "$run1_project")" \
+    || fail "horizon_backlog_open_count failed on the seeded project"
+  seeded_count="$(python3 -c 'import json, sys; print(len(json.load(open(sys.argv[1]))))' "$SEED_DIR/backlog.json")" \
+    || fail "could not count the seed's tickets in $SEED_DIR/backlog.json"
+  [ "$open_count" = "$seeded_count" ] \
+    || fail "horizon_backlog_open_count reports $open_count open tickets on a seed of $seeded_count"
+  pass "the open-ticket count the observer's end state reads matches the seed ($open_count)"
+  if ( horizon_backlog_open_count "$WORK" ) >/dev/null 2>&1; then
+    fail "horizon_backlog_open_count returned a count for a directory with no lit store"
+  fi
+  pass "an unreadable backlog is refused by the open-ticket count, not read as zero"
+  # And the completed state, which is the one the count exists to recognise: every ticket
+  # in run2's project closed. `lit ls` hides closed tickets by default, so an all-closed
+  # store lists nothing unfiltered - the count has to read as zero here, not refuse.
+  # Everything but epics, closed with a resolution rather than `done` (done is reachable
+  # only from in_progress): an epic's state derives from its children and lit refuses to
+  # close one directly, so once every other ticket is closed the epics follow on their
+  # own. Selected by type, not by id shape - a standalone task has no dotted suffix.
+  local id
+  for id in $(cd "$run2_project" && lit ls --status open,in_progress --format lines --columns id,type \
+      | awk -F'|' '$2 !~ /epic/ { gsub(/ /, "", $1); print $1 }'); do
+    (cd "$run2_project" && lit close "$id" --resolution obsolete --reason "verify-seed: completed state" >/dev/null 2>&1) \
+      || fail "could not close seeded ticket $id in run2's project"
+  done
+  open_count="$(horizon_backlog_open_count "$run2_project")" \
+    || fail "horizon_backlog_open_count refused a project whose every ticket is closed"
+  [ "$open_count" = "0" ] \
+    || fail "horizon_backlog_open_count reports $open_count open tickets after closing every one"
+  pass "a project whose every ticket is closed counts as zero open, not as an unreadable store"
+
   # Fresh history means the seeded repo's first commit has no parent - it is a new
   # project, not a branch off some existing history that a later reader could trace
   # back into another repo.
