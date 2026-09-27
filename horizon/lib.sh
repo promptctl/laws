@@ -1477,6 +1477,13 @@ Re-run pin-instrument.sh to pin the version now installed, or reinstall the pinn
     || horizon_die "could not bind CLAUDE_CONFIG_DIR into the run session"
   tmux set-environment -t "$HORIZON_TMUX_SESSION" DISABLE_AUTOUPDATER 1 \
     || horizon_die "could not disable the auto-updater in the run session"
+  # PATH too, for the same reason as CLAUDE_CONFIG_DIR: a pane on an already-running
+  # server inherits the SERVER's environment, so a campaign's frozen `lit` (first on the
+  # driver's PATH) would otherwise reach the pin, which records its hash, and not the
+  # sessions, which would run whatever the machine has - a control recorded and not
+  # applied. [LAW:one-source-of-truth]
+  tmux set-environment -t "$HORIZON_TMUX_SESSION" PATH "$PATH" \
+    || horizon_die "could not bind PATH into the run session"
   tmux respawn-pane -k -t "$HORIZON_TMUX_SESSION" -c "$project_dir" \
     "$claude_path" --dangerously-skip-permissions "/goal $(<"$goal_file")" \
     || horizon_die "could not launch claude in the run session"
@@ -1927,13 +1934,36 @@ $report"
 # once the store has proven it can list the tickets it holds.
 horizon_backlog_open_count() {
   local project_dir="$1" listing every
-  every="$(cd "$project_dir" && lit ls --format lines)" \
+  # Every status named explicitly: `lit ls` hides closed tickets by default, so an
+  # unfiltered listing of a project whose every ticket is closed is empty - and that is
+  # the exact state this function exists to recognise, not a broken store.
+  every="$(cd "$project_dir" && lit ls --status open,in_progress,closed --format lines)" \
     || horizon_die "lit ls failed in $project_dir while counting tickets"
   [ -n "$every" ] \
     || horizon_die "lit lists no tickets at all in $project_dir. A run's project is seeded with a backlog, so this is an unreadable store rather than an empty one"
   listing="$(cd "$project_dir" && lit ls --status open --status in_progress --format lines)" \
     || horizon_die "lit ls failed in $project_dir while counting open tickets"
   printf '%s' "$listing" | grep -c . || true
+}
+
+# How long the transcripts must go unwritten before a completed run is ended.
+: "${HORIZON_QUIET_SECONDS:=180}"
+
+# Usage: horizon_wait_quiet <transcripts_dir> <deadline_seconds>
+#
+# Returns once no file under the transcripts dir has been written for
+# HORIZON_QUIET_SECONDS, or the deadline (a value of $SECONDS) passes - the caller's
+# ceiling still applies, so a session that never goes quiet ends when the run would have.
+horizon_wait_quiet() {
+  local dir="$1" deadline="$2" newest now
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    newest="$(find "$dir" -type f -name '*.jsonl' -exec stat -f %m {} + 2>/dev/null | sort -n | tail -1)"
+    now="$(date +%s)" || horizon_die "could not read the clock"
+    [ -n "$newest" ] || newest="$now"
+    [ $((now - newest)) -lt "$HORIZON_QUIET_SECONDS" ] || return 0
+    sleep 30
+  done
+  horizon_log "the session did not go quiet before the ceiling; ending it now"
 }
 
 # Usage: horizon_observe <config_dir> <project_dir> <goal_file> <target_sessions> <max_minutes>
@@ -2000,8 +2030,15 @@ arrives as plain text and leaves exactly this."
     open_count="$(horizon_backlog_open_count "$project_dir")" \
       || horizon_die "could not count the project's open tickets - the refusal is above"
     if [ "$open_count" -eq 0 ]; then
+      # Not ended on the spot: the last ticket closes BEFORE the agent writes its handoff
+      # and relaunches, and a kill there truncates the final transcript mid close-out.
+      # The session is given until it goes quiet - no transcript written for
+      # HORIZON_QUIET_SECONDS - and the wall-clock ceiling still bounds the wait.
+      horizon_log "the backlog is complete: no open or in-progress ticket remains; waiting for the session to go quiet"
+      horizon_wait_quiet "$(horizon_live_transcripts_dir "$config_dir")" "$deadline"
+      report="$(horizon_report "$(horizon_live_transcripts_dir "$config_dir")" "$project_dir" "$goal_file")"
       printf '%s\n' "$report"
-      horizon_log "the backlog is complete: no open or in-progress ticket remains; ending the run after $reached consecutive committing session(s)"
+      horizon_log "ending the run: backlog complete, session quiet, after $reached consecutive committing session(s)"
       return 0
     fi
     # The session dying is not the same fact as the target being met, and only one of

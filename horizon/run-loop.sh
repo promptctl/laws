@@ -172,9 +172,11 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   # campaign then counts as a run that happened. A refused invocation leaves nothing
   # behind, so the gate runs beside the two above. The pin's own check stays, for callers
   # that pin without this driver. [LAW:no-silent-failure]
-  local claude_path
+  local claude_path claude_version
   claude_path="$(horizon_claude_path)" || horizon_die "could not resolve the claude binary"
-  horizon_assert_claude_version "$(horizon_claude_version "$claude_path")"
+  claude_version="$(horizon_claude_version "$claude_path")" \
+    || horizon_die "could not read the version of the claude binary at $claude_path"
+  horizon_assert_claude_version "$claude_version"
 
   mkdir -p "$HORIZON_WORK_DIR" || horizon_die "could not create the work dir $HORIZON_WORK_DIR"
   local instrument_dir="$HORIZON_WORK_DIR/instrument"
