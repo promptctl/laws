@@ -13,6 +13,7 @@
 #
 # Usage:
 #   horizon/campaign.sh <campaign-dir> [runs] [seed-dir]
+#   touch <campaign-dir>/STOP      # end the campaign after the run in progress
 #
 # <campaign-dir>  where the campaign lives. Created on the first invocation and RESUMED
 #                 on every later one: the pins are read back from its campaign.json, the
@@ -294,6 +295,16 @@ main() {
   local number status
   number="$(campaign_next_run_number "$dir")"
   while [ "$number" -le "$runs" ]; do
+    # THE STOP FILE: how an operator ends a campaign between runs without racing it. A
+    # campaign loops straight from one driver exit into the next run, so stopping it by
+    # signal means finding the right process at the right instant - and killing the
+    # driver's tmux session sends SIGHUP into a capture in progress. `touch <dir>/STOP`
+    # instead: the running run finishes and is archived, and no further run starts.
+    # Remove the file to resume. [LAW:no-ambient-temporal-coupling]
+    if [ -e "$dir/STOP" ]; then
+      horizon_log "stop file present at $dir/STOP; not starting run $number"
+      return 0
+    fi
     status=0
     campaign_run_one "$dir" "$number" "$seed_dir" || status=$?
     # A run that never became live - refused before it created a work dir (an
