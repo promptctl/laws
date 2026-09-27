@@ -356,6 +356,8 @@ seedings produce the same tree and the same HEAD commit sha.
 horizon/verify-seed.sh [seed-dir]
 ```
 
+`seed-dir` defaults to the deleted `horizon/seeds/macklebox`; pass one.
+
 Seeds twice and checks the manifests and backlog shapes are byte-identical, then checks
 the seeded backlog against the **seed bundle** — every ticket, its parent, and every
 `blocks` edge, keyed by title rather than by position, so a bug shared with `backlog.py`
@@ -363,8 +365,8 @@ cannot hide. Reproducibility alone would not be worth much: a seeding that silen
 dropped every dependency edge reproduces that damage perfectly.
 
 It then checks the repo has fresh history and no remote — `lit init` adopts a backlog
-from a git remote when it finds one, which is exactly how this seed was recovered in the
-first place. After that it diffs every file under the seed's `repo/` against what was
+from a git remote when it finds one, which is exactly how the reference seed was
+recovered in the first place. After that it diffs every file under the seed's `repo/` against what was
 committed, byte for byte — the only check that ties a committed tree back to the seed,
 since two matching manifests would agree just as happily on the wrong bytes.
 
@@ -394,9 +396,10 @@ horizon/run-loop.sh [seed-dir] [memento-ref] [lit-ref] [reviewer-sha] [goal-ref]
 
 Builds time zero with the two commands above, launches session one with the pinned
 `/goal` wording as claude's prompt, waits until that session's transcript records the
-goal executed, and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`, which no longer exists, so pass one;
-the four refs go straight to `pin-instrument.sh`, and each one left empty takes that
-argument's default there - which for the reviewer and the goal wording means *resolved
+goal executed, and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`,
+which no longer exists, so pass one; the four refs go straight to `pin-instrument.sh`,
+and each one left empty takes that argument's default there - which for the reviewer
+and the goal wording means *resolved
 live for this run* (the `v1` tag, this checkout's HEAD). A campaign passes all four.
 Every session after the first is produced by memento's own relaunch.
 
@@ -633,6 +636,8 @@ Tests: `horizon/sessions.test.py`.
 ```sh
 horizon/campaign.sh <campaign-dir> [runs] [seed-dir]
 ```
+
+`seed-dir` defaults to the deleted `horizon/seeds/macklebox`; pass one.
 
 A campaign is N runs of one configuration, serially, and its product is the *spread*
 those runs show. The spread is only readable if the runs differ in nothing but the agent's

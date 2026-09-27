@@ -36,6 +36,8 @@ does not reopen single-session evals.
 ## Salvage
 
 The deleted tree's isolation layer (isolated logged-in profile) and tmux
-session-driver were transport, not single-task apparatus. Recover them from git history at this file's introducing commit rather than
-rebuilding blind. The long-horizon harness's scripts are still in `horizon/`; its
-reference seed was deleted in the commit for PR #78 and is recoverable from `35effb3`.
+session-driver were transport, not single-task apparatus. Recover them from git
+history at `cf5a570^`, the parent of the commit that introduced this file and deleted
+the tree, rather than rebuilding blind. The long-horizon harness's scripts are still in
+`horizon/`; its reference seed was deleted in the commit for PR #78 and is recoverable
+from `35effb3`.
