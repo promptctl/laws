@@ -969,19 +969,22 @@ horizon_bind_remote() {
       || horizon_die "could not close leftover PR #$pr in $repo"
   done
 
-  # Listed after the PRs are closed, so this is what survived --delete-branch rather
-  # than a list that names branches the loop above already removed.
-  branches="$(horizon_remote_branches "$repo")"
-  # Branches an agent pushed without ever opening a PR are left behind by the loop above.
-  # master is skipped rather than attempted-and-forgiven: GitHub refuses to delete a
-  # default branch, and letting that refusal pass would be indistinguishable from a real
-  # permission failure going unnoticed. [LAW:no-silent-failure]
-  local branch
-  for branch in $branches; do
-    [ "$branch" = "master" ] && continue
-    horizon_log "deleting leftover branch $branch"
-    gh api -X DELETE "repos/$repo/git/refs/heads/$branch" \
-      || horizon_die "could not delete leftover branch $branch in $repo"
+  # EVERY ref but master, not only branches. lit keeps the backlog it syncs on a ref of
+  # its own (`refs/dolt/data`), which a branch listing never shows and a force-push of
+  # master never touches - so the previous run's whole backlog survived the reset, and
+  # the next run's first `lit` command found a remote store sharing no history with its
+  # seeded one and told the agent, at every command, that it was BLOCKED. Time zero is
+  # "master at the seeded HEAD and nothing else", so the reset removes whatever else the
+  # remote holds rather than naming the kinds of ref it knows about. Listed after the PRs
+  # are closed, so this is what survived --delete-branch. master is never in the list:
+  # GitHub refuses to delete a default branch, and letting that refusal pass would be
+  # indistinguishable from a real permission failure. [LAW:no-ambient-temporal-coupling]
+  local refs ref
+  refs="$(horizon_remote_leftover_refs "$repo")"
+  for ref in $refs; do
+    horizon_log "deleting leftover ref $ref"
+    gh api -X DELETE "repos/$repo/git/$ref" \
+      || horizon_die "could not delete leftover ref $ref in $repo"
   done
 
   horizon_project_git "$project_dir" remote add origin "git@github.com:${repo}.git" \
@@ -1026,27 +1029,33 @@ horizon_assert_remote_at_time_zero() {
   [ -z "$open_prs" ] \
     || horizon_die "$repo still has open PR(s) #${open_prs//$'\n'/, #} - the run would inherit a previous run's work as its own"
 
-  local extra_branches
-  extra_branches="$(horizon_remote_branches "$repo" | sed '/^master$/d')"
-  [ -z "$extra_branches" ] \
-    || horizon_die "$repo still carries branches from a previous run: ${extra_branches//$'\n'/, }"
+  local extra_refs
+  extra_refs="$(horizon_remote_leftover_refs "$repo")"
+  [ -z "$extra_refs" ] \
+    || horizon_die "$repo still carries refs from a previous run: ${extra_refs//$'\n'/, }"
 }
 
 # Usage: horizon_remote_open_prs <repo>  -> open PR numbers, one per line
-# Usage: horizon_remote_branches <repo>  -> branch names, one per line
+# Usage: horizon_remote_leftover_refs <repo>  -> every ref that is not time zero, one per line
 #
-# Paginated, so "every open PR" and "every branch" mean what they say past the API's
+# Paginated, so "every open PR" and "every ref" mean what they say past the API's
 # default page; the reset and the time-zero assertion both read through these, so they
 # cannot disagree about what the remote holds. [LAW:one-source-of-truth]
+#
+# Time zero is refs/heads/master plus GitHub's own undeletable refs/pull/*; everything
+# else - branches, tags, lit's refs/dolt/data, whatever a future tool adds - is a previous
+# run's leftover. Listed by exclusion so a new kind of ref is caught rather than quietly
+# inherited. matching-refs with an empty pattern is GitHub's listing of every ref.
 horizon_remote_open_prs() {
   local repo="$1"
   gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].number' \
     || horizon_die "could not list open PRs in $repo"
 }
-horizon_remote_branches() {
+horizon_remote_leftover_refs() {
   local repo="$1"
-  gh api --paginate "repos/$repo/branches?per_page=100" --jq '.[].name' \
-    || horizon_die "could not list branches in $repo"
+  gh api --paginate "repos/$repo/git/matching-refs/?per_page=100" \
+    --jq '.[].ref | select(. != "refs/heads/master" and (startswith("refs/pull/") | not))' \
+    || horizon_die "could not list refs in $repo"
 }
 
 # Usage: horizon_assert_reviewer_credential <repo>
