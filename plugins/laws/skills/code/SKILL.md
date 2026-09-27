@@ -1090,8 +1090,8 @@ that says only "succeeded" is a photograph of the landing with no flight recorde
 
 **Telemetry is code.** It is typed, tested, versioned, and named by one convention.
 It gets no exemption from any other law: the outbound edge where events leave the
-process is a boundary, and `[LAW:parse-dont-validate]` applies there - redaction of
-secrets happens at that one checkpoint, not scattered through call sites. And it obeys
+process is a boundary like any other, with one checkpoint (`[LAW:single-enforcer]`),
+and `laws:code-observability` says what that checkpoint does. And it obeys
 `[LAW:no-silent-failure]` in the one way that does not take the aircraft down with the
 panel: **a telemetry failure is itself telemetry.** When the exporter is unreachable,
 the request does not crash; the dropped events are counted and surfaced, and the work
