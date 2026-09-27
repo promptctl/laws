@@ -1922,28 +1922,38 @@ $report"
 
 # Usage: horizon_backlog_open_count <project_dir>  -> number of open or in-progress tickets
 #
-# Counted from `lit ls` in the project itself, the only store that knows. A lit that fails
-# is a die, never a zero: zero is the run's success condition, and a broken lit reading as
-# "backlog complete" would end a live run early while reporting it finished.
+# Counted from lit's store in the project itself, the only store that knows. A lit that
+# fails is a die, never a zero: zero is the run's success condition, and a broken lit
+# reading as "backlog complete" would end a live run early while reporting it finished.
 # [LAW:no-silent-failure]
+#
+# READ-ONLY, THROUGH `lit ls --at <storage_dir>`, NOT `lit ls` IN THE WORKSPACE. A
+# workspace listing syncs first, and syncing takes the store's commit lock - so an
+# observer polling every 30s was a second actor on the store under measurement, and it
+# queued behind the agent's own `lit sync` (run 1 of the baseline campaign logged it
+# waiting on the lock the agent's mirror held). `--at` reads the storage directory the
+# workspace names and takes part in no sync. The observer only ever READS.
 #
 # And a store that lists NOTHING is refused the same way, for the reason
 # horizon_capture_backlog refuses an export with no tickets: every run is seeded with a
-# backlog, and lit exits 0 with an empty listing on a sync it cannot resolve - so an empty
-# unfiltered listing is a broken store, not a finished one. The open count is only read
-# once the store has proven it can list the tickets it holds.
+# backlog, so an empty listing of every status is a broken store, not a finished one.
+# One listing serves both facts - the store can list, and how many tickets are not
+# closed - so the store is opened once per pass rather than twice.
 horizon_backlog_open_count() {
-  local project_dir="$1" listing every
+  local project_dir="$1" storage_dir listing
+  storage_dir="$(cd "$project_dir" && lit workspace | awk '/^storage_dir:/{print $2}')" \
+    || horizon_die "lit workspace failed in $project_dir while locating its store"
+  [ -n "$storage_dir" ] \
+    || horizon_die "lit workspace in $project_dir names no storage_dir"
   # Every status named explicitly: `lit ls` hides closed tickets by default, so an
   # unfiltered listing of a project whose every ticket is closed is empty - and that is
   # the exact state this function exists to recognise, not a broken store.
-  every="$(cd "$project_dir" && lit ls --status open,in_progress,closed --format lines)" \
-    || horizon_die "lit ls failed in $project_dir while counting tickets"
-  [ -n "$every" ] \
-    || horizon_die "lit lists no tickets at all in $project_dir. A run's project is seeded with a backlog, so this is an unreadable store rather than an empty one"
-  listing="$(cd "$project_dir" && lit ls --status open --status in_progress --format lines)" \
-    || horizon_die "lit ls failed in $project_dir while counting open tickets"
-  printf '%s' "$listing" | grep -c . || true
+  listing="$(cd "$project_dir" && lit ls --at "$storage_dir" --status open,in_progress,closed --format lines --columns id,state)" \
+    || horizon_die "lit ls --at $storage_dir failed while counting tickets"
+  [ -n "$listing" ] \
+    || horizon_die "lit lists no tickets at all in $storage_dir. A run's project is seeded with a backlog, so this is an unreadable store rather than an empty one"
+  # Each line is `<id> | <state>`; the count is the lines whose state is not closed.
+  printf '%s\n' "$listing" | awk -F' \\| *' '$2 != "closed"' | grep -c . || true
 }
 
 # How long the transcripts must go unwritten before a completed run is ended.
@@ -1951,19 +1961,25 @@ horizon_backlog_open_count() {
 
 # Usage: horizon_wait_quiet <transcripts_dir> <deadline_seconds>
 #
-# Returns once no file under the transcripts dir has been written for
-# HORIZON_QUIET_SECONDS, or the deadline (a value of $SECONDS) passes - the caller's
-# ceiling still applies, so a session that never goes quiet ends when the run would have.
+# Returns 0 once no file under the transcripts dir has been written for
+# HORIZON_QUIET_SECONDS, and 1 when the deadline (a value of $SECONDS) passes first - the
+# caller's ceiling still applies, so a session that never goes quiet ends when the run
+# would have, and the caller hears which of the two happened rather than reading both as
+# "quiet". [LAW:no-silent-failure]
+#
+# Recency is read with `find -mmin`, which BSD and GNU find share; `stat` does not share
+# a flag between them, and a silenced stat would have read every pass as "written just
+# now" and waited out the whole ceiling.
 horizon_wait_quiet() {
-  local dir="$1" deadline="$2" newest now
+  local dir="$1" deadline="$2" minutes recent
+  minutes=$(( (HORIZON_QUIET_SECONDS + 59) / 60 ))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    newest="$(find "$dir" -type f -name '*.jsonl' -exec stat -f %m {} + 2>/dev/null | sort -n | tail -1)"
-    now="$(date +%s)" || horizon_die "could not read the clock"
-    [ -n "$newest" ] || newest="$now"
-    [ $((now - newest)) -lt "$HORIZON_QUIET_SECONDS" ] || return 0
+    recent="$(find "$dir" -type f -name '*.jsonl' -mmin "-$minutes")" \
+      || horizon_die "could not read transcript write times under $dir"
+    [ -n "$recent" ] || return 0
     sleep 30
   done
-  horizon_log "the session did not go quiet before the ceiling; ending it now"
+  return 1
 }
 
 # Usage: horizon_observe <config_dir> <project_dir> <goal_file> <target_sessions> <max_minutes>
@@ -2035,9 +2051,23 @@ arrives as plain text and leaves exactly this."
       # The session is given until it goes quiet - no transcript written for
       # HORIZON_QUIET_SECONDS - and the wall-clock ceiling still bounds the wait.
       horizon_log "the backlog is complete: no open or in-progress ticket remains; waiting for the session to go quiet"
-      horizon_wait_quiet "$(horizon_live_transcripts_dir "$config_dir")" "$deadline"
+      local quiet=0
+      horizon_wait_quiet "$(horizon_live_transcripts_dir "$config_dir")" "$deadline" || quiet=$?
+      # The report is read AGAIN after the wait, and the carry checked again on it: the
+      # last ticket closes before the agent hands off and relaunches, so the boundary
+      # that wait covered is one the loop above never saw. The one outcome this design
+      # refuses - a run recorded clean with a lost carry - is exactly what reading only
+      # the pre-wait report would allow. [LAW:no-silent-failure]
       report="$(horizon_report "$(horizon_live_transcripts_dir "$config_dir")" "$project_dir" "$goal_file")"
+      counts="$(printf '%s' "$report" | horizon_report_counts)"
+      read -r reached drifted in_force <<<"$counts"
       printf '%s\n' "$report"
+      if [ "$drifted" -gt 0 ]; then
+        horizon_die "the backlog completed, but the pinned goal did not survive $drifted session boundary/boundaries after the last ticket closed; see goal_received above"
+      fi
+      if [ "$quiet" -ne 0 ]; then
+        horizon_die "the backlog completed after $reached consecutive committing session(s), but the session was still writing transcripts when the ${max_minutes}-minute ceiling ended the run: its final transcript may be truncated"
+      fi
       horizon_log "ending the run: backlog complete, session quiet, after $reached consecutive committing session(s)"
       return 0
     fi

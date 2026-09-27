@@ -76,17 +76,38 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CAMPAIGN_RECORD="campaign.json"
 
 # Usage: campaign_driver_commit  -> "<sha> <clean|dirty>" for the tree the driver runs from
+#
+# The whole tree, not just horizon/: the driver sources nothing outside it today, but a
+# record that says "clean" of a tree with uncommitted changes is a record that lies the
+# day it does.
 campaign_driver_commit() {
   local repo_root sha state
   repo_root="$(horizon_repo_root "$SCRIPT_DIR")"
-  sha="$(git -C "$repo_root" rev-parse --verify HEAD)" \
+  sha="$(horizon_resolve_commit "$repo_root" HEAD)" \
     || horizon_die "could not read the driver checkout's HEAD"
-  if [ -z "$(git -C "$repo_root" status --porcelain -- horizon)" ]; then
+  if [ -z "$(git -C "$repo_root" status --porcelain)" ]; then
     state=clean
   else
     state=dirty
   fi
   printf '%s %s\n' "$sha" "$state"
+}
+
+# Usage: campaign_assert_last_run_complete <campaign_dir>
+#
+# A run that was refused AFTER its work dir existed (a fetch that failed while seeding)
+# leaves a run-N/ with no seeded project or no run.json - the state main dies on. Its
+# number is still the highest present, so a resume that only counted directories would
+# start at N+1 with that slot consumed and the refusal never re-read. Refused here by
+# name instead, the same way campaign_run_one refuses a refused run's log and outcome.
+campaign_assert_last_run_complete() {
+  local dir="$1" n
+  n="$(campaign_next_run_number "$dir")"
+  n=$((n - 1))
+  [ "$n" -ge 1 ] || return 0
+  [ -d "$dir/run-$n" ] || return 0
+  [ -d "$dir/run-$n/seed" ] && [ -f "$dir/run-$n/run.json" ] \
+    || horizon_die "run $n at $dir/run-$n never became a run (no seeded project or no run.json). Read $dir/run-$n.log, move the run's directory, log and outcome aside, and resume"
 }
 
 # Usage: campaign_next_run_number <campaign_dir>  -> 1 + the highest run-N present
@@ -112,8 +133,11 @@ campaign_create() {
   # call that fails part-way would otherwise leave a directory with bin/ and no
   # campaign.json, which the next invocation refuses as neither new nor resumable.
   # [LAW:no-silent-failure]
+  # Removed by the script's EXIT trap rather than a RETURN trap: every failure in here
+  # is a horizon_die, which exits without returning, so a RETURN trap never fired on
+  # exactly the fetch-failed-part-way case it existed for.
   refs="$(mktemp -d)" || horizon_die "could not create a scratch dir for ref resolution"
-  trap 'rm -rf "$refs"' RETURN
+  CAMPAIGN_SCRATCH="$refs"
 
   horizon_log "resolving memento once: ${HORIZON_MEMENTO_REPO_URL}@${HORIZON_MEMENTO_DEFAULT_REF}"
   memento_sha="$(horizon_git_fetch "$HORIZON_MEMENTO_REPO_URL" "$refs/memento.git" "$HORIZON_MEMENTO_DEFAULT_REF")"
@@ -132,17 +156,24 @@ campaign_create() {
   # the machine's lit through every upgrade, which is the drift this exists to stop. The
   # copy is hashed again rather than trusted: the record names the bytes every run will
   # execute, not the bytes that were on PATH a moment earlier.
-  mkdir -p "$dir/bin" || horizon_die "could not create $dir"
-  cp "$lit_path" "$dir/bin/lit" || horizon_die "could not copy $lit_path into $dir/bin"
-  chmod +x "$dir/bin/lit"
-  [ "$(horizon_sha256_file "$dir/bin/lit")" = "$lit_sha256" ] \
-    || horizon_die "the copy of lit at $dir/bin/lit does not hash to the binary it was copied from"
-  horizon_log "lit frozen at $dir/bin/lit ($lit_sha256)"
+  #
+  # Built under a staging name beside the final one and renamed into place once
+  # campaign.json is written: a copy or a record that fails part-way then leaves a
+  # staging dir main ignores, never a campaign dir holding bin/ and no record, which the
+  # next invocation would refuse as neither new nor resumable. [LAW:no-silent-failure]
+  local staging="$dir.building"
+  rm -rf "$staging"
+  mkdir -p "$staging/bin" || horizon_die "could not create $staging"
+  cp "$lit_path" "$staging/bin/lit" || horizon_die "could not copy $lit_path into $staging/bin"
+  chmod +x "$staging/bin/lit"
+  [ "$(horizon_sha256_file "$staging/bin/lit")" = "$lit_sha256" ] \
+    || horizon_die "the copy of lit at $staging/bin/lit does not hash to the binary it was copied from"
+  horizon_log "lit frozen at $staging/bin/lit ($lit_sha256)"
 
-  python3 - "$dir/$CAMPAIGN_RECORD" "$seed_dir" "$memento_sha" "$lit_sha" "$reviewer_sha" \
+  python3 - "$staging/$CAMPAIGN_RECORD" "$seed_dir" "$memento_sha" "$lit_sha" "$reviewer_sha" \
     "$goal_ref" "$lit_sha256" "$claude_version" "$HORIZON_CLAUDE_MODEL" \
     "$HORIZON_MAX_MINUTES" "$HORIZON_TARGET_SESSIONS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'EOF'
-import json, sys
+import json, os, sys
 (path, seed_dir, memento_sha, lit_sha, reviewer_sha, goal_ref, lit_sha256,
  claude_version, model, max_minutes, target_sessions, created) = sys.argv[1:]
 doc = {
@@ -163,10 +194,18 @@ doc = {
         "target_sessions": int(target_sessions),
     },
 }
-with open(path, "w") as handle:
+tmp = path + ".tmp"
+with open(tmp, "w") as handle:
     json.dump(doc, handle, indent=2, sort_keys=True)
     handle.write("\n")
+os.replace(tmp, path)
 EOF
+  # main admitted $dir only as absent or empty; an empty one is removed so the rename
+  # lands the staging dir at its name rather than inside it.
+  if [ -d "$dir" ]; then
+    rmdir "$dir" || horizon_die "could not replace the empty $dir with the built campaign"
+  fi
+  mv "$staging" "$dir" || horizon_die "could not move the built campaign from $staging to $dir"
   horizon_log "campaign recorded at $dir/$CAMPAIGN_RECORD"
 }
 
@@ -240,10 +279,16 @@ campaign_run_one() {
 import json, os, sys
 path, number, status, started, ended, driver, log, run_dir = sys.argv[1:]
 sha, state = driver.split(" ", 1)
+# The driver's last word about the RUN, not about the capture: run-loop.sh's exit
+# handler logs "bundle captured" after every ending, success or die, so the literal last
+# line would read the same for every run and the index's "how each run ended" would say
+# nothing. The close-out's own lines are skipped; one pass over the log, nothing held.
 last = None
 with open(log, "rb") as handle:
-    lines = [l.decode("utf-8", "replace").rstrip("\n") for l in handle if l.strip()]
-    last = lines[-1] if lines else None
+    for raw in handle:
+        line = raw.decode("utf-8", "replace").rstrip("\n")
+        if line.strip() and not line.startswith("[horizon] bundle captured:"):
+            last = line
 doc = {
     "run": int(number),
     "driver_exit_status": int(status),
@@ -254,12 +299,17 @@ doc = {
     "log": os.path.basename(log),
     "last_log_line": last,
 }
-with open(path, "w") as handle:
+tmp = path + ".tmp"
+with open(tmp, "w") as handle:
     json.dump(doc, handle, indent=2, sort_keys=True)
     handle.write("\n")
+os.replace(tmp, path)
 EOF
   return "$status"
 }
+
+CAMPAIGN_SCRATCH=""
+trap '[ -z "$CAMPAIGN_SCRATCH" ] || rm -rf "$CAMPAIGN_SCRATCH"' EXIT
 
 main() {
   local dir="${1:-}" runs="${2:-5}" seed_dir="${3:-$SCRIPT_DIR/seeds/macklebox}"
@@ -280,12 +330,14 @@ main() {
   horizon_need cp
   horizon_need chmod
   horizon_need mv
+  horizon_need rmdir
   horizon_need date
   horizon_need ls
 
   if [ -e "$dir/$CAMPAIGN_RECORD" ]; then
     horizon_log "resuming the campaign at $dir"
     campaign_assert_resumable "$dir" "$seed_dir"
+    campaign_assert_last_run_complete "$dir"
   else
     [ ! -e "$dir" ] || [ -z "$(ls -A "$dir")" ] \
       || horizon_die "$dir exists, is not empty, and holds no $CAMPAIGN_RECORD - not a campaign this can resume"
