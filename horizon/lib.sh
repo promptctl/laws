@@ -1904,10 +1904,24 @@ $report"
   done
 }
 
+# Usage: horizon_backlog_open_count <project_dir>  -> number of open or in-progress tickets
+#
+# Counted from `lit ls` in the project itself, the only store that knows. A lit that fails
+# is a die, never a zero: zero is the run's success condition, and a broken lit reading as
+# "backlog complete" would end a live run early while reporting it finished.
+# [LAW:no-silent-failure]
+horizon_backlog_open_count() {
+  local project_dir="$1" listing
+  listing="$(cd "$project_dir" && lit ls --status open --status in_progress --format lines)" \
+    || horizon_die "lit ls failed in $project_dir while counting open tickets"
+  printf '%s' "$listing" | grep -c . || true
+}
+
 # Usage: horizon_observe <config_dir> <project_dir> <goal_file> <target_sessions> <max_minutes>
 #
 # Watches until the run has produced <target_sessions> consecutive sessions of committed
-# work, or the wall-clock ceiling stops it. Prints the final report to stdout.
+# work, or the project's backlog holds no open ticket, or the wall-clock ceiling stops it.
+# Prints the final report to stdout.
 #
 # The two limits are arguments rather than globals the caller happens to have set: a
 # function that silently reads its caller's variables only works for that one caller,
@@ -1951,6 +1965,18 @@ arrives as plain text and leaves exactly this."
     fi
     if [ "$reached" -ge "$target" ]; then
       printf '%s\n' "$report"
+      return 0
+    fi
+    # THE BACKLOG BEING DONE IS THE RUN'S NATURAL END. The goal wording tells the agent to
+    # keep going "until the backlog, or the current epic, is done", so once every ticket is
+    # closed the session has nothing left to do and sits at an idle prompt; watching it
+    # until the wall-clock ceiling would end a finished build as a reported stall. Read from
+    # the project's own backlog, which is the one thing that knows. A ticket is closed only
+    # once its PR is merged (that is what the wording asks for), so zero open tickets means
+    # the work is integrated, not merely written. [LAW:one-source-of-truth]
+    if [ "$(horizon_backlog_open_count "$project_dir")" -eq 0 ]; then
+      printf '%s\n' "$report"
+      horizon_log "the backlog is complete: no open or in-progress ticket remains; ending the run after $reached consecutive committing session(s)"
       return 0
     fi
     # The session dying is not the same fact as the target being met, and only one of
