@@ -1910,8 +1910,18 @@ $report"
 # is a die, never a zero: zero is the run's success condition, and a broken lit reading as
 # "backlog complete" would end a live run early while reporting it finished.
 # [LAW:no-silent-failure]
+#
+# And a store that lists NOTHING is refused the same way, for the reason
+# horizon_capture_backlog refuses an export with no tickets: every run is seeded with a
+# backlog, and lit exits 0 with an empty listing on a sync it cannot resolve - so an empty
+# unfiltered listing is a broken store, not a finished one. The open count is only read
+# once the store has proven it can list the tickets it holds.
 horizon_backlog_open_count() {
-  local project_dir="$1" listing
+  local project_dir="$1" listing every
+  every="$(cd "$project_dir" && lit ls --format lines)" \
+    || horizon_die "lit ls failed in $project_dir while counting tickets"
+  [ -n "$every" ] \
+    || horizon_die "lit lists no tickets at all in $project_dir. A run's project is seeded with a backlog, so this is an unreadable store rather than an empty one"
   listing="$(cd "$project_dir" && lit ls --status open --status in_progress --format lines)" \
     || horizon_die "lit ls failed in $project_dir while counting open tickets"
   printf '%s' "$listing" | grep -c . || true
@@ -1974,7 +1984,13 @@ arrives as plain text and leaves exactly this."
     # the project's own backlog, which is the one thing that knows. A ticket is closed only
     # once its PR is merged (that is what the wording asks for), so zero open tickets means
     # the work is integrated, not merely written. [LAW:one-source-of-truth]
-    if [ "$(horizon_backlog_open_count "$project_dir")" -eq 0 ]; then
+    # Captured into a checked assignment: a die inside a command substitution exits only
+    # the subshell, and `[ "" -eq 0 ]` is a bash error the loop would repeat every pass
+    # until the ceiling, not the named refusal. [LAW:no-silent-failure]
+    local open_count
+    open_count="$(horizon_backlog_open_count "$project_dir")" \
+      || horizon_die "could not count the project's open tickets - the refusal is above"
+    if [ "$open_count" -eq 0 ]; then
       printf '%s\n' "$report"
       horizon_log "the backlog is complete: no open or in-progress ticket remains; ending the run after $reached consecutive committing session(s)"
       return 0
