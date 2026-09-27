@@ -6,6 +6,12 @@ resulting run bundle. This directory is the instrument's pinned, reproducible
 environment - the piece that makes a run's controlled variables checkable instead of
 assumed.
 
+**Status (2026-09-27):** the long-horizon eval is dropped by owner decision; the epic is
+closed. These scripts are kept as they were. The reference seed they default to,
+`horizon/seeds/macklebox`, was deleted in PR #78 and is recoverable with
+`git checkout 35effb3 -- horizon/seeds`; until then every command that takes a seed-dir
+needs one passed explicitly.
+
 ## The one command
 
 ```sh
@@ -321,9 +327,10 @@ it. A **seed bundle** is the entire definition of time zero, and has exactly two
   than a private one, so lit validates and wires the whole backlog in one transaction
   and there is no second schema here to drift from it.
 
-`horizon/seeds/macklebox` is the reference seed, recovered from the reference run
-itself — see its `PROVENANCE.md` for how time zero was identified and why the bundle is
-vendored rather than fetched.
+`horizon/seeds/macklebox` was the reference seed, recovered from the reference run
+itself; its `PROVENANCE.md` explains how time zero was identified and why the bundle was
+vendored rather than fetched. Both are deleted from the tree (see the status note at the
+top) and recoverable from `35effb3`.
 
 Seeding produces, under `<run-dir>`: the project (fresh history, no remote, spec
 committed, `lit` initialised, backlog loaded), a `backlog-shape.json`, and a canonical
@@ -349,6 +356,8 @@ seedings produce the same tree and the same HEAD commit sha.
 horizon/verify-seed.sh [seed-dir]
 ```
 
+`seed-dir` defaults to the deleted `horizon/seeds/macklebox`; pass one.
+
 Seeds twice and checks the manifests and backlog shapes are byte-identical, then checks
 the seeded backlog against the **seed bundle** — every ticket, its parent, and every
 `blocks` edge, keyed by title rather than by position, so a bug shared with `backlog.py`
@@ -356,8 +365,8 @@ cannot hide. Reproducibility alone would not be worth much: a seeding that silen
 dropped every dependency edge reproduces that damage perfectly.
 
 It then checks the repo has fresh history and no remote — `lit init` adopts a backlog
-from a git remote when it finds one, which is exactly how this seed was recovered in the
-first place. After that it diffs every file under the seed's `repo/` against what was
+from a git remote when it finds one, which is exactly how the reference seed was
+recovered in the first place. After that it diffs every file under the seed's `repo/` against what was
 committed, byte for byte — the only check that ties a committed tree back to the seed,
 since two matching manifests would agree just as happily on the wrong bytes.
 
@@ -387,9 +396,10 @@ horizon/run-loop.sh [seed-dir] [memento-ref] [lit-ref] [reviewer-sha] [goal-ref]
 
 Builds time zero with the two commands above, launches session one with the pinned
 `/goal` wording as claude's prompt, waits until that session's transcript records the
-goal executed, and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`;
-the four refs go straight to `pin-instrument.sh`, and each one left empty takes that
-argument's default there - which for the reviewer and the goal wording means *resolved
+goal executed, and then only observes. `seed-dir` defaults to `horizon/seeds/macklebox`,
+which no longer exists, so pass one; the four refs go straight to `pin-instrument.sh`,
+and each one left empty takes that argument's default there - which for the reviewer
+and the goal wording means *resolved
 live for this run* (the `v1` tag, this checkout's HEAD). A campaign passes all four.
 Every session after the first is produced by memento's own relaunch.
 
@@ -626,6 +636,8 @@ Tests: `horizon/sessions.test.py`.
 ```sh
 horizon/campaign.sh <campaign-dir> [runs] [seed-dir]
 ```
+
+`seed-dir` defaults to the deleted `horizon/seeds/macklebox`; pass one.
 
 A campaign is N runs of one configuration, serially, and its product is the *spread*
 those runs show. The spread is only readable if the runs differ in nothing but the agent's
