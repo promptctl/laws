@@ -27,6 +27,7 @@ import tempfile
 TOKEN_FIELDS = ("input_tokens", "cache_creation_input_tokens",
                 "cache_read_input_tokens", "output_tokens")
 RUN_DIR = re.compile(r"^run-(\d+)$")
+RUN_OUTCOME = re.compile(r"^run-(\d+)\.outcome\.json$")
 
 
 def read_json(path):
@@ -45,11 +46,19 @@ def read_json(path):
 
 
 def run_numbers(campaign_dir):
-    numbers = []
+    """Every run the campaign attempted: one with a bundle, or one with only an outcome.
+
+    A run the driver refused leaves an outcome file and no bundle, and it is the run that
+    ENDED the campaign - the one a reader most needs to see in "how each run ended".
+    """
+    numbers = set()
     for name in os.listdir(campaign_dir):
         match = RUN_DIR.match(name)
         if match and os.path.isdir(os.path.join(campaign_dir, name)):
-            numbers.append(int(match.group(1)))
+            numbers.add(int(match.group(1)))
+        match = RUN_OUTCOME.match(name)
+        if match:
+            numbers.add(int(match.group(1)))
     return sorted(numbers)
 
 
@@ -102,7 +111,7 @@ def describe_run(campaign_dir, number):
     outcome = read_json(os.path.join(campaign_dir, "run-%d.outcome.json" % number))
     return {
         "run": number,
-        "bundle": "run-%d" % number,
+        "bundle": "run-%d" % number if os.path.isdir(run_dir) else None,
         "started": record.get("started") if record else None,
         "ended": record.get("ended") if record else None,
         "duration_seconds": record.get("duration_seconds") if record else None,
@@ -161,7 +170,7 @@ def render_markdown(campaign, runs):
                    "%s/%s" % (cell(loop.get("goal_carries_intact")),
                               cell(loop.get("goal_carries_expected"))))
         lines.append("| %s |" % " | ".join([
-            run["bundle"],
+            run["bundle"] or "run-%d (no bundle)" % run["run"],
             cell(run["started"]),
             cell(duration(run["duration_seconds"])),
             cell(run["driver_exit_status"]),
@@ -179,7 +188,8 @@ def render_markdown(campaign, runs):
         ]))
     lines += ["", "## How each run ended", ""]
     for run in runs:
-        lines.append("- **%s**: %s" % (run["bundle"], run["ended_with"] or "(no driver log line recorded)"))
+        lines.append("- **%s**: %s" % (run["bundle"] or "run-%d (no bundle)" % run["run"],
+                                        run["ended_with"] or "(no driver log line recorded)"))
     lines.append("")
     return "\n".join(lines)
 

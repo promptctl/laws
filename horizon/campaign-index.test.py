@@ -183,6 +183,27 @@ root = tempfile.mkdtemp(prefix="campaign-index.none.")
 done = subprocess.run([sys.executable, RENDERER, root], capture_output=True, text=True)
 check("no campaign.json is refused", done.returncode != 0 and "campaign.json" in done.stderr)
 
+
+# ── a run the driver refused (an outcome file, no bundle) is still a run the index shows ─
+root = campaign_dir()
+full_bundle(root, 1, sessions=3, closed=5, merged=5, exit_status=0, last_line="ok")
+write(os.path.join(root, "run-2.outcome.json"), {
+    "run": 2, "driver_exit_status": 1, "started": "x", "ended": "y",
+    "driver": {"commit": "d" * 40, "tree": "clean"}, "bundle_present": False,
+    "log": "run-2.log", "last_log_line": "ERROR [horizon]: claude is 2.1.290, not the pinned 2.1.283",
+})
+index, markdown = render(root)
+check("a refused run is indexed after the real one", [r["run"] for r in index["runs"]] == [1, 2])
+refused = index["runs"][1]
+check("a refused run names no bundle", refused["bundle"] is None)
+check("a refused run carries its driver exit and last line",
+      refused["driver_exit_status"] == 1 and refused["ended_with"].startswith("ERROR [horizon]"))
+check("a refused run's loop, PRs and backlog are absent",
+      refused["loop"] is None and refused["pull_requests"] is None and refused["backlog"] is None)
+check("markdown says how the refused run ended", "**run-2 (no bundle)**: ERROR [horizon]" in markdown)
+check("markdown rows one per run including the refused one",
+      markdown.count("\n| run-1 |") == 1 and markdown.count("\n| run-2 (no bundle) |") == 1)
+
 print()
 if FAILURES:
     sys.exit("%d check(s) failed: %s" % (len(FAILURES), ", ".join(FAILURES)))

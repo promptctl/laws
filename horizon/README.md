@@ -659,7 +659,9 @@ session count; the ceiling is the budget cap, and a run that hits it is reported
 **Resuming.** A campaign spans many hours and the process driving it will not always
 survive that. Invoking `campaign.sh` on an existing campaign dir resumes it: the pins are
 read back from `campaign.json`, the next run number follows the last `run-N/` present, and
-the loop stops once `[runs]` exist. That is what keeps a restarted campaign the *same*
+the loop stops once `[runs]` exist. A resume is refused while the last run present is one
+the driver refused - a `run-N/` with no seeded project or no `run.json`, or a `run-N.log`
+and outcome with no bundle - so a refusal is read and moved aside rather than skipped. That is what keeps a restarted campaign the *same*
 campaign rather than a second one with fresh pins.
 
 **Stopping.** `touch <campaign-dir>/STOP`: the run in progress finishes and is archived,
@@ -674,7 +676,7 @@ if it survives, starts the next run on top of it.
 outside the bundle so `verify-bundle.sh`'s layout stays exactly what it checks:
 `run-N.log`, the driver's whole output, and `run-N.outcome.json`, the driver's exit
 status, the commit of the working tree the driver ran from and whether that tree was
-dirty, and the last line the driver printed. A run the driver refused before it created a
+dirty, and the last line the driver printed before its close-out. A run the driver refused before it created a
 work dir leaves no bundle, and that ends the campaign rather than looping on a refusal.
 
 **The index.** `campaign-index.py <campaign-dir>` renders every run into `index.json` and
