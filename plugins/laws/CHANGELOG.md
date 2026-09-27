@@ -1,5 +1,10 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.31.0 - 2026-09-27
+
+- laws(code): add `[LAW:nothing-unseen]` - the running system exposes its own state in all three conditions, working, broken, and unknown; one wide event per unit of work from the substrate every unit passes through, from the first commit; zero and absent are different facts; a telemetry failure is itself telemetry (promptctl-observability-gba)
+- laws(code-observability): new skill, held beside laws:code, carrying `[LAW:nothing-unseen]`'s per-domain bindings - what the shared layer is for a service, a CLI, a job, a migration, a distributed hop - the retrofit procedure, and the constraints every binding must survive (promptctl-observability-gba)
+
 ## v0.30.0 - 2026-09-26
 
 - laws: remove the hosted-session injector, the `claude-laws` launcher, `install-launcher`, `laws-switch`, and `laws-excise.js` - the in-session craft switch moved out of this repo (owner decision 2026-09-24; preserved on `keep/craft-switch`, see design-docs/craft-switch-preserved.md) (promptctl-injector-wih)

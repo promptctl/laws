@@ -249,20 +249,22 @@ none of them can happen unseen.
 
 In this repo's tooling that audit already has a home. Once the law has a token, the
 sheriff audit cites it and produces the findings, and the posse skill implements them.
-Retrofitting is the law plus the existing audit-and-remediation loop; it needs no
-skill of its own. The audit's tell for a bad retrofit is telemetry added per call site
-where a shared layer exists, because that is the shape that goes missing.
+The audit's tell for a bad retrofit is telemetry added per call site where a shared
+layer exists, because that is the shape that goes missing.
 
-Where the guidance lives: the law carries one sentence, that in a retrofit
-instrumentation lands in the substrate or the substrate is built first. The ordered
-procedure is binding-level, since the chokepoints differ by domain. The six failure
-shapes feed the sheriff.
+Where the guidance lives (superseded 2026-09-18, see "Where it goes"): the law carries
+the redirect to the shared layer; the ordered procedure and the per-domain layers live
+in the `laws:code-observability` skill, which defines no audit loop of its own. The six
+failure shapes feed the sheriff.
 
 ## Where it goes
 
-The recommended home is a new law token in laws:code, with domain bindings that say
-what "observable" means concretely for a CLI, a service, a script, a schema migration.
-Framed as the dynamic twin of the unrepresentable-states law.
+The recommended home is a new law token in laws:code, framed as the dynamic twin of
+the unrepresentable-states law. Owner instruction 2026-09-18: what "observable" means
+concretely for a CLI, a service, a script, a schema migration lives in a separate
+`laws:code-observability` skill, not in laws:code's domain bindings, so the entry stays
+short and the bindings have one source (`observability-north-star.law.md` req. 16-17,
+`observability-skill.spec.md`).
 
 Rejected placements:
 
@@ -296,11 +298,16 @@ Three questions were open before wording. The owner settled them as follows.
   document names concepts, not tokens, so it does not go stale when a token is
   renamed.
 
-Also decided: the fail-loud collision under tensions. The retrofit section above is a
-proposal from the same date, awaiting owner review.
+Also decided: the fail-loud collision under tensions. The retrofit section above was a
+proposal from the same date; it shipped, in the skill, on 2026-09-27.
 
-## Still open
+## Resolved, 2026-09-27
 
-- The law's wording. Proposed separately, approved before it enters the craft.
-- Whether the retrofit procedure belongs in each domain binding or in a single
-  binding-level section that every domain shares, with per-domain chokepoint lists.
+The owner removed the approval gate on 2026-09-27 and left the remaining decisions to
+the implementing session. Enacted in laws v0.31.0, `plugins/laws/skills/code/SKILL.md`:
+
+- The wording is `design-docs/observability-law.md`'s entry, token `nothing-unseen`,
+  less what the 2026-09-18 split assigns to the skill.
+- The retrofit procedure is a single block shared by every domain, in
+  `plugins/laws/skills/code-observability/SKILL.md` after the per-domain bindings;
+  each domain's own binding names its shared layer.

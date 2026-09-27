@@ -101,18 +101,19 @@ This specifies content, not wording. Bracketed line numbers cite
 22. Do not instrument the part that broke; carry out requirements 23-27 in order.
     Failure: on existing code, writers add a metric at the incident site, which is a
     call-site instrument and the shape that goes missing. [151-157, 225-226]
-23. First, inventory the shared layers requirements 4, 9, 12, and 15 name for the
+23. First, fix attribute names, event names, and units before the first instrument
+    lands. [236-237; moved from fifth to first on 2026-09-27 because the draft's own
+    wording, "before the first instrument lands", puts it ahead of every other step]
+24. Second, inventory the shared layers requirements 4, 9, 12, and 15 name for the
     domains present, and give each one the event and the correlation ID. [227-229]
-24. `[LAW:one-source-of-truth]` Second, where no shared layer exists - three hand-rolled
+25. `[LAW:one-source-of-truth]` Third, where no shared layer exists - three hand-rolled
     HTTP clients, requests assembled inline - consolidate the copies into one client or
     one runner and then instrument it; instrumenting each copy cements the duplication.
     [230-232, 154-156]
-25. Third, give every job and script the run wrapper of requirement 12 and its summary
+26. Fourth, give every job and script the run wrapper of requirement 12 and its summary
     event, including zero. [233]
-26. Fourth, fold existing ad-hoc log lines into the event as the code around them is
+27. Fifth, fold existing ad-hoc log lines into the event as the code around them is
     touched: no sweep deletion, and no new metric that duplicates a log line. [234-235]
-27. Fifth, fix attribute names, event names, and units before the first instrument lands.
-    [236-237]
 28. Make the done criterion the law's forbidden shapes (north-star requirement 12),
     walked as an audit: each shape found is a ticket, and the retrofit is done when none
     of them can happen unseen. In this repo the audit is `sheriff-is-in-town` and the

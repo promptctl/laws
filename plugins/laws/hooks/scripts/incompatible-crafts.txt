@@ -29,3 +29,4 @@
 # wrong. It says nothing about the reverse ordering, and a craft absent from every edge
 # mixes freely with all others.
 code prompt
+code-observability prompt   # same register as code, held beside it
