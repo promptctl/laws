@@ -1072,16 +1072,16 @@ Three independently maintained copies of the same facts are `[LAW:one-source-of-
 violated three ways, and they will disagree at exactly the hour you need them to
 agree.
 
-**Instrumentation lives in the substrate, not at the call site.** Google's Dapper
-worked because it sat in the RPC library and every service got tracing for free; the
-instrumentation nobody has to remember is the instrumentation that is actually there.
-So it goes in the middleware, the base client, the job runner, the command dispatcher -
-the one layer every unit of work already passes through - and it is `[LAW:single-enforcer]`
-for telemetry: one place emits, and a log line hand-placed inside a function is a
-duplicate checkpoint that will drift from the canonical one. This is also the whole
-mechanism behind "from the beginning." Bolted-on observability is thin, inconsistent,
-and missing where it is needed, and every practitioner who has retrofitted one says
-so. Put it in the substrate on day one and it cannot be forgotten on day two hundred.
+**Instrumentation lives in the substrate, not at the call site.** The instrumentation
+nobody has to remember is the instrumentation that is actually there. So it goes in the
+middleware, the base client, the job runner, the command dispatcher - the one layer
+every unit of work already passes through - and it is `[LAW:single-enforcer]` for
+telemetry: one place emits, and a log line hand-placed inside a function is a
+duplicate checkpoint that will drift from the canonical one. Telemetry per call site
+where a shared layer exists is the tell. This is also the whole mechanism behind "from
+the beginning." Bolted-on observability is thin, inconsistent, and missing where it is
+needed, and every practitioner who has retrofitted one says so. Put it in the substrate
+on day one and it cannot be forgotten on day two hundred.
 
 **The system explains its decisions, not only its outcomes.** Which of three config
 sources won. Which branch of the union was taken. Why the retry fired. A dry-run, a
@@ -1098,25 +1098,12 @@ the request does not crash; the dropped events are counted and surfaced, and the
 continues. Nothing fails silently, which is fail-loud's entire intent, and the hot path
 never depends on the telemetry pipeline being up.
 
-Now disarm the proverbs that will be quoted at you.
-
 **"We have dashboards."** Dashboards are monitoring, and monitoring answers questions
 you thought to ask in advance, with data pre-aggregated to answer only those. It
 catches the failures you predicted. This law is about the ones you did not: raw,
 high-cardinality records you can slice by a dimension you had no reason to name until
 the incident named it for you. A system you can only ask pre-planned questions of is
 monitored, not observable.
-
-**"Logging is noise."** It is, when it is scattered log lines at pixel resolution -
-that is the failure of a *call-site* practice, not of observability. One wide event per
-unit of work is the opposite of noise: it is the smallest complete record, emitted once,
-from one place. Volume is the symptom of instrumenting in the wrong layer.
-
-**"That's an ops concern / a library choice."** Which backend, which SDK, which
-exporter - those are binding-level detail and mostly settled (OpenTelemetry is the
-consensus). Whether the system *can be understood from its outputs* is a property of
-the code's shape, decided by whoever writes the substrate, and no backend can add it
-afterward.
 
 FORBIDDEN shapes - on sight, these are bugs:
 - A script exits 0 having processed zero items, and nothing distinguishes "all done"
@@ -1155,19 +1142,14 @@ def sync(items, run):
     # items=0 is a fact. No record at all is a different fact. Both are visible.
 ```
 
-The temptation arrives in two voices. The first, on new code: *"I'll get it working
-first and add logging after."* Refuse it. "After" produces exactly the thin,
-inconsistent bolt-on the law exists to prevent, because instrumentation added once the
-shape is set goes where the incidents were, not where the work flows. The redirect:
-the first thing built is the layer every unit of work passes through, and the event
-goes in there before the first unit does. The second voice, on existing code: *"the
-codebase already exists - I'll add metrics around the part that broke."* Refuse that
-too; a metric at the incident site is a call-site instrument, which is the shape that
-goes missing. The redirect is the same substrate, arrived at from the other side: find
-the layer every unit of work already passes through and instrument there, and where no
-such layer exists - three hand-rolled HTTP clients, requests assembled inline - build
-it first. The domain bindings say what the substrate is in each domain and carry the
-order of work for a retrofit.
+The temptation arrives as: *"I'll get it working first and add logging after."* Refuse
+it. "After" produces exactly the thin, inconsistent bolt-on the law exists to prevent,
+because instrumentation added once the shape is set goes where the incidents were, not
+where the work flows. The redirect: the first thing built is the layer every unit of
+work passes through, and the event goes in there before the first unit does. What that
+layer is in each domain, and the order of work when the codebase already exists, is
+`laws:code-observability`'s job - load it when you are writing instrumentation or
+retrofitting it.
 
 Diagnostic: *if this ran at 3 a.m. and did nothing, could anyone tell that from it not
 having run - and could they say, from the outputs alone, why it did what it did?*
@@ -1258,25 +1240,12 @@ misread the binding.
   (`[LAW:no-silent-failure]` at the wire).
 - Version at the boundary, not scattered through internals
   (`[LAW:single-enforcer]`).
-- The `[LAW:nothing-unseen]` substrate is the request middleware and the base
-  outbound client. One wide event per request, correlation ID propagated on the wire
-  (W3C Trace Context).
-- Measure at the boundary the code owns: rate, errors, duration - the RED triple - and
-  saturation of anything that can fill.
-- "Is it working" is a service-level objective over user-visible behavior; alert on
-  the symptom the user sees, never on a cause.
-- A path nobody has hit yet is in the unknown condition. Synthetic probes exercise it
-  on a schedule so the panel reads something before a user does.
-- The process exposes its own introspection surface - a metrics endpoint, a health
-  probe, a profiling endpoint - so a running instance can be asked, not only read.
 
 **Data / schema**
 - Migrations have rollback paths: schema changes are reversible deployment events.
 - Avoid dual-write - it is `[LAW:one-source-of-truth]` violated on purpose. If genuinely
   unavoidable, define explicit cutover criteria and a deadline, in writing, before
   the first double write.
-- The `[LAW:nothing-unseen]` substrate is the migration runner. One event per
-  migration: rows touched, duration, which step, rollback taken or not.
 
 **Pipelines / compilers**
 - Staged with explicit I/O: each stage declares its inputs and outputs.
@@ -1284,75 +1253,17 @@ misread the binding.
   (`[LAW:one-way-deps]` in time).
 - IRs are owned: every intermediate representation has an explicit owner, never
   ambient.
-- The stage's event records the counts on both sides of its declared I/O, so a stage
-  that consumed 10,000 and produced 0 is a visible fact, not a quiet one
-  (`[LAW:nothing-unseen]`).
 
 **Distributed systems**
-- Failure modes are documented like success paths - designed, not appended - and
-  instrumented the same way, because a failure mode with no signal is
-  `[LAW:nothing-unseen]`'s unknown condition by construction.
+- Failure modes are documented like success paths - designed, not appended.
 - Ordering and timing have an explicit owner: distributed sequencing is
   `[LAW:no-ambient-temporal-coupling]` at scale; no ambient assumptions.
-- The trace is the wide event with parent IDs; the correlation ID crosses every hop
-  or the record is broken at that hop.
 
 **CLI**
-- Exit codes are a contract, not just 0/1 - and the invocation's event and the exit
-  code say the same thing.
+- Exit codes are a contract, not just 0/1.
 - Stdout and stderr have defined semantics: parseable vs. human output is an
   intentional design decision (`[LAW:effects-at-boundaries]` for text;
   `[LAW:parse-dont-validate]` at the consuming end).
-- The `[LAW:nothing-unseen]` substrate is the entry point and the command
-  dispatcher. One event per invocation: command, arguments as parsed, exit code,
-  duration.
-- `--dry-run` / `--explain` are the decision surface: what the command will do and
-  which inputs decided it, before it acts.
-
-**Scripts and background jobs**
-- The `[LAW:nothing-unseen]` substrate is the run wrapper: one summary event at exit
-  with every count, including zero. This is the cheapest binding there is, and it
-  closes the unknown condition for the whole codebase.
-- A scheduled job also emits a heartbeat, and the absence of the heartbeat is alerted
-  on (`absent()` in Prometheus, a dead-man's switch anywhere else). No heartbeat means
-  the reporter died, not that nothing happened.
-- Status is never a boolean. Running, idle, last run at, last run's counts, last
-  failure and why.
-
-**Caches, retries, config - in any domain**
-- A cache exposes hits, misses, and evictions, or it is two copies with a hope.
-- A retry loop records every attempt on the unit of work's event; the fourth-attempt
-  success carries the three failures with it.
-- A config value read from several sources records which one won, on the event, so
-  the question "which config is live" has an answer without a debugger.
-
-**What every telemetry binding must survive**
-- Cardinality has a bill. Wide events tolerate high cardinality; metric labels do not.
-  Derive metrics from events; never put a user ID in a label.
-- Sampling loses something either way: head sampling drops the interesting traces,
-  tail sampling buffers. Choose one on purpose and record the choice on the event.
-- Secrets leak through telemetry constantly. Redaction is a single checkpoint at the
-  outbound edge, never a per-call-site scrub.
-- Overhead is budgeted, and Dapper's budget - under one percent - is the reference.
-  Instrumentation that slows the hot path gets ripped out, and once it is ripped out
-  the system is back in cloud.
-
-**Retrofitting `[LAW:nothing-unseen]` onto an existing codebase** - one procedure
-for every domain, in the order that keeps each step cheap and the result consistent:
-1. Fix attribute names, event names, and units before the first instrument lands; the
-   inconsistency of bolt-ons comes from each retrofit inventing its own.
-2. Inventory the substrates the domain bindings above name. Each gets the wide event
-   and the correlation ID. Coverage grows with the number of substrates, not call
-   sites, which is why this step alone covers most of a codebase.
-3. Where there is no substrate, consolidate first: collapse the copies into one client
-   or one runner, then instrument that. Instrumenting each copy cements the duplication
-   (`[LAW:one-source-of-truth]` applied to the retrofit itself).
-4. Give every job and script the run wrapper and its summary event, including zero.
-5. Fold existing ad-hoc log lines into the wide event as the code around them is
-   touched. No sweep deletion; no new metric that duplicates a log line.
-The done criterion is the law's FORBIDDEN list, walked as an audit: each shape found is
-a ticket, and the retrofit is done when none of them can happen unseen. The tell for a
-bad retrofit is telemetry per call site where a shared layer exists.
 
 ---
 

@@ -3,11 +3,14 @@
 **2026-09-13, draft. Enacted 2026-09-27 in laws v0.31.0.** This is
 `design-docs/observability.md` rewritten in the shape and register of a law entry in
 laws:code. The owner ungated it on 2026-09-27 rather than approving a wording, so the
-implementing session decided: the token `nothing-unseen` is canonical, the law entry
-below went into `plugins/laws/skills/code/SKILL.md` as written, the domain bindings
-were folded into the existing per-domain lists there, and the retrofit procedure is one
-shared block at the end of the bindings. That SKILL.md is now the source; this file is
-the record of the draft it came from.
+implementing session decided under the owner's 2026-09-18 split
+(`observability-north-star.law.md` req. 16-17): the token `nothing-unseen` is canonical;
+the law entry below went into `plugins/laws/skills/code/SKILL.md` minus what the split
+assigns to the skill (the two ops-side proverbs, the vendor names, the bindings pointer);
+the domain bindings, the retrofit procedure, and the constraints every binding must
+survive went into `plugins/laws/skills/code-observability/SKILL.md`, with naming moved
+from retrofit step 5 to step 1 because it must precede the first instrument. Those two
+files are now the source; this file is the record of the draft they came from.
 
 ---
 

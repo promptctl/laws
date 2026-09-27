@@ -2,7 +2,8 @@ Each version's section is written in the PR that bumps `.claude-plugin/plugin.js
 
 ## v0.31.0 - 2026-09-27
 
-- laws(code): add `[LAW:nothing-unseen]` - the running system exposes its own state in all three conditions, working, broken, and unknown; one wide event per unit of work from the substrate every unit passes through, from the first commit; zero and absent are different facts; a telemetry failure is itself telemetry. Domain bindings name the substrate per domain, with one shared retrofit procedure (promptctl-observability-gba)
+- laws(code): add `[LAW:nothing-unseen]` - the running system exposes its own state in all three conditions, working, broken, and unknown; one wide event per unit of work from the substrate every unit passes through, from the first commit; zero and absent are different facts; a telemetry failure is itself telemetry (promptctl-observability-gba)
+- laws(code-observability): new skill, held beside laws:code, carrying `[LAW:nothing-unseen]`'s per-domain bindings - what the shared layer is for a service, a CLI, a job, a migration, a distributed hop - the retrofit procedure, and the constraints every binding must survive (promptctl-observability-gba)
 
 ## v0.30.0 - 2026-09-26
 
