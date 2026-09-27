@@ -38,7 +38,7 @@ def campaign_dir():
     root = tempfile.mkdtemp(prefix="campaign-index.")
     write(os.path.join(root, "campaign.json"), {
         "schema_version": 1,
-        "seed_dir": "/seeds/macklebox",
+        "seed": {"dir": "/seeds/macklebox"},
         "pins": {"memento_ref": "m" * 40, "lit_plugin_ref": "l" * 40, "reviewer_sha": "r" * 40,
                  "goal_ref": "g" * 40, "lit_binary_sha256": "b" * 64,
                  "claude_version": "2.1.283", "claude_model": "claude-opus-5"},
@@ -159,6 +159,15 @@ write(os.path.join(root, "run-1.outcome.json"), {
 index, markdown = render(root)
 check("a bundle with no run.json still gets a row", index["runs"][0]["duration_seconds"] is None
       and index["runs"][0]["ended_with"].endswith("run.json"))
+
+# ── a ticket with no status is bucketed, not a None key that breaks the render ───────
+root = campaign_dir()
+full_bundle(root, 1, sessions=1, closed=1, merged=1, exit_status=0, last_line="ok")
+write(os.path.join(root, "run-1", "backlog", "export.json"),
+      {"issues": [{"id": "a", "status": "closed"}, {"id": "b"}, {"id": "c", "status": None}]})
+index, markdown = render(root)
+check("issues without a status are counted under 'missing'",
+      index["runs"][0]["backlog"]["missing"] == 2 and index["runs"][0]["backlog"]["total"] == 3)
 
 # ── a broken record is refused rather than rendered as absence ──────────────────────
 root = campaign_dir()

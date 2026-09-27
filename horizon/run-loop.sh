@@ -167,6 +167,15 @@ Archive it (copy it wherever you are keeping runs) and remove it, then start thi
   horizon_log "checking the reviewer's credential is set on $HORIZON_RUN_REPO"
   horizon_assert_reviewer_credential "$HORIZON_RUN_REPO"
 
+  # The campaign's version gate, HERE and not only inside the pin: pin-instrument.sh runs
+  # after the work dir exists, and a refusal there leaves a bundle behind - which a
+  # campaign then counts as a run that happened. A refused invocation leaves nothing
+  # behind, so the gate runs beside the two above. The pin's own check stays, for callers
+  # that pin without this driver. [LAW:no-silent-failure]
+  local claude_path
+  claude_path="$(horizon_claude_path)" || horizon_die "could not resolve the claude binary"
+  horizon_assert_claude_version "$(horizon_claude_version "$claude_path")"
+
   mkdir -p "$HORIZON_WORK_DIR" || horizon_die "could not create the work dir $HORIZON_WORK_DIR"
   local instrument_dir="$HORIZON_WORK_DIR/instrument"
   local seed_out_dir="$HORIZON_WORK_DIR/seed"

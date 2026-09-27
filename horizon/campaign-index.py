@@ -59,7 +59,10 @@ def backlog_states(export):
         return None
     counts = {"open": 0, "in_progress": 0, "closed": 0}
     for issue in export.get("issues", []):
-        status = issue.get("status")
+        # A status the export does not name is bucketed by name rather than by None: a
+        # None key cannot be sorted beside strings and would take the whole render down
+        # with a traceback from inside json.
+        status = issue.get("status") or "missing"
         counts[status] = counts.get(status, 0) + 1
     counts["total"] = len(export.get("issues", []))
     return counts
@@ -146,7 +149,7 @@ def render_markdown(campaign, runs):
         % (pins.get("claude_version"), pins.get("claude_model"), pins.get("lit_binary_sha256"),
            budget.get("max_minutes"), budget.get("target_sessions")),
         "",
-        "| run | started (UTC) | duration | driver exit | sessions | with commits | carries intact | PRs opened / merged | reviews | tickets closed / total | tokens in / out / cache-read / cache-create | captures failed |",
+        "| run | started (UTC) | duration | driver exit | sessions | with commits | carries intact | PRs opened / merged | reviews | tickets closed / total | tokens in / cache-create / cache-read / out | captures failed |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for run in runs:
