@@ -1029,8 +1029,10 @@ verification mean anything.
 from its outputs alone - for questions nobody thought to ask in advance - in all three
 of its conditions: when it is working, when it is not, and when nobody yet knows
 which. Instrumentation is built into the layer every unit of work passes through, from
-the first commit, and is subject to every other law. What happens unseen did not
-reliably happen.**
+the first commit, and is subject to every other law. The instrumentation of a change is
+part of the change, as its tests are: the units of work the change touches emit their
+event, and the facts the change introduces land on that event, in the same change.
+What happens unseen did not reliably happen.**
 
 A pilot can fly by sight until the cloud comes. Inside cloud, the only aircraft that
 survives is the one whose panel was built and trusted long before it was needed:
@@ -1098,6 +1100,20 @@ the request does not crash; the dropped events are counted and surfaced, and the
 continues. Nothing fails silently, which is fail-loud's entire intent, and the hot path
 never depends on the telemetry pipeline being up.
 
+**Observability is a property of the code's shape, not of the sink.** The panel is the
+instruments and the wiring that feeds them; where the readings get written down
+afterward is a detail of the hangar. A system whose export edge appends every event to
+a local file is fully observable: every fact about every run exists, under its
+correlation ID, and can be sliced by a dimension nobody has named yet, the moment
+someone opens the file. A system wired to a trace store, with instruments hand-placed
+at last quarter's incident sites, is blind, and the store cannot show what the code
+never emitted. Which sink the edge writes to is a configuration value, changed without
+touching the code. Whether there is anything to write is decided by the code's shape,
+and no configuration can change that. So the voice that says *"there's no backend yet -
+I'll instrument once it exists"* has the dependency backwards: the backend is the last
+thing to arrive and the one thing the shape does not wait on. Build the edge, point it
+at a file, and the day the store exists is a config change and nothing else.
+
 **"We have dashboards."** Dashboards are monitoring, and monitoring answers questions
 you thought to ask in advance, with data pre-aggregated to answer only those. It
 catches the failures you predicted. This law is about the ones you did not: raw,
@@ -1138,18 +1154,34 @@ RIGHT - the same script, instrumented in the run wrapper, one record per run:
 def sync(items, run):
     for item in items:
         run.attempt(push, item)   # counts attempts, failures, retries - per run
-    # exit: {"job":"sync","items":0,"pushed":0,"failed":0,"duration_ms":4}
-    # items=0 is a fact. No record at all is a different fact. Both are visible.
+    # exit, one record per run:
+    # {"event":"sync","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736",
+    #  "service":"inventory-sync","started_at":"2026-09-29T03:00:00Z",
+    #  "duration_ms":4,"outcome":"ok","error":null,
+    #  "sink":"file","sink_error":"connection refused",
+    #  "counts":{"items":0,"pushed":0,"failed":0}}
+    # counts.items=0 is a fact. No record at all is a different fact. Both are visible.
+    # sink=file with sink_error set: the exporter was down; the record exists anyway.
 ```
 
 The temptation arrives as: *"I'll get it working first and add logging after."* Refuse
 it. "After" produces exactly the thin, inconsistent bolt-on the law exists to prevent,
 because instrumentation added once the shape is set goes where the incidents were, not
 where the work flows. The redirect: the first thing built is the layer every unit of
-work passes through, and the event goes in there before the first unit does. What that
-layer is in each domain, and the order of work when the codebase already exists, is
-`laws:code-observability`'s job - load it when you are writing instrumentation or
-retrofitting it.
+work passes through, and the event goes in there before the first unit does. The same
+voice, on a change to code that already runs, says *"I'll ship the feature and file the
+instrumentation as a follow-up."* Refuse that too, for the reason you would refuse to
+file the tests as a follow-up: the follow-up is the task that never lands, and the
+change flies into cloud with no panel. The units of work the change touches emit their
+event, and the facts the change introduces - the new count, the new branch, the new
+config source - land on that event, in the same change. What the shared layer is in
+each domain, the floor a codebase stands up first, and the order coverage grows in when
+the codebase already exists, are `laws:code-observability`'s job. Load it on two
+triggers: when you are writing instrumentation or retrofitting it, and on first contact
+with a codebase whose units of work emit nothing. The second trigger is the one that
+gets missed: a session doing feature work in an uninstrumented codebase is not writing
+instrumentation, would never think to load the bindings, and is exactly the session
+that has to stand the floor up before its change can fly.
 
 Diagnostic: *if this ran at 3 a.m. and did nothing, could anyone tell that from it not
 having run - and could they say, from the outputs alone, why it did what it did?*
