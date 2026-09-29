@@ -24,7 +24,7 @@ This specifies content, not wording. Bracketed line numbers cite
 
 1. Cite `[LAW:nothing-unseen]` and do not restate it. Requirements 2-32 sharpen the law
    for one domain or one phase of the work and never relax it; a binding that seems to
-   conflict with the law has been misread. [173-174; `code/SKILL.md`:1030-1033]
+   conflict with the law has been misread. [173-174; `code/SKILL.md`:1028-1035]
 
 ### Objections raised during the work
 
@@ -101,7 +101,7 @@ This specifies content, not wording. Bracketed line numbers cite
     which inputs decided it, before it acts. [191-192]
 11. Treat exit codes as a contract, and make the event and the exit code say the same
     thing. This sharpens the existing CLI binding in laws:code ("Exit codes are a
-    contract, not just 0/1") and does not replace it. [193; `code/SKILL.md`:1063]
+    contract, not just 0/1") and does not replace it. [193; `code/SKILL.md`:1295]
 
 ### Scripts and background jobs
 
@@ -119,7 +119,7 @@ This specifies content, not wording. Bracketed line numbers cite
 16. Record on a pipeline stage's event the counts on both sides of its declared inputs
     and outputs, so a stage that consumed input and produced nothing is a visible fact.
     This sharpens the existing pipelines binding in laws:code ("Staged with explicit
-    I/O"). [208-210; `code/SKILL.md`:1048-1050]
+    I/O"). [208-210; `code/SKILL.md`:1283]
 
 ### Distributed systems
 
@@ -128,7 +128,7 @@ This specifies content, not wording. Bracketed line numbers cite
 18. Instrument failure modes the way success paths are instrumented, as part of their
     design rather than appended afterward. This sharpens the existing distributed binding
     in laws:code ("Failure modes are documented like success paths"). [215-216;
-    `code/SKILL.md`:1054-1055]
+    `code/SKILL.md`:1290]
 
 ### Caches, retries, and config
 
