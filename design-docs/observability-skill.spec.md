@@ -1,8 +1,9 @@
 # `laws:code-observability` - skill specification
 
-Scope: what the skill must contain - how to find the shared layer in each domain, what
-each domain's event carries, how to retrofit a codebase that has no shared layer, and
-the constraints every binding has to survive. The law itself is specified in
+Scope: what the skill must contain - what a fully observable system looks like, the
+smallest shape that satisfies the law, how to find the shared layer in each domain, what
+each domain's event carries, how coverage grows across a codebase that has no shared
+layer, and the constraints every binding has to survive. The law itself is specified in
 `design-docs/observability-north-star.law.md` and is never restated here. The lineage
 and industry survey stay in `design-docs/observability.md`.
 
@@ -35,6 +36,40 @@ This specifies content, not wording. Bracketed line numbers cite
    outputs is a property of the code's shape and is decided by whoever writes the shared
    layer. Failure: observability is dismissed as an ops concern or a library choice.
    [102-106]
+
+### The end state
+
+3a. State, as properties of a running system and not as a tool list, what a fully
+    instrumented system has, so a session that has never seen that standard can read it
+    as a checklist of what is still missing: (a) one wide event per unit of work under a
+    trace ID that crosses every hop; (b) metrics, traces, and logs as views over those
+    events; (c) rate, errors, duration, and saturation at every boundary the system owns;
+    (d) objectives on user-visible symptoms, with alerts only on those and on missing
+    heartbeats; (e) an introspection surface per process; (f) the event schema as a type,
+    with tests that assert the event and its fields the way tests assert a return value;
+    (g) redaction at one export edge; (h) telemetry failures counted and surfaced.
+    Requirements 4-32 are how each property is reached. [owner target 2026-09-27]
+
+### The floor
+
+3b. State the smallest shape that satisfies the law and ships in the first commit before
+    any backend exists: a wrapper on the shared layer that opens and closes the event, an
+    event type, one call that adds a fact to the current event, and one export edge.
+    [owner decision 2026-09-27]
+3c. Make the export edge speak OTLP to an address read from configuration, and append
+    JSONL to a local file when that address is absent or unreachable, counting the drop
+    on the next event. A codebase with only the file sink is fully observable; pointing
+    the edge at a store later is a configuration change, not a code change. Failure: the
+    shape waits on the infrastructure. [law req. 11, 11a]
+3d. Name the OpenTelemetry SDK as the usual source of the floor in any language, and name
+    nothing else: no collector, no store, no hostname, no client library. Those belong to
+    the consumer's own environment guidance. Failure: a public skill carries one user's
+    infrastructure. [owner decision 2026-09-28]
+3e. Give every codebase the same starting field set, so no session designs names:
+    `event`, `trace_id`, `service`, `started_at`, `duration_ms`, `outcome`, `error`, and a
+    `counts` object whose keys are the unit of work's counts including zeros. A codebase
+    adds fields; it never renames these and never runs a parallel set. [owner decision
+    2026-09-29; sharpens requirement 23]
 
 ### Services
 
@@ -96,13 +131,19 @@ This specifies content, not wording. Bracketed line numbers cite
 21. When a config value can be read from several sources, record on the event which
     source won. [222-223]
 
-### Retrofitting an existing codebase
+### How coverage grows across an existing codebase
 
+21a. State that requirements 23-27 are the order coverage grows across many changes,
+    not a program one session runs to completion: each change stands up the floor if it
+    is absent, instruments the units of work it touches with the facts it introduces,
+    and stops. Coverage grows the way test coverage grows. Failure: a session either
+    launches a whole-repo retrofit or, seeing that as the only move, does nothing.
+    [owner decision 2026-09-27; law req. 11b]
 22. Do not instrument the part that broke; carry out requirements 23-27 in order.
     Failure: on existing code, writers add a metric at the incident site, which is a
     call-site instrument and the shape that goes missing. [151-157, 225-226]
 23. First, fix attribute names, event names, and units before the first instrument
-    lands. [236-237; moved from fifth to first on 2026-09-27 because the draft's own
+    lands, starting from requirement 3e's field set rather than a blank page. [236-237; moved from fifth to first on 2026-09-27 because the draft's own
     wording, "before the first instrument lands", puts it ahead of every other step]
 24. Second, inventory the shared layers requirements 4, 9, 12, and 15 name for the
     domains present, and give each one the event and the correlation ID. [227-229]
@@ -132,6 +173,11 @@ This specifies content, not wording. Bracketed line numbers cite
     instrumentation that slows the hot path gets ripped out, and once it is ripped out
     the system is unobserved again. [250-252]
 
+### What the skill does not carry
+
+32a. Carry no workflow: nothing about tickets, sessions, reviews, or when a unit of work
+    is done. Those are the consumer's process. [owner decision 2026-09-27]
+
 ### The artifact
 
 33. Write the skill at `plugins/laws/skills/code-observability/SKILL.md`, with
@@ -139,7 +185,8 @@ This specifies content, not wording. Bracketed line numbers cite
     [repo convention: `plugins/laws/skills/*/SKILL.md`]
 34. Trigger the description on: writing or reviewing instrumentation, logging, metrics,
     tracing, or telemetry; deciding what a new service, CLI, or job must emit;
-    retrofitting an existing codebase; and acting on a `[LAW:nothing-unseen]` finding.
+    first contact with a codebase whose units of work emit nothing; retrofitting an
+    existing codebase; and acting on a `[LAW:nothing-unseen]` finding.
     Because the bindings live here rather than in laws:code, this description is the only
     path a session holding laws:code has to them. [decision, not from the source]
 35. This is a code-medium skill: it may be held beside laws:code, and must not be stacked

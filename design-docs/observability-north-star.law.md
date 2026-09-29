@@ -59,6 +59,15 @@ This specifies content, not wording. Bracketed line numbers cite
     counted and surfaced, and the hot path never depends on the telemetry pipeline being
     up. [82-86]
 
+11a. State that observability is a property of the code's shape, not of the sink: a
+    system whose export edge writes to a local file can be fully observable, and one
+    wired to a trace store can be blind. Which sink is a configuration value. Failure:
+    instrumentation is deferred until the backend exists. [owner decision 2026-09-27]
+11b. State that the instrumentation of a change is part of the change, as its tests are:
+    the units of work a change touches emit their event and the facts the change
+    introduces land on it, in the same change. Failure: instrumentation is filed as a
+    later task and never lands. [owner decision 2026-09-27]
+
 ### Forbidden shapes
 
 12. List these shapes as bugs on sight: (a) a script exits 0 having processed zero items
@@ -89,7 +98,7 @@ This specifies content, not wording. Bracketed line numbers cite
 ### Writing the entry
 
 18. Give the entry the shape every other law entry has: a `## [LAW:nothing-unseen] -
-    <short title>` heading, a bold statement carrying requirements 1, 4, and 10, the
+    <short title>` heading, a bold statement carrying requirements 1, 4, 10, and 11b, the
     FORBIDDEN list of requirement 12, one rehearsed temptation with its redirect
     (requirement 4's), the diagnostic of requirement 19, and the relations of
     requirement 15. [`code/SKILL.md`:914-1027]
@@ -104,3 +113,8 @@ This specifies content, not wording. Bracketed line numbers cite
 21. Draw the entry's imagery from `design-docs/observability-law.md`, which is the
     approved candidate expression, rather than inventing new imagery. [decision, not from
     the source]
+22. Send the reader to `laws:code-observability` on two triggers, both named in the
+    entry: when writing or retrofitting instrumentation, and on first contact with a
+    codebase whose units of work emit nothing. The second is the on-ramp: a session doing
+    feature work in an uninstrumented codebase is not writing instrumentation and would
+    otherwise never load the bindings. [owner decision 2026-09-27; `code/SKILL.md`:1149-1152]
