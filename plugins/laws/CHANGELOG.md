@@ -1,5 +1,10 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.32.0 - 2026-09-29
+
+- laws(code): `[LAW:nothing-unseen]` gains two claims - observability is a property of the code's shape, not of the sink, and the instrumentation of a change is part of the change as its tests are; the RIGHT example emits the default field set; the closing pointer loads laws:code-observability on first contact with a codebase whose units of work emit nothing (promptctl-observability-8nr)
+- laws(code-observability): the on-ramp - what a fully observable system has, the floor (wrapper, event type, fact call, OTLP export edge with JSONL file fallback and the `sink`/`sink_error` fields), the default field set, and the retrofit order reframed as how coverage grows per change; names no deployment (promptctl-observability-8nr)
+
 ## v0.31.0 - 2026-09-27
 
 - laws(code): add `[LAW:nothing-unseen]` - the running system exposes its own state in all three conditions, working, broken, and unknown; one wide event per unit of work from the substrate every unit passes through, from the first commit; zero and absent are different facts; a telemetry failure is itself telemetry (promptctl-observability-gba)
