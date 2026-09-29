@@ -97,13 +97,14 @@ This specifies content, not wording. Bracketed line numbers cite
 
 ### Writing the entry
 
-18. Give the entry the shape every other law entry has, with the RIGHT example's emitted
-    record using the field set of skill spec requirement 3e (`event`, a `counts` object)
-    so the law and the skill show one shape: a `## [LAW:nothing-unseen] -
-    <short title>` heading, a bold statement carrying requirements 1, 4, 10, and 11b, the
-    FORBIDDEN list of requirement 12, one rehearsed temptation with its redirect
+18. Give the entry the shape every other law entry has: a `## [LAW:nothing-unseen] -
+    <short title>` heading, a bold statement carrying requirements 1, 4, 10, and 11b,
+    the FORBIDDEN list of requirement 12, one rehearsed temptation with its redirect
     (requirement 4's), the diagnostic of requirement 19, and the relations of
-    requirement 15. [`code/SKILL.md`:914-1027]
+    requirement 15. The RIGHT example's emitted record uses skill spec requirement 3e's
+    full field set, so the law and the skill show one shape; the entry released in
+    0.31.0 emits `job` and flat counts and is re-cut to this when the prose is next
+    written. [`code/SKILL.md`:914-1027]
 19. End with the diagnostic, which tests requirements 5 and 9: *if this ran at 3 a.m. and
     did nothing, could anyone tell that from it not having run - and could they say, from
     the outputs alone, why it did what it did?* [159-160]
@@ -117,6 +118,7 @@ This specifies content, not wording. Bracketed line numbers cite
     the source]
 22. Send the reader to `laws:code-observability` on two triggers, both named in the
     entry: when writing or retrofitting instrumentation, and on first contact with a
-    codebase whose units of work emit nothing. The second is the on-ramp: a session doing
-    feature work in an uninstrumented codebase is not writing instrumentation and would
-    otherwise never load the bindings. [owner decision 2026-09-27; `code/SKILL.md`:1149-1152]
+    codebase whose units of work emit nothing. The second is the on-ramp: a session
+    doing feature work in an uninstrumented codebase is not writing instrumentation and
+    would otherwise never load the bindings. [owner decision 2026-09-27;
+    `code/SKILL.md`:1149-1152]
