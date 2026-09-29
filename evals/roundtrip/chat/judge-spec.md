@@ -44,7 +44,7 @@ Counts: A — met 6, not met 2, n/a 0. B — met 5, not met 3, n/a 0. C — met 
 Failures:
 - A, #4: "check whether production uploads have been timing out since the httpx 0.28 deploy" states that a deploy happened, which is not established.
 - A, #6: "Separately, check whether production uploads have been timing out since the httpx 0.28 deploy." The check is proposed without saying what its result would change or decide.
-- B, #1: The opening says "I have a fix, but it's only on my machine so far." A later line repeats it: "I haven't pushed the change, so CI hasn't run on it. CI is still red." The production bullet also says the same thing twice: "I haven't checked production ... I haven't confirmed that either way."
+- B, #1: The opening says "I have a fix, but it's only on my machine so far." Line 10 repeats it: "I haven't pushed the change, so CI hasn't run on it. CI is still red." The production bullet also says the same thing twice: "I haven't checked production ... I haven't confirmed that either way."
 - B, #3: The "**Why:**" section never says whether the httpx cause was verified or inferred. "it's worth checking whether production has deployed the httpx bump" is an unlabeled opinion.
 - B, #6: "it's worth checking whether production has deployed the httpx bump" gives no concrete effect of the check.
 - C, #1: The opening "I have a fix that passes locally, but I haven't pushed it" is repeated in "CI hasn't run on the change, because it isn't pushed." The production bullet also doubles up: "I didn't check ... My guess, which I haven't tested".
