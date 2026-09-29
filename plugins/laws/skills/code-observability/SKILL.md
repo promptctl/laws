@@ -87,8 +87,10 @@ is absent, or set and unreachable, the edge appends the event as JSONL to a loca
 instead. An event written to the file is not dropped - it is still a complete record,
 still sliceable, still there at 3 a.m. - so this sharpens the law's *a telemetry
 failure is itself telemetry* rather than restating it: the count of what the exporter
-could not deliver is the count of file records whose `sink` field reads `file`, and
-when the address was set and unreachable the record's `sink_error` carries the error.
+could not deliver is the count of records carrying `sink_error`, which is set only when
+the address was set and unreachable and carries the exporter's error; a record written
+to the file because no address was configured has `sink` = `file` and no `sink_error`,
+and was never a failure.
 The outage is visible on the record itself. That matters for the single-event job that
 runs once and exits: it will never emit the later "N events dropped" event that a
 long-running service could, so the fact has to ride on the one record it does emit.
@@ -99,8 +101,7 @@ SDK exporter with the file fallback above, which the stock exporter does not hav
 That is the whole of what this skill names. Which collector receives the OTLP, which
 store it lands in, what hostname the address resolves to, and whether the codebase
 shares a client library with its neighbors are the consumer's own environment, and
-belong in the consumer's own guidance, not here. A public tool cited as the example of
-a primitive - `absent()` below - is not a deployment.
+belong in the consumer's own guidance, not here.
 
 **The default field set.** Every codebase starts from the same names, so no one
 designs them, and the inconsistency of bolt-ons - each retrofit inventing its own
@@ -124,9 +125,6 @@ vocabulary - never gets a chance to start:
 A codebase adds fields to this set. It never renames one of these, and it never runs
 a parallel set beside them - two names for the same fact is
 `[LAW:one-source-of-truth]` violated on the panel itself.
-
-A repo with only the file sink is fully observable. Pointing the edge at a store
-later changes a configuration value and nothing in the code.
 
 ---
 
@@ -222,7 +220,7 @@ The job you touched gets its run wrapper; the three clients your feature calls g
 consolidated and the one client instrumented; the log lines in the function you
 rewrote get folded in; the rest of the codebase waits for the change that touches it.
 Coverage grows the way test coverage grows: with each change, at the edges the change
-reached, never as a separate project.
+reached. The audit below is for what no change has reached yet.
 
 Done is the law's FORBIDDEN list, walked as an audit: each shape found is a defect,
 and the retrofit is done when none of them can happen unseen. In this repo that audit

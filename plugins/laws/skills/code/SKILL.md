@@ -1059,7 +1059,7 @@ real concerns with other homes, and this law does not reach them.
 **Three conditions, and the third is the one that kills.** Working and broken are the
 conditions everyone instruments for. The third - *unknown* - is where systems die
 quietly, and it has one tell: **zero and absent are different facts, and both must be
-visible.** A job that processed nothing emits `items_processed=0`. A job that never ran
+visible.** A job that processed nothing emits `counts.items=0`. A job that never ran
 emits nothing. If your telemetry cannot separate those two, then "no news" means
 either "all quiet" or "the reporter is dead," and you will read it as the first every
 time until the day it was the second. Absence of a signal is itself a signal, and the
@@ -1157,9 +1157,9 @@ def sync(items, run):
     # exit, one record per run:
     # {"event":"sync","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736",
     #  "service":"inventory-sync","started_at":"2026-09-29T03:00:00Z",
-    #  "duration_ms":4,"outcome":"ok","error":null,
+    #  "duration_ms":4,"outcome":"ok",
     #  "sink":"file","sink_error":"connection refused",
-    #  "counts":{"items":0,"pushed":0,"failed":0}}
+    #  "counts":{"items":0,"attempts":0,"pushed":0,"failed":0,"retries":0}}
     # counts.items=0 is a fact. No record at all is a different fact. Both are visible.
     # sink=file with sink_error set: the exporter was down; the record exists anyway.
 ```
