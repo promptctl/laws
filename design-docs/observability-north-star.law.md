@@ -7,8 +7,8 @@ and are specified in `design-docs/observability-skill.spec.md`. Observability of
 agent's own work, of verification instruments, and of claim status in documents is
 outside the law.
 
-This specifies content, not wording. Bracketed line numbers cite
-`design-docs/observability-law.md` unless another file is named.
+This specifies content, not wording. In bracketed citations, "draft" means
+`design-docs/observability-law.md`, followed by the section cited.
 
 ## Terms
 
@@ -25,39 +25,40 @@ This specifies content, not wording. Bracketed line numbers cite
 1. State that a running system must expose enough of itself that its state can be
    reconstructed from its outputs alone, including for questions nobody thought to ask
    in advance, and name the three conditions directly: when it is working, when it is
-   not, and when nobody yet knows which. [15-20, 44-45; `observability.md`:277-283]
+   not, and when nobody yet knows which. [draft entry; `observability.md` "Shape
+   decisions"]
 2. State that the law covers the whole run - including runs that succeed and runs whose
    outcome nobody can name - and is therefore not a clause of `[LAW:no-silent-failure]`,
-   which covers the moment of failure. [36-38]
+   which covers the moment of failure. [draft entry]
 3. State that pre-aggregated monitoring does not satisfy requirement 1: the bar is raw,
    high-cardinality records that can be sliced by a dimension nobody named until the
    incident named it. Failure: "we have dashboards" is offered as proof a system is
-   observable. [90-95]
+   observable. [draft entry]
 4. State that instrumentation is built into the shared layer from the first commit: the
    shared layer is built first, and the event goes into it before the first unit of work
    passes through. Failure: on new code, writers plan to get it working first and add
-   logging after. [17-18, 69-71, 145-151]
+   logging after. [draft entry]
 5. State that zero and absent are different facts and both must be visible: a unit of
    work that ran and did nothing emits its counts as zero, and one that never ran emits
    nothing. Failure: readers of telemetry that cannot separate the two read silence as
-   "all quiet" when the reporter is dead. [46-50]
+   "all quiet" when the reporter is dead. [draft entry]
 6. State that the absence of an expected signal is itself a signal, and that the
-   instrument reporting an absence exists before the absence can occur. [50-51]
+   instrument reporting an absence exists before the absence can occur. [draft entry]
 7. `[LAW:one-source-of-truth]` State that one event per unit of work is the source of
    truth, and that metrics are aggregates over those events, traces are those events
    with parent IDs, and log lines are fields on them - never independently maintained
-   copies of the same facts. [53-60]
+   copies of the same facts. [draft entry]
 8. `[LAW:single-enforcer]` State that telemetry is emitted from the shared layer only,
    not from log lines hand-placed inside functions, and that telemetry per call site
-   where a shared layer exists is the tell of a violation. [62-68, 241]
+   where a shared layer exists is the tell of a violation. [draft entry, "Retrofitting"]
 9. State that the system reports its decisions, not only its outcomes, and can show what
-   it will do before it does it. [73-76]
+   it will do before it does it. [draft entry]
 10. State that telemetry is code - typed, tested, versioned, named by one convention -
-    and gets no exemption from any other law. [17-18, 78-79]
+    and gets no exemption from any other law. [draft entry]
 11. `[LAW:no-silent-failure]` State that a telemetry failure is itself telemetry: when
     the exporter is unreachable the unit of work does not fail, the dropped events are
     counted and surfaced, and the hot path never depends on the telemetry pipeline being
-    up. [82-86]
+    up. [draft entry]
 
 11a. State that observability is a property of the code's shape, not of the sink: a
     system whose export edge writes to a local file can be fully observable, and one
@@ -76,20 +77,20 @@ This specifies content, not wording. Bracketed line numbers cite
     retry loop succeeds on a later attempt and nobody learns the earlier ones failed;
     (d) a cache with no hit-rate surface; (e) a background job whose only visible states
     are running and not running; (f) a config value read from one of several places with
-    no way to ask which one won. [108-118]
+    no way to ask which one won. [draft entry]
 
 ### Placement inside laws:code
 
-13. Add `nothing-unseen` to the token index. [`code/SKILL.md`:35-52]
+13. Add `nothing-unseen` to the token index. [`code/SKILL.md` token index]
 14. Add it to the recap under **Observable correctness**, alongside
     `[LAW:verifiable-goals]`, `[LAW:behavior-not-structure]`, and
-    `[LAW:no-silent-failure]`. [278-284]
+    `[LAW:no-silent-failure]`. [draft "In the recap"]
 15. Close the entry with its relations: dynamic twin of `[LAW:types-are-the-program]`,
     an instance of `[FRAMING:representation]`, sibling of `[LAW:no-silent-failure]` and
-    `[LAW:verifiable-goals]`. [162-167]
+    `[LAW:verifiable-goals]`. [draft entry]
 16. Do not add observability bullets to the DOMAIN BINDINGS section of laws:code; the
     skill owns the bindings, and a copy here would be a second source for them.
-    [owner instruction, 2026-09-18; supersedes `observability.md`:263-265]
+    [owner instruction, 2026-09-18; supersedes `observability.md` "Where it goes"]
 17. Keep out of the entry everything the skill owns: no per-domain list of shared layers,
     no retrofit procedure, no tool or vendor names, no cardinality, sampling, redaction,
     or overhead operations. Requirement 12 is the only domain-recognizable content the
@@ -104,15 +105,15 @@ This specifies content, not wording. Bracketed line numbers cite
     requirement 15. The RIGHT example's emitted record uses skill spec requirement 3e's
     full field set, so the law and the skill show one shape; the entry released in
     0.31.0 emits `job` and flat counts and is re-cut to this when the prose is next
-    written. [`code/SKILL.md`:976-1194]
+    written. [`code/SKILL.md` law entries]
 19. End with the diagnostic, which tests requirements 5 and 9: *if this ran at 3 a.m. and
     did nothing, could anyone tell that from it not having run - and could they say, from
-    the outputs alone, why it did what it did?* [159-160]
+    the outputs alone, why it did what it did?* [draft entry]
 20. Write the entry in the effective, rhetorical style of the file it joins, not in this
     spec's words; that file's redundancy is load-bearing and distilling it is a
     documented failure. The style authority is laws:prompt, which cannot be loaded beside
     laws:code, so a subagent seeded with only laws:prompt writes the entry from this
-    spec. [`code/SKILL.md`:5-11; `.claude/skills/laws/SKILL.md` rules 1 and 2]
+    spec. [`code/SKILL.md` header comment; `.claude/skills/laws/SKILL.md` rules 1 and 2]
 21. Draw the entry's imagery from `design-docs/observability-law.md`, which is the
     approved candidate expression, rather than inventing new imagery. [decision, not from
     the source]
@@ -121,4 +122,4 @@ This specifies content, not wording. Bracketed line numbers cite
     codebase whose units of work emit nothing. The second is the on-ramp: a session
     doing feature work in an uninstrumented codebase is not writing instrumentation and
     would otherwise never load the bindings. [owner decision 2026-09-27;
-    `code/SKILL.md`:1176-1184]
+    `code/SKILL.md` nothing-unseen pointer]
