@@ -104,7 +104,7 @@ This specifies content, not wording. Bracketed line numbers cite
     requirement 15. The RIGHT example's emitted record uses skill spec requirement 3e's
     full field set, so the law and the skill show one shape; the entry released in
     0.31.0 emits `job` and flat counts and is re-cut to this when the prose is next
-    written. [`code/SKILL.md`:914-1027]
+    written. [`code/SKILL.md`:976-1194]
 19. End with the diagnostic, which tests requirements 5 and 9: *if this ran at 3 a.m. and
     did nothing, could anyone tell that from it not having run - and could they say, from
     the outputs alone, why it did what it did?* [159-160]
@@ -121,4 +121,4 @@ This specifies content, not wording. Bracketed line numbers cite
     codebase whose units of work emit nothing. The second is the on-ramp: a session
     doing feature work in an uninstrumented codebase is not writing instrumentation and
     would otherwise never load the bindings. [owner decision 2026-09-27;
-    `code/SKILL.md`:1149-1152]
+    `code/SKILL.md`:1176-1184]

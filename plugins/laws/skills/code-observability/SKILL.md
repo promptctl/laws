@@ -1,15 +1,17 @@
 ---
 name: code-observability
-description: Domain bindings for [LAW:nothing-unseen] - what the shared layer is in each domain (service, CLI, script or job, migration, distributed hop), what its one event carries, the order of work for retrofitting a codebase that has no shared layer, and the constraints every binding must survive (cardinality, sampling, redaction, overhead). Load when writing or reviewing instrumentation, logging, metrics, tracing, or telemetry; when deciding what a new service, CLI, or job must emit; when retrofitting observability onto an existing codebase; or when acting on a [LAW:nothing-unseen] finding. Held beside laws:code; the law itself lives there and is not restated here.
+description: Domain bindings for [LAW:nothing-unseen] - what a fully observable system has, the smallest shape that satisfies the law before any backend exists (the floor, with its default field set), what the shared layer is in each domain (service, CLI, script or job, migration, distributed hop), what its one event carries, the order coverage grows in across a codebase that has no shared layer, and the constraints every binding must survive (cardinality, sampling, redaction, overhead). Load when writing or reviewing instrumentation, logging, metrics, tracing, or telemetry; when deciding what a new service, CLI, or job must emit; on first contact with a codebase whose units of work emit nothing; when retrofitting observability onto an existing codebase; or when acting on a [LAW:nothing-unseen] finding. Held beside laws:code; the law itself lives there and is not restated here.
 ---
 
 # Where the panel goes
 
 `[LAW:nothing-unseen]` says instrumentation lives in the layer every unit of work
-passes through, from the first commit, and that zero and absent are different facts.
-This skill says what that layer *is*, domain by domain, and in what order to build it
-when the codebase already exists. It sharpens the law; it never relaxes it. A binding
-that seems to conflict with the law has been misread.
+passes through, from the first commit; that zero and absent are different facts; and
+that the instrumentation of a change ships with the change, as its tests do. This
+skill says what that layer *is*, domain by domain, what the smallest shape that
+satisfies the law looks like, what a finished panel looks like, and in what order
+coverage grows when the codebase already exists. It sharpens the law; it never relaxes
+it. A binding that seems to conflict with the law has been misread.
 
 Two objections arrive the moment the work starts. Both are answered by the same
 sentence, and it is the one to keep active.
@@ -20,11 +22,109 @@ per unit of work is the opposite of noise: the smallest complete record, emitted
 from one place. Volume is the symptom of instrumenting in the wrong layer, and the cure
 is the layer, never fewer facts.
 
-**"That's an ops concern, a library choice."** Which backend, which SDK, which
-exporter - those are binding-level detail and mostly settled (OpenTelemetry is the
-consensus). Whether the system *can be understood from its outputs* is a property of
-the code's shape, decided by whoever writes the shared layer, and no backend can add it
-afterward. The shared layer is yours to write. That is the work.
+**"That's an ops concern, a library choice."** The law already settles this:
+observability is a property of the code's shape, not of the sink, and which sink is a
+configuration value. What this skill adds is who decides the shape and what is left
+over once it is decided. The shape is decided by whoever writes the shared layer, and
+no backend can add it afterward. Which backend, which SDK, which exporter - those are
+binding-level detail, and mostly settled. The shared layer is yours to write. That is
+the work.
+
+---
+
+## What a fully observable system has
+
+This is the end state, stated as properties of a running system rather than as a
+list of tools, because a tool can be installed without any of these being true. Read
+it as a checklist of what is still missing. Everything below this section is how each
+line is reached.
+
+- **One wide event per unit of work**, under a trace ID that crosses every hop the
+  unit takes. Every request, job run, command invocation, and migration leaves exactly
+  one record, and the record says everything known about it.
+- **Metrics, traces, and logs are views over those events.** A metric is an aggregate
+  over them; a trace is them with parent IDs; a log line is a field on one. No view is
+  maintained on its own.
+- **Rate, errors, duration, and saturation at every boundary the system owns** - each
+  inbound edge, each outbound client, each queue and pool that can fill.
+- **Objectives on user-visible symptoms**, and alerts only on those and on missing
+  heartbeats. Nothing pages on a cause; a cause is what the event is read for after the
+  page.
+- **An introspection surface per process** - a metrics endpoint, a health probe, a
+  profiling endpoint - so a running instance can be asked, not only read.
+- **The event schema is a type**, and tests assert the event and its fields the way
+  they assert a return value: a unit of work that runs under test produced its record,
+  and the record carries the facts the code claims it carries.
+- **Redaction at one export edge.** Secrets leave the process through one checkpoint,
+  and nowhere else.
+- **Telemetry failures are counted and surfaced.** An exporter that could not deliver
+  is a fact on the record, never a gap in the record.
+
+A codebase with none of these is in cloud with no panel. A codebase with the first
+one has a panel; the rest are the instruments being added to it.
+
+---
+
+## The floor: the smallest shape that satisfies the law
+
+The law says the event goes into the shared layer before the first unit of work passes
+through, and that this does not wait for a backend. This is the shape that makes that
+possible. It ships in the first commit, before any store, collector, or dashboard
+exists, and it has four parts:
+
+1. **A wrapper on the shared layer** that opens the event when the unit of work
+   begins and closes it when the unit ends - on success, on failure, and on the
+   exception nobody caught.
+2. **An event type**: the record as a type, with the default fields below, so the
+   schema is checked by the compiler and asserted by the tests.
+3. **One call that adds a fact to the current event** - the only thing code inside the
+   unit of work ever does about telemetry. It does not emit; it annotates. The wrapper
+   emits.
+4. **One export edge** through which every event leaves the process.
+
+The export edge speaks OTLP to an address read from configuration. When that address
+is absent, or set and unreachable, the edge appends the event as JSONL to a local file
+instead. An event written to the file is not dropped - it is still a complete record,
+still sliceable, still there at 3 a.m. - so this sharpens the law's *a telemetry
+failure is itself telemetry* rather than restating it: the count of what the exporter
+could not deliver is the count of records carrying `sink_error`, which is set only when
+the address was set and unreachable and carries the exporter's error; a record written
+to the file because no address was configured has `sink` = `file` and no `sink_error`,
+and was never a failure.
+The outage is visible on the record itself. That matters for the single-event job that
+runs once and exits: it will never emit the later "N events dropped" event that a
+long-running service could, so the fact has to ride on the one record it does emit.
+
+The OpenTelemetry SDK is the usual source of the event and trace primitives and of
+the OTLP exporter, in any language; the export edge is the codebase's own, wrapping the
+SDK exporter with the file fallback above, which the stock exporter does not have.
+That is the whole of what this skill names. Which collector receives the OTLP, which
+store it lands in, what hostname the address resolves to, and whether the codebase
+shares a client library with its neighbors are the consumer's own environment, and
+belong in the consumer's own guidance, not here.
+
+**The default field set.** Every codebase starts from the same names, so no one
+designs them, and the inconsistency of bolt-ons - each retrofit inventing its own
+vocabulary - never gets a chance to start:
+
+- `event` - the name of the unit of work.
+- `trace_id` - the correlation ID that crosses every hop.
+- `service` - which process emitted it.
+- `started_at` - when the unit began.
+- `duration_ms` - how long it took.
+- `outcome` - how it ended.
+- `error` - the error when it did not end well; absent otherwise.
+- `sink` - `otlp` or `file`: where this record went.
+- `sink_error` - present only when `sink` is `file` because the address was set and
+  unreachable; it carries the exporter's error.
+- `counts` - an object whose keys are the unit of work's counts, including the zeros.
+  Items seen, items pushed, items failed, rows touched, attempts made. A count of zero
+  is written as zero; it is the fact that separates *ran and did nothing* from *never
+  ran*.
+
+A codebase adds fields to this set. It never renames one of these, and it never runs
+a parallel set beside them - two names for the same fact is
+`[LAW:one-source-of-truth]` violated on the panel itself.
 
 ---
 
@@ -83,7 +183,7 @@ afterward. The shared layer is yours to write. That is the work.
 
 ---
 
-## Retrofitting a codebase that already exists
+## How coverage grows across a codebase that already exists
 
 The temptation on existing code: *"I'll add metrics around the part that broke."*
 Refuse it. A metric at the incident site is a call-site instrument, which is the shape
@@ -92,8 +192,9 @@ retrofit invents its own names beside it. The redirect is the shared layer, arri
 from the other side, in this order, because each step is what makes the next one cheap:
 
 1. **Fix the names first.** Attribute names, event names, and units are settled before
-   the first instrument lands. The inconsistency of bolt-ons comes from each retrofit
-   inventing its own.
+   the first instrument lands - starting from the default field set above, not from a
+   blank page. The inconsistency of bolt-ons comes from each retrofit inventing its
+   own.
 2. **Inventory the shared layers** the bindings above name for the domains present.
    Each gets the wide event and the correlation ID. Coverage grows with the number of
    shared layers, not call sites, which is why this step alone covers most of a
@@ -107,7 +208,21 @@ from the other side, in this order, because each step is what makes the next one
 5. **Fold ad-hoc log lines into the event** as the code around them is touched. No
    sweep deletion; no new metric that duplicates a log line.
 
-Done is the law's FORBIDDEN list, walked as an audit: each shape found is a ticket,
+This is the order coverage grows in across many changes. It is not a program that one
+change runs to completion, and the second temptation is to read it as one: *"the
+whole codebase needs this, and I can't do the whole codebase, so I'll leave it."* That
+reading produces either a sweep that touches every file or, seeing the sweep as the
+only move, nothing at all - and nothing at all is what the codebase has now. The order
+binds across the codebase's history, not within one change. A change stands up the
+floor if it is absent, does the steps that reach the units of work it touches - in
+that order - instruments those units with the facts the change introduces, and stops.
+The job you touched gets its run wrapper; the three clients your feature calls get
+consolidated and the one client instrumented; the log lines in the function you
+rewrote get folded in; the rest of the codebase waits for the change that touches it.
+Coverage grows the way test coverage grows: with each change, at the edges the change
+reached. The audit below is for what no change has reached yet.
+
+Done is the law's FORBIDDEN list, walked as an audit: each shape found is a defect,
 and the retrofit is done when none of them can happen unseen. In this repo that audit
 is `sheriff-is-in-town` and the remediation is `form-a-posse`; this skill defines no
 audit loop of its own. The tell for a bad retrofit is telemetry per call site where a
