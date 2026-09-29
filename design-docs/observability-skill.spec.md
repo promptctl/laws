@@ -57,23 +57,25 @@ This specifies content, not wording. Bracketed line numbers cite
     event type, one call that adds a fact to the current event, and one export edge.
     [owner decision 2026-09-27]
 3c. Make the export edge speak OTLP to an address read from configuration, and append
-    JSONL to a local file when that address is absent or unreachable. An event written to
-    the file is not dropped; when the address was set and unreachable, the file record
-    carries that fact as a field, so an exporter outage is visible on the record itself
-    rather than on a later event that a single-event job never emits. A codebase with only the file sink is fully observable; pointing
-    the edge at a store later is a configuration change, not a code change. Failure: the
-    shape waits on the infrastructure. [law req. 11, 11a]
-3d. Name the OpenTelemetry SDK as the usual source of the floor in any language, and name
-    no deployment: no collector, no store, no hostname, no client library of the user's
-    own. Those belong to the consumer's own environment guidance. A public tool cited as
-    the example of a primitive, as requirement 13 cites Prometheus's `absent()`, is not a
-    deployment. Failure: a public skill carries one user's
-    infrastructure. [owner decision 2026-09-28]
+    JSONL to a local file when that address is absent or unreachable. An event written
+    to the file is not dropped, so this sharpens law req. 11 rather than restating it:
+    the count of what the exporter could not deliver is the count of file records whose
+    `sink` field reads `file`, and when the address was set and unreachable the record's
+    `sink_error` carries the error, so an exporter outage is visible on the record
+    itself rather than on a later event that a single-event job never emits.
+3d. Name the OpenTelemetry SDK as the usual source of the event and trace primitives and
+    of the OTLP exporter in any language, and make the export edge the codebase's own:
+    it wraps the SDK exporter with the file fallback of requirement 3c, which the stock
+    exporter does not have. Name no deployment: no collector, no store, no hostname, no
+    client library of the user's own. Those belong to the consumer's own environment
+    guidance. A public tool cited as the example of a primitive, as requirement 13 cites
+    Prometheus's `absent()`, is not a deployment.
 3e. Give every codebase the same starting field set, so no session designs names:
-    `event`, `trace_id`, `service`, `started_at`, `duration_ms`, `outcome`, `error`, and a
-    `counts` object whose keys are the unit of work's counts including zeros. A codebase
-    adds fields; it never renames these and never runs a parallel set. [owner decision
-    2026-09-29; sharpens requirement 23]
+    `event`, `trace_id`, `service`, `started_at`, `duration_ms`, `outcome`, `error`,
+    `sink` (`otlp` or `file`), `sink_error` (present only when `sink` is `file` because
+    the address was unreachable), and a `counts` object whose keys are the unit of
+    work's counts including zeros. A codebase adds fields; it never renames these and
+    never runs a parallel set. [owner decision 2026-09-29; sharpens requirement 23]
 
 ### Services
 
@@ -149,8 +151,9 @@ This specifies content, not wording. Bracketed line numbers cite
     Failure: on existing code, writers add a metric at the incident site, which is a
     call-site instrument and the shape that goes missing. [151-157, 225-226]
 23. First, fix attribute names, event names, and units before the first instrument
-    lands, starting from requirement 3e's field set rather than a blank page. [236-237; moved from fifth to first on 2026-09-27 because the draft's own
-    wording, "before the first instrument lands", puts it ahead of every other step]
+    lands, starting from requirement 3e's field set rather than a blank page. [236-237;
+    moved from fifth to first on 2026-09-27 because the draft's own wording, "before the
+    first instrument lands", puts it ahead of every other step]
 24. Second, inventory the shared layers requirements 4, 9, 12, and 15 name for the
     domains present, and give each one the event and the correlation ID. [227-229]
 25. `[LAW:one-source-of-truth]` Third, where no shared layer exists - three hand-rolled
