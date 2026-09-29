@@ -59,9 +59,9 @@ This specifies content, not wording. Bracketed line numbers cite
 3c. Make the export edge speak OTLP to an address read from configuration, and append
     JSONL to a local file when that address is absent or unreachable. An event written
     to the file is not dropped, so this sharpens law req. 11 rather than restating it:
-    the count of what the exporter could not deliver is the count of file records whose
-    `sink` field reads `file`, and when the address was set and unreachable the record's
-    `sink_error` carries the error, so an exporter outage is visible on the record
+    the count of what the exporter could not deliver is the count of records carrying
+    `sink_error`, set only when the address was set and unreachable; a record written to
+    the file because no address was configured has no `sink_error` and was never a failure, so an exporter outage is visible on the record
     itself rather than on a later event that a single-event job never emits.
 3d. Name the OpenTelemetry SDK as the usual source of the event and trace primitives and
     of the OTLP exporter in any language, and make the export edge the codebase's own:
