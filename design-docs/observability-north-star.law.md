@@ -97,7 +97,9 @@ This specifies content, not wording. Bracketed line numbers cite
 
 ### Writing the entry
 
-18. Give the entry the shape every other law entry has: a `## [LAW:nothing-unseen] -
+18. Give the entry the shape every other law entry has, with the RIGHT example's emitted
+    record using the field set of skill spec requirement 3e (`event`, a `counts` object)
+    so the law and the skill show one shape: a `## [LAW:nothing-unseen] -
     <short title>` heading, a bold statement carrying requirements 1, 4, 10, and 11b, the
     FORBIDDEN list of requirement 12, one rehearsed temptation with its redirect
     (requirement 4's), the diagnostic of requirement 19, and the relations of

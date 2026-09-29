@@ -31,11 +31,11 @@ This specifies content, not wording. Bracketed line numbers cite
 2. Treat high telemetry volume as the symptom of instrumenting at call sites rather than
    in the shared layer, not as a reason to drop the one event per unit of work. Failure:
    "logging is noise" is offered as an argument against instrumenting. [97-100]
-3. Do not treat observability as settled by the choice of backend, SDK, or exporter;
-   those are binding-level detail, while whether the system can be understood from its
-   outputs is a property of the code's shape and is decided by whoever writes the shared
-   layer. Failure: observability is dismissed as an ops concern or a library choice.
-   [102-106]
+3. Cite the law's claim that observability is the code's shape and the sink is
+   configuration (north-star req. 11a) and add only what the skill owns: the shape is
+   decided by whoever writes the shared layer, and backend, SDK, and exporter are
+   binding-level detail. Failure: observability is dismissed as an ops concern or a
+   library choice. [102-106]
 
 ### The end state
 
@@ -57,13 +57,17 @@ This specifies content, not wording. Bracketed line numbers cite
     event type, one call that adds a fact to the current event, and one export edge.
     [owner decision 2026-09-27]
 3c. Make the export edge speak OTLP to an address read from configuration, and append
-    JSONL to a local file when that address is absent or unreachable, counting the drop
-    on the next event. A codebase with only the file sink is fully observable; pointing
+    JSONL to a local file when that address is absent or unreachable. An event written to
+    the file is not dropped; when the address was set and unreachable, the file record
+    carries that fact as a field, so an exporter outage is visible on the record itself
+    rather than on a later event that a single-event job never emits. A codebase with only the file sink is fully observable; pointing
     the edge at a store later is a configuration change, not a code change. Failure: the
     shape waits on the infrastructure. [law req. 11, 11a]
 3d. Name the OpenTelemetry SDK as the usual source of the floor in any language, and name
-    nothing else: no collector, no store, no hostname, no client library. Those belong to
-    the consumer's own environment guidance. Failure: a public skill carries one user's
+    no deployment: no collector, no store, no hostname, no client library of the user's
+    own. Those belong to the consumer's own environment guidance. A public tool cited as
+    the example of a primitive, as requirement 13 cites Prometheus's `absent()`, is not a
+    deployment. Failure: a public skill carries one user's
     infrastructure. [owner decision 2026-09-28]
 3e. Give every codebase the same starting field set, so no session designs names:
     `event`, `trace_id`, `service`, `started_at`, `duration_ms`, `outcome`, `error`, and a
@@ -139,7 +143,9 @@ This specifies content, not wording. Bracketed line numbers cite
     and stops. Coverage grows the way test coverage grows. Failure: a session either
     launches a whole-repo retrofit or, seeing that as the only move, does nothing.
     [owner decision 2026-09-27; law req. 11b]
-22. Do not instrument the part that broke; carry out requirements 23-27 in order.
+22. Do not instrument the part that broke; carry out requirements 23-27 in order. The
+    order binds across the codebase's history, not within one change: a change does the
+    steps that reach the units of work it touches, in that order, and leaves the rest.
     Failure: on existing code, writers add a metric at the incident site, which is a
     call-site instrument and the shape that goes missing. [151-157, 225-226]
 23. First, fix attribute names, event names, and units before the first instrument
@@ -156,7 +162,7 @@ This specifies content, not wording. Bracketed line numbers cite
 27. Fifth, fold existing ad-hoc log lines into the event as the code around them is
     touched: no sweep deletion, and no new metric that duplicates a log line. [234-235]
 28. Make the done criterion the law's forbidden shapes (north-star requirement 12),
-    walked as an audit: each shape found is a ticket, and the retrofit is done when none
+    walked as an audit: each shape found is a defect, and the retrofit is done when none
     of them can happen unseen. In this repo the audit is `sheriff-is-in-town` and the
     remediation is `form-a-posse`; the skill defines no audit loop of its own. [238-240]
 
@@ -175,8 +181,9 @@ This specifies content, not wording. Bracketed line numbers cite
 
 ### What the skill does not carry
 
-32a. Carry no workflow: nothing about tickets, sessions, reviews, or when a unit of work
-    is done. Those are the consumer's process. [owner decision 2026-09-27]
+32a. Carry no workflow of its own: nothing about how tickets are sized, when reviews run,
+    or what a session does first. Those are the consumer's process. Requirement 28's done
+    criterion is a property of the code and stays. [owner decision 2026-09-27]
 
 ### The artifact
 
