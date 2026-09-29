@@ -25,8 +25,8 @@ This specifies content, not wording. In bracketed citations, "draft" means
 1. State that a running system must expose enough of itself that its state can be
    reconstructed from its outputs alone, including for questions nobody thought to ask
    in advance, and name the three conditions directly: when it is working, when it is
-   not, and when nobody yet knows which. [draft preamble, entry; `observability.md`
-   "Shape decisions"]
+   not, and when nobody yet knows which. [draft entry; `observability.md` "Shape
+   decisions"]
 2. State that the law covers the whole run - including runs that succeed and runs whose
    outcome nobody can name - and is therefore not a clause of `[LAW:no-silent-failure]`,
    which covers the moment of failure. [draft entry]
@@ -73,8 +73,7 @@ This specifies content, not wording. In bracketed citations, "draft" means
 
 12. List these shapes as bugs on sight: (a) a script exits 0 having processed zero items
     and nothing distinguishes "all done" from "did nothing"; (b) a catch-all swallows an
-    exception and continues, so a failure count reads zero because nothing counted; (c)
-    a
+    exception and continues, so a failure count reads zero because nothing counted; (c) a
     retry loop succeeds on a later attempt and nobody learns the earlier ones failed;
     (d) a cache with no hit-rate surface; (e) a background job whose only visible states
     are running and not running; (f) a config value read from one of several places with
@@ -85,15 +84,14 @@ This specifies content, not wording. In bracketed citations, "draft" means
 13. Add `nothing-unseen` to the token index. [`code/SKILL.md` token index]
 14. Add it to the recap under **Observable correctness**, alongside
     `[LAW:verifiable-goals]`, `[LAW:behavior-not-structure]`, and
-    `[LAW:no-silent-failure]`. [draft "The lineage", "In the recap"]
+    `[LAW:no-silent-failure]`. [draft "In the recap"]
 15. Close the entry with its relations: dynamic twin of `[LAW:types-are-the-program]`,
     an instance of `[FRAMING:representation]`, sibling of `[LAW:no-silent-failure]` and
     `[LAW:verifiable-goals]`. [draft entry]
 16. Do not add observability bullets to the DOMAIN BINDINGS section of laws:code; the
     skill owns the bindings, and a copy here would be a second source for them.
     [owner instruction, 2026-09-18; supersedes `observability.md` "Where it goes"]
-17. Keep out of the entry everything the skill owns: no per-domain list of shared
-    layers,
+17. Keep out of the entry everything the skill owns: no per-domain list of shared layers,
     no retrofit procedure, no tool or vendor names, no cardinality, sampling, redaction,
     or overhead operations. Requirement 12 is the only domain-recognizable content the
     entry carries.
@@ -108,20 +106,16 @@ This specifies content, not wording. In bracketed citations, "draft" means
     full field set, so the law and the skill show one shape; the entry released in
     0.31.0 emits `job` and flat counts and is re-cut to this when the prose is next
     written. [`code/SKILL.md` law entries]
-19. End with the diagnostic, which tests requirements 5 and 9: *if this ran at 3 a.m.
-    and
-    did nothing, could anyone tell that from it not having run - and could they say,
-    from
+19. End with the diagnostic, which tests requirements 5 and 9: *if this ran at 3 a.m. and
+    did nothing, could anyone tell that from it not having run - and could they say, from
     the outputs alone, why it did what it did?* [draft entry]
 20. Write the entry in the effective, rhetorical style of the file it joins, not in this
     spec's words; that file's redundancy is load-bearing and distilling it is a
-    documented failure. The style authority is laws:prompt, which cannot be loaded
-    beside
+    documented failure. The style authority is laws:prompt, which cannot be loaded beside
     laws:code, so a subagent seeded with only laws:prompt writes the entry from this
     spec. [`code/SKILL.md` header comment; `.claude/skills/laws/SKILL.md` rules 1 and 2]
 21. Draw the entry's imagery from `design-docs/observability-law.md`, which is the
-    approved candidate expression, rather than inventing new imagery. [decision, not
-    from
+    approved candidate expression, rather than inventing new imagery. [decision, not from
     the source]
 22. Send the reader to `laws:code-observability` on two triggers, both named in the
     entry: when writing or retrofitting instrumentation, and on first contact with a
