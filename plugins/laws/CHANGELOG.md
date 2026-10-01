@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.33.0 - 2026-10-01
+
+- laws(code): add `[LAW:domain-language]` - name things in the language of their domain, the term another expert would recognize unprompted; the project's own names alongside, spelled as the project spells them; a subsystem may name more finely still; the layers stack and never replace one another. Cited from `[FRAMING:representation]`, `[LAW:decomposition]`, `[LAW:types-are-the-program]`, `[LAW:one-source-of-truth]`, `[LAW:comments-carry-meaning]`, and the recap (promptctl-domain-language-oq5)
+
 ## v0.32.0 - 2026-09-29
 
 - laws(code): `[LAW:nothing-unseen]` gains two claims - observability is a property of the code's shape, not of the sink, and the instrumentation of a change is part of the change as its tests are; the RIGHT example emits the default field set; the closing pointer loads laws:code-observability on first contact with a codebase whose units of work emit nothing (promptctl-observability-8nr)
