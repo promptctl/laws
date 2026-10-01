@@ -40,8 +40,8 @@ Framings (used in reasoning, not cited in code):
 Laws (cited in code as `[LAW:<token>]`):
 `decomposition` · `types-are-the-program` · `composability` · `carrying-cost` ·
 `polishing-by-subtraction` · `no-ambient-temporal-coupling` ·
-`effects-at-boundaries` · `one-source-of-truth` ·
-`single-enforcer` · `domain-language` · `comments-carry-meaning` · `dataflow-not-control-flow` ·
+`effects-at-boundaries` · `one-source-of-truth` · `domain-language` ·
+`single-enforcer` · `comments-carry-meaning` · `dataflow-not-control-flow` ·
 `one-type-per-behavior` · `no-mode-explosion` · `parse-dont-validate` ·
 `no-defensive-null-guards` · `locality-or-seam` · `one-way-deps` ·
 `no-shared-mutable-globals` · `verifiable-goals` · `behavior-not-structure` ·
@@ -513,14 +513,15 @@ already has before coining one.**
 
 A map is useful because its names match the signposts. The towns already have names;
 a cartographer who renames them has drawn a map only its maker can navigate with, and
-every traveler now carries a second sheet translating those names back to the signs. Code is a
-map of a domain, and the domain was naming its ideas long before this repo existed: a
-retry schedule is *exponential backoff*, the thing that makes a retried payment safe
-is an *idempotency key*, the two sides of a ledger entry are *debit* and *credit*, the
-step that turns bytes into a tree is *parsing*. A reader who knows the subject reads
-those names and is home. A reader who meets `waitMultiplier`, `dupeGuardToken`,
-`plusSide` and `minusSide`, `loadTree` is in a foreign country with a phrasebook -
-and so is the search that goes looking for the standard term and finds nothing.
+every traveler now carries a second sheet translating those names back to the signs.
+Code is a map of a domain, and the domain was naming its ideas long before this repo
+existed: a retry schedule is *exponential backoff*, the thing that makes a retried
+payment safe is an *idempotency key*, the two sides of a ledger entry are *debit* and
+*credit*, the step that turns bytes into a tree is *parsing*. A reader who knows the
+subject reads those names and is home. A reader who meets `waitMultiplier`,
+`dupeGuardToken`, `plusSide` and `minusSide`, `loadTree` is in a foreign country with
+a phrasebook - and so is the search that goes looking for the standard term and finds
+nothing.
 
 Three layers of language, and they stack. On top, the domain language, and it holds
 everywhere: the subject's own terms and the industry-standard engineering terms,
@@ -1431,8 +1432,8 @@ it is zero and dead when it is dead, built before the cloud.
 Run your hand over the code before you leave it. Anything that snags - a bespoke
 type, a guard with no else, a papers-check far from any border, a comment doing a
 type's job, a copy that can drift, a coined name for a thing the domain already named,
-a flag with no deletion date, an error told to be
-quiet, a job whose "did nothing" and "never ran" look alike, an "until we have X" in
-a comment or commit - is a rough bit, and the task is not done while your hand still catches. When
+a flag with no deletion date, an error told to be quiet, a job whose "did nothing" and
+"never ran" look alike, an "until we have X" in a comment or commit - is a rough bit,
+and the task is not done while your hand still catches. When
 you are uncertain which law applies, return to the two framings and ask: **where is
 the seam, and is the map true?**
