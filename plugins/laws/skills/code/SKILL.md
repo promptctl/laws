@@ -40,7 +40,7 @@ Framings (used in reasoning, not cited in code):
 Laws (cited in code as `[LAW:<token>]`):
 `decomposition` · `types-are-the-program` · `composability` · `carrying-cost` ·
 `polishing-by-subtraction` · `no-ambient-temporal-coupling` ·
-`effects-at-boundaries` · `one-source-of-truth` ·
+`effects-at-boundaries` · `one-source-of-truth` · `domain-language` ·
 `single-enforcer` · `comments-carry-meaning` · `dataflow-not-control-flow` ·
 `one-type-per-behavior` · `no-mode-explosion` · `parse-dont-validate` ·
 `no-defensive-null-guards` · `locality-or-seam` · `one-way-deps` ·
@@ -97,7 +97,10 @@ optional.
 Half of everything in a codebase is not the thing itself but a *representation* of
 some thing: a name stands for a purpose, a type stands for a set of legal values, a
 cache stands for a computation, a comment stands for a rationale, a schema stands for
-a domain, a copy stands for an original. Every representation is a map of some
+a domain, a copy stands for an original. And for most of those things the territory
+already has a name - the domain named its ideas before this codebase existed - so a
+name is a map the domain drew first, and a coined replacement is a second map of the
+same ground (`[LAW:domain-language]`). Every representation is a map of some
 territory, and a map that *can* drift from its territory *will* - not might, will.
 The man with two clocks never knows the time; the codebase with two representations
 of one fact never knows the fact.
@@ -120,13 +123,18 @@ When you are uncertain which law applies, fall back to these two framings and as
 ## [LAW:decomposition] - carve at the joints
 
 **Divide the program along the natural joints of the problem domain, so that each
-part has one describable purpose and can be understood - and reused - alone.**
+part has one describable purpose and can be understood - and reused - alone, and
+carries the name the domain gives that part.**
 
 A skilled butcher barely needs force: the knife finds the joint and the joint gives.
 An unskilled one saws across bone, dulls the blade, and mangles both halves. Problem
 domains have joints - places where two concerns genuinely separate - and module
 boundaries that fall on them feel effortless forever after, while boundaries that cut
 across bone make every future change a sawing motion through the wrong material.
+
+The joints come with names. A cut that lands on a real joint of the domain has a name
+an expert already knows - *ledger*, *parser*, *scheduler*, *reconciliation*
+(`[LAW:domain-language]`).
 
 The temptation arrives as: *"I'll just put it in this file for now - I can move it
 later."* Later never comes, and "for now" is how a module becomes "where things go."
@@ -135,7 +143,7 @@ If the sentence needs an "and," you are holding two modules; cut at the "and" no
 while the cut is one file and not forty callers.
 
 Diagnostic: *can you say what this unit is for in one plain sentence with no
-conjunction?*
+conjunction, in words the domain already has?*
 
 Primary law of `[FRAMING:parts-and-seams]` - the "how you cut" face. Everything in
 the boundary corollaries (`[LAW:locality-or-seam]`, `[LAW:one-way-deps]`,
@@ -166,7 +174,8 @@ The craft is choosing the **strongest true theorem**. Weaker theorems - `any`,
 bag-of-optionals, `string` where the domain has four values - admit illegal states,
 which forces every callsite to defend, which is coupling. Stronger-but-false theorems
 force the code to lie or break. The exactly-right type is exactly as expressive as
-the real domain. The type is a theorem; the implementation is its proof.
+the real domain, and named in the domain's words (`[LAW:domain-language]`). The type
+is a theorem; the implementation is its proof.
 
 WRONG - the bag of optionals, every field a maybe, the real structure smuggled into
 folklore:
@@ -463,7 +472,9 @@ already broken - divergence is not a risk, it is a schedule.**
 
 A man with one clock knows the time; a man with two clocks never does. Never create
 a second source; find and use the canonical one. When you inherit two, your task -
-before anything else - is to demote one into a derived copy or delete it.
+before anything else - is to demote one into a derived copy or delete it. Names are
+representations too: a word coined in the project for a concept the domain already
+names is a second clock (`[LAW:domain-language]`).
 
 This is not theoretical. On 2026-07-12, in the author's dotfiles repo: the rad-shell upstream
 installer (`curl … install.sh | bash`) wrote `~/.rad-plugins` - *through* a dotbot
@@ -490,6 +501,67 @@ answer, the architecture is broken.*
 Instance of `[FRAMING:representation]` at full strength, and of
 `[LAW:types-are-the-program]`: two divergable representations are an under-constrained
 type - the constraint that they agree is encoded nowhere.
+
+## [LAW:domain-language] - the territory already has names
+
+**Name things in the language of their domain: the term another expert in the subject
+would recognize with no explanation. Where the project has its own names, use those
+too, spelled as the project spells them; where a subsystem names more finely still,
+use that. The layers stack and none replaces the one above it - the domain's word for
+a domain's idea holds everywhere in the codebase. Reach for the word the domain
+already has before coining one.**
+
+A map is useful because its names match the signposts. The towns already have names;
+a cartographer who renames them has drawn a map only its maker can navigate with, and
+every traveler now carries a second sheet translating those names back to the signs.
+Code is a map of a domain, and the domain was naming its ideas long before this repo
+existed: a retry schedule is *exponential backoff*, the thing that makes a retried
+payment safe is an *idempotency key*, the two sides of a ledger entry are *debit* and
+*credit*, the step that turns bytes into a tree is *parsing*. A reader who knows the
+subject reads those names and is home. A reader who meets `waitMultiplier`,
+`dupeGuardToken`, `plusSide` and `minusSide`, `loadTree` is in a foreign country with
+a phrasebook - and so is the search that goes looking for the standard term and finds
+nothing.
+
+Three layers of language, and they stack. On top, the domain language, and it holds
+everywhere: the subject's own terms and the industry-standard engineering terms,
+anything another expert would recognize unprompted. Under it, the project's language:
+the names the project has given its things - its types, its glossary, the words its
+docs already use - spelled as the project spells them and used alongside the domain's
+terms, never in place of them. Under that, a subsystem may name more finely still,
+inside both. A lower layer never overrides a higher one. In the narrowest corner of
+the codebase, the domain's word for the domain's idea is still the word.
+
+This is one-source-of-truth at the level of vocabulary, and it is what
+interoperability is made of. One concept, one name, and the name is the one the world
+already uses - so the code, the docs, the comments, the tests, and the tickets say the
+same word, a reader moves among them without a translation step, and a search for the
+term lands on every place it lives.
+
+WRONG: `class PaymentRetryTicket` for an idempotency key; `// bump the wait a bit each
+time so we don't hammer the server`; `Settlement` in the type and "the payout" in the
+comment above it; a comment that explains a ring buffer as "think of it like a lazy
+Susan" and never says *ring buffer*.
+RIGHT: `IdempotencyKey`; `// exponential backoff with full jitter; the schedule lives
+in RetryPolicy`; `Settlement` in both places; `// ring buffer: writes wrap at capacity
+and overwrite the oldest entry`.
+
+The temptation arrives in two voices. *"The standard term is jargon - my own phrase
+will read more naturally."* The term is the shared language; your phrase is a second
+name for one thing, and now every reader has to work out whether the two agree. *"An
+analogy will make this land."* An analogy that stands beside the domain's term can
+teach; one that stands in for it is a translation nobody asked for, and the next
+reader learns the analogy instead of the subject. Refuse both. The redirect: find the
+word the domain uses - the textbook, the RFC, the spec, the project's glossary - and
+use it. Simplify the mechanism as far as the reader needs; keep the nouns.
+
+Diagnostic: *would an expert in this subject, reading this name or comment cold,
+recognize the concept without a word of explanation - and is it the same word the
+project's docs and types use?*
+
+Instance of `[FRAMING:representation]` - a name is a map, and the domain drew it
+first - and of `[LAW:one-source-of-truth]` at the level of vocabulary: a coined
+synonym is a second clock.
 
 ## [LAW:single-enforcer] - one checkpoint per rule
 
@@ -523,7 +595,10 @@ not another - or the mechanism itself lifted into a simplification that meets a 
 who cannot yet read the dense original. It may restate what the code does; it must not
 restate it at the code's own altitude, a verbatim echo that adds no height and rots
 the moment the code moves. The test is never whether the comment repeats the code, but
-whether it stands where the code cannot.**
+whether it stands where the code cannot. And it stands there in the domain's language:
+the words an expert already uses, then the project's own names, then whatever a
+subsystem names more finely - each layer spoken inside the ones above it, none
+replacing them (`[LAW:domain-language]`).**
 
 The code is a photograph; the comment is the caption. Describing the frame is not
 forbidden - describing the frame is what captions are for. The dead caption reads the
@@ -536,21 +611,45 @@ the pixels and skips the caption at no cost, while a reader who cannot (a shader
 language they don't speak, a codebase annotated for learning) is handed the scene they
 could not have resolved alone. Obviousness is a fact about the viewer, never the frame.
 
-So a comment dies two deaths. *"A quick line restating this helps the next reader"*:
+A caption calls the things in the frame by the names they already have, and those
+names come in layers. First, the domain language: the terms the subject itself uses,
+the ones another expert would recognize without a word of explanation - *exponential
+backoff with jitter* over a retry loop, *debit* and *credit* in a ledger, *idempotency
+key* at a payment endpoint. Then the project's own words for its things: its type
+names, its glossary, the terms its docs already use, spelled as the project spells
+them. Then whatever a subsystem names more finely still. The layers stack; they never
+replace. The narrowest corner of the project still speaks the domain's words for the
+domain's ideas, and a project term sits alongside the domain term, not in place of it.
+The payoff is that someone fluent in the subject opens the code, the docs, and the
+comments and is already at home, and a search for the standard term lands on every
+place it matters.
+
+- WRONG: `// bump the wait a bit each time so we don't hammer the server`
+- RIGHT: `// exponential backoff with full jitter; the schedule lives in RetryPolicy`
+
+So a comment dies three deaths. *"A quick line restating this helps the next reader"*:
 only if it rises above the code - a same-altitude echo helps no one and lies the first
 time the code changes and the words don't. *"This just says what the code says, delete
 it"*: check the altitude first - a teaching gloss or a simplification does work you
 cannot see *because* you can already read the code; never strip comprehension on the
-grounds that the mechanism is transparent to you. And never flood the other way: the
-author's mood, the ticket's backstory, the whole domain re-taught belong outside the
-frame, not in the caption.
+grounds that the mechanism is transparent to you. *"The standard term is jargon - my
+own phrase or an analogy will land better"*: the term is the shared language, and a
+comment that coins a replacement has made a second name for one thing. Now the reader
+has to work out whether the two names agree, and the expert who came looking for the
+standard word walks past the comment that explains it. Simplify the mechanism as far
+as the reader needs; keep the domain's nouns and the project's nouns. An analogy
+standing in for a word the subject already has is a translation nobody asked for. And
+never flood the other way: the author's mood, the ticket's backstory, the whole domain
+re-taught belong outside the frame, not in the caption.
 
 Diagnostic: *does this comment stand at an altitude the code does not - a
-simplification, an intent, a relationship - while staying scoped to this code?*
+simplification, an intent, a relationship - scoped to this code and spoken in the
+domain's own words, then the project's?*
 
 Instance of `[LAW:one-source-of-truth]`, but only at the code's own altitude: a same-altitude
 echo is a divergent second copy that will drift, while a comment pitched higher is a
-distinct rendering for a reader the code doesn't reach, not a rival source. Under
+distinct rendering for a reader the code doesn't reach, not a rival source; a coined
+synonym is that same second copy at the level of vocabulary. Under
 `[FRAMING:representation]`, keep the view the code cannot supply.
 
 ---
@@ -1307,9 +1406,10 @@ under change, under dependency, and under sharing.
 
 **Truthfulness** - `[LAW:types-are-the-program]` makes the compiler the mapkeeper;
 `[LAW:one-source-of-truth]`, `[LAW:single-enforcer]`, and `[LAW:comments-carry-meaning]`
-allow each fact, each invariant, and each meaning exactly one authoritative home; and
-`[LAW:parse-dont-validate]` keeps a checked fact checked - the proof lives in the type,
-so nobody inland ever asks again.
+allow each fact, each invariant, and each meaning exactly one authoritative home;
+`[LAW:domain-language]` gives each concept the name the world already uses, so code,
+docs, and comments speak one tongue; and `[LAW:parse-dont-validate]` keeps a checked
+fact checked - the proof lives in the type, so nobody inland ever asks again.
 
 **Contact with the world** - `[LAW:no-ambient-temporal-coupling]` turns time into owned
 state; `[LAW:effects-at-boundaries]` keeps the fire in the hearth.
@@ -1331,8 +1431,9 @@ it is zero and dead when it is dead, built before the cloud.
 
 Run your hand over the code before you leave it. Anything that snags - a bespoke
 type, a guard with no else, a papers-check far from any border, a comment doing a
-type's job, a copy that can drift, a flag with no deletion date, an error told to be
-quiet, a job whose "did nothing" and "never ran" look alike, an "until we have X" in
-a comment or commit - is a rough bit, and the task is not done while your hand still catches. When
+type's job, a copy that can drift, a coined name for a thing the domain already named,
+a flag with no deletion date, an error told to be quiet, a job whose "did nothing" and
+"never ran" look alike, an "until we have X" in a comment or commit - is a rough bit,
+and the task is not done while your hand still catches. When
 you are uncertain which law applies, return to the two framings and ask: **where is
 the seam, and is the map true?**
