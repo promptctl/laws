@@ -3,6 +3,7 @@ failure.json left in the run dir. This is the entry point an eval calls."""
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 
 from . import HarnessError, record
@@ -12,11 +13,12 @@ from .session import Session, Spec, check_prompt
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def run(spec: Spec, prompts: list[str], run_dir: Path, run_id: str) -> dict:
+def run(spec: Spec, prompts: list[str], run_dir: Path, run_id: str, stop: threading.Event | None = None) -> dict:
     """Returns the run record, written to <run_dir>/run.json. Arguments that are not
     accepted (the run id, the prompts, a run dir with contents) raise before anything is
     written. Past them, any failure writes <run_dir>/failure.json and raises the
-    HarnessError; there is no third outcome."""
+    HarnessError; there is no third outcome. Setting `stop` ends the run as an
+    `interrupted` failure at its next poll."""
     if not RUN_ID_RE.match(run_id):
         raise HarnessError("spec", f"run id {run_id!r} must match {RUN_ID_RE.pattern}")
     if not prompts:
@@ -26,7 +28,7 @@ def run(spec: Spec, prompts: list[str], run_dir: Path, run_id: str) -> dict:
     if run_dir.exists() and any(run_dir.iterdir()):
         raise HarnessError("spec", f"run dir already has contents: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
-    session = Session(spec, run_dir, run_id)
+    session = Session(spec, run_dir, run_id, stop)
     try:
         with session:
             for prompt in prompts:

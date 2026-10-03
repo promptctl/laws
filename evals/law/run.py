@@ -29,10 +29,12 @@ import hashlib
 import json
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import Future, ThreadPoolExecutor
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,8 +48,7 @@ REPO = HERE.parent.parent
 sys.path.insert(0, str(REPO / "harness"))
 
 from harness import run as harness_run  # noqa: E402
-from harness import tmux  # noqa: E402
-from harness.session import Spec, tmux_name  # noqa: E402
+from harness.session import Spec  # noqa: E402
 
 SKILL_PATH = "plugins/laws/skills/code/SKILL.md"
 ORACLE_TIMEOUT_SECS = 600
@@ -99,7 +100,7 @@ def resolve_arm(spec: str) -> Arm:
 class Case:
     law: str
     scenario: str
-    root: Path
+    root: Path  # the invocation's snapshot of the case, never the live checkout
     sha256: str  # of everything that decides a verdict: fixture, request, oracle, differential.py
 
     @property
@@ -107,7 +108,10 @@ class Case:
         return f"{self.law}/{self.scenario}"
 
 
-def load_cases(law: str) -> list[Case]:
+def load_cases(law: str, snapshot: Path) -> list[Case]:
+    """The law's cases, copied with differential.py into `snapshot` (laid out like this
+    directory) and digested there: every run of the invocation copies its fixture from, and
+    is judged by, the code its record's digest names, whatever the checkout does meanwhile."""
     law_dir = HERE / "cases" / law
     if not law_dir.is_dir():
         known = sorted(p.name for p in (HERE / "cases").iterdir() if p.is_dir())
@@ -122,17 +126,22 @@ def load_cases(law: str) -> list[Case]:
         for part in ("fixture", "request.md", "oracle.py"):
             if not (root / part).exists():
                 die(f"case {law}/{root.name} is missing {part}")
-        cases.append(Case(law, root.name, root, case_digest(root)))
+    shutil.copyfile(HERE / "differential.py", snapshot / "differential.py")
+    for root in sorted(d for d in law_dir.iterdir() if d.is_dir()):
+        copy = snapshot / "cases" / law / root.name
+        shutil.copytree(root, copy, ignore=FIXTURE_IGNORE)
+        cases.append(Case(law, root.name, copy, case_digest(snapshot, copy)))
     return cases
 
 
-def case_digest(root: Path) -> str:
-    """Ties a verdict to the exact case and oracle code that produced it."""
+def case_digest(base: Path, root: Path) -> str:
+    """Ties a verdict to the exact case and oracle code that produced it. `base` is laid
+    out like this directory, so a snapshot digests the same as the checkout it copies."""
     files = sorted(p for p in (root / "fixture").rglob("*") if p.is_file() and not set(RESIDUE) & set(p.parts))
-    files += [root / "request.md", root / "oracle.py", HERE / "differential.py"]
+    files += [root / "request.md", root / "oracle.py", base / "differential.py"]
     digest = hashlib.sha256()
     for path in files:
-        name = path.relative_to(HERE).as_posix()
+        name = path.relative_to(base).as_posix()
         digest.update(f"{name}\0{hashlib.sha256(path.read_bytes()).hexdigest()}\n".encode())
     return digest.hexdigest()
 
@@ -141,14 +150,12 @@ def run_id_of(case: Case, arm: Arm, repeat: int) -> str:
     return f"{case.law}/{case.scenario}/{arm.slug}/r{repeat}"
 
 
-def harness_run_id_of(run_id: str) -> str:
-    # A harness run id names a tmux session, and tmux allows no "/" or ".".
-    return run_id.replace("/", "_")
-
-
-def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path) -> dict:
+def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path, stop: threading.Event) -> dict:
     run_id = run_id_of(case, arm, repeat)
-    stem = harness_run_id_of(run_id)
+    stem = run_id.replace("/", "_")
+    # The harness run id names a tmux session, which tmux allows no "/" or "." and refuses
+    # to reuse; the results dir's digest keeps two invocations of one law from colliding.
+    harness_id = f"{stem}_{hashlib.sha256(str(out).encode()).hexdigest()[:8]}"
     log(f"start {run_id}")
     with tempfile.TemporaryDirectory(prefix="law-eval-run-") as tmp:
         # Resolved: the harness judges isolation on resolved paths, and macOS's temp dir is a symlink.
@@ -163,7 +170,7 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path) -> dict:
         # prompt with surrounding whitespace rather than trimming it.
         request = (case.root / "request.md").read_text().removesuffix("\n")
         spec = Spec(work_dir=workdir, model=model, append_system_prompt=guidance_file)
-        session = harness_run.run(spec, [request], out / "runs" / stem, stem)
+        session = harness_run.run(spec, [request], out / "runs" / stem, harness_id, stop)
 
         diff = out / "diffs" / f"{stem}.diff"
         for residue in [p for name in RESIDUE for p in workdir.rglob(name)]:
@@ -207,14 +214,37 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path) -> dict:
     return record
 
 
-def stop_runs(pool: ThreadPoolExecutor, futures: list[tuple[str, Future]]) -> None:
-    """Ctrl-C reaches only the main thread. Queued runs are dropped, and ending each live
-    run's tmux session makes its harness turn fail at the next poll and record it."""
-    pool.shutdown(wait=False, cancel_futures=True)
-    for run_id, future in futures:
-        if future.running():
-            tmux.kill(tmux_name(harness_run_id_of(run_id)))
+def run_all(jobs: list[tuple[Case, Arm, int]], model: str, out: Path, workers: int) -> tuple[list[dict], bool]:
+    """Every job's failure, and whether Ctrl-C stopped the batch. Ctrl-C reaches only this
+    thread: it drops the queued runs, which never started and count nowhere, and stops the
+    live ones, which the harness records as `interrupted` failures."""
+    stop = threading.Event()
+    pool = ThreadPoolExecutor(max_workers=workers)
+    futures = [(case, arm, run_id_of(case, arm, n), pool.submit(run_one, case, arm, n, model, out, stop))
+               for case, arm, n in jobs]
+    for _, _, run_id, future in futures:
+        future.add_done_callback(
+            lambda f, run_id=run_id: f.cancelled() or f.exception() is None or log(f"FAILED {run_id}: {f.exception()}")
+        )
+    interrupted = False
+    try:
+        for *_, future in futures:
+            future.exception()
+    except KeyboardInterrupt:
+        interrupted = True
+        log("interrupted: dropping queued runs, stopping live ones")
+        # One Ctrl-C arrives twice under `uv run`, which forwards it to this process; a
+        # repeat must not abandon the stop it started. A hung stop still answers SIGTERM.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        stop.set()
+        pool.shutdown(wait=False, cancel_futures=True)
     pool.shutdown(wait=True)
+    failures = [
+        {"run_id": run_id, "case": case.id, "arm": arm.name, "error": f"{type(error).__name__}: {error}"}
+        for case, arm, run_id, future in futures
+        if not future.cancelled() and (error := future.exception()) is not None
+    ]
+    return failures, interrupted
 
 
 def main() -> None:
@@ -229,47 +259,39 @@ def main() -> None:
 
     if args.repeats < 1:
         die("--repeats must be at least 1")
+    if args.jobs < 1:
+        die("--jobs must be at least 1")
     arm_specs = args.arms or ["none", "skill:HEAD"]
     if len(set(arm_specs)) != len(arm_specs):
         die(f"an arm is named twice: {arm_specs}")
     arms = [resolve_arm(spec) for spec in arm_specs]
     if len({a.slug for a in arms}) != len(arms):
         die(f"two arms share a slug: {[a.slug for a in arms]}")
-    cases = load_cases(args.law)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out = (args.out or HERE / "results" / args.law / stamp).resolve()
-    if out.exists() and any(out.iterdir()):
-        die(f"results directory already has contents: {out}")
-    for sub in ("runs", "records", "diffs"):
-        (out / sub).mkdir(parents=True, exist_ok=True)
-    log(f"{len(cases)} case(s) x {len(arms)} arm(s) x {args.repeats} repeat(s) on {args.model} -> {out}")
+    with tempfile.TemporaryDirectory(prefix="law-eval-cases-") as snapshot:
+        cases = load_cases(args.law, Path(snapshot))
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out = (args.out or HERE / "results" / args.law / stamp).resolve()
+        if out.exists() and any(out.iterdir()):
+            die(f"results directory already has contents: {out}")
+        for sub in ("runs", "records", "diffs"):
+            (out / sub).mkdir(parents=True, exist_ok=True)
+        log(f"{len(cases)} case(s) x {len(arms)} arm(s) x {args.repeats} repeat(s) on {args.model} -> {out}")
 
-    jobs = [(case, arm, n) for case in cases for arm in arms for n in range(1, args.repeats + 1)]
-    pool = ThreadPoolExecutor(max_workers=args.jobs)
-    futures = [(case, arm, run_id_of(case, arm, n), pool.submit(run_one, case, arm, n, args.model, out)) for case, arm, n in jobs]
-    failures = []
-    try:
-        for case, arm, run_id, future in futures:
-            try:
-                future.result()
-            except Exception as error:  # every failure is collected and reported below, then fails the command
-                failures.append({"run_id": run_id, "case": case.id, "arm": arm.name, "error": f"{type(error).__name__}: {error}"})
-                log(f"FAILED {run_id}: {error}")
-    except KeyboardInterrupt:
-        stop_runs(pool, [(run_id, future) for _, _, run_id, future in futures])
-        die(f"interrupted; partial results in {out}")
-    pool.shutdown(wait=True)
+        jobs = [(case, arm, n) for case in cases for arm in arms for n in range(1, args.repeats + 1)]
+        failures, interrupted = run_all(jobs, args.model, out, args.jobs)
     # A summary counts these in its arm's runs; they are the runs with no record.
     if failures:
         (out / "failed-runs.json").write_text(json.dumps(failures, indent=2) + "\n")
     listing = "\n  ".join(f"{f['run_id']}: {f['error']}" for f in failures)
 
-    if len(failures) == len(jobs):
-        die(f"every run failed:\n  {listing}")
+    if not any((out / "records").iterdir()):
+        die(f"{'interrupted; ' if interrupted else ''}no run has a record:\n  {listing}")
     summaries = sensitivity.summarize(*sensitivity.load_results(out))
     sensitivity.write_summaries(out, summaries)
     print(sensitivity.table(summaries))
     print(f"\nresults: {out}")
+    if interrupted:
+        die(f"interrupted; the summaries cover the runs that finished. Failed runs:\n  {listing}")
     if failures:
         die(f"{len(failures)} of {len(jobs)} runs failed and have no record (see failed-runs.json):\n  {listing}")
 
