@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shlex
 import shutil
 import time
@@ -28,6 +29,7 @@ BOOT_TIMEOUT_SECS = 120
 EDITOR_TIMEOUT_SECS = 30
 SUBMIT_TIMEOUT_SECS = 60
 TURN_TIMEOUT_SECS = 1800
+EXIT_TIMEOUT_SECS = 30
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,7 @@ class Session:
         self.transcript_path: Path | None = None  # set once the session is closed and the file moved
         self._lock = None
         self._launched = False
+        self._pid: int | None = None
 
     # ── lifecycle ──────────────────────────────────────────────────────────────────────
     def __enter__(self) -> "Session":
@@ -112,6 +115,7 @@ class Session:
         try:
             if self._launched:
                 tmux.kill(self.tmux_name)
+                self._await_exit()
                 try:
                     self._capture_transcript()
                 except HarnessError:
@@ -162,6 +166,8 @@ class Session:
 
         tmux.new_session(self.tmux_name, PANE_WIDTH, PANE_HEIGHT, str(spec.work_dir), argv)
         self._launched = True
+        # env execs claude, so the pane process is claude itself.
+        self._pid = tmux.pane_pid(self.tmux_name)
         self._await_ready()
 
     def _await_ready(self) -> None:
@@ -233,6 +239,21 @@ class Session:
         return _wait("the turn finishing", "turn", timeout, finished, pane)
 
     # ── close-out ──────────────────────────────────────────────────────────────────────
+    def _await_exit(self) -> None:
+        """claude writes its last transcript records while it shuts down, after the tmux
+        session is gone. Moving the file before the process has exited strands that tail
+        in a new file at the old path."""
+        if self._pid is None:
+            return
+        deadline = time.monotonic() + EXIT_TIMEOUT_SECS
+        while time.monotonic() < deadline:
+            try:
+                os.kill(self._pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.2)
+        raise HarnessError("teardown", f"claude (pid {self._pid}) was still running {EXIT_TIMEOUT_SECS}s after its session ended")
+
     def _capture_transcript(self) -> None:
         """Move, not copy: the config dir then never accumulates runs' records, and what a
         later run finds there is only its own. A session's subagent transcripts live in a
