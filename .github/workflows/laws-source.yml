@@ -1,0 +1,20 @@
+name: laws-source
+
+# plugins/laws/skills/code/SKILL.md is generated from plugins/laws/source/code/ and the
+# plugin installs with no build step, so the staleness test is the only thing standing
+# between a source edit and a stale skill shipping.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover plugins/laws/source
