@@ -9,6 +9,7 @@ the 500.
 import http.server
 import sys
 import threading
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -25,7 +26,8 @@ def avatar_server() -> tuple[str, dict]:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            user_id = self.path.rstrip("/").rsplit("/", 1)[-1].removesuffix(".png")
+            path = urllib.parse.urlsplit(self.path).path
+            user_id = path.rstrip("/").rsplit("/", 1)[-1].removesuffix(".png")
             if user_id == GONE:
                 self.send_error(status["gone"])
                 return

@@ -58,11 +58,14 @@ the verdict is `inconclusive`.
 ## Records
 
 - `runs/<run>.json`: one per run, conforming to `schema/run-record.schema.json`. It
-  holds the case, law, arm and skill ref, the model requested, the model the session
+  holds the case and a digest of the case and oracle code that judged it, the law, arm
+  and skill ref, the model requested, the model the session
   reported, and the models it was billed for, plus the Claude Code version, turns,
   tokens, cost, oracle verdict, and paths to the transcript and the agent's diff.
 - `summaries/<scenario>.json`: the case's sensitivity record, conforming to
   `schema/case-summary.schema.json`. It is derived from `runs/` every time, never edited.
+- `failed-runs.json`: present only when some runs ended without a record (a timeout, a
+  nonzero `claude` exit, an oracle crash). A summary counts only recorded runs.
 
 A summary reads each arm against `none`, counting only the runs that reached the
 decision:
