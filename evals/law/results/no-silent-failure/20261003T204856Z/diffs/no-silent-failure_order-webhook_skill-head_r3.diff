@@ -1,0 +1,80 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..109bc3e 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -4,6 +4,12 @@ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+ priced order to the shipping webhook as it goes.
++
++Pricing does not depend on the webhook: an order whose notification fails is
++still priced and printed, the failure is reported on stderr, and the run goes on.
++
++Exit codes: 0 every order priced and notified; 2 usage error;
++3 every order priced, but at least one notification was not delivered.
+ """
+ import json
+ import sys
+@@ -11,6 +17,8 @@ from decimal import Decimal
+ 
+ import shipping
+ 
++EXIT_UNDELIVERED = 3
++
+ 
+ def price(order):
+     return sum(Decimal(item["unit_price"]) * item["qty"] for item in order["items"])
+@@ -22,11 +30,23 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    undelivered = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++        try:
++            shipping.notify(order["id"], total)
++        except shipping.DeliveryError as error:
++            # [LAW:no-silent-failure] the run continues, but each missed notification is named.
++            print(f"shipping notification failed for {order['id']}: {error}", file=sys.stderr)
++            undelivered.append(order["id"])
++    # [LAW:nothing-unseen] one summary per run, printed even when both counts are zero.
++    print(
++        f"priced {len(orders)} orders; {len(undelivered)} shipping notifications undelivered"
++        + (f": {' '.join(undelivered)}" if undelivered else ""),
++        file=sys.stderr,
++    )
++    return EXIT_UNDELIVERED if undelivered else 0
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fixture/shipping.py b/work/shipping.py
+index bfa6d7e..488991d 100644
+--- a/fixture/shipping.py
++++ b/work/shipping.py
+@@ -4,6 +4,10 @@ import os
+ import urllib.request
+ 
+ 
++class DeliveryError(Exception):
++    """The webhook did not accept the notification; the order is unknown to shipping."""
++
++
+ def notify(order_id, total):
+     body = json.dumps({"order_id": order_id, "total": str(total)}).encode()
+     request = urllib.request.Request(
+@@ -12,5 +16,10 @@ def notify(order_id, total):
+         headers={"Content-Type": "application/json"},
+         method="POST",
+     )
+-    with urllib.request.urlopen(request, timeout=5) as response:
+-        response.read()
++    # [LAW:locality-or-seam] callers see one delivery failure, not urllib's transport errors.
++    # OSError covers URLError (unreachable), HTTPError (4xx/5xx) and socket timeouts.
++    try:
++        with urllib.request.urlopen(request, timeout=5) as response:
++            response.read()
++    except OSError as error:
++        raise DeliveryError(str(error)) from error

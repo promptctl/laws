@@ -1,0 +1,55 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..6702a66 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -3,19 +3,29 @@
+ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+-<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. A user with no avatar
++(the CDN answers 404) is skipped and counted. Runs nightly from cron.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar's bytes, or None if the user has no avatar."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as error:
++        # [LAW:no-silent-failure] 404 is the CDN's answer for "no avatar"; every
++        # other status is a real failure and still propagates.
++        if error.code != 404:
++            raise
++        return None
+ 
+ 
+ def main(argv):
+@@ -25,9 +35,15 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    synced = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        avatar = fetch(user_id)
++        if avatar is None:
++            continue
++        (out / f"{user_id}.png").write_bytes(avatar)
++        synced += 1
++    # [LAW:nothing-unseen] report both counts so a run that synced nothing is visible
++    print(f"synced {synced} avatars, {len(users) - synced} users have no avatar")
+     return 0
+ 
+ 
