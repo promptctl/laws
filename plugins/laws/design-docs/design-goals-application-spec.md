@@ -99,6 +99,17 @@ what was verified by observation vs. derived from source), then the surfaces. A
 spec that says "see src/router.js" is broken twice - it leaks the source and it
 fails the handoff.
 
+**The spec is written in the language of the application's subject.** A reader
+fluent in the subject - the clean team included - should be at home in the spec
+because it uses that subject's words. Three layers of vocabulary combine and never
+replace one another: the subject's language is the top layer and holds in every
+section, the narrowest included; the application's own names, the ones it exposes at
+its boundary, sit alongside it, spelled as the application spells them; and a
+surface that serves a narrower part of the subject adds that narrower field's terms.
+This is a preference, not a prohibition: the writer reaches for the subject's word
+before coining one. Names that exist only inside the application are not the second
+layer; they are mechanism and stay out (see *Behavior, never mechanism*).
+
 **The craft ends with two audit passes, one per direction.** A completeness pass
 (sweep the taxonomy again against the finished spec: any surface thin or missing?)
 and a purity pass (reread every sentence against the boundary test: could an
