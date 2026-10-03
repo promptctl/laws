@@ -25,8 +25,11 @@ from .plugins import DirPlugin
 HERE = Path(__file__).resolve().parent.parent
 PROBE_PLUGIN = HERE / "tests" / "fixtures" / "probe-plugin"
 GUIDANCE_MARKER = "HARNESS-VERIFY-GUIDANCE-3c91"
+# Its last line is about 420 characters, so in a 200-column pane the input box wraps it
+# twice, and the second wrap lands inside the 60-character tail the turn looks for.
 LARGE_PROMPT = "\n".join(f"Line {i}: filler that makes this prompt larger than a paste may be." for i in range(80)) \
-    + "\nReply with exactly the word BRAVO and nothing else."
+    + "\n" + "This last line runs past the width of the pane so that it wraps. " * 5 \
+    + "Padding so the wrap lands in the tail. Reply with exactly the word BRAVO and nothing else."
 
 
 class Checks:

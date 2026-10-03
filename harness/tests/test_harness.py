@@ -438,6 +438,12 @@ class SessionLaunch(unittest.TestCase):
             f.write('}\n{"n": 3}\n')
         self.assertEqual(session.records(), [{"n": 1}, {"n": 2}, {"n": 3}])
 
+    def test_a_prompt_line_the_tui_wrapped_is_still_found_in_the_pane(self):
+        tail = "the end of a long line that the input box wrapped"
+        pane = "❯ start of the line and the end of a long line\n  that the input box wrapped\n──────\n"
+        self.assertEqual(session_module.shown(pane, tail), 1)
+        self.assertEqual(session_module.shown("❯ \n──────\n", tail), 0)
+
     def test_subagents_are_launched_on_the_requested_model(self):
         env = session_module.launch_env(self.session().spec, Path("/e"))
         self.assertEqual((env["CLAUDE_CODE_SUBAGENT_MODEL"], env["EDITOR"]), ("claude-x", "/e"))

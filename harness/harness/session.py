@@ -84,6 +84,12 @@ def check_prompt(prompt: object) -> str:
     return prompt
 
 
+def shown(pane: str, text: str) -> int:
+    """How many times the pane shows `text`. The TUI wraps a long line onto indented rows of
+    its own, so whitespace, line breaks included, is dropped from both before counting."""
+    return "".join(pane.split()).count("".join(text.split()))
+
+
 def launch_env(spec: Spec, editor: Path) -> dict[str, str]:
     # Subagents run on the requested model too, so every response can be held to it.
     return claude.session_env(home.CONFIG_DIR, {"EDITOR": str(editor), "VISUAL": str(editor),
@@ -302,11 +308,11 @@ class Session:
         # The prompt's last line is where the box's cursor sits, so it is on screen however
         # long the prompt is; it is in the box once the pane shows it once more than before.
         tail = prompt.splitlines()[-1][-60:]
-        shown_before = pane().count(tail)
+        shown_before = shown(pane(), tail)
         tmux.send_keys(name, "C-g")
         _wait("the editor writing the prompt", "turn", EDITOR_TIMEOUT_SECS, done.exists, pane)
         _wait("the prompt appearing in the input box", "turn", EDITOR_TIMEOUT_SECS,
-              lambda: pane().count(tail) > shown_before, pane)
+              lambda: shown(pane(), tail) > shown_before, pane)
         tmux.send_keys(name, "Enter")
 
         def submitted() -> bool:
