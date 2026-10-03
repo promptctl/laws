@@ -17,7 +17,7 @@ from pathlib import Path
 
 import jsonschema
 
-from . import HarnessError, record, transcript
+from . import HarnessError, home, record, transcript
 from .run import run
 from .session import Spec
 from .plugins import DirPlugin
@@ -58,6 +58,7 @@ def verify(model: str, out: Path | None) -> int:
     checks.check("driven for two turns", replies == ["ALPHA", "BRAVO"], f"replies {replies}")
     clean_transcript = root / "clean" / clean["transcript"]
     checks.check("transcript captured", clean_transcript.is_file(), str(clean_transcript))
+    checks.check("nothing left in the config dir", not _left_behind(clean), clean["session_id"])
     jsonschema.validate(json.loads((root / "clean" / "run.json").read_text()), record.RUN_SCHEMA)
     checks.check("run record conforms to the schema", True, str(root / "clean" / "run.json"))
 
@@ -86,6 +87,7 @@ def verify(model: str, out: Path | None) -> int:
     checks.check("admitted hooks are seen", {"SessionStart", "Stop"} <= set(seen["hooks"]), json.dumps(seen["hooks"]))
     checks.check("admitted plugin's skill is seen", "harness-probe:probe" in seen["plugin_skills"], json.dumps(seen["plugin_skills"]))
     checks.check("admitted MCP server is seen", "harness-probe" in seen["mcp_servers"], json.dumps(seen["mcp_servers"]))
+    checks.check("nothing left in the config dir", not _left_behind(control), control["session_id"])
     control_records = transcript.load(root / "control" / control["transcript"])
     checks.check("appended guidance is in the system prompt", GUIDANCE_MARKER in transcript.system_prompt(control_records),
                  control["admitted"]["append_system_prompt"]["sha256"])
@@ -95,6 +97,11 @@ def verify(model: str, out: Path | None) -> int:
     kinds = {"CLAUDE.md", "hook", "plugin skill", "MCP server"}
     checks.check("an empty admission refuses every load", all(any(v.startswith(k) for v in refused) for k in kinds), json.dumps(refused))
     return _finish(checks, root, out)
+
+
+def _left_behind(run_record: dict) -> list[Path]:
+    """Any file of the session's still under the config dir after the run moved it out."""
+    return list((home.CONFIG_DIR / "projects").glob(f"*/{run_record['session_id']}*"))
 
 
 def _finish(checks: Checks, root: Path, out: Path | None) -> int:

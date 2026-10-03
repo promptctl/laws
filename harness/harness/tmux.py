@@ -47,6 +47,13 @@ def alive(name: str) -> bool:
     return out.returncode == 0 and out.stdout.strip() == "0"
 
 
+def pane_pid(name: str) -> int:
+    out = _tmux("display-message", "-p", "-t", _pane(name), "#{pane_pid}")
+    if out.returncode != 0 or not out.stdout.strip().isdigit():
+        raise HarnessError("launch", f"could not read the pane pid of {name}: {out.stderr.strip()}")
+    return int(out.stdout.strip())
+
+
 def capture(name: str) -> str:
     out = _tmux("capture-pane", "-p", "-t", _pane(name))
     if out.returncode != 0:
