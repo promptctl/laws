@@ -80,6 +80,15 @@ def turns(records: list[dict]) -> list[Turn]:
     return finished
 
 
+def system_prompt(records: list[dict]) -> str:
+    """The system prompt the session sent, as Claude Code recorded it."""
+    snapshots = [a for a in _require_attachments(records, "prompt_snapshot") if a.get("systemPrompt")]
+    if not snapshots:
+        raise HarnessError("transcript", "no prompt_snapshot record carries a systemPrompt")
+    prompt = snapshots[-1]["systemPrompt"]
+    return "\n".join(prompt) if isinstance(prompt, list) else str(prompt)
+
+
 def served_models(records: list[dict]) -> list[str]:
     """Every model the API answered with, from the responses themselves."""
     return sorted({r["message"]["model"] for r in records if r.get("type") == "assistant" and r["message"].get("model")})
@@ -99,6 +108,12 @@ def tokens(records: list[dict]) -> dict[str, int]:
     keys = {"input": "input_tokens", "output": "output_tokens",
             "cache_read": "cache_read_input_tokens", "cache_creation": "cache_creation_input_tokens"}
     return {name: sum(int(u.get(key) or 0) for u in usage_by_message.values()) for name, key in keys.items()}
+
+
+def _summary_event(record: dict) -> str:
+    """stop_hook_summary -> Stop, subagent_stop_hook_summary -> SubagentStop."""
+    words = record["subtype"].removesuffix("_hook_summary").split("_")
+    return "".join(w.capitalize() for w in words)
 
 
 @dataclass(frozen=True)
@@ -134,7 +149,12 @@ def loaded(records: list[dict]) -> Loaded:
                     if r.get("type") == "attachment" and str(r["attachment"].get("type", "")).startswith("hook_")]
     if any(not a.get("hookEvent") for a in hook_records):
         raise HarnessError("transcript", "a hook record carries no hookEvent; the reader cannot tell which hook ran")
-    hooks = sorted({a["hookEvent"] for a in hook_records})
+    # Stop and SubagentStop hooks are recorded as a system summary instead. A hook that
+    # prints nothing leaves no record at all, so this reads the hooks that put something in
+    # front of the model; home.check_config_dir and --setting-sources are what keep silent
+    # ones out.
+    summaries = [r for r in records if r.get("type") == "system" and str(r.get("subtype", "")).endswith("hook_summary")]
+    hooks = sorted({a["hookEvent"] for a in hook_records} | {_summary_event(r) for r in summaries})
     mcp = set()
     for a in _attachments(records, "mcp_instructions_delta"):
         mcp |= set(a.get("addedNames", []))

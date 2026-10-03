@@ -45,3 +45,8 @@ def state(pane: str) -> str:
         return BYPASS_DISCLAIMER
     return FORMING
 
+
+
+def trust_selected(pane: str) -> bool:
+    """The trust dialog's cursor is on the yes option."""
+    return any(line.lstrip().startswith("❯") and "Yes, I trust this folder" in line for line in pane.splitlines())

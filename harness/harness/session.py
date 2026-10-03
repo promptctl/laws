@@ -40,10 +40,14 @@ class Spec:
     claude_version: str | None = None  # None records the version found without holding it
     settings: dict = field(default_factory=dict)  # extra --settings; hook events in it are admitted
     mcp_config: dict | None = None  # MCP servers admitted by name
+    # The work dir's own CLAUDE.md and .claude/settings*.json load (setting source
+    # "project"). Off, no settings file and no CLAUDE.md loads at all.
+    project_settings: bool = False
 
     @staticmethod
     def from_json(data: dict) -> "Spec":
-        allowed = {"work_dir", "model", "plugins", "append_system_prompt", "claude_version", "settings", "mcp_config"}
+        allowed = {"work_dir", "model", "plugins", "append_system_prompt", "claude_version", "settings", "mcp_config",
+                   "project_settings"}
         unknown = set(data) - allowed
         if unknown:
             raise HarnessError("spec", f"unknown spec fields {sorted(unknown)}")
@@ -57,6 +61,7 @@ class Spec:
             claude_version=data.get("claude_version"),
             settings=data.get("settings", {}),
             mcp_config=data.get("mcp_config"),
+            project_settings=bool(data.get("project_settings", False)),
         )
 
 
@@ -98,16 +103,22 @@ class Session:
         self._lock.__enter__()
         try:
             self._start()
-        except BaseException:
-            self.__exit__(None, None, None)
+        except BaseException as error:
+            self.__exit__(type(error), error, error.__traceback__)
             raise
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, exc_type, exc, tb) -> None:
         try:
             if self._launched:
                 tmux.kill(self.tmux_name)
-                self._capture_transcript()
+                try:
+                    self._capture_transcript()
+                except HarnessError:
+                    # A session that failed before it wrote a transcript has nothing to
+                    # capture; the failure that stopped it is the one to report.
+                    if exc is None:
+                        raise
         finally:
             if self._lock is not None:
                 self._lock.__exit__(None, None, None)
@@ -140,7 +151,7 @@ class Session:
         link.symlink_to(self.binary.path)
         settings = {"skipDangerousModePermissionPrompt": True} | spec.settings
         argv += [str(link), "--model", spec.model, "--session-id", self.session_id,
-                 "--setting-sources", "", "--settings", json.dumps(settings),
+                 "--setting-sources", "project" if spec.project_settings else "", "--settings", json.dumps(settings),
                  "--strict-mcp-config", "--dangerously-skip-permissions"]
         if spec.mcp_config is not None:
             argv += ["--mcp-config", json.dumps(spec.mcp_config)]
@@ -154,8 +165,8 @@ class Session:
         self._await_ready()
 
     def _await_ready(self) -> None:
-        """Wait out `forming`; answer the trust dialog (its default is "Yes, I trust this
-        folder", and the work dir is the caller's); refuse every other gate at once."""
+        """Wait out `forming`; answer the trust dialog with yes (the work dir is the
+        caller's); refuse every other gate at once."""
         deadline = time.monotonic() + BOOT_TIMEOUT_SECS
         pane = ""
         while time.monotonic() < deadline:
@@ -166,7 +177,9 @@ class Session:
             if current == boot.READY:
                 return
             if current == boot.UNTRUSTED:
-                tmux.send_keys(self.tmux_name, "Enter")
+                # Confirmed only once the cursor sits on the yes option: in bypass mode the
+                # dialog's default is "No, exit", so a bare Enter would quit.
+                tmux.send_keys(self.tmux_name, "Enter" if boot.trust_selected(pane) else "Down")
             elif current != boot.FORMING:
                 raise HarnessError("boot", f"session booted to '{current}': {boot.MEANING[current]}. The pane showed:\n{pane}")
             time.sleep(POLL_SECS)

@@ -22,7 +22,10 @@ LOCK_FILE = HOME / "lock"
 # Claude Code reads these from a config dir's settings or global state and would load
 # guidance or tools from them. The harness's config dir carries none; check_config_dir
 # refuses one that grew any.
-FOREIGN_ENTRIES = ("CLAUDE.md", "skills", "commands", "agents", "plugins", "hooks", "output-styles")
+FOREIGN_ENTRIES = ("CLAUDE.md", "skills", "commands", "agents", "hooks", "output-styles")
+# plugins/ itself is not foreign: Claude Code registers the official marketplace catalog
+# there on its own. An install is what would load, and installs are listed here.
+INSTALLED_PLUGINS = Path("plugins") / "installed_plugins.json"
 
 
 @contextlib.contextmanager
@@ -61,6 +64,9 @@ def check_config_dir() -> None:
     present = [name for name in FOREIGN_ENTRIES if (CONFIG_DIR / name).exists()]
     if present:
         raise HarnessError("config", f"{CONFIG_DIR} carries {present}; the harness config dir holds no guidance or plugins")
+    installed = CONFIG_DIR / INSTALLED_PLUGINS
+    if installed.exists() and json.loads(installed.read_text()).get("plugins"):
+        raise HarnessError("config", f"{installed} lists installed plugins; the harness admits plugins only per run")
     settings = CONFIG_DIR / "settings.json"
     if settings.exists():
         enabled = [k for k in ("enabledPlugins", "hooks", "mcpServers") if json.loads(settings.read_text()).get(k)]
