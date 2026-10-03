@@ -26,13 +26,14 @@ class SourceTree:
     def __exit__(self, *exc) -> None:
         shutil.rmtree(self.dir)
 
-    def edit(self, relative: str, old: str, new: str) -> None:
+    def edit(self, relative: str, old: str, new: str, count: int | None = None) -> None:
+        """Replace old, which must occur exactly once - or, given count, at least once, replacing the first count."""
         path = self.source / relative
         text = path.read_text()
         found = text.count(old)
-        if found != 1:
+        if found != 1 and not (count and found >= 1):
             raise AssertionError(f"{relative}: expected one {old!r}, found {found}")
-        path.write_text(text.replace(old, new))
+        path.write_text(text.replace(old, new, count or 1))
 
     def check(self) -> int:
         with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
@@ -127,6 +128,29 @@ class Refusals(unittest.TestCase):
             with self.subTest(stray=stray), SourceTree() as tree:
                 tree.edit("laws/one-way-deps.md", "<!-- rung: M -->", stray)
                 self.assertRefused(tree, "unknown directive")
+
+    def test_marker_inside_a_paragraph_is_refused(self):
+        with SourceTree() as tree:
+            tree.edit("laws/one-way-deps.md", "\nare forbidden.**", "\n<!-- rung: S -->\nare forbidden.**")
+            self.assertRefused(tree, "inside a paragraph")
+
+    def test_bad_marker_outside_a_law_is_refused(self):
+        with SourceTree() as tree:
+            tree.edit("recap.md", "\n\n", "\n\n<!-- rung: X -->\n", count=1)
+            self.assertRefused(tree, "recap.md:", "rung must be one of")
+
+    def test_nested_law_file_is_refused(self):
+        with SourceTree() as tree:
+            (tree.source / "laws" / "sub").mkdir()
+            (tree.source / "laws" / "one-way-deps.md").rename(tree.source / "laws" / "sub" / "one-way-deps.md")
+            tree.edit("skeleton.md", "laws/one-way-deps.md", "laws/sub/one-way-deps.md")
+            self.assertRefused(tree, "is nested")
+
+    def test_nested_law_file_left_out_is_refused(self):
+        with SourceTree() as tree:
+            (tree.source / "laws" / "sub").mkdir()
+            (tree.source / "laws" / "sub" / "x.md").write_text("## [LAW:x] - x\n")
+            self.assertRefused(tree, "laws/sub/x.md")
 
     def test_unknown_rung_is_refused(self):
         with SourceTree() as tree:
