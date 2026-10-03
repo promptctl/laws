@@ -30,6 +30,9 @@ def run(spec: Spec, prompts: list[str], run_dir: Path, run_id: str) -> dict:
     except Exception as raised:
         # A defect in the harness itself is still a failed run, recorded as one.
         error = raised if isinstance(raised, HarnessError) else HarnessError("internal", f"{type(raised).__name__}: {raised}")
+        if error is not raised:
+            for note in getattr(raised, "__notes__", []):
+                error.add_note(note)
         captured = None if session.transcript_path is None else session.transcript_path.relative_to(run_dir).as_posix()
         record.write(run_dir / "failure.json", record.failure(run_id, error, captured))
         raise error from raised

@@ -43,11 +43,13 @@ def _require_attachments(records: list[dict], kind: str) -> list[dict]:
 
 
 def _is_prompt(record: dict) -> bool:
-    """A user message the session received as a typed prompt (not a tool result or a meta line)."""
+    """A user message the session received as a typed prompt: not a tool result, a meta
+    line, or the summary Claude Code writes as a user message when it compacts."""
     return (
         record.get("type") == "user"
         and not record.get("isMeta")
         and not record.get("isSidechain")
+        and not record.get("isCompactSummary")
         and isinstance(record.get("message", {}).get("content"), str)
     )
 
@@ -89,9 +91,21 @@ def system_prompt(records: list[dict]) -> str:
     return "\n".join(prompt) if isinstance(prompt, list) else str(prompt)
 
 
+SYNTHETIC_MODEL = "<synthetic>"
+
+
 def served_models(records: list[dict]) -> list[str]:
-    """Every model the API answered with, from the responses themselves."""
-    return sorted({r["message"]["model"] for r in records if r.get("type") == "assistant" and r["message"].get("model")})
+    """Every model the API answered with, from the responses themselves. Claude Code writes
+    its own assistant messages (API errors, "No response requested.") under the model
+    "<synthetic>"; no API served those."""
+    return sorted({r["message"]["model"] for r in records
+                   if r.get("type") == "assistant" and r["message"].get("model") not in (None, "", SYNTHETIC_MODEL)})
+
+
+def api_errors(records: list[dict]) -> list[str]:
+    """The text of every API error the session showed in place of a reply."""
+    return ["\n".join(b.get("text", "") for b in r["message"].get("content", []) if b.get("type") == "text")
+            for r in records if r.get("type") == "assistant" and r.get("isApiErrorMessage")]
 
 
 def claude_versions(records: list[dict]) -> list[str]:
@@ -123,14 +137,20 @@ class Loaded:
     hooks: tuple[str, ...]
     plugin_skills: tuple[str, ...]
     plugin_agents: tuple[str, ...]
+    project_skills: tuple[str, ...]
+    project_agents: tuple[str, ...]
     mcp_servers: tuple[str, ...]
 
     def as_record(self) -> dict:
         return {k: list(v) for k, v in self.__dict__.items()}
 
 
-def loaded(records: list[dict]) -> Loaded:
+def loaded(records: list[dict], work_dir_skills: frozenset[str] = frozenset()) -> Loaded:
     """Read the loaded set from the session's own records.
+
+    A plugin's skills and agents are named `plugin:name`. An agent that is neither a plugin's
+    nor a builtin came from a project. The skill listing does not mark builtins, so a
+    project skill is told apart by name: `work_dir_skills` is what the work dir defines.
 
     skill_listing and agent_listing_delta are required: every session writes them, so their
     absence means the format moved and nothing below could be trusted. CLAUDE.md files,
@@ -162,5 +182,8 @@ def loaded(records: list[dict]) -> Loaded:
         mcp |= {s if isinstance(s, str) else s.get("name", str(s)) for s in a.get("failedMcpServers", []) + a.get("pendingMcpServers", [])}
         mcp |= {n.split("__")[1] for n in a.get("addedNames", []) + a.get("surfacedNames", []) if n.startswith("mcp__")}
     plugin_skills = sorted(n for n in skills if ":" in n)
-    plugin_agents = sorted(agents - builtin_agents)
-    return Loaded(tuple(claude_md), tuple(hooks), tuple(plugin_skills), tuple(plugin_agents), tuple(sorted(mcp)))
+    project_skills = sorted(n for n in skills if ":" not in n and n in work_dir_skills)
+    plugin_agents = sorted(a for a in agents - builtin_agents if ":" in a)
+    project_agents = sorted(a for a in agents - builtin_agents if ":" not in a)
+    return Loaded(tuple(claude_md), tuple(hooks), tuple(plugin_skills), tuple(plugin_agents),
+                  tuple(project_skills), tuple(project_agents), tuple(sorted(mcp)))

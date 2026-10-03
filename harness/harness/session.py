@@ -14,6 +14,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import time
 import uuid
 from collections.abc import Callable
@@ -30,6 +31,7 @@ EDITOR_TIMEOUT_SECS = 30
 SUBMIT_TIMEOUT_SECS = 60
 TURN_TIMEOUT_SECS = 1800
 EXIT_TIMEOUT_SECS = 30
+KILL_TIMEOUT_SECS = 5
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,10 @@ class Session:
         self.binary: claude.Binary | None = None
         self.auth: claude.Auth | None = None
         self.pinned: list[plugins.Pinned] = []
+        # What the caller admitted, read once at launch: the session runs with permissions
+        # skipped and can rewrite its own work dir, so nothing is read from it afterwards.
+        self.admitted: dict | None = None
+        self.work_dir_skills: frozenset[str] = frozenset()
         self.transcript_path: Path | None = None  # set once the session is closed and the file moved
         self._lock = None
         self._launched = False
@@ -115,7 +121,13 @@ class Session:
         try:
             if self._launched:
                 tmux.kill(self.tmux_name)
-                self._await_exit()
+                try:
+                    forced = self._await_exit()
+                except HarnessError as error:
+                    if exc is None:
+                        raise
+                    exc.add_note(str(error))
+                    return
                 try:
                     self._capture_transcript()
                 except HarnessError:
@@ -123,6 +135,12 @@ class Session:
                     # capture; the failure that stopped it is the one to report.
                     if exc is None:
                         raise
+                if forced is not None:
+                    # A failure already in flight is the one to report; the forced exit
+                    # rides along on it rather than replacing it.
+                    if exc is None:
+                        raise HarnessError("teardown", forced)
+                    exc.add_note(f"[teardown] {forced}")
         finally:
             if self._lock is not None:
                 self._lock.__exit__(None, None, None)
@@ -143,6 +161,13 @@ class Session:
 
         control = self.run_dir / "control"
         control.mkdir(exist_ok=True)
+        guidance = None
+        if spec.append_system_prompt is not None:
+            # Loaded from a copy, so the recorded digest is of what the session read.
+            guidance = control / "append-system-prompt.md"
+            shutil.copyfile(spec.append_system_prompt, guidance)
+        self.admitted = self._admit(guidance)
+        self.work_dir_skills = _work_dir_skills(spec.work_dir)
         editor = control / "editor.sh"
         editor.write_text(f"#!/bin/sh\ncp {shlex.quote(str(control / 'prompt.txt'))} \"$1\" && touch {shlex.quote(str(control / 'editor.done'))}\n")
         editor.chmod(0o755)
@@ -161,14 +186,34 @@ class Session:
             argv += ["--mcp-config", json.dumps(spec.mcp_config)]
         for p in self.pinned:
             argv += ["--plugin-dir", str(p.plugin_dir)]
-        if spec.append_system_prompt is not None:
-            argv += ["--append-system-prompt-file", str(spec.append_system_prompt)]
+        if guidance is not None:
+            argv += ["--append-system-prompt-file", str(guidance)]
 
         tmux.new_session(self.tmux_name, PANE_WIDTH, PANE_HEIGHT, str(spec.work_dir), argv)
         self._launched = True
         # env execs claude, so the pane process is claude itself.
         self._pid = tmux.pane_pid(self.tmux_name)
         self._await_ready()
+
+    def _admit(self, guidance: Path | None) -> dict:
+        spec = self.spec
+        project_hooks: set[str] = set()
+        if spec.project_settings:
+            for f in (spec.work_dir / ".claude" / n for n in ("settings.json", "settings.local.json")):
+                if f.is_file():
+                    try:
+                        project_hooks |= set(json.loads(f.read_text()).get("hooks", {}))
+                    except json.JSONDecodeError as error:
+                        raise HarnessError("spec", f"{f} is not JSON: {error}") from None
+        return {
+            "plugins": [{"name": p.name, **p.provenance} for p in self.pinned],
+            "append_system_prompt": None if guidance is None else {
+                "path": str(spec.append_system_prompt), "sha256": hashlib.sha256(guidance.read_bytes()).hexdigest()},
+            "hook_events": sorted({e for p in self.pinned for e in p.hook_events} | set(spec.settings.get("hooks", {}))
+                                  | project_hooks),
+            "mcp_servers": sorted((spec.mcp_config or {}).get("mcpServers", {})),
+            "project_settings": spec.project_settings,
+        }
 
     def _await_ready(self) -> None:
         """Wait out `forming`; answer the trust dialog with yes (the work dir is the
@@ -239,20 +284,27 @@ class Session:
         return _wait("the turn finishing", "turn", timeout, finished, pane)
 
     # ── close-out ──────────────────────────────────────────────────────────────────────
-    def _await_exit(self) -> None:
-        """claude writes its last transcript records while it shuts down, after the tmux
-        session is gone. Moving the file before the process has exited strands that tail
-        in a new file at the old path."""
-        if self._pid is None:
-            return
-        deadline = time.monotonic() + EXIT_TIMEOUT_SECS
+    def _exited_within(self, seconds: float) -> bool:
+        deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             try:
                 os.kill(self._pid, 0)
             except ProcessLookupError:
-                return
+                return True
             time.sleep(0.2)
-        raise HarnessError("teardown", f"claude (pid {self._pid}) was still running {EXIT_TIMEOUT_SECS}s after its session ended")
+        return False
+
+    def _await_exit(self) -> str | None:
+        """claude writes its last transcript records while it shuts down, after the tmux
+        session is gone. Moving the file before the process has exited strands that tail
+        in a new file at the old path. One that will not exit is killed, so it cannot go on
+        writing to the shared config dir; the return says that happened."""
+        if self._pid is None or self._exited_within(EXIT_TIMEOUT_SECS):
+            return None
+        os.kill(self._pid, signal.SIGKILL)
+        if not self._exited_within(KILL_TIMEOUT_SECS):
+            raise HarnessError("teardown", f"claude (pid {self._pid}) survived SIGKILL; its transcript was left in place")
+        return f"claude (pid {self._pid}) was still running {EXIT_TIMEOUT_SECS}s after its session ended and was killed"
 
     def _capture_transcript(self) -> None:
         """Move, not copy: the config dir then never accumulates runs' records, and what a
@@ -268,3 +320,11 @@ class Session:
         if sidecar.is_dir():
             shutil.move(str(sidecar), target / sidecar.name)
         self.transcript_path = target / live.name
+
+
+def _work_dir_skills(work_dir: Path) -> frozenset[str]:
+    """The skills and commands the work dir defines, which load as project skills."""
+    claude_dir = work_dir / ".claude"
+    skills = {d.name for d in (claude_dir / "skills").glob("*") if (d / "SKILL.md").is_file()}
+    commands = {f.stem for f in (claude_dir / "commands").glob("*.md")}
+    return frozenset(skills | commands)
