@@ -1,0 +1,61 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..5f8ec77 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -11,28 +11,49 @@ from decimal import Decimal
+ from pathlib import Path
+ 
+ 
++# The bank's marker for an amount it did not supply.
++AMOUNT_NOT_AVAILABLE = "N/A"
++
++
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    """Yield (line_number, account, amount); amount is None where the bank wrote N/A."""
++    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+-        date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        _date, account, amount = line.split(",")
++        # [LAW:parse-dont-validate] the bank's one known non-amount becomes an explicit
++        # absence here; any other unparseable amount still fails loudly in Decimal().
++        amount = amount.strip()
++        yield line_number, account, None if amount == AMOUNT_NOT_AVAILABLE else Decimal(amount)
+ 
+ 
+ def totals(exports_dir):
++    """Return (per-account sums, rows left out of them because they carry no amount)."""
+     sums = {}
++    missing = []
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
+-    return sums
++        for line_number, account, amount in read_rows(path):
++            if amount is None:
++                missing.append((path, line_number, account))
++            else:
++                sums[account] = sums.get(account, Decimal("0")) + amount
++    return sums, missing
+ 
+ 
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    sums, missing = totals(argv[1])
++    for account, total in sorted(sums.items()):
+         print(f"{account} {total:.2f}")
++    # [LAW:no-silent-failure] a total that omits a row must say so, and say which row.
++    for path, line_number, account in missing:
++        print(
++            f"warning: {path}:{line_number}: amount is {AMOUNT_NOT_AVAILABLE}; "
++            f"row not included in {account} total",
++            file=sys.stderr,
++        )
+     return 0
+ 
+ 
