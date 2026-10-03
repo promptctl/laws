@@ -22,9 +22,11 @@ fix and chosen not to do it. Code that only "doesn't make anything worse" is cod
 carrying it is the cost - `[LAW:carrying-cost]` is the price of what you keep, not what
 you build.
 
+<!-- rung: M -->
 When you recognize the pattern, the amount of work it implies is not an input. The
 procedure is mandatory:
 
+<!-- rung: M -->
 1. **Pause the current work.** Comment the ticket with where it stops and what is in
    play, and groom the backlog so the work is picked up again after the escape lands.
 2. **Plan the escape.** If you know what Y is, Y is the work. If you do not, step zero
@@ -39,6 +41,7 @@ procedure is mandatory:
    carries its own task and nothing else; trust the process to bring the paused work
    back.
 
+<!-- rung: M -->
 Cite this law where its decision lands: on the paused ticket's comment and on the
 escape ticket, and in code only as an exception when the minimum is knowingly kept.
 Every ticket filed under it carries the label `escape-local-minima`, the token spelled
