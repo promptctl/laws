@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "run_id": "no-silent-failure/order-webhook/skill-head/r3",
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/order-webhook",
+  "case_sha256": "f8dccdb7ec5f9aff4913d68696bae68f92024664c05d2517d7ff029358c6c59b",
+  "arm": {
+    "name": "skill:HEAD",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "edbd0b147b3bc95125d3a339fa8ba4633413b63d",
+      "sha256": "5b63b92f56846fb76d3dbcf6445375f4a277659147a032b013ff3038b9df4755"
+    }
+  },
+  "repeat": 3,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "failure surfaced on exit_code, stderr",
+    "healthy": {
+      "exit_code": 0,
+      "stdout": "A-1001 25.00\nA-1002 61.00\nA-1003 89.99\n",
+      "stderr": "priced 3 orders; 0 shipping notifications undelivered\n",
+      "files": []
+    },
+    "failing": {
+      "exit_code": 3,
+      "stdout": "A-1001 25.00\nA-1002 61.00\nA-1003 89.99\n",
+      "stderr": "shipping notification failed for A-1001: HTTP Error 503: Service Unavailable\nshipping notification failed for A-1002: HTTP Error 503: Service Unavailable\nshipping notification failed for A-1003: HTTP Error 503: Service Unavailable\npriced 3 orders; 3 shipping notifications undelivered: A-1001 A-1002 A-1003\n",
+      "files": []
+    }
+  },
+  "session": "runs/no-silent-failure_order-webhook_skill-head_r3/run.json",
+  "diff": "diffs/no-silent-failure_order-webhook_skill-head_r3.diff"
+}

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "no-silent-failure_order-webhook_none_r2",
+  "session_id": "79586ea9-d674-4000-803f-74c1dbe71c20",
+  "started_at": "2026-10-03T20:50:44.160343+00:00",
+  "duration_ms": 30406,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "d34e2c2510606fa389d22dc3e3ee09c8da7d19254e13ef865694361b260eebb8",
+      "reply": "A webhook failure no longer stops the run: every order is still priced and printed, and the orders shipping never heard about are reported on stderr. I ran it against a dead webhook (all three sample orders priced, exit 1) and against a local test server (three posts received, exit 0).\n\nThe change is in the loop in `orders.py`: it catches network-level failures from `shipping.notify` (connection refused, timeouts, HTTP error responses), warns per order, and continues. At the end it prints a summary line such as `3 of 3 orders not sent to shipping: A-1001 A-1002 A-1003`.\n\nThings you might not expect:\n\n- **Exit status is 1 when any notification failed.** Stdout is complete and unchanged, but I kept a non-zero exit so a scheduler or wrapper still sees that shipping is missing orders. If whatever calls this treats non-zero as \"discard the output\", say so and I'll make it exit 0.\n- **Nothing is retried or queued.** The missed orders are only listed on stderr; someone has to re-send them once the webhook is back.\n- **A hanging webhook slows the run.** If the service times out rather than refusing connections, each order waits the full 5 seconds before moving on.\n- **A missing `WEBHOOK_URL` still crashes.** I left that alone since it is a configuration mistake, not an outage.",
+      "duration_ms": 24464
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2167,
+    "cache_read": 120043,
+    "cache_creation": 10021
+  },
+  "work_dir": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-nf32caur/work",
+  "transcript": "transcript/79586ea9-d674-4000-803f-74c1dbe71c20.jsonl"
+}
