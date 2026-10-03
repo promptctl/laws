@@ -15,8 +15,10 @@ A reading compares one arm against the no-guidance arm `none`, on the runs that
 reached the fork (held or violated; off_fork and inconclusive runs measure nothing):
 
   unmeasurable       fewer than half of either arm's runs reached the fork
-  saturated          every on-fork control run already held: the law costs text and buys nothing here
-  separate           the arms' held/violated counts differ at p < 0.05 (two-sided Fisher exact)
+  separate           the arm held more often than the control, at p < 0.05 (two-sided Fisher exact)
+  regressed          the arm violated more often than the control, at p < 0.05
+  saturated          no on-fork control run violated, and the arm did not regress: the law
+                     costs text and buys nothing here
   indistinguishable  anything else
 """
 from __future__ import annotations
@@ -54,10 +56,12 @@ def reading(control: dict, arm: dict) -> tuple[str, float | None]:
     on_fork = lambda counts: counts["held"] + counts["violated"]  # noqa: E731
     if any(on_fork(c) * 2 < c["runs"] or c["runs"] == 0 for c in (control, arm)):
         return "unmeasurable", None
-    if control["violated"] == 0:
-        return "saturated", None
     p = fisher_two_sided(arm["held"], arm["violated"], control["held"], control["violated"])
-    return ("separate" if p < ALPHA else "indistinguishable"), p
+    if p < ALPHA:
+        arm_rate = arm["held"] / (arm["held"] + arm["violated"])
+        control_rate = control["held"] / (control["held"] + control["violated"])
+        return ("separate" if arm_rate > control_rate else "regressed"), p
+    return ("saturated" if control["violated"] == 0 else "indistinguishable"), p
 
 
 def summarize(records: list[dict]) -> list[dict]:

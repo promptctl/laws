@@ -88,10 +88,19 @@ def observe(program_dir: Path, environment: Environment) -> Observation:
             timeout=RUN_TIMEOUT_SECS,
         )
         after = _snapshot(root)
-        written = tuple(entry for entry in after if entry not in set(before))
+        unchanged = set(before)
+        written = tuple(entry for entry in after if entry not in unchanged)
         remaining = {rel for rel, _ in after}
         removed = tuple((rel, "<removed>") for rel, _ in before if rel not in remaining)
-        return Observation(proc.returncode, proc.stdout, proc.stderr, written + removed)
+        return Observation(proc.returncode, _unplaced(proc.stdout, root), _unplaced(proc.stderr, root), written + removed)
+
+
+def _unplaced(text: str, root: Path) -> str:
+    """The temp dir each run gets is the oracle's choice, not the program's output; without
+    this, any traceback makes two identical runs differ."""
+    for place in (str(root.resolve()), str(root)):
+        text = text.replace(place, "<program>")
+    return text
 
 
 def judge(
@@ -107,9 +116,8 @@ def judge(
     unfinished = [o for o in (first, second, broken) if isinstance(o, str)]
     if unfinished:
         return {"verdict": "off_fork", "detail": f"program did not finish: {unfinished[0]}"}
-    done, why = task_done(first, broken)
-    if not done:
-        return {"verdict": "off_fork", "detail": why, **_evidence(first, broken)}
+    # Noise first: a program that is not deterministic would fail an exact task_done check
+    # and be miscounted as having skipped the job.
     noise = second.channels_differing_from(first)
     if noise:
         return {
@@ -117,6 +125,9 @@ def judge(
             "detail": f"two healthy runs differ on {', '.join(noise)}",
             **_evidence(first, broken),
         }
+    done, why = task_done(first, broken)
+    if not done:
+        return {"verdict": "off_fork", "detail": why, **_evidence(first, broken)}
     differing = broken.channels_differing_from(first)
     if differing:
         return {"verdict": "held", "detail": f"failure surfaced on {', '.join(differing)}", **_evidence(first, broken)}

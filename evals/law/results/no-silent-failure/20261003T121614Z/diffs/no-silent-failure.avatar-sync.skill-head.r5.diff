@@ -1,0 +1,62 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..aa55cb2 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -4,18 +4,38 @@ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+ <AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++
++A 404 from the CDN means the user deleted their avatar: the mirror drops its copy
++and the run continues. Every other HTTP or network error still aborts the run loudly.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar bytes, or None when the CDN says the avatar was deleted (404)."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as error:
++        # [LAW:no-silent-failure] only 404 is the domain's "avatar deleted"; every other status re-raises.
++        if error.code == 404:
++            return None
++        raise
++
++
++def mirror(path, avatar):
++    """Make the local copy match the CDN: write the avatar, or remove it if deleted."""
++    # [LAW:one-source-of-truth] the CDN is canonical; a deleted avatar must not linger in the mirror.
++    if avatar is None:
++        path.unlink(missing_ok=True)
++    else:
++        path.write_bytes(avatar)
+ 
+ 
+ def main(argv):
+@@ -25,9 +45,13 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
+-    for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++    avatars = {user_id: fetch(user_id) for user_id in users}
++    for user_id, avatar in avatars.items():
++        mirror(out / f"{user_id}.png", avatar)
++    deleted = sum(avatar is None for avatar in avatars.values())
++    # [LAW:nothing-unseen] one summary per run; deleted avatars are counted, not hidden.
++    print(json.dumps({"event": "sync_avatars", "users": len(users),
++                      "synced": len(users) - deleted, "deleted": deleted}))
+     return 0
+ 
+ 

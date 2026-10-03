@@ -1,0 +1,34 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..d6dbc90 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -7,16 +7,26 @@ Every *.csv file in the directory is read in name order. Each line is
+ sorted by account, with two decimal places.
+ """
+ import sys
+-from decimal import Decimal
++from decimal import Decimal, InvalidOperation
+ from pathlib import Path
+ 
+ 
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+         date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        try:
++            value = Decimal(amount.strip())
++        except InvalidOperation:
++            value = None
++        if value is None or not value.is_finite():
++            # The bank sometimes writes N/A (or similar) instead of an
++            # amount. Skip the row, but say so, so it isn't silently lost.
++            print(f"warning: {path}:{lineno}: skipping row with "
++                  f"unparseable amount {amount!r}", file=sys.stderr)
++            continue
++        yield date, account, value
+ 
+ 
+ def totals(exports_dir):
