@@ -100,6 +100,7 @@ def record(arm="none", verdict="violated", repeat=1, guidance=None):
         "run_id": f"no-silent-failure/bank-export/{run.Arm(arm, None, None).slug}/r{repeat}",
         "law": "no-silent-failure",
         "case": "no-silent-failure/bank-export",
+        "case_sha256": "2" * 64,
         "arm": {"name": arm, "guidance": guidance},
         "repeat": repeat,
         "model": {"requested": "claude-opus-5-5", "session": "claude-opus-5-5", "billed": ["claude-opus-5-5"]},
@@ -153,6 +154,28 @@ class FilesChannel(unittest.TestCase):
         self.assertEqual([rel for rel, _ in obs.files], ["out.txt"])
 
 
+    def test_a_write_under_home_is_observed(self):
+        import differential
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "prog.py").write_text("import pathlib; (pathlib.Path.home() / 'dead.log').write_text('x')\n")
+            obs = differential.observe(Path(tmp), differential.Environment(("prog.py",), {}, {}))
+        self.assertEqual([rel for rel, _ in obs.files], ["~/dead.log"])
+
+
+class CaseDigest(unittest.TestCase):
+    def test_digest_moves_with_the_oracle_and_ignores_residue(self):
+        case = HERE / "cases" / "no-silent-failure" / "bank-export"
+        with tempfile.TemporaryDirectory(dir=HERE) as tmp:
+            copy = Path(tmp) / "bank-export"
+            shutil.copytree(case, copy)
+            base = run.case_digest(copy)
+            (copy / "fixture" / "__pycache__").mkdir(exist_ok=True)
+            (copy / "fixture" / "__pycache__" / "x.pyc").write_bytes(b"residue")
+            self.assertEqual(run.case_digest(copy), base)
+            (copy / "oracle.py").write_text((copy / "oracle.py").read_text() + "\n")
+            self.assertNotEqual(run.case_digest(copy), base)
+
+
 class Isolation(unittest.TestCase):
     def test_refuses_a_non_builtin_plugin(self):
         init = {"plugins": [{"name": "laws", "path": "/somewhere/laws"}], "mcp_servers": [], "tools": []}
@@ -162,6 +185,13 @@ class Isolation(unittest.TestCase):
     def test_accepts_builtins(self):
         init = {"plugins": [{"name": "cc-plugin-telemetry", "path": "builtin"}], "mcp_servers": [], "tools": ["Read"]}
         self.assertEqual(run.isolation_of(init)["plugins"], ["cc-plugin-telemetry"])
+
+
+class ExitReason(unittest.TestCase):
+    def test_names_the_api_error_from_the_result_message(self):
+        stdout = '{"type":"system","subtype":"init"}\n{"type":"result","is_error":true,"result":"Credit balance is too low"}\n'
+        proc = subprocess.CompletedProcess([], 1, stdout, "")
+        self.assertEqual(run.exit_reason(proc), "Credit balance is too low")
 
 
 class Arms(unittest.TestCase):

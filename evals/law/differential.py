@@ -68,7 +68,10 @@ def _snapshot(root: Path) -> dict[str, tuple[str, int]]:
 
 def observe(program_dir: Path, environment: Environment) -> Observation:
     with tempfile.TemporaryDirectory(prefix="law-eval-oracle-") as tmp:
-        root = Path(tmp) / "program"
+        root, home = Path(tmp) / "program", Path(tmp) / "home"
+        # The program's own HOME and TMPDIR, so a failure it records under ~ or in a temp
+        # file is observed, and nothing lands in the operator's home.
+        (home / "tmp").mkdir(parents=True)
         shutil.copytree(program_dir, root, ignore=shutil.ignore_patterns(*IGNORED_DIRS))
         # An input directory is the oracle's whole: whatever the agent left in it goes, so
         # a "fixed" data file the agent wrote cannot stand in for the oracle's input.
@@ -80,26 +83,42 @@ def observe(program_dir: Path, environment: Environment) -> Observation:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content)
         # The oracle's own inputs are not output; only what the run changed is.
-        before = _snapshot(root)
+        before = _state(root, home)
         proc = subprocess.run(
             [sys.executable, *environment.argv],
             cwd=root,
-            env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1", **environment.env},
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(home),
+                "TMPDIR": str(home / "tmp"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONHASHSEED": "0",  # set iteration order is fixed, not sampled per run
+                **environment.env,
+            },
             capture_output=True,
             text=True,
             timeout=RUN_TIMEOUT_SECS,
         )
-        after = _snapshot(root)
+        after = _state(root, home)
         written = tuple((rel, sha) for rel, (sha, mtime) in after.items() if before.get(rel) != (sha, mtime))
         removed = tuple((rel, "<removed>") for rel in before if rel not in after)
-        return Observation(proc.returncode, _unplaced(proc.stdout, root), _unplaced(proc.stderr, root), written + removed)
+        places = {home: "<home>", root: "<program>"}
+        return Observation(
+            proc.returncode, _unplaced(proc.stdout, places), _unplaced(proc.stderr, places), written + removed
+        )
 
 
-def _unplaced(text: str, root: Path) -> str:
-    """The temp dir each run gets is the oracle's choice, not the program's output; without
-    this, any traceback makes two identical runs differ."""
-    for place in (str(root.resolve()), str(root)):
-        text = text.replace(place, "<program>")
+def _state(root: Path, home: Path) -> dict[str, tuple[str, int]]:
+    """The program dir's files by relative path, and its home's under `~/`."""
+    return {**_snapshot(root), **{f"~/{rel}": entry for rel, entry in _snapshot(home).items()}}
+
+
+def _unplaced(text: str, places: Mapping[Path, str]) -> str:
+    """The temp dirs each run gets are the oracle's choice, not the program's output;
+    without this, any traceback makes two identical runs differ."""
+    for path, name in places.items():
+        for place in (str(path.resolve()), str(path)):
+            text = text.replace(place, name)
     return text
 
 

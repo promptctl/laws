@@ -55,8 +55,10 @@ RUN_SCHEMA = json.loads((HERE / "schema" / "run-record.schema.json").read_text()
 MAX_TURNS = 40
 RUN_TIMEOUT_SECS = 1200
 ORACLE_TIMEOUT_SECS = 600
-# Local build residue never reaches the agent: it differs per checkout and names the case's path.
-FIXTURE_IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache")
+# Local build residue never reaches the agent (it differs per checkout and names the case's
+# path) and never reaches a committed diff.
+RESIDUE = ("__pycache__", ".pytest_cache")
+FIXTURE_IGNORE = shutil.ignore_patterns(*RESIDUE)
 # The only variables the session sees besides its config dir and key; anything else in the
 # operator's shell (other credentials, CLAUDE_CODE_* switches) would leak or change the run.
 PASSED_ENV = ("PATH", "LANG", "LC_ALL", "TMPDIR")
@@ -105,6 +107,7 @@ class Case:
     law: str
     scenario: str
     root: Path
+    sha256: str  # of everything that decides a verdict: fixture, request, oracle, differential.py
 
     @property
     def id(self) -> str:
@@ -116,12 +119,28 @@ def load_cases(law: str) -> list[Case]:
     if not law_dir.is_dir():
         known = sorted(p.name for p in (HERE / "cases").iterdir() if p.is_dir())
         die(f"no cases for law {law!r}; laws with cases: {', '.join(known)}")
-    cases = [Case(law, d.name, d) for d in sorted(law_dir.iterdir()) if d.is_dir()]
-    for case in cases:
+    cases = []
+    for root in sorted(d for d in law_dir.iterdir() if d.is_dir()):
         for part in ("fixture", "request.md", "oracle.py"):
-            if not (case.root / part).exists():
-                die(f"case {case.id} is missing {part}")
+            if not (root / part).exists():
+                die(f"case {law}/{root.name} is missing {part}")
+        cases.append(Case(law, root.name, root, case_digest(root)))
     return cases
+
+
+def case_digest(root: Path) -> str:
+    """Ties a verdict to the exact case and oracle code that produced it."""
+    files = sorted(p for p in (root / "fixture").rglob("*") if p.is_file() and not set(RESIDUE) & set(p.parts))
+    files += [root / "request.md", root / "oracle.py", HERE / "differential.py"]
+    digest = hashlib.sha256()
+    for path in files:
+        name = path.relative_to(HERE).as_posix()
+        digest.update(f"{name}\0{hashlib.sha256(path.read_bytes()).hexdigest()}\n".encode())
+    return digest.hexdigest()
+
+
+def run_id_of(case: Case, arm: Arm, repeat: int) -> str:
+    return f"{case.law}/{case.scenario}/{arm.slug}/r{repeat}"
 
 
 def api_key() -> str:
@@ -145,6 +164,14 @@ def parse_stream(lines: list[str]) -> tuple[dict, dict]:
     return inits[0], results[-1]
 
 
+def exit_reason(proc: subprocess.CompletedProcess) -> str:
+    """Why a session failed: its result message names an API error ("Credit balance is too
+    low") that stderr leaves empty."""
+    results = [m for m in map(json.loads, filter(str.strip, proc.stdout.splitlines())) if m.get("type") == "result"]
+    said = results[-1].get("result", "") if results else ""
+    return f"{said} {proc.stderr.strip()[-2000:]}".strip()
+
+
 def isolation_of(init: dict) -> dict:
     plugins = init.get("plugins") or []
     foreign = [p["name"] for p in plugins if p.get("path") != "builtin"]
@@ -156,7 +183,7 @@ def isolation_of(init: dict) -> dict:
 
 
 def run_one(case: Case, arm: Arm, repeat: int, model: str, key: str, out: Path) -> dict:
-    run_id = f"{case.law}/{case.scenario}/{arm.slug}/r{repeat}"
+    run_id = run_id_of(case, arm, repeat)
     stem = run_id.replace("/", ".")
     log(f"start {run_id}")
     with tempfile.TemporaryDirectory(prefix="law-eval-run-") as tmp:
@@ -200,13 +227,15 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, key: str, out: Path) 
         transcript = out / "transcripts" / f"{stem}.jsonl"
         transcript.write_text(proc.stdout)
         if proc.returncode != 0:
-            raise RuntimeError(f"{run_id}: claude exited {proc.returncode}: {proc.stderr.strip()[-2000:]}")
+            raise RuntimeError(f"{run_id}: claude exited {proc.returncode}: {exit_reason(proc)}")
         init, result = parse_stream(proc.stdout.splitlines())
         if init.get("model") != model:
             raise RuntimeError(f"{run_id}: asked for model {model}, session reported {init.get('model')}")
         isolation = isolation_of(init)
 
         diff = out / "diffs" / f"{stem}.diff"
+        for residue in [p for name in RESIDUE for p in workdir.rglob(name)]:
+            shutil.rmtree(residue, ignore_errors=True)
         # `git diff --no-index` exits 1 when the trees differ, which is the expected case.
         changes = subprocess.run(
             ["git", "diff", "--no-index", "--", pristine.name, workdir.name],
@@ -232,6 +261,7 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, key: str, out: Path) 
         "run_id": run_id,
         "law": case.law,
         "case": case.id,
+        "case_sha256": case.sha256,
         "arm": {"name": arm.name, "guidance": arm.guidance},
         "repeat": repeat,
         "model": {"requested": model, "session": init["model"], "billed": sorted((result.get("modelUsage") or {}).keys())},
@@ -295,23 +325,27 @@ def main() -> None:
 
     jobs = [(case, arm, n) for case in cases for arm in arms for n in range(1, args.repeats + 1)]
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = [pool.submit(run_one, case, arm, n, args.model, key, out) for case, arm, n in jobs]
+        futures = [(run_id_of(case, arm, n), pool.submit(run_one, case, arm, n, args.model, key, out)) for case, arm, n in jobs]
         failures = []
-        for future in futures:
+        for run_id, future in futures:
             try:
                 future.result()
             except Exception as error:  # every failure is collected and reported below, then fails the command
-                failures.append(str(error))
-                log(f"FAILED {error}")
+                failures.append({"run_id": run_id, "error": f"{type(error).__name__}: {error}"})
+                log(f"FAILED {run_id}: {error}")
+    # A summary counts only the runs that have records; this file is what says others are missing.
+    if failures:
+        (out / "failed-runs.json").write_text(json.dumps(failures, indent=2) + "\n")
+    listing = "\n  ".join(f"{f['run_id']}: {f['error']}" for f in failures)
 
     if len(failures) == len(jobs):
-        die(f"every run failed:\n  " + "\n  ".join(failures))
+        die(f"every run failed:\n  {listing}")
     summaries = sensitivity.summarize(sensitivity.load_records(out))
     sensitivity.write_summaries(out, summaries)
     print(sensitivity.table(summaries))
     print(f"\nresults: {out}")
     if failures:
-        die(f"{len(failures)} of {len(jobs)} runs failed and have no record:\n  " + "\n  ".join(failures))
+        die(f"{len(failures)} of {len(jobs)} runs failed and have no record (see failed-runs.json):\n  {listing}")
 
 
 if __name__ == "__main__":

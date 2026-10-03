@@ -4,7 +4,7 @@
   "title": "One agent run of one law-eval case under one arm",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "law", "case", "arm", "repeat", "model", "claude_code_version",
+  "required": ["schema_version", "run_id", "law", "case", "case_sha256", "arm", "repeat", "model", "claude_code_version",
                "started_at", "duration_ms", "turns", "tokens", "cost_usd", "session", "isolation", "oracle",
                "transcript", "diff"],
   "properties": {
@@ -13,6 +13,7 @@
                "description": "<law>/<scenario>/<arm slug>/r<repeat>; unique within one results directory"},
     "law": {"type": "string", "pattern": "^[a-z0-9-]+$", "description": "the [LAW:<token>] the case targets"},
     "case": {"type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+$", "description": "<law>/<scenario>, the case directory under evals/law/cases"},
+    "case_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "digest of the case's fixture, request.md, oracle.py and differential.py: the code that produced the verdict"},
     "arm": {"$ref": "#/$defs/arm"},
     "repeat": {"type": "integer", "minimum": 1},
     "model": {
