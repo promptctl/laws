@@ -194,6 +194,11 @@ class ExitReason(unittest.TestCase):
         self.assertEqual(run.exit_reason(proc), "Credit balance is too low")
 
 
+    def test_plain_text_output_keeps_stderr(self):
+        proc = subprocess.CompletedProcess([], 1, "Error: something broke\n{trunc", "boom")
+        self.assertEqual(run.exit_reason(proc), "boom")
+
+
 class Arms(unittest.TestCase):
     def test_skill_arm_reads_the_skill_at_its_ref(self):
         arm = run.resolve_arm("skill:HEAD")
