@@ -35,9 +35,14 @@ does not reopen single-session evals.
 
 ## Salvage
 
-The deleted tree's isolation layer (isolated logged-in profile) and tmux
-session-driver were transport, not single-task apparatus. Recover them from git
-history at `cf5a570^`, the parent of the commit that introduced this file and deleted
-the tree, rather than rebuilding blind. The long-horizon harness's scripts are still in
-`horizon/`; its reference seed was deleted in the commit for PR #78 and is recoverable
-from `35effb3`.
+The deleted tree's harness was transport, not single-task apparatus. Its `evals/isolation`,
+`evals/driver`, `evals/run`, `evals/configs`, `evals/compare`, `evals/judge` and
+`evals/judges` are restored from `cf5a570^` as source material for the harness epic
+(`promptctl-harness-4r0`). Its `evals/tasks` and `evals/suites`, the single-session cases,
+stay deleted. The long-horizon harness's scripts are still in `horizon/`; its reference
+seed was deleted in the commit for PR #78 and is recoverable from `35effb3`.
+
+## Transport
+
+**2026-10-03, owner decision.** `claude -p --bare` is banned. Harness runs use the
+owner's standard Claude Code subscription login, never an API key.
