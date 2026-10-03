@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import jsonschema
@@ -62,9 +63,9 @@ class FisherExact(unittest.TestCase):
         self.assertAlmostEqual(sensitivity.fisher_two_sided(3, 2, 3, 2), 1.0)
 
 
-def counts(held, violated, off_fork=0, inconclusive=0):
+def counts(held, violated, off_fork=0, inconclusive=0, failed=0):
     return {"runs": held + violated + off_fork + inconclusive, "held": held, "violated": violated,
-            "off_fork": off_fork, "inconclusive": inconclusive, "run_ids": []}
+            "off_fork": off_fork, "inconclusive": inconclusive, "failed": failed, "run_ids": []}
 
 
 class Readings(unittest.TestCase):
@@ -93,14 +94,17 @@ class Readings(unittest.TestCase):
     def test_unmeasurable_when_most_runs_miss_the_fork(self):
         self.assertEqual(sensitivity.reading(counts(1, 1, off_fork=3), counts(5, 0))[0], "unmeasurable")
 
+    def test_failed_runs_count_against_reaching_the_fork(self):
+        self.assertEqual(sensitivity.reading(counts(5, 0), counts(1, 0, failed=4))[0], "unmeasurable")
 
-def record(arm="none", verdict="violated", repeat=1, guidance=None):
+
+def record(arm="none", verdict="violated", repeat=1, guidance=None, case_sha256="2" * 64):
     return {
         "schema_version": 2,
         "run_id": f"no-silent-failure/bank-export/{run.Arm(arm, None, None).slug}/r{repeat}",
         "law": "no-silent-failure",
         "case": "no-silent-failure/bank-export",
-        "case_sha256": "2" * 64,
+        "case_sha256": case_sha256,
         "arm": {"name": arm, "guidance": guidance},
         "repeat": repeat,
         "model": "claude-opus-5-5",
@@ -116,13 +120,46 @@ class Schema(unittest.TestCase):
         records = [record("none", "violated", n) for n in (1, 2)] + [record("skill:HEAD", "held", n, guidance) for n in (1, 2)]
         for r in records:
             jsonschema.validate(r, sensitivity.RUN_SCHEMA)
-        [summary] = sensitivity.summarize(records)  # summarize validates against the summary schema
+        failures = [{"run_id": "no-silent-failure/bank-export/skill-head/r3", "case": "no-silent-failure/bank-export",
+                     "arm": "skill:HEAD", "error": "HarnessError: api"}]
+        [summary] = sensitivity.summarize(records, failures)  # summarize validates against the summary schema
         self.assertEqual(summary["arms"]["none"]["violated"], 2)
+        self.assertEqual(summary["arms"]["skill:HEAD"]["failed"], 1)
         self.assertEqual(summary["comparisons"][0]["arm"], "skill:HEAD")
+
+    def test_a_case_whose_runs_failed_entirely_is_still_summarized(self):
+        failures = [{"run_id": "no-silent-failure/bank-export/none/r1", "case": "no-silent-failure/bank-export",
+                     "arm": "none", "error": "HarnessError: api"}]
+        [summary] = sensitivity.summarize([], failures)
+        self.assertEqual(summary["arms"]["none"]["failed"], 1)
+
+    def test_refuses_records_from_two_case_digests(self):
+        records = [record(repeat=1), record(repeat=2, case_sha256="3" * 64)]
+        with self.assertRaises(SystemExit):
+            sensitivity.summarize(records, [])
+
+    def test_refuses_an_arm_with_two_guidance_texts(self):
+        def guidance(sha):
+            return {"path": run.SKILL_PATH, "ref": "HEAD", "commit": "0" * 40, "sha256": sha}
+        records = [record("skill:HEAD", "held", 1, guidance("1" * 64)), record("skill:HEAD", "held", 2, guidance("4" * 64))]
+        with self.assertRaises(SystemExit):
+            sensitivity.summarize(records, [])
 
     def test_schema_rejects_an_unknown_verdict(self):
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(record(verdict="passed"), sensitivity.RUN_SCHEMA)
+
+
+class LoadCases(unittest.TestCase):
+    def test_refuses_a_case_name_the_record_schema_would_refuse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp) / "cases" / "no-silent-failure" / "Bank_Export"
+            (case / "fixture").mkdir(parents=True)
+            (case / "request.md").write_text("x\n")
+            (case / "oracle.py").write_text("")
+            with mock.patch.object(run, "HERE", Path(tmp)), self.assertRaises(SystemExit) as raised:
+                run.load_cases("no-silent-failure")
+        self.assertIn("Bank_Export", str(raised.exception))
 
 
 class Differential(unittest.TestCase):

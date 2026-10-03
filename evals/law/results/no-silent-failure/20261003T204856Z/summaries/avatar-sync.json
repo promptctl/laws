@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "law": "no-silent-failure",
   "case": "no-silent-failure/avatar-sync",
   "models": [
@@ -12,6 +12,7 @@
       "violated": 0,
       "off_fork": 0,
       "inconclusive": 0,
+      "failed": 0,
       "run_ids": [
         "no-silent-failure/avatar-sync/none/r1",
         "no-silent-failure/avatar-sync/none/r2",
@@ -26,6 +27,7 @@
       "violated": 0,
       "off_fork": 0,
       "inconclusive": 0,
+      "failed": 0,
       "run_ids": [
         "no-silent-failure/avatar-sync/skill-head/r1",
         "no-silent-failure/avatar-sync/skill-head/r2",

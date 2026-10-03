@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "law-evals/case-summary/1",
+  "$id": "law-evals/case-summary/2",
   "title": "Sensitivity record of one law-eval case: verdict counts per arm, and each arm read against the no-guidance arm",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "law", "case", "models", "arms", "comparisons"],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "law": {"type": "string"},
     "case": {"type": "string"},
     "models": {"type": "array", "items": {"type": "string"}, "description": "distinct models the case's runs were asked for (and, per the harness, served by)"},
@@ -14,13 +14,14 @@
       "type": "object",
       "additionalProperties": {
         "type": "object", "additionalProperties": false,
-        "required": ["runs", "held", "violated", "off_fork", "inconclusive", "run_ids"],
+        "required": ["runs", "held", "violated", "off_fork", "inconclusive", "failed", "run_ids"],
         "properties": {
           "runs": {"type": "integer", "minimum": 0},
           "held": {"type": "integer", "minimum": 0},
           "violated": {"type": "integer", "minimum": 0},
           "off_fork": {"type": "integer", "minimum": 0},
           "inconclusive": {"type": "integer", "minimum": 0},
+          "failed": {"type": "integer", "minimum": 0, "description": "runs that ended without a record (failed-runs.json); not in runs"},
           "run_ids": {"type": "array", "items": {"type": "string"}}
         }
       }
@@ -33,7 +34,7 @@
           "control": {"const": "none"},
           "arm": {"type": "string"},
           "reading": {"enum": ["separate", "regressed", "saturated", "indistinguishable", "unmeasurable"]},
-          "p_value": {"type": ["number", "null"], "description": "two-sided Fisher exact test on held vs violated counts; null when fewer than half of either arm's runs reached the fork"}
+          "p_value": {"type": ["number", "null"], "description": "two-sided Fisher exact test on held vs violated counts; null when fewer than half of either arm's runs, failed ones included, reached the fork"}
         }
       }
     }
