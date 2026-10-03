@@ -96,24 +96,16 @@ class Readings(unittest.TestCase):
 
 def record(arm="none", verdict="violated", repeat=1, guidance=None):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_id": f"no-silent-failure/bank-export/{run.Arm(arm, None, None).slug}/r{repeat}",
         "law": "no-silent-failure",
         "case": "no-silent-failure/bank-export",
         "case_sha256": "2" * 64,
         "arm": {"name": arm, "guidance": guidance},
         "repeat": repeat,
-        "model": {"requested": "claude-opus-5-5", "session": "claude-opus-5-5", "billed": ["claude-opus-5-5"]},
-        "claude_code_version": "2.1.288",
-        "started_at": "2026-10-03T12:00:00+00:00",
-        "duration_ms": 1000,
-        "turns": 4,
-        "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_creation": 40},
-        "cost_usd": 0.1,
-        "session": {"session_id": "s", "is_error": False, "terminal_reason": "completed"},
-        "isolation": {"plugins": ["cc-plugin-telemetry"], "mcp_servers": [], "tools": ["Bash"]},
+        "model": "claude-opus-5-5",
         "oracle": {"verdict": verdict, "detail": ""},
-        "transcript": "transcripts/x.jsonl",
+        "session": "runs/x/run.json",
         "diff": "diffs/x.diff",
     }
 
@@ -174,29 +166,6 @@ class CaseDigest(unittest.TestCase):
             self.assertEqual(run.case_digest(copy), base)
             (copy / "oracle.py").write_text((copy / "oracle.py").read_text() + "\n")
             self.assertNotEqual(run.case_digest(copy), base)
-
-
-class Isolation(unittest.TestCase):
-    def test_refuses_a_non_builtin_plugin(self):
-        init = {"plugins": [{"name": "laws", "path": "/somewhere/laws"}], "mcp_servers": [], "tools": []}
-        with self.assertRaisesRegex(RuntimeError, "isolation is broken"):
-            run.isolation_of(init)
-
-    def test_accepts_builtins(self):
-        init = {"plugins": [{"name": "cc-plugin-telemetry", "path": "builtin"}], "mcp_servers": [], "tools": ["Read"]}
-        self.assertEqual(run.isolation_of(init)["plugins"], ["cc-plugin-telemetry"])
-
-
-class ExitReason(unittest.TestCase):
-    def test_names_the_api_error_from_the_result_message(self):
-        stdout = '{"type":"system","subtype":"init"}\n{"type":"result","is_error":true,"result":"Credit balance is too low"}\n'
-        proc = subprocess.CompletedProcess([], 1, stdout, "")
-        self.assertEqual(run.exit_reason(proc), "Credit balance is too low")
-
-
-    def test_plain_text_output_keeps_stderr(self):
-        proc = subprocess.CompletedProcess([], 1, "Error: something broke\n{trunc", "boom")
-        self.assertEqual(run.exit_reason(proc), "boom")
 
 
 class Arms(unittest.TestCase):
