@@ -2,7 +2,7 @@ Each version's section is written in the PR that bumps `.claude-plugin/plugin.js
 
 ## v0.34.0 - 2026-10-03
 
-- laws(prose, spec, application-spec): each docs medium states domain language in its own words - write in the subject's vocabulary, reaching for its word before coining one; the project's own names alongside, spelled as the project spells them; a narrower corner adds its own terms; the layers combine and never replace one another. Paid for by cutting older text, mostly unmeasured frequency and causal claims, so each skill's token count goes down (prose craft -59, spec -56, application-spec craft -9) (promptctl-domain-language-ghn)
+- laws(prose, spec, application-spec): each docs medium states domain language in its own words - write in the subject's vocabulary, reaching for its word before coining one; the project's own names alongside, spelled as the project spells them; a narrower corner adds its own terms; the layers combine and never replace one another. Paid for by cutting older text, mostly unmeasured frequency and causal claims, so each skill's token count goes down (prose craft -59, spec -56, application-spec craft -33) (promptctl-domain-language-ghn)
 
 ## v0.33.0 - 2026-10-01
 
