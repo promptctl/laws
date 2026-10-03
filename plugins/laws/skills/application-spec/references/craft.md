@@ -318,8 +318,9 @@ accounting, mail delivery, build pipelines, whatever the application is for. Wri
 the spec in that subject's language, so a reader fluent in it is at home from the
 first page: reach for the subject's established word before coining one of your
 own. Alongside it, use the names the application itself puts at its boundary - its
-commands, fields, screens, and the terms its interface uses for its own concepts -
-spelled exactly as the application spells them. Where a surface serves a narrower
+commands, fields, and the names it gives its own concepts - spelled exactly as the
+application spells them; its human-facing text stays under
+[APPSPEC:exact-where-machines-read]. Where a surface serves a narrower
 part of the subject - the payroll screens of an accounting application, say - its
 sentences take that narrower field's terms as well. The layers combine: the
 subject's language holds in every section, the application's names sit within it,
@@ -345,8 +346,7 @@ nothing. Craft from other media does not carry in.
   naming the offending character's position."
 
 Diagnostic: delete the entire target from the universe - repo, binary, deployment.
-Does every sentence of the spec still resolve for a reader who knows the subject
-and holds only the spec?
+Does every sentence of the spec still resolve?
 
 ## Two audits before you ship [APPSPEC:two-audit-passes]
 

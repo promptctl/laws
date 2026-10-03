@@ -86,8 +86,8 @@ warming up ("In today's fast-paced environment...", "Before we dive in..."), del
 the warm-up; the real first sentence is hiding right after it.
 
 **Write for a specific reader.** Know what they already know and what they will *do*
-after reading, and lead with that: a README with what the thing is and the install
-command, a report with the recommendation. Text that serves "everyone" serves no one.
+after reading, and lead with what that action needs: a README with what the thing is
+and the install command, a report with the recommendation. Text that serves "everyone" serves no one.
 
 **Prefer plain words and active sentences.** "Use" beats "utilize," "because" beats
 "due to the fact that," "the parser fails on X" beats "a failure may be experienced
@@ -97,8 +97,8 @@ cache is deleted."
 **Use the subject's own words.** Someone fluent in the subject should feel at home
 from the first line, so reach for the term the field already uses before coining your
 own: a payroll guide says "gross pay" and "withholding," not "base amount" and
-"removed portion." The project's own names stand alongside those terms, spelled the
-way the project spells them, and a narrower corner - one component's guide, one
+"removed portion." The project's own names stand alongside those terms, written
+exactly as the project writes them, and a narrower corner - one component's guide, one
 team's runbook - adds terms specific to it. Each layer adds to the others and none
 replaces one; the subject's language still holds in the narrowest corner.
 
