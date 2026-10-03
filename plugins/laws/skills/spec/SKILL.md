@@ -13,7 +13,9 @@ The process uses three documents, each with a single job, plus a matrix that tie
 - **FSD:** what the product does, written as testable functional requirements.
 - **Spec:** how it is built, with rigor scaled to how much each part has been validated and how costly it would be to reverse.
 
-A standard traceability matrix connects all three, so every component traces back to a user request and anything that doesn't trace back gets cut. The documents' own terms and section names are industry standard, so a new team member can follow them without learning a new vocabulary. What the documents say about the product is written in the vocabulary of the subject it serves (an invoicing product's documents say invoice, sent, and overdue), so someone who knows that subject reads them as written in their own language. The project's names for its parts sit alongside that vocabulary, spelled as the project spells them, and a narrower part of the product can add more specific terms of its own; each layer adds to the ones above it and replaces none, so the subject's vocabulary holds even in the narrowest section. Where the subject already has a word, use it before coining one.
+A standard traceability matrix connects all three, so every component traces back to a user request and anything that doesn't trace back gets cut. The documents' own terms and section names are industry standard, so a new team member can follow them without learning a new vocabulary.
+
+What the documents say about the product is written in the vocabulary of the subject it serves (an invoicing product's documents say invoice, sent, and overdue), so someone who knows that subject reads them as written in their own language. The project's names for its parts sit alongside that vocabulary in the project's own spelling, and a narrower part of the product can add more specific terms of its own; each layer adds to the ones above it and replaces none, so the subject's vocabulary holds even in the narrowest section. Where the subject already has a word, use it rather than coining one.
 
 ## Templates
 
