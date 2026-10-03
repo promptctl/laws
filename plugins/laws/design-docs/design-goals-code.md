@@ -24,6 +24,12 @@ This skill governs every task whose deliverable is code - writing, editing, revi
 
 **The cheap on-pattern choice is not neutral.** `[LAW:escape-local-minima]` is the third process goal: a fix defended as "doesn't make anything worse, until we have X" is a local minimum being entered, and recognizing that phrasing mid-task pauses the work, plans the escape (finding Y first if Y is unknown, ending in full law realignment), and hands off to a fresh session. Tickets filed under it carry the label `escape-local-minima` so the pattern can be found and counted.
 
+## How the file is built
+
+`plugins/laws/skills/code/SKILL.md` is generated output; nobody edits it by hand. Its source is `plugins/laws/source/code/`: one file per law and per framing, plus the preamble, the domain bindings, the recap, and `skeleton.md`, which fixes their order and holds the part headings. `plugins/laws/source/generate.py` writes the file, and a test fails when the committed file is stale against the sources. The token index is derived from the law and framing headings, so it cannot drift from them.
+
+The goal of the split is per-law sizing (epic promptctl-layers-4c0). Each law gets a rung: S for one turn, M for a run, L for a whole session. Spans are marked inside each law's prose with HTML-comment lines: `<!-- rung: S -->` before the bold statement, the Diagnostic line, and the lineage line, and `<!-- rung: M -->` before the temptation script and its redirect. A marker covers the one paragraph that follows it. Unmarked text is L. The L rendering is the source verbatim with the marker lines removed. S and M are subsets of L's paragraphs, so S ⊂ M ⊂ L holds by construction. The generator removes markers and nothing else. It never reorders or rewrites prose. The header comment's ban on deduplicating or compressing applies to the sources exactly as it applied to the single file, because the sources are that file cut at its seams.
+
 ## What it deliberately avoids, and why
 
 **It refuses to be read as a checklist.** The skill says outright that the laws are one coherent way of seeing programs, not items to tick off, and its own header comment forbids deduplicating or compressing the file - it states the redundancy is load-bearing and that distilling a previous version is what destroyed it. So the document repeats the same idea across every law on purpose; that's a design choice, not an oversight.
