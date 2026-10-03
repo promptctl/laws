@@ -88,6 +88,8 @@ def marked_paragraphs(lines: list[str], where: str) -> dict[str, list[str]]:
         rung = d[1]
         if rung not in RUNGS:
             raise SourceError(f"{where}:{i + 1}: rung must be one of {RUNGS}, got {rung!r}")
+        if i > 0 and lines[i - 1].strip():
+            raise SourceError(f"{where}:{i + 1}: rung marker sits inside a paragraph; it belongs on the blank line before one")
         following = lines[i + 1] if i + 1 < len(lines) else ""
         if not following.strip() or directive(following, f"{where}:{i + 2}"):
             raise SourceError(f"{where}:{i + 1}: rung marker is not followed by a paragraph")
@@ -127,6 +129,7 @@ def render(source: Path = SOURCE) -> Rendered:
     skeleton = (source / "skeleton.md").read_text().splitlines(keepends=True)
     assembled: list[tuple[str, str]] = []  # (line, where it came from)
     units: list[Unit] = []
+    included: set[str] = set()  # laws/ and framings/ files, as the skeleton names them
     for n, line in enumerate(skeleton, 1):
         d = directive(line, f"skeleton.md:{n}")
         if d is None:
@@ -140,17 +143,23 @@ def render(source: Path = SOURCE) -> Rendered:
         if not path.is_file():
             raise SourceError(f"skeleton.md:{n}: included file {d[1]!r} does not exist")
         lines = path.read_text().splitlines(keepends=True)
-        kind = KIND_BY_DIR.get(Path(d[1]).parent.as_posix())
-        if kind is not None:
+        parts = Path(d[1]).parts
+        kind = KIND_BY_DIR.get(parts[0]) if len(parts) > 1 else None
+        if kind is None:
+            marked_paragraphs(lines, d[1])
+        elif len(parts) != 2:
+            raise SourceError(f"skeleton.md:{n}: {d[1]!r} is nested; {parts[0]}/ files sit directly in it")
+        else:
             units.append(read_unit(path, kind, lines))
+            included.add(d[1])
         assembled.extend((l, f"{d[1]}:{i}") for i, l in enumerate(lines, 1))
 
     tokens = {kind: [u.token for u in units if u.kind == kind] for kind in ("LAW", "FRAMING")}
     for kind, found in tokens.items():
         if len(set(found)) != len(found):
             raise SourceError(f"duplicate {kind} token in skeleton: {found}")
-    for directory, kind in KIND_BY_DIR.items():
-        orphans = sorted({p.stem for p in (source / directory).glob("*.md")} - set(tokens[kind]))
+    for directory in KIND_BY_DIR:
+        orphans = sorted({p.relative_to(source).as_posix() for p in (source / directory).rglob("*.md")} - included)
         if orphans:
             raise SourceError(f"skeleton.md includes no line for {directory}/ files: {orphans}")
     expanded = {
