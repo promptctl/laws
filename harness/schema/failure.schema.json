@@ -7,8 +7,8 @@
   "required": ["schema_version", "run_id", "stage", "error", "transcript"],
   "properties": {
     "schema_version": {"const": 1},
-    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
-    "stage": {"type": "string", "description": "where the run stopped: spec, lock, config, binary, auth, plugins, launch, boot, turn, transcript, api, model, isolation, record, teardown"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+    "stage": {"type": "string", "description": "where the run stopped: spec, lock, config, binary, auth, plugins, launch, boot, turn, transcript, api, model, isolation, record, teardown, internal, interrupted"},
     "error": {"type": "string"},
     "transcript": {"type": ["string", "null"], "description": "the captured transcript, relative to the run dir, when the session got far enough to leave one"}
   }

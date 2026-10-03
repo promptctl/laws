@@ -5,6 +5,7 @@ refusal the harness promises. `harness verify` is the live counterpart.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import stat
@@ -19,6 +20,8 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from harness import HarnessError, boot, claude, home, plugins, record, tmux, transcript  # noqa: E402
+from harness import cli  # noqa: E402
+from harness import run as run_module  # noqa: E402
 from harness import session as session_module  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -108,6 +111,12 @@ class TranscriptReaders(unittest.TestCase):
     def test_a_non_json_line_is_refused(self):
         with self.assertRaisesRegex(HarnessError, "line 2"):
             transcript.parse('{"type": "user"}\nnot json\n')
+
+    def test_a_live_transcript_leaves_a_record_mid_write_for_the_next_read(self):
+        self.assertEqual(transcript.parse('{"type": "user"}\n{"type": "assi', complete=False), [{"type": "user"}])
+        self.assertEqual(transcript.parse("", complete=False), [])
+        with self.assertRaisesRegex(HarnessError, "line 2"):
+            transcript.parse('{"type": "user"}\n{"type": "assi')
 
 
 class Isolation(unittest.TestCase):
@@ -363,6 +372,7 @@ class SessionLaunch(unittest.TestCase):
         (session.spec.work_dir / ".claude").mkdir()
         settings = session.spec.work_dir / ".claude" / "settings.json"
         settings.write_text(json.dumps({"hooks": {"SessionStart": []}}))
+        (session.spec.work_dir / ".claude" / "settings.local.json").write_text(json.dumps({"hooks": {"PreCompact": []}}))
         guidance = session.run_dir / "guidance.md"
         guidance.write_text("g")
         admitted = session._admit(guidance)
@@ -396,6 +406,28 @@ class SessionLaunch(unittest.TestCase):
         self.assertIn("was killed", said)
         with self.assertRaises(ProcessLookupError):
             os.kill(session._pid, 0)
+
+
+class Runs(unittest.TestCase):
+    def test_a_run_id_tmux_would_rename_is_refused(self):
+        with self.assertRaisesRegex(HarnessError, "run id"):
+            run_module.run(None, ["p"], Path(tempfile.mkdtemp()), "v1.2")
+
+    def test_an_interrupted_run_leaves_a_failure_and_keeps_propagating(self):
+        run_dir = Path(tempfile.mkdtemp())
+        with mock.patch.object(run_module, "Session") as session:
+            session.return_value.turn.side_effect = KeyboardInterrupt()
+            session.return_value.transcript_path = None
+            with self.assertRaises(KeyboardInterrupt):
+                run_module.run(None, ["p"], run_dir, "r1")
+        self.assertEqual(json.loads((run_dir / "failure.json").read_text())["stage"], "interrupted")
+
+    def test_prompts_must_be_a_list_of_strings(self):
+        spec = Path(tempfile.mkdtemp()) / "spec.json"
+        spec.write_text(json.dumps({"session": {}, "prompts": "hello"}))
+        args = argparse.Namespace(spec=str(spec), run_id=None, out=str(spec.parent / "out"))
+        with self.assertRaisesRegex(HarnessError, "list of strings"):
+            cli.run_command(args)
 
 
 class Schemas(unittest.TestCase):

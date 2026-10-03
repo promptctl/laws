@@ -15,7 +15,11 @@ from pathlib import Path
 from . import HarnessError
 
 
-def parse(text: str) -> list[dict]:
+def parse(text: str, complete: bool = True) -> list[dict]:
+    """`complete=False` reads a transcript still being written: its unterminated last line
+    is a record mid-write and is left for the next read."""
+    if not complete and not text.endswith("\n"):
+        text = text[:text.rfind("\n") + 1]
     records = []
     for number, line in enumerate(text.splitlines(), 1):
         if not line.strip():
