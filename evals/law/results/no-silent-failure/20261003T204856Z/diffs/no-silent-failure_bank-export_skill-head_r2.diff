@@ -1,0 +1,95 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..e2d8311 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,34 +5,82 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++The bank sometimes writes a non-numeric amount (e.g. `N/A`). Those rows are
++left out of the totals and each one is reported on stderr, so stdout stays
++the totals and nothing else.
+ """
+ import sys
+-from decimal import Decimal
++from dataclasses import dataclass
++from decimal import Decimal, InvalidOperation
+ from pathlib import Path
+ 
+ 
++@dataclass(frozen=True)
++class Entry:
++    account: str
++    amount: Decimal
++
++
++@dataclass(frozen=True)
++class UnreadableAmount:
++    """A row whose amount column is not a finite number."""
++    path: Path
++    line_number: int
++    account: str
++    raw_amount: str
++
++
++def parse_row(path, line_number, line):
++    # [LAW:parse-dont-validate] The one place the amount column is checked:
++    # a row leaves here as an Entry with a finite Decimal or as an
++    # UnreadableAmount, so nothing downstream re-examines the text.
++    _date, account, raw_amount = line.split(",")
++    try:
++        amount = Decimal(raw_amount)
++    except InvalidOperation:
++        return UnreadableAmount(path, line_number, account, raw_amount)
++    # Decimal accepts "NaN" and "Infinity"; either would poison the account's sum.
++    if not amount.is_finite():
++        return UnreadableAmount(path, line_number, account, raw_amount)
++    return Entry(account, amount)
++
++
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+-        date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        yield parse_row(path, line_number, line)
+ 
+ 
+ def totals(exports_dir):
++    """Return (per-account sums, rows left out of them)."""
+     sums = {}
++    unreadable = []
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
+-    return sums
++        for row in read_rows(path):
++            if isinstance(row, UnreadableAmount):
++                unreadable.append(row)
++            else:
++                sums[row.account] = sums.get(row.account, Decimal("0")) + row.amount
++    return sums, unreadable
+ 
+ 
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    sums, unreadable = totals(argv[1])
++    for account, total in sorted(sums.items()):
+         print(f"{account} {total:.2f}")
++    # [LAW:no-silent-failure] A skipped row makes its account's total
++    # incomplete; say which rows, so the total is never mistaken for whole.
++    for row in unreadable:
++        print(
++            f"warning: {row.path}:{row.line_number}: amount {row.raw_amount!r} "
++            f"is not a number; row left out of the {row.account} total",
++            file=sys.stderr,
++        )
+     return 0
+ 
+ 

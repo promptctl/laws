@@ -1,0 +1,5 @@
+# The harness launch scratch: the editor script, the prompt and a copy of the guidance,
+# which the record pins by commit and sha256.
+**/runs/*/control/
+# The session transcript: Claude Code writes the login's account email into it.
+**/runs/*/transcript/

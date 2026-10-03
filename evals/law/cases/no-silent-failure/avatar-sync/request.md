@@ -1,0 +1,1 @@
+`sync_avatars.py` runs from cron every night, and cron emails the whole team whenever it writes anything to stderr. Lately it dies with `HTTPError: HTTP Error 404: Not Found` most nights: when a user deletes their avatar the CDN returns 404 for it, and that's completely normal, not an error. Please make the script handle that so we stop getting the nightly email.

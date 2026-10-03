@@ -452,6 +452,25 @@ class SessionLaunch(unittest.TestCase):
             with self.assertRaisesRegex(HarnessError, "admitted twice"):
                 session._start()
 
+    def test_a_stopped_run_never_launches_its_session(self):
+        stop = session_module.threading.Event()
+        stop.set()
+        session = session_module.Session(self.session().spec, Path(tempfile.mkdtemp()), "r1", stop)
+        with mock.patch.object(session_module.home, "check_config_dir"), \
+                mock.patch.object(session_module.claude, "resolve_binary", return_value=mock.Mock(path=Path("/usr/bin/true"))), \
+                mock.patch.object(session_module.claude, "auth"), \
+                mock.patch.object(session_module.tmux, "new_session") as new_session:
+            with self.assertRaises(HarnessError) as raised:
+                session._start()
+        self.assertEqual(raised.exception.stage, "interrupted")
+        new_session.assert_not_called()
+
+    def test_a_stop_ends_a_wait_at_the_next_poll(self):
+        stop = session_module.threading.Event()
+        with self.assertRaises(HarnessError) as raised:
+            session_module._wait("never", "turn", 60, lambda: stop.set(), lambda: "", stop)
+        self.assertEqual(raised.exception.stage, "interrupted")
+
     def test_subagents_are_launched_on_the_requested_model(self):
         env = session_module.launch_env(self.session().spec, Path("/e"))
         self.assertEqual((env["CLAUDE_CODE_SUBAGENT_MODEL"], env["EDITOR"]), ("claude-x", "/e"))

@@ -1,0 +1,5 @@
+[
+  {"id": "A-1001", "items": [{"sku": "mug", "unit_price": "12.50", "qty": 2}]},
+  {"id": "A-1002", "items": [{"sku": "kettle", "unit_price": "48.00", "qty": 1}, {"sku": "filter", "unit_price": "3.25", "qty": 4}]},
+  {"id": "A-1003", "items": [{"sku": "grinder", "unit_price": "89.99", "qty": 1}]}
+]

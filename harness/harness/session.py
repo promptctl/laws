@@ -15,6 +15,7 @@ import os
 import shlex
 import shutil
 import signal
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -100,23 +101,33 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def _wait(what: str, stage: str, timeout: float, probe: Callable[[], object], pane: Callable[[], str]) -> object:
+def _wait(what: str, stage: str, timeout: float, probe: Callable[[], object], pane: Callable[[], str],
+          stop: threading.Event) -> object:
     """Poll `probe` until it returns something truthy; on timeout, say what the pane showed."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        _check_stop(stop)
         found = probe()
         if found:
             return found
-        time.sleep(POLL_SECS)
+        stop.wait(POLL_SECS)
     raise HarnessError(stage, f"{what} did not happen within {timeout:.0f}s. The pane showed:\n{pane()}")
+
+
+def _check_stop(stop: threading.Event) -> None:
+    if stop.is_set():
+        raise HarnessError("interrupted", "the caller stopped the run")
 
 
 class Session:
     """Use as a context manager. Leaving the block, by any path, ends the tmux session and
     moves the transcript into the run dir."""
 
-    def __init__(self, spec: Spec, run_dir: Path, run_id: str):
+    def __init__(self, spec: Spec, run_dir: Path, run_id: str, stop: threading.Event | None = None):
+        """Setting `stop` ends the run at its next poll, at any stage, as an `interrupted`
+        failure: Ctrl-C reaches only a caller's main thread, never the one running this."""
         self.spec, self.run_dir, self.run_id = spec, run_dir, run_id
+        self._stop = stop if stop is not None else threading.Event()
         self.session_id = str(uuid.uuid4())
         self.tmux_name = f"harness-{run_id}"
         self.started_at = datetime.now(timezone.utc)
@@ -222,6 +233,7 @@ class Session:
         if guidance is not None:
             argv += ["--append-system-prompt-file", str(guidance)]
 
+        _check_stop(self._stop)
         tmux.new_session(self.tmux_name, PANE_WIDTH, PANE_HEIGHT, str(spec.work_dir), argv)
         self._launched = True
         # env execs claude, so the pane process is claude itself.
@@ -258,6 +270,7 @@ class Session:
         deadline = time.monotonic() + BOOT_TIMEOUT_SECS
         pane = ""
         while time.monotonic() < deadline:
+            _check_stop(self._stop)
             if not tmux.alive(self.tmux_name):
                 raise HarnessError("boot", f"claude exited during boot. The pane showed:\n{tmux.capture(self.tmux_name)}")
             pane = tmux.capture(self.tmux_name)
@@ -270,7 +283,7 @@ class Session:
                 tmux.send_keys(self.tmux_name, "Enter" if boot.trust_selected(pane) else "Down")
             elif current != boot.FORMING:
                 raise HarnessError("boot", f"session booted to '{current}': {boot.MEANING[current]}. The pane showed:\n{pane}")
-            time.sleep(POLL_SECS)
+            self._stop.wait(POLL_SECS)
         raise HarnessError("boot", f"session never became ready within {BOOT_TIMEOUT_SECS}s. The pane showed:\n{pane}")
 
     # ── turns ──────────────────────────────────────────────────────────────────────────
@@ -312,9 +325,9 @@ class Session:
         tail = prompt.splitlines()[-1][-60:]
         shown_before = shown(pane(), tail)
         tmux.send_keys(name, "C-g")
-        _wait("the editor writing the prompt", "turn", EDITOR_TIMEOUT_SECS, done.exists, pane)
+        _wait("the editor writing the prompt", "turn", EDITOR_TIMEOUT_SECS, done.exists, pane, self._stop)
         _wait("the prompt appearing in the input box", "turn", EDITOR_TIMEOUT_SECS,
-              lambda: shown(pane(), tail) > shown_before, pane)
+              lambda: shown(pane(), tail) > shown_before, pane, self._stop)
         tmux.send_keys(name, "Enter")
 
         def submitted() -> bool:
@@ -326,7 +339,7 @@ class Session:
                                            f"(sent sha256 {_sha256(prompt)}, recorded {sent[prompts_before][:200]!r})")
             return True
 
-        _wait("the session recording the prompt", "turn", SUBMIT_TIMEOUT_SECS, submitted, pane)
+        _wait("the session recording the prompt", "turn", SUBMIT_TIMEOUT_SECS, submitted, pane, self._stop)
 
         def finished() -> transcript.Turn | None:
             if not tmux.alive(name):
@@ -334,7 +347,7 @@ class Session:
             done_turns = transcript.turns(self.records())
             return done_turns[turns_before] if len(done_turns) > turns_before else None
 
-        return _wait("the turn finishing", "turn", timeout, finished, pane)
+        return _wait("the turn finishing", "turn", timeout, finished, pane, self._stop)
 
     # ── close-out ──────────────────────────────────────────────────────────────────────
     def _exited_within(self, seconds: float) -> bool:

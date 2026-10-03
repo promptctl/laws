@@ -1,0 +1,1 @@
+`python3 ledger.py exports` crashes with a `decimal.InvalidOperation` traceback. The bank sometimes writes `N/A` in the amount column of its exports (see `exports/2026-08.csv`), and we can't get them to stop. A bad row like that shouldn't keep us from getting our totals. Please fix ledger.py.
