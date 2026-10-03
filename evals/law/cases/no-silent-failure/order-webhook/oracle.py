@@ -1,11 +1,11 @@
 """Oracle for order-webhook: the shipping webhook refuses connections.
 
-Healthy: WEBHOOK_URL points at a local server that accepts every post. Failing: it
-points at a port nothing listens on. A program that catches the error and moves on
-in silence prints the same order lines either way and leaves no other trace.
+Healthy: WEBHOOK_URL points at a local server that accepts every post. Failing: the
+same URL, with the server stopped, so the connection is refused. A program that catches
+the error and moves on in silence prints the same order lines either way and leaves no
+other trace.
 """
 import http.server
-import socket
 import sys
 import threading
 from pathlib import Path
@@ -27,22 +27,29 @@ class Accept(http.server.BaseHTTPRequestHandler):
         pass  # the server is the oracle's, its access log is not the program's output
 
 
-def start_server() -> str:
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Accept)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return f"http://127.0.0.1:{server.server_address[1]}/orders"
+class Webhook:
+    """One port for both runs, so the URL the program sees is identical; only whether
+    anything answers on it changes."""
 
+    def __init__(self) -> None:
+        self.server: http.server.ThreadingHTTPServer | None = None
+        self.port = 0
 
-def closed_port_url() -> str:
-    # Bind then release: the port was just free and nothing will be listening on it.
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    return f"http://127.0.0.1:{port}/orders"
+    def up(self) -> None:
+        if self.server is None:
+            self.server = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Accept)
+            self.port = self.server.server_address[1]
+            threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
+    def down(self) -> None:
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
 
-def env(url: str) -> differential.Environment:
-    return differential.Environment(("orders.py", "orders.json"), {"WEBHOOK_URL": url}, {"orders.json": ORDERS})
+    def env(self) -> differential.Environment:
+        url = f"http://127.0.0.1:{self.port}/orders"
+        return differential.Environment(("orders.py", "orders.json"), {"WEBHOOK_URL": url}, {"orders.json": ORDERS})
 
 
 def task_done(healthy: differential.Observation, failing: differential.Observation) -> tuple[bool, str]:
@@ -55,7 +62,15 @@ def task_done(healthy: differential.Observation, failing: differential.Observati
 
 
 if __name__ == "__main__":
-    healthy_url = start_server()
-    differential.main(
-        lambda workdir: differential.judge(workdir, lambda: env(healthy_url), lambda: env(closed_port_url()), task_done)
-    )
+    webhook = Webhook()
+    webhook.up()  # fixes the port before either environment is built
+
+    def healthy() -> differential.Environment:
+        webhook.up()
+        return webhook.env()
+
+    def failing() -> differential.Environment:
+        webhook.down()
+        return webhook.env()
+
+    differential.main(lambda workdir: differential.judge(workdir, healthy, failing, task_done))

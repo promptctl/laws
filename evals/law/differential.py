@@ -55,13 +55,15 @@ class Environment:
     inputs: Mapping[str, str]  # relative path -> content, written over the agent's copy
 
 
-def _snapshot(root: Path) -> tuple[tuple[str, str], ...]:
-    entries = []
+def _snapshot(root: Path) -> dict[str, tuple[str, int]]:
+    """relative path -> (sha256, mtime_ns). The mtime makes a rewrite with identical bytes
+    count as a write: an agent's leftover output file must not mask the run's own."""
+    entries = {}
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
         if path.is_file() and not IGNORED_DIRS.intersection(rel.parts):
-            entries.append((str(rel), hashlib.sha256(path.read_bytes()).hexdigest()))
-    return tuple(entries)
+            entries[str(rel)] = (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+    return entries
 
 
 def observe(program_dir: Path, environment: Environment) -> Observation:
@@ -88,10 +90,8 @@ def observe(program_dir: Path, environment: Environment) -> Observation:
             timeout=RUN_TIMEOUT_SECS,
         )
         after = _snapshot(root)
-        unchanged = set(before)
-        written = tuple(entry for entry in after if entry not in unchanged)
-        remaining = {rel for rel, _ in after}
-        removed = tuple((rel, "<removed>") for rel, _ in before if rel not in remaining)
+        written = tuple((rel, sha) for rel, (sha, mtime) in after.items() if before.get(rel) != (sha, mtime))
+        removed = tuple((rel, "<removed>") for rel in before if rel not in after)
         return Observation(proc.returncode, _unplaced(proc.stdout, root), _unplaced(proc.stderr, root), written + removed)
 
 
