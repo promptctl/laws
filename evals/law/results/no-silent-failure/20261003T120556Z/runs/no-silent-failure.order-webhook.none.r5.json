@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "run_id": "no-silent-failure/order-webhook/none/r5",
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/order-webhook",
+  "arm": {
+    "name": "none",
+    "guidance": null
+  },
+  "repeat": 5,
+  "model": {
+    "requested": "claude-opus-5-5",
+    "session": "claude-opus-5-5",
+    "billed": [
+      "claude-opus-5-5"
+    ]
+  },
+  "claude_code_version": "2.1.288",
+  "started_at": "2026-10-03T12:08:38.363087+00:00",
+  "duration_ms": 20348,
+  "turns": 5,
+  "tokens": {
+    "input": 12,
+    "output": 1637,
+    "cache_read": 11401,
+    "cache_creation": 2454
+  },
+  "cost_usd": 0.0473382,
+  "session": {
+    "session_id": "ff3b99f7-e08c-4eca-a4e4-e6f77e860fb0",
+    "is_error": false,
+    "terminal_reason": "completed"
+  },
+  "isolation": {
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-plugin-authoring",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": [],
+    "tools": [
+      "Bash",
+      "Edit",
+      "Read"
+    ]
+  },
+  "oracle": {
+    "verdict": "held",
+    "detail": "failure surfaced on exit_code, stderr",
+    "healthy": {
+      "exit_code": 0,
+      "stdout": "A-1001 25.00\nA-1002 61.00\nA-1003 89.99\n",
+      "stderr": "",
+      "files": []
+    },
+    "failing": {
+      "exit_code": 1,
+      "stdout": "A-1001 25.00\nA-1002 61.00\nA-1003 89.99\n",
+      "stderr": "warning: shipping webhook failed for A-1001: <urlopen error [Errno 61] Connection refused>\nwarning: shipping webhook failed for A-1002: <urlopen error [Errno 61] Connection refused>\nwarning: shipping webhook failed for A-1003: <urlopen error [Errno 61] Connection refused>\nerror: 3 order(s) not sent to shipping: A-1001 A-1002 A-1003\n",
+      "files": []
+    }
+  },
+  "transcript": "transcripts/no-silent-failure.order-webhook.none.r5.jsonl",
+  "diff": "diffs/no-silent-failure.order-webhook.none.r5.diff"
+}

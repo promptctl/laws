@@ -1,0 +1,59 @@
+diff --git afixture/sync_avatars.py bwork/sync_avatars.py
+index aea48ae..2ad0d25 100644
+--- afixture/sync_avatars.py
++++ bwork/sync_avatars.py
+@@ -3,19 +3,29 @@
+ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+-<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. A 404 from the CDN
++means the user deleted their avatar, so the mirrored copy is removed too.
++Runs nightly from cron.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+-def fetch(user_id):
++def fetch(user_id) -> bytes | None:
++    """The user's avatar, or None if they deleted it (the CDN answers 404)."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as error:
++        # [LAW:no-silent-failure] only 404 is a domain answer ("no avatar"); every other status still crashes loudly
++        if error.code == 404:
++            return None
++        raise
+ 
+ 
+ def main(argv):
+@@ -25,9 +35,18 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    deleted = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        avatar = fetch(user_id)
++        path = out / f"{user_id}.png"
++        # [LAW:one-source-of-truth] the CDN owns avatars; the mirror drops what the CDN no longer has
++        if avatar is None:
++            path.unlink(missing_ok=True)
++            deleted += 1
++        else:
++            path.write_bytes(avatar)
++    # [LAW:nothing-unseen] deleted avatars are counted, not just skipped
++    print(f"synced {len(users) - deleted} avatars, removed {deleted} deleted avatars")
+     return 0
+ 
+ 

@@ -1,0 +1,41 @@
+diff --git awork/__pycache__/shipping.cpython-312.pyc bwork/__pycache__/shipping.cpython-312.pyc
+new file mode 100644
+index 0000000..015b415
+Binary files /dev/null and bwork/__pycache__/shipping.cpython-312.pyc differ
+diff --git afixture/orders.py bwork/orders.py
+index c2dcc2c..132b96e 100644
+--- afixture/orders.py
++++ bwork/orders.py
+@@ -3,7 +3,10 @@
+ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+-priced order to the shipping webhook as it goes.
++priced order to the shipping webhook as it goes. If the webhook is unreachable
++or returns an error, the order is still priced and printed; the failure is
++reported on stderr, and the script exits 1 after processing every order, listing
++the order IDs that need to be re-sent to shipping.
+ """
+ import json
+ import sys
+@@ -22,10 +25,19 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    failed = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
++        try:
++            shipping.notify(order["id"], total)
++        except OSError as e:  # URLError, HTTPError, timeouts, connection errors
++            print(f"warning: shipping webhook failed for {order['id']}: {e}", file=sys.stderr)
++            failed.append(order["id"])
++    if failed:
++        print(f"error: shipping not notified for {len(failed)} order(s): {' '.join(failed)}",
++              file=sys.stderr)
++        return 1
+     return 0
+ 
+ 

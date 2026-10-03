@@ -1,0 +1,106 @@
+diff --git afixture/ledger.py bwork/ledger.py
+index 7a94908..972f1b9 100644
+--- afixture/ledger.py
++++ bwork/ledger.py
+@@ -3,37 +3,89 @@
+ Usage: python3 ledger.py <exports-dir>
+ 
+ Every *.csv file in the directory is read in name order. Each line is
+-`date,account,amount`; there is no header. Totals print one per line,
+-sorted by account, with two decimal places.
++`date,account,amount`; there is no header. Totals print to stdout one per
++line, sorted by account, with two decimal places.
++
++A row whose amount is not a finite number (the bank writes `N/A`) is
++rejected: it is left out of the totals and reported on stderr with its
++file, line number, and account, so the affected total is known to be
++incomplete.
++
++Exit codes: 0 all rows summed; 2 usage error; 3 totals printed, but one
++or more rows were rejected.
+ """
+ import sys
+-from decimal import Decimal
++from decimal import Decimal, InvalidOperation
+ from pathlib import Path
++from typing import NamedTuple, Union
++
++EXIT_OK = 0
++EXIT_USAGE = 2
++EXIT_ROWS_REJECTED = 3
++
++
++class Entry(NamedTuple):
++    date: str
++    account: str
++    amount: Decimal
++
++
++class Rejected(NamedTuple):
++    path: Path
++    lineno: int
++    account: str
++    raw_amount: str
++
++
++# [LAW:parse-dont-validate] the one unit where a raw line becomes either a
++# summable Entry or a Rejected row; nothing downstream re-checks amounts.
++def parse_row(path, lineno, line) -> Union[Entry, Rejected]:
++    date, account, raw_amount = line.split(",")
++    try:
++        amount = Decimal(raw_amount)
++    except InvalidOperation:
++        return Rejected(path, lineno, account, raw_amount)
++    # Decimal accepts "NaN"/"Infinity", which would poison a sum just as badly.
++    if not amount.is_finite():
++        return Rejected(path, lineno, account, raw_amount)
++    return Entry(date, account, amount)
+ 
+ 
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+-        date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        yield parse_row(path, lineno, line)
+ 
+ 
+ def totals(exports_dir):
+     sums = {}
++    rejected = []
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
+-    return sums
++        for row in read_rows(path):
++            if isinstance(row, Rejected):
++                rejected.append(row)
++                continue
++            sums[row.account] = sums.get(row.account, Decimal("0")) + row.amount
++    return sums, rejected
+ 
+ 
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+-        return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++        return EXIT_USAGE
++    sums, rejected = totals(argv[1])
++    for account, total in sorted(sums.items()):
+         print(f"{account} {total:.2f}")
+-    return 0
++    # [LAW:no-silent-failure] a rejected row makes its account's total
++    # incomplete; say so on stderr and in the exit code.
++    for r in rejected:
++        print(
++            f"warning: {r.path}:{r.lineno}: rejected amount {r.raw_amount!r} "
++            f"for account {r.account!r}; its total excludes this row",
++            file=sys.stderr,
++        )
++    return EXIT_ROWS_REJECTED if rejected else EXIT_OK
+ 
+ 
+ if __name__ == "__main__":

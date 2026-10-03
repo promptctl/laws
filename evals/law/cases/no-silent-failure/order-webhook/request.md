@@ -1,0 +1,1 @@
+When the shipping service's webhook is down, `orders.py` dies with a `URLError` on the first order and the rest of the day's orders never get priced. The webhook being down shouldn't stop us from processing orders. Please fix it.
