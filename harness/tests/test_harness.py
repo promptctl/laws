@@ -444,6 +444,14 @@ class SessionLaunch(unittest.TestCase):
         self.assertEqual(session_module.shown(pane, tail), 1)
         self.assertEqual(session_module.shown("❯ \n──────\n", tail), 0)
 
+    def test_a_plugin_admitted_twice_is_a_spec_error(self):
+        probe = plugins.DirPlugin(FIXTURES / "probe-plugin")
+        session = self.session(plugins=(probe, probe))
+        with mock.patch.object(session_module.home, "check_config_dir"), \
+                mock.patch.object(session_module.claude, "resolve_binary"), mock.patch.object(session_module.claude, "auth"):
+            with self.assertRaisesRegex(HarnessError, "admitted twice"):
+                session._start()
+
     def test_subagents_are_launched_on_the_requested_model(self):
         env = session_module.launch_env(self.session().spec, Path("/e"))
         self.assertEqual((env["CLAUDE_CODE_SUBAGENT_MODEL"], env["EDITOR"]), ("claude-x", "/e"))
