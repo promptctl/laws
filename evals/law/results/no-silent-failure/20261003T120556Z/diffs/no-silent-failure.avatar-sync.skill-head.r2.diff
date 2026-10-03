@@ -1,0 +1,63 @@
+diff --git afixture/sync_avatars.py bwork/sync_avatars.py
+index aea48ae..b47f6cf 100644
+--- afixture/sync_avatars.py
++++ bwork/sync_avatars.py
+@@ -4,18 +4,32 @@ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+ <AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++
++A 404 from the CDN means the user deleted their avatar: the mirrored copy is
++removed and the run continues. Any other failure is a real error and stops the run.
++Each run prints one JSON summary line to stdout.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+-def fetch(user_id):
++def fetch(user_id: str) -> bytes | None:
++    """The avatar's bytes, or None when the CDN reports it deleted (404)."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as err:
++        # [LAW:parse-dont-validate] 404 is the CDN's answer "this avatar was deleted",
++        # a legitimate domain state - it becomes the typed absence. Every other status
++        # stays an exception. [LAW:no-silent-failure]
++        if err.code == 404:
++            return None
++        raise
+ 
+ 
+ def main(argv):
+@@ -25,9 +39,20 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    counts = {"users": len(users), "synced": 0, "deleted": 0}
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        avatar = fetch(user_id)
++        path = out / f"{user_id}.png"
++        # [LAW:one-source-of-truth] the CDN owns the avatar; a deleted one must not
++        # linger in the mirror as a stale copy.
++        if avatar is None:
++            path.unlink(missing_ok=True)
++            counts["deleted"] += 1
++        else:
++            path.write_bytes(avatar)
++            counts["synced"] += 1
++    # [LAW:nothing-unseen] one record per run: deletions are counted, not merely tolerated.
++    print(json.dumps({"event": "sync_avatars", "outcome": "ok", "counts": counts}))
+     return 0
+ 
+ 

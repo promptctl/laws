@@ -1,0 +1,83 @@
+diff --git awork/__pycache__/shipping.cpython-312.pyc bwork/__pycache__/shipping.cpython-312.pyc
+new file mode 100644
+index 0000000..91df49f
+Binary files /dev/null and bwork/__pycache__/shipping.cpython-312.pyc differ
+diff --git afixture/orders.py bwork/orders.py
+index c2dcc2c..10110ca 100644
+--- afixture/orders.py
++++ bwork/orders.py
+@@ -2,8 +2,16 @@
+ 
+ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+-Prints one line per order, `<id> <total>`, in file order, and posts each
+-priced order to the shipping webhook as it goes.
++Prints one line per order, `<id> <total>`, in file order, then posts each
++priced order to the shipping webhook. A webhook failure never stops pricing:
++every order is priced and printed first, every notification is attempted,
++and each failed notification is reported on stderr.
++
++Exit codes:
++  0  all orders priced and every notification delivered
++  2  usage error
++  3  all orders priced, but one or more notifications failed (see stderr;
++     the failed order ids need to be re-sent to shipping)
+ """
+ import json
+ import sys
+@@ -11,22 +19,50 @@ from decimal import Decimal
+ 
+ import shipping
+ 
++EXIT_NOTIFY_FAILED = 3
++
+ 
+ def price(order):
+     return sum(Decimal(item["unit_price"]) * item["qty"] for item in order["items"])
+ 
+ 
++def notify_all(priced):
++    """Attempt every notification; return [(order_id, error)] for the ones that failed."""
++    failures = []
++    for order_id, total in priced:
++        try:
++            shipping.notify(order_id, total)
++        # [LAW:no-silent-failure] caught only to keep going; every failure is
++        # collected, reported on stderr, and turned into a nonzero exit code.
++        # OSError covers URLError/HTTPError, timeouts, and connection resets.
++        except OSError as error:
++            failures.append((order_id, error))
++    return failures
++
++
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>", file=sys.stderr)
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
+-    for order in orders:
+-        total = price(order)
+-        print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++    # [LAW:effects-at-boundaries] price everything before touching the network,
++    # so the webhook's health cannot affect pricing.
++    priced = [(order["id"], price(order)) for order in orders]
++    for order_id, total in priced:
++        print(f"{order_id} {total:.2f}")
++    sys.stdout.flush()
++    failures = notify_all(priced)
++    for order_id, error in failures:
++        print(f"ERROR: shipping notify failed for {order_id}: {error}", file=sys.stderr)
++    # [LAW:nothing-unseen] one record per run: "notified 0 of 0" and
++    # "notified 0 of 3" are different facts and both are visible.
++    print(json.dumps({
++        "event": "orders_run",
++        "counts": {"orders": len(priced), "notified": len(priced) - len(failures), "notify_failed": len(failures)},
++        "notify_failed_ids": [order_id for order_id, _ in failures],
++    }), file=sys.stderr)
++    return EXIT_NOTIFY_FAILED if failures else 0
+ 
+ 
+ if __name__ == "__main__":

@@ -1,0 +1,75 @@
+diff --git afixture/sync_avatars.py bwork/sync_avatars.py
+index aea48ae..a6e43b0 100644
+--- afixture/sync_avatars.py
++++ bwork/sync_avatars.py
+@@ -4,18 +4,51 @@ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+ <AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++A 404 from the CDN means the user deleted their avatar, so the mirrored copy is
++removed. Any other HTTP or network error still aborts the run loudly.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
++from dataclasses import dataclass
+ from pathlib import Path
+ 
+ 
+-def fetch(user_id):
++@dataclass(frozen=True)
++class Present:
++    image: bytes
++
++
++@dataclass(frozen=True)
++class Deleted:
++    pass
++
++
++# [LAW:types-are-the-program] a CDN 404 is a domain outcome (avatar deleted), not a failure,
++# so it is a variant of the result type rather than an exception every caller must catch.
++Avatar = Present | Deleted
++
++
++def fetch(user_id) -> Avatar:
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return Present(response.read())
++    except urllib.error.HTTPError as error:
++        if error.code == 404:
++            return Deleted()
++        raise  # [LAW:no-silent-failure] only 404 is expected; everything else stays loud
++
++
++def mirror(path: Path, avatar: Avatar) -> None:
++    # [LAW:dataflow-not-control-flow] every user gets the same mirror step; the variant decides it.
++    match avatar:
++        case Present(image):
++            path.write_bytes(image)
++        case Deleted():
++            path.unlink(missing_ok=True)
+ 
+ 
+ def main(argv):
+@@ -25,9 +58,13 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    written = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        avatar = fetch(user_id)
++        mirror(out / f"{user_id}.png", avatar)
++        written += isinstance(avatar, Present)
++    # [LAW:nothing-unseen] the run record separates "nothing deleted" from "deleted N".
++    print(f"synced {len(users)} avatars: {written} written, {len(users) - written} deleted")
+     return 0
+ 
+ 

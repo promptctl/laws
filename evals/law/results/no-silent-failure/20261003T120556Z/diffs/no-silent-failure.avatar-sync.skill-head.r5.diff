@@ -1,0 +1,81 @@
+diff --git afixture/sync_avatars.py bwork/sync_avatars.py
+index aea48ae..590a73f 100644
+--- afixture/sync_avatars.py
++++ bwork/sync_avatars.py
+@@ -3,19 +3,55 @@
+ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+-<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. A 404 from the CDN
++means the user deleted their avatar, so the mirrored copy is removed too.
++Any other failure is still a real error and aborts the run. Runs nightly from cron.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
++from dataclasses import dataclass
+ from pathlib import Path
+ 
+ 
+-def fetch(user_id):
++@dataclass(frozen=True)
++class Avatar:
++    image: bytes
++
++
++@dataclass(frozen=True)
++class Deleted:
++    pass
++
++
++# [LAW:types-are-the-program] a fetch has exactly two legal outcomes; every other
++# HTTP failure stays an exception rather than becoming a third, silent outcome.
++AvatarState = Avatar | Deleted
++
++
++def fetch(user_id) -> AvatarState:
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return Avatar(response.read())
++    except urllib.error.HTTPError as error:
++        # [LAW:no-silent-failure] only 404 (avatar deleted by the user) is a domain
++        # outcome; 403, 5xx, timeouts etc. still propagate and fail the run loudly.
++        if error.code == 404:
++            return Deleted()
++        raise
++
++
++def mirror(path: Path, state: AvatarState) -> None:
++    # [LAW:dataflow-not-control-flow] every user's mirror entry is reconciled each run;
++    # the state decides whether that means writing the image or removing the stale copy.
++    match state:
++        case Avatar(image):
++            path.write_bytes(image)
++        case Deleted():
++            path.unlink(missing_ok=True)
+ 
+ 
+ def main(argv):
+@@ -25,9 +61,13 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
+-    for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++    states = [fetch(user_id) for user_id in users]
++    for user_id, state in zip(users, states):
++        mirror(out / f"{user_id}.png", state)
++    # [LAW:nothing-unseen] deleted avatars are counted, so "nothing to sync" and
++    # "every avatar 404'd" are distinguishable in the nightly output.
++    deleted = sum(isinstance(state, Deleted) for state in states)
++    print(f"synced {len(users) - deleted} avatars, {deleted} deleted")
+     return 0
+ 
+ 
