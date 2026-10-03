@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "law-evals/run-record/1",
+  "title": "One agent run of one law-eval case under one arm",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "law", "case", "case_sha256", "arm", "repeat", "model", "claude_code_version",
+               "started_at", "duration_ms", "turns", "tokens", "cost_usd", "session", "isolation", "oracle",
+               "transcript", "diff"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+/[a-z0-9-]+/r[0-9]+$",
+               "description": "<law>/<scenario>/<arm slug>/r<repeat>; unique within one results directory"},
+    "law": {"type": "string", "pattern": "^[a-z0-9-]+$", "description": "the [LAW:<token>] the case targets"},
+    "case": {"type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+$", "description": "<law>/<scenario>, the case directory under evals/law/cases"},
+    "case_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "digest of the case's fixture, request.md, oracle.py and differential.py: the code that produced the verdict"},
+    "arm": {"$ref": "#/$defs/arm"},
+    "repeat": {"type": "integer", "minimum": 1},
+    "model": {
+      "type": "object", "additionalProperties": false, "required": ["requested", "session", "billed"],
+      "properties": {
+        "requested": {"type": "string"},
+        "session": {"type": "string", "description": "the model the session reported at init"},
+        "billed": {"type": "array", "items": {"type": "string"}, "description": "every model the run was billed for"}
+      }
+    },
+    "claude_code_version": {"type": "string"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "turns": {"type": "integer", "minimum": 0, "description": "agentic turns the session took, as Claude Code counts them"},
+    "tokens": {
+      "type": "object", "additionalProperties": false,
+      "required": ["input", "output", "cache_read", "cache_creation"],
+      "properties": {
+        "input": {"type": "integer", "minimum": 0},
+        "output": {"type": "integer", "minimum": 0},
+        "cache_read": {"type": "integer", "minimum": 0},
+        "cache_creation": {"type": "integer", "minimum": 0}
+      }
+    },
+    "cost_usd": {"type": "number", "minimum": 0},
+    "session": {
+      "type": "object", "additionalProperties": false, "required": ["session_id", "is_error", "terminal_reason"],
+      "properties": {
+        "session_id": {"type": "string"},
+        "is_error": {"type": "boolean"},
+        "terminal_reason": {"type": "string"}
+      }
+    },
+    "isolation": {
+      "type": "object", "additionalProperties": false, "required": ["plugins", "mcp_servers", "tools"],
+      "description": "what the session reported loading; the harness refuses a run that loaded anything but Claude Code's builtin plugins",
+      "properties": {
+        "plugins": {"type": "array", "items": {"type": "string"}},
+        "mcp_servers": {"type": "array", "maxItems": 0},
+        "tools": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "oracle": {
+      "type": "object", "required": ["verdict", "detail"],
+      "properties": {
+        "verdict": {"enum": ["held", "violated", "off_fork", "inconclusive"]},
+        "detail": {"type": "string"}
+      }
+    },
+    "transcript": {"type": "string", "description": "path, relative to the results directory, of the session's stream-json output"},
+    "diff": {"type": "string", "description": "path, relative to the results directory, of the agent's changes to the fixture"}
+  },
+  "$defs": {
+    "arm": {
+      "type": "object", "additionalProperties": false, "required": ["name", "guidance"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^(none|skill:.+)$"},
+        "guidance": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["path", "ref", "commit", "sha256"],
+             "properties": {
+               "path": {"type": "string"},
+               "ref": {"type": "string"},
+               "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+               "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+             }}
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "law-evals/case-summary/1",
+  "title": "Sensitivity record of one law-eval case: verdict counts per arm, and each arm read against the no-guidance arm",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "law", "case", "models", "arms", "comparisons"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "law": {"type": "string"},
+    "case": {"type": "string"},
+    "models": {"type": "array", "items": {"type": "string"}, "description": "distinct session models across the case's runs"},
+    "arms": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false,
+        "required": ["runs", "held", "violated", "off_fork", "inconclusive", "run_ids"],
+        "properties": {
+          "runs": {"type": "integer", "minimum": 0},
+          "held": {"type": "integer", "minimum": 0},
+          "violated": {"type": "integer", "minimum": 0},
+          "off_fork": {"type": "integer", "minimum": 0},
+          "inconclusive": {"type": "integer", "minimum": 0},
+          "run_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "comparisons": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["control", "arm", "reading", "p_value"],
+        "properties": {
+          "control": {"const": "none"},
+          "arm": {"type": "string"},
+          "reading": {"enum": ["separate", "regressed", "saturated", "indistinguishable", "unmeasurable"]},
+          "p_value": {"type": ["number", "null"], "description": "two-sided Fisher exact test on held vs violated counts; null when fewer than half of either arm's runs reached the fork"}
+        }
+      }
+    }
+  }
+}

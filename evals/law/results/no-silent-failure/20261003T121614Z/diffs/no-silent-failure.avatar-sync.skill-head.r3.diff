@@ -1,0 +1,65 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..c4164a3 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -4,18 +4,34 @@ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+ <AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++A 404 means the user deleted their avatar, so the mirror drops its copy too.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+-def fetch(user_id):
++class Deleted:
++    """The CDN answered 404: the user deleted this avatar. A normal outcome, not an error."""
++
++
++DELETED = Deleted()
++
++
++def fetch(user_id) -> bytes | Deleted:
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as err:
++        # [LAW:no-silent-failure] only 404 is a domain fact (deleted avatar); every other
++        # HTTP status still propagates loudly.
++        if err.code == 404:
++            return DELETED
++        raise
+ 
+ 
+ def main(argv):
+@@ -25,9 +41,20 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    synced = removed = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        path = out / f"{user_id}.png"
++        # [LAW:types-are-the-program] fetch's return type carries the deleted case,
++        # so the mirror handles it as a variant rather than an exception.
++        match fetch(user_id):
++            case Deleted():
++                path.unlink(missing_ok=True)
++                removed += 1
++            case data:
++                path.write_bytes(data)
++                synced += 1
++    # [LAW:nothing-unseen] deleted avatars are counted, so a night of mass 404s is visible.
++    print(f"synced {synced} avatars, removed {removed} deleted avatars ({len(users)} users)")
+     return 0
+ 
+ 
