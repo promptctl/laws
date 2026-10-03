@@ -317,10 +317,9 @@ The one thing the clean team does bring is fluency in the application's subject 
 accounting, mail delivery, build pipelines, whatever the application is for. Write
 the spec in that subject's language, so a reader fluent in it is at home from the
 first page: reach for the subject's established word before coining one of your
-own. Alongside it, use the names the application itself puts at its boundary - its
-commands, fields, and the names it gives its own concepts - spelled exactly as the
-application spells them; its human-facing text stays under
-[APPSPEC:exact-where-machines-read]. Where a surface serves a narrower
+own. Alongside it, use the names the application puts at its boundary - commands,
+fields, concept names, even ones only a human reads - spelled exactly as the
+application spells them: a name is not prose. Where a surface serves a narrower
 part of the subject - the payroll screens of an accounting application, say - its
 sentences take that narrower field's terms as well. The layers combine: the
 subject's language holds in every section, the application's names sit within it,
