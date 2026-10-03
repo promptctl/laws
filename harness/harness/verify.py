@@ -17,7 +17,7 @@ from pathlib import Path
 
 import jsonschema
 
-from . import HarnessError, home, record, transcript
+from . import HarnessError, home, record, session, transcript
 from .run import run
 from .session import Spec
 from .plugins import DirPlugin
@@ -99,7 +99,7 @@ def verify(model: str, out: Path | None) -> int:
     control_records = transcript.load(root / "control" / control["transcript"])
     checks.check("appended guidance is in the system prompt", GUIDANCE_MARKER in transcript.system_prompt(control_records),
                  control["admitted"]["append_system_prompt"]["sha256"])
-    loads = transcript.loaded(control_records, frozenset({"probe-skill"}))
+    loads = transcript.loaded(control_records, session.project_defs(control_work.resolve()))
     nothing = {"plugins": [], "hook_events": [], "mcp_servers": [], "project_settings": False}
     refused = record.isolation_violations(loads, nothing, control_work.resolve())
     kinds = {"CLAUDE.md", "hook", "plugin skill", "project skill", "project agent", "MCP server"}

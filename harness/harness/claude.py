@@ -26,6 +26,23 @@ PASSED_ENV = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_
 SUBSCRIPTION_AUTH_METHODS = ("claude.ai",)
 
 
+# Settings that would authenticate a session some other way than the subscription login
+# `claude auth status` vouched for, or send it to another provider or endpoint. A session's
+# settings are refused if they carry any of them.
+CREDENTIAL_SETTINGS = ("apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh")
+CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL",
+                  "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+                  "CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+                  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD")
+
+
+def refuse_credential_settings(settings: dict, where: str) -> None:
+    found = [k for k in CREDENTIAL_SETTINGS if k in settings]
+    found += [f"env.{k}" for k in CREDENTIAL_ENV if k in (settings.get("env") or {})]
+    if found:
+        raise HarnessError("auth", f"{where} sets {found}; runs use the subscription login only")
+
+
 @dataclass(frozen=True)
 class Binary:
     path: Path  # resolved through the installer's moving symlink to the immutable versioned file

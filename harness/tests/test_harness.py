@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -87,17 +88,30 @@ class TranscriptReaders(unittest.TestCase):
             attachment("mcp_instructions_delta", addedNames=["docs"], addedBlocks=[], removedNames=[]),
             attachment("deferred_tools_delta", addedNames=["mcp__search__find"], surfacedNames=[],
                        failedMcpServers=["broken"], pendingMcpServers=[]),
-            attachment("skill_listing", names=["simplify", "laws:code", "deploy"]),
-            attachment("agent_listing_delta", addedTypes=["Plan", "laws:auditor", "reviewer"], builtInTypes=["Plan"]),
+            attachment("skill_listing", names=["simplify", "laws:code", "deploy", "grp:nested", "up"]),
+            attachment("agent_listing_delta", addedTypes=["Plan", "laws:auditor", "reviewer", "stray"], builtInTypes=["Plan"]),
         ]
-        loaded = transcript.loaded(records, frozenset({"deploy"}))
+        defs = transcript.ProjectDefs(work_skills=frozenset({"deploy", "grp:nested"}), work_agents=frozenset({"reviewer"}),
+                                      parent_skills=frozenset({"up"}), parent_agents=frozenset())
+        loaded = transcript.loaded(records, defs)
         self.assertEqual(loaded.claude_md, ("/Users/x/.claude/CLAUDE.md",))
         self.assertEqual(loaded.hooks, ("PreCompact", "SessionStart", "Stop"))
         self.assertEqual(loaded.mcp_servers, ("broken", "docs", "search"))
         self.assertIn("laws:code", loaded.plugin_skills)
         self.assertEqual(loaded.plugin_agents, ("laws:auditor",))
-        self.assertEqual(loaded.project_skills, ("deploy",))
+        self.assertEqual(loaded.plugin_skills, ("laws:code",))
+        self.assertEqual(loaded.project_skills, ("deploy", "grp:nested"))
         self.assertEqual(loaded.project_agents, ("reviewer",))
+        self.assertEqual(loaded.other_skills, ("up",))
+        self.assertEqual(loaded.other_agents, ("stray",))
+
+    def test_a_missing_usage_or_duration_is_refused_not_read_as_zero(self):
+        message = {"id": "msg_1", "model": "m", "content": [], "usage": {"output_tokens": 5}}
+        with self.assertRaisesRegex(HarnessError, "token usage"):
+            transcript.tokens([{"type": "assistant", "message": message}])
+        stripped = [{k: v for k, v in r.items() if k != "durationMs"} for r in TWO_TURNS]
+        with self.assertRaisesRegex(HarnessError, "durationMs"):
+            transcript.turns(stripped)
 
     def test_a_transcript_without_its_listings_is_refused(self):
         stripped = [r for r in TWO_TURNS if r.get("attachment", {}).get("type") != "skill_listing"]
@@ -112,11 +126,6 @@ class TranscriptReaders(unittest.TestCase):
         with self.assertRaisesRegex(HarnessError, "line 2"):
             transcript.parse('{"type": "user"}\nnot json\n')
 
-    def test_a_live_transcript_leaves_a_record_mid_write_for_the_next_read(self):
-        self.assertEqual(transcript.parse('{"type": "user"}\n{"type": "assi', complete=False), [{"type": "user"}])
-        self.assertEqual(transcript.parse("", complete=False), [])
-        with self.assertRaisesRegex(HarnessError, "line 2"):
-            transcript.parse('{"type": "user"}\n{"type": "assi')
 
 
 class Isolation(unittest.TestCase):
@@ -126,7 +135,7 @@ class Isolation(unittest.TestCase):
 
     def loaded(self, **fields) -> transcript.Loaded:
         base = {"claude_md": (), "hooks": (), "plugin_skills": (), "plugin_agents": (), "project_skills": (),
-                "project_agents": (), "mcp_servers": ()}
+                "project_agents": (), "other_skills": (), "other_agents": (), "mcp_servers": ()}
         return transcript.Loaded(**(base | fields))
 
     def test_nothing_loaded_is_clean(self):
@@ -142,6 +151,11 @@ class Isolation(unittest.TestCase):
         self.assertEqual(record.isolation_violations(loaded, self.NOTHING, self.WORK),
                          ["CLAUDE.md /work/case/sub/CLAUDE.md", "project skill deploy", "project agent reviewer"])
         self.assertEqual(record.isolation_violations(loaded, self.PROJECT, self.WORK), [])
+
+    def test_loads_from_outside_the_work_dir_are_always_foreign(self):
+        loaded = self.loaded(other_skills=("up",), other_agents=("stray",))
+        self.assertEqual(record.isolation_violations(loaded, self.PROJECT, self.WORK),
+                         ["parent-directory skill up", "agent stray from outside the work dir"])
 
     def test_unadmitted_hooks_plugins_and_servers_are_foreign(self):
         loaded = self.loaded(hooks=("Stop",), plugin_skills=("laws:code",), plugin_agents=("memento:x",), mcp_servers=("docs",))
@@ -387,14 +401,62 @@ class SessionLaunch(unittest.TestCase):
         (session.spec.work_dir / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": []}}))
         self.assertEqual(session._admit(None)["hook_events"], [])
 
-    def test_the_work_dirs_skills_and_commands_are_named(self):
-        work = Path(tempfile.mkdtemp())
+    def test_project_definitions_are_named_as_the_session_lists_them(self):
+        root = Path(tempfile.mkdtemp())
+        work = root / "repo" / "sub"
         (work / ".claude" / "skills" / "deploy").mkdir(parents=True)
-        (work / ".claude" / "skills" / "deploy" / "SKILL.md").write_text("x")
+        (work / ".claude" / "skills" / "deploy" / "SKILL.md").write_text("---\nname: deploy-it\ndescription: x\n---\n")
         (work / ".claude" / "skills" / "empty").mkdir()
-        (work / ".claude" / "commands").mkdir()
+        (work / ".claude" / "commands" / "grp").mkdir(parents=True)
         (work / ".claude" / "commands" / "ship.md").write_text("x")
-        self.assertEqual(session_module._work_dir_skills(work), frozenset({"deploy", "ship"}))
+        (work / ".claude" / "commands" / "grp" / "nested.md").write_text("x")
+        (work / ".claude" / "agents").mkdir()
+        (work / ".claude" / "agents" / "reviewer.md").write_text("x")
+        (root / "repo" / ".claude" / "agents").mkdir(parents=True)
+        (root / "repo" / ".claude" / "agents" / "file.md").write_text("---\nname: up-agent\n---\n")
+        defs = session_module.project_defs(work)
+        self.assertEqual(defs.work_skills, frozenset({"deploy-it", "ship", "grp:nested"}))
+        self.assertEqual(defs.work_agents, frozenset({"reviewer"}))
+        self.assertIn("up-agent", defs.parent_agents)
+
+    def test_settings_that_bring_another_credential_are_refused(self):
+        with self.assertRaisesRegex(HarnessError, "env.ANTHROPIC_API_KEY"):
+            self.session(settings={"env": {"ANTHROPIC_API_KEY": "sk-x"}})._admit(None)
+        session = self.session(project_settings=True)
+        (session.spec.work_dir / ".claude").mkdir()
+        (session.spec.work_dir / ".claude" / "settings.json").write_text(json.dumps({"apiKeyHelper": "echo k"}))
+        with self.assertRaisesRegex(HarnessError, "apiKeyHelper"):
+            session._admit(None)
+
+    def test_the_live_transcript_is_read_incrementally_leaving_a_record_mid_write(self):
+        session = self.session()
+        live = session.run_dir / "live.jsonl"
+        live.write_text('{"n": 1}\n{"n": 2')
+        session._live_path = live
+        self.assertEqual(session.records(), [{"n": 1}])
+        with live.open("a") as f:
+            f.write('}\n{"n": 3}\n')
+        self.assertEqual(session.records(), [{"n": 1}, {"n": 2}, {"n": 3}])
+
+    def test_subagents_are_launched_on_the_requested_model(self):
+        env = session_module.launch_env(self.session().spec, Path("/e"))
+        self.assertEqual((env["CLAUDE_CODE_SUBAGENT_MODEL"], env["EDITOR"]), ("claude-x", "/e"))
+
+    def test_a_failed_capture_rides_along_on_the_failure_in_flight(self):
+        session = self.session()
+        session._launched = True
+        failure = HarnessError("turn", "timed out")
+        with mock.patch.object(session_module.tmux, "kill"), \
+                mock.patch.object(session, "_await_exit", return_value=None), \
+                mock.patch.object(session, "_capture_transcript", side_effect=HarnessError("transcript", "2 transcripts")):
+            session.__exit__(HarnessError, failure, None)
+        self.assertEqual(failure.__notes__, ["[transcript] 2 transcripts"])
+
+    def test_prompts_the_tui_would_not_submit_verbatim_are_refused(self):
+        for bad in ["", "  ", "text\n", " text", "/clear", "!ls", "# note", 3]:
+            with self.assertRaises(HarnessError, msg=repr(bad)):
+                session_module.check_prompt(bad)
+        self.assertEqual(session_module.check_prompt("line one\nline two"), "line one\nline two")
 
     def test_a_claude_that_will_not_exit_is_killed_and_said_so(self):
         session = self.session()
@@ -428,6 +490,37 @@ class Runs(unittest.TestCase):
         args = argparse.Namespace(spec=str(spec), run_id=None, out=str(spec.parent / "out"))
         with self.assertRaisesRegex(HarnessError, "list of strings"):
             cli.run_command(args)
+
+
+class Records(unittest.TestCase):
+    def test_subagent_transcripts_are_held_to_the_same_checks(self):
+        run_dir = Path(tempfile.mkdtemp())
+        main = run_dir / "transcript" / "s.jsonl"
+        (run_dir / "transcript" / "s" / "subagents").mkdir(parents=True)
+        main.write_text((FIXTURES / "two-turns.jsonl").read_text())
+        sub = {"type": "assistant", "isSidechain": True,
+               "message": {"id": "msg_sub", "model": "claude-other", "content": [], "usage": {"input_tokens": 1, "output_tokens": 1}}}
+        (run_dir / "transcript" / "s" / "subagents" / "agent-1.jsonl").write_text(json.dumps(sub) + "\n")
+        session = mock.Mock(transcript_path=main, run_dir=run_dir)
+        session.spec.model = "claude-haiku-4-5-20251001"
+        with self.assertRaisesRegex(HarnessError, "claude-other"):
+            record.build(session)
+
+
+    def test_a_clean_session_builds_a_record_that_conforms(self):
+        run_dir = Path(tempfile.mkdtemp())
+        main = run_dir / "transcript" / "s.jsonl"
+        main.parent.mkdir()
+        main.write_text((FIXTURES / "two-turns.jsonl").read_text())
+        session = mock.Mock(transcript_path=main, run_dir=run_dir, run_id="r1", session_id=str(uuid.uuid4()),
+                            started_at=datetime.now(timezone.utc), project_defs=transcript.ProjectDefs(),
+                            admitted={"plugins": [], "append_system_prompt": None, "hook_events": [], "mcp_servers": [],
+                                      "project_settings": False})
+        session.spec.model, session.spec.claude_version, session.spec.work_dir = "claude-haiku-4-5-20251001", None, Path("/w")
+        session.binary = claude.Binary(Path("/bin/claude"), "2.1.288")
+        session.auth = claude.Auth("claude.ai", "firstParty")
+        built = record.build(session)
+        self.assertEqual(len(built["turns"]), 2)
 
 
 class Schemas(unittest.TestCase):
