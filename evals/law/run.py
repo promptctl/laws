@@ -32,7 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,7 +47,7 @@ sys.path.insert(0, str(REPO / "harness"))
 
 from harness import run as harness_run  # noqa: E402
 from harness import tmux  # noqa: E402
-from harness.session import Spec  # noqa: E402
+from harness.session import Spec, tmux_name  # noqa: E402
 
 SKILL_PATH = "plugins/laws/skills/code/SKILL.md"
 ORACLE_TIMEOUT_SECS = 600
@@ -141,14 +141,14 @@ def run_id_of(case: Case, arm: Arm, repeat: int) -> str:
     return f"{case.law}/{case.scenario}/{arm.slug}/r{repeat}"
 
 
-def tmux_name_of(run_id: str) -> str:
-    # The harness names a tmux session after its run id, and tmux allows no "/" or ".".
+def harness_run_id_of(run_id: str) -> str:
+    # A harness run id names a tmux session, and tmux allows no "/" or ".".
     return run_id.replace("/", "_")
 
 
 def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path) -> dict:
     run_id = run_id_of(case, arm, repeat)
-    stem = tmux_name_of(run_id)
+    stem = harness_run_id_of(run_id)
     log(f"start {run_id}")
     with tempfile.TemporaryDirectory(prefix="law-eval-run-") as tmp:
         # Resolved: the harness judges isolation on resolved paths, and macOS's temp dir is a symlink.
@@ -207,6 +207,16 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path) -> dict:
     return record
 
 
+def stop_runs(pool: ThreadPoolExecutor, futures: list[tuple[str, Future]]) -> None:
+    """Ctrl-C reaches only the main thread. Queued runs are dropped, and ending each live
+    run's tmux session makes its harness turn fail at the next poll and record it."""
+    pool.shutdown(wait=False, cancel_futures=True)
+    for run_id, future in futures:
+        if future.running():
+            tmux.kill(tmux_name(harness_run_id_of(run_id)))
+    pool.shutdown(wait=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("law", help="a directory name under evals/law/cases, e.g. no-silent-failure")
@@ -246,13 +256,7 @@ def main() -> None:
                 failures.append({"run_id": run_id, "case": case.id, "arm": arm.name, "error": f"{type(error).__name__}: {error}"})
                 log(f"FAILED {run_id}: {error}")
     except KeyboardInterrupt:
-        # Ctrl-C reaches only this thread. Queued runs are dropped, and ending the live
-        # sessions' tmux sessions makes each running harness turn fail and record it.
-        pool.shutdown(wait=False, cancel_futures=True)
-        for _, _, run_id, future in futures:
-            if future.running():
-                tmux.kill(tmux_name_of(run_id))
-        pool.shutdown(wait=True)
+        stop_runs(pool, [(run_id, future) for _, _, run_id, future in futures])
         die(f"interrupted; partial results in {out}")
     pool.shutdown(wait=True)
     # A summary counts these in its arm's runs; they are the runs with no record.

@@ -162,6 +162,30 @@ class LoadCases(unittest.TestCase):
         self.assertIn("Bank_Export", str(raised.exception))
 
 
+class StopRuns(unittest.TestCase):
+    def test_kills_the_session_the_harness_launched_for_each_live_run(self):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from harness.session import Session, Spec
+        released, started = threading.Event(), threading.Event()
+
+        def live():
+            started.set()
+            released.wait(10)
+
+        run_id = "no-silent-failure/bank-export/none/r1"
+        harness_id = run.harness_run_id_of(run_id)
+        launched = Session(Spec(work_dir=Path(tempfile.gettempdir()), model="claude-opus-5-5"), Path(tempfile.gettempdir()), harness_id)
+        pool = ThreadPoolExecutor(max_workers=1)
+        futures = [(run_id, pool.submit(live)), ("no-silent-failure/bank-export/none/r2", pool.submit(live))]
+        started.wait(10)
+        killed = []
+        with mock.patch.object(run.tmux, "kill", side_effect=lambda name: (killed.append(name), released.set())):
+            run.stop_runs(pool, futures)
+        self.assertEqual(killed, [launched.tmux_name])
+        self.assertTrue(futures[1][1].cancelled())
+
+
 class Differential(unittest.TestCase):
     def test_nondeterminism_is_inconclusive_even_when_the_job_check_fails(self):
         import differential
