@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "claude-harness/run-record/1",
+  "title": "One finished Claude Code session run by the harness",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "session_id", "started_at", "duration_ms", "claude", "auth", "model",
+               "admitted", "loaded", "turns", "tokens", "work_dir", "transcript"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+    "session_id": {"type": "string", "format": "uuid"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "claude": {
+      "type": "object", "additionalProperties": false, "required": ["path", "version", "version_pinned"],
+      "properties": {
+        "path": {"type": "string", "description": "the versioned executable the run launched, resolved through the installer's symlink"},
+        "version": {"type": "string", "description": "the version every transcript record carries"},
+        "version_pinned": {"type": "boolean", "description": "true when the caller required this version; false when it was only recorded"}
+      }
+    },
+    "auth": {
+      "type": "object", "additionalProperties": false, "required": ["method", "provider"],
+      "properties": {
+        "method": {"enum": ["claude.ai"], "description": "the subscription login; any other method is refused before launch"},
+        "provider": {"const": "firstParty"}
+      }
+    },
+    "model": {
+      "type": "object", "additionalProperties": false, "required": ["requested", "served"],
+      "properties": {
+        "requested": {"type": "string", "pattern": "^claude-"},
+        "served": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 1,
+                   "description": "every model the API answered with; the harness refuses a run served by any model but the requested one"}
+      }
+    },
+    "admitted": {
+      "type": "object", "additionalProperties": false, "required": ["plugins", "append_system_prompt", "hook_events", "mcp_servers", "project_settings"],
+      "properties": {
+        "plugins": {"type": "array", "items": {"$ref": "#/$defs/plugin"}},
+        "append_system_prompt": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+             "properties": {"path": {"type": "string"}, "sha256": {"$ref": "#/$defs/sha256"}}}
+          ]
+        },
+        "hook_events": {"type": "array", "items": {"type": "string"}},
+        "mcp_servers": {"type": "array", "items": {"type": "string"}},
+        "project_settings": {"type": "boolean", "description": "the work dir's CLAUDE.md, .claude/settings.json, skills and agents were allowed to load"}
+      }
+    },
+    "loaded": {
+      "type": "object", "additionalProperties": false,
+      "required": ["claude_md", "hooks", "plugin_skills", "plugin_agents", "project_skills", "project_agents", "other_skills", "other_agents", "mcp_servers"],
+      "description": "what the session's transcript records loading beyond Claude Code's builtins; every entry was admitted",
+      "properties": {
+        "claude_md": {"type": "array", "items": {"type": "string"}},
+        "hooks": {"type": "array", "items": {"type": "string"}},
+        "plugin_skills": {"type": "array", "items": {"type": "string"}},
+        "plugin_agents": {"type": "array", "items": {"type": "string"}},
+        "project_skills": {"type": "array", "items": {"type": "string"}},
+        "project_agents": {"type": "array", "items": {"type": "string"}},
+        "other_skills": {"type": "array", "items": {"type": "string"}, "description": "defined in a parent of the work dir"},
+        "other_agents": {"type": "array", "items": {"type": "string"}, "description": "neither builtin, a plugin's nor the work dir's"},
+        "mcp_servers": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "turns": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["prompt_sha256", "reply", "duration_ms"],
+        "properties": {
+          "prompt_sha256": {"$ref": "#/$defs/sha256"},
+          "reply": {"type": "string"},
+          "duration_ms": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "tokens": {
+      "type": "object", "additionalProperties": false, "required": ["input", "output", "cache_read", "cache_creation"],
+      "properties": {
+        "input": {"type": "integer", "minimum": 0},
+        "output": {"type": "integer", "minimum": 0},
+        "cache_read": {"type": "integer", "minimum": 0},
+        "cache_creation": {"type": "integer", "minimum": 0}
+      }
+    },
+    "work_dir": {"type": "string"},
+    "transcript": {"type": "string", "description": "path of the session's JSONL transcript, relative to the run dir"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "plugin": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["name", "source", "repo", "ref", "subdir", "commit", "tree"],
+         "properties": {
+           "name": {"type": "string"}, "source": {"const": "git"}, "repo": {"type": "string"}, "ref": {"type": "string"},
+           "subdir": {"type": "string"},
+           "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+         }},
+        {"type": "object", "additionalProperties": false, "required": ["name", "source", "path", "sha256"],
+         "properties": {
+           "name": {"type": "string"}, "source": {"const": "dir"}, "path": {"type": "string"},
+           "sha256": {"$ref": "#/$defs/sha256"}
+         }}
+      ]
+    }
+  }
+}
