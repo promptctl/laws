@@ -1,6 +1,6 @@
 ---
 name: laws
-description: Rules for editing the laws skills in THIS repo - which content belongs in which file, and which rules stay inside one medium. Use when creating, editing, or reviewing any `plugins/laws/skills/*/SKILL.md` (or `DISABLED_SKILL.md`), any file under `plugins/laws/skills/*/references/`, or any `plugins/laws/design-docs/design-goals-*.md`. How to write the prose well is laws:prompt's job, not this skill's.
+description: Rules for editing the laws skills in THIS repo - which content belongs in which file, and which rules stay inside one medium. Use when creating, editing, or reviewing any `plugins/laws/skills/*/SKILL.md` (or `DISABLED_SKILL.md`), any file under `plugins/laws/skills/*/references/` or `plugins/laws/source/`, or any `plugins/laws/design-docs/design-goals-*.md`. How to write the prose well is laws:prompt's job, not this skill's.
 ---
 
 # Editing the laws skills
@@ -39,6 +39,16 @@ care. Simple is the goal, not a step toward something more impressive.
 2. A rule from one medium stays in that medium's files. Don't copy it into another - a
    ticket rule can be false for a report. Check by grepping a rule's distinctive phrase;
    it should appear under one medium only.
+3. `plugins/laws/skills/code/SKILL.md` is generated. Never edit it. Edit its sources
+   under `plugins/laws/source/code/`: one file per law and per framing, plus the
+   preamble, bindings, recap, and `skeleton.md` for order and part headings. Then run
+   `python3 plugins/laws/source/generate.py` and commit both. The header comment's rule
+   against deduplicating or compressing applies to the sources. A source is that file
+   cut at its seams, not a new place to tidy. The `<!-- rung: S -->` and
+   `<!-- rung: M -->` lines mark which paragraphs serve which rung of hold. Keep them on
+   the statement, the Diagnostic line, and the lineage line (S), and on the temptation
+   script (M). The generator refuses a law whose statement, directly under the heading, is not
+   S-marked, or that has no S-marked Diagnostic.
 
 ## Workflow
 
