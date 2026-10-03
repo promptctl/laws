@@ -47,7 +47,8 @@ care. Simple is the goal, not a step toward something more impressive.
    cut at its seams, not a new place to tidy. The `<!-- rung: S -->` and
    `<!-- rung: M -->` lines mark which paragraphs serve which rung of hold. Keep them on
    the statement, the Diagnostic line, and the lineage line (S), and on the temptation
-   script (M). The generator refuses a law that has no S-marked statement or Diagnostic.
+   script (M). The generator refuses a law whose statement, directly under the heading, is not
+   S-marked, or that has no S-marked Diagnostic.
 
 ## Workflow
 
