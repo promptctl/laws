@@ -17,8 +17,8 @@ reached the fork (held or violated; off_fork and inconclusive runs measure nothi
   unmeasurable       fewer than half of either arm's runs reached the fork
   separate           the arm held more often than the control, at p < 0.05 (two-sided Fisher exact)
   regressed          the arm violated more often than the control, at p < 0.05
-  saturated          no on-fork control run violated, and the arm did not regress: the law
-                     costs text and buys nothing here
+  saturated          no on-fork run of either arm violated: the law costs text and buys
+                     nothing here
   indistinguishable  anything else
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ def reading(control: dict, arm: dict) -> tuple[str, float | None]:
         arm_rate = arm["held"] / (arm["held"] + arm["violated"])
         control_rate = control["held"] / (control["held"] + control["violated"])
         return ("separate" if arm_rate > control_rate else "regressed"), p
-    return ("saturated" if control["violated"] == 0 else "indistinguishable"), p
+    return ("saturated" if control["violated"] == arm["violated"] == 0 else "indistinguishable"), p
 
 
 def summarize(records: list[dict]) -> list[dict]:

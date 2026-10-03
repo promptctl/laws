@@ -6,6 +6,7 @@ and the untouched fixture as off_fork. That is what makes an oracle trustworthy 
 any agent output is read with it.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -83,6 +84,9 @@ class Readings(unittest.TestCase):
     def test_regressed_is_not_separate(self):
         self.assertEqual(sensitivity.reading(counts(4, 1), counts(0, 5))[0], "regressed")
 
+    def test_an_undetectable_regression_is_not_saturated(self):
+        self.assertEqual(sensitivity.reading(counts(5, 0), counts(2, 3))[0], "indistinguishable")
+
     def test_indistinguishable(self):
         self.assertEqual(sensitivity.reading(counts(2, 3), counts(3, 2))[0], "indistinguishable")
 
@@ -136,6 +140,17 @@ class Differential(unittest.TestCase):
             env = lambda: differential.Environment(("prog.py",), {}, {})  # noqa: E731
             verdict = differential.judge(Path(tmp), env, env, lambda healthy, failing: (False, "stdout is not EXPECTED"))
         self.assertEqual(verdict["verdict"], "inconclusive")
+
+
+class FilesChannel(unittest.TestCase):
+    def test_rewriting_a_leftover_file_with_the_same_bytes_counts_as_written(self):
+        import differential
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "out.txt").write_text("same\n")
+            os.utime(Path(tmp) / "out.txt", ns=(0, 0))
+            (Path(tmp) / "prog.py").write_text("open('out.txt', 'w').write('same\\n')\n")
+            obs = differential.observe(Path(tmp), differential.Environment(("prog.py",), {}, {}))
+        self.assertEqual([rel for rel, _ in obs.files], ["out.txt"])
 
 
 class Isolation(unittest.TestCase):
