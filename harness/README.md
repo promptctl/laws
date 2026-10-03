@@ -36,7 +36,7 @@ Needs `uv`, `tmux`, `git` and `claude` on PATH. A spec:
 ```
 
 Only `work_dir` and `model` are required. `project_settings` lets the work dir's own
-`CLAUDE.md`, `.claude/settings*.json`, skills and agents load; off, any of them that loads
+`CLAUDE.md`, `.claude/settings.json`, skills and agents load; off, any of them that loads
 fails the run. What is admitted is read once at launch, because the session can rewrite its
 own work dir. A run leaves `DIR/run.json`
 (`schema/run-record.schema.json`) or `DIR/failure.json` (`schema/failure.schema.json`),

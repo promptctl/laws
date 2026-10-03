@@ -41,8 +41,11 @@ def run_command(args: argparse.Namespace) -> None:
     data = json.loads(Path(args.spec).read_text())
     if set(data) != {"session", "prompts"}:
         raise HarnessError("spec", f"a run spec is {{session, prompts}}, not {sorted(data)}")
+    prompts = data["prompts"]
+    if not isinstance(prompts, list) or not all(isinstance(p, str) for p in prompts):
+        raise HarnessError("spec", f"prompts is a list of strings, not {prompts!r}")
     run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    result = run(Spec.from_json(data["session"]), list(data["prompts"]), Path(args.out).resolve(), run_id)
+    result = run(Spec.from_json(data["session"]), prompts, Path(args.out).resolve(), run_id)
     print(json.dumps({"run": str(Path(args.out).resolve() / "run.json"), "turns": len(result["turns"]),
                       "model": result["model"]["served"]}, indent=2))
 

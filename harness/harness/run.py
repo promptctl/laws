@@ -8,7 +8,8 @@ from pathlib import Path
 from . import HarnessError, record
 from .session import Session, Spec
 
-RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+# The run id names the tmux session, and tmux rewrites "." in a session name to "_".
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def run(spec: Spec, prompts: list[str], run_dir: Path, run_id: str) -> dict:
@@ -27,14 +28,22 @@ def run(spec: Spec, prompts: list[str], run_dir: Path, run_id: str) -> dict:
             for prompt in prompts:
                 session.turn(prompt)
         result = record.build(session)
-    except Exception as raised:
-        # A defect in the harness itself is still a failed run, recorded as one.
-        error = raised if isinstance(raised, HarnessError) else HarnessError("internal", f"{type(raised).__name__}: {raised}")
+    except BaseException as raised:
+        # A defect in the harness itself is still a failed run, recorded as one, and so is
+        # a run stopped from outside (Ctrl-C), which then keeps propagating as itself.
+        if isinstance(raised, HarnessError):
+            error = raised
+        elif isinstance(raised, Exception):
+            error = HarnessError("internal", f"{type(raised).__name__}: {raised}")
+        else:
+            error = HarnessError("interrupted", f"{type(raised).__name__}: {raised}")
         if error is not raised:
             for note in getattr(raised, "__notes__", []):
                 error.add_note(note)
         captured = None if session.transcript_path is None else session.transcript_path.relative_to(run_dir).as_posix()
         record.write(run_dir / "failure.json", record.failure(run_id, error, captured))
+        if not isinstance(raised, Exception):
+            raise
         raise error from raised
     record.write(run_dir / "run.json", result)
     return result

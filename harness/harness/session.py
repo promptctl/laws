@@ -44,7 +44,7 @@ class Spec:
     claude_version: str | None = None  # None records the version found without holding it
     settings: dict = field(default_factory=dict)  # extra --settings; hook events in it are admitted
     mcp_config: dict | None = None  # MCP servers admitted by name
-    # The work dir's own CLAUDE.md and .claude/settings*.json load (setting source
+    # The work dir's own CLAUDE.md and .claude/settings.json load (setting source
     # "project"). Off, no settings file and no CLAUDE.md loads at all.
     project_settings: bool = False
 
@@ -199,12 +199,13 @@ class Session:
         spec = self.spec
         project_hooks: set[str] = set()
         if spec.project_settings:
-            for f in (spec.work_dir / ".claude" / n for n in ("settings.json", "settings.local.json")):
-                if f.is_file():
-                    try:
-                        project_hooks |= set(json.loads(f.read_text()).get("hooks", {}))
-                    except json.JSONDecodeError as error:
-                        raise HarnessError("spec", f"{f} is not JSON: {error}") from None
+            # settings.local.json is the "local" setting source, which never loads.
+            f = spec.work_dir / ".claude" / "settings.json"
+            if f.is_file():
+                try:
+                    project_hooks |= set(json.loads(f.read_text()).get("hooks", {}))
+                except json.JSONDecodeError as error:
+                    raise HarnessError("spec", f"{f} is not JSON: {error}") from None
         return {
             "plugins": [{"name": p.name, **p.provenance} for p in self.pinned],
             "append_system_prompt": None if guidance is None else {
@@ -244,8 +245,11 @@ class Session:
         return found[0] if found else None
 
     def records(self) -> list[dict]:
-        path = self._live_transcript() if self.transcript_path is None else self.transcript_path
-        return transcript.load(path) if path is not None else []
+        if self.transcript_path is not None:
+            return transcript.load(self.transcript_path)
+        live = self._live_transcript()
+        # claude is still appending: a last line without its newline is a record mid-write.
+        return transcript.parse(live.read_text(), complete=False) if live is not None else []
 
     def turn(self, prompt: str, timeout: float = TURN_TIMEOUT_SECS) -> transcript.Turn:
         if not prompt:

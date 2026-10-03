@@ -8,7 +8,7 @@
                "admitted", "loaded", "turns", "tokens", "work_dir", "transcript"],
   "properties": {
     "schema_version": {"const": 1},
-    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
     "session_id": {"type": "string", "format": "uuid"},
     "started_at": {"type": "string", "format": "date-time"},
     "duration_ms": {"type": "integer", "minimum": 0},
@@ -48,7 +48,7 @@
         },
         "hook_events": {"type": "array", "items": {"type": "string"}},
         "mcp_servers": {"type": "array", "items": {"type": "string"}},
-        "project_settings": {"type": "boolean", "description": "the work dir's CLAUDE.md, .claude/settings*.json, skills and agents were allowed to load"}
+        "project_settings": {"type": "boolean", "description": "the work dir's CLAUDE.md, .claude/settings.json, skills and agents were allowed to load"}
       }
     },
     "loaded": {
