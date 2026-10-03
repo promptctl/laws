@@ -9,7 +9,7 @@
     "schema_version": {"const": 1},
     "law": {"type": "string"},
     "case": {"type": "string"},
-    "models": {"type": "array", "items": {"type": "string"}, "description": "distinct session models across the case's runs"},
+    "models": {"type": "array", "items": {"type": "string"}, "description": "distinct models the case's runs were asked for (and, per the harness, served by)"},
     "arms": {
       "type": "object",
       "additionalProperties": {

@@ -13,9 +13,10 @@ evals/law/run.py no-silent-failure --arm none --arm skill:my-branch --repeats 3
 evals/law/sensitivity.py <results-dir>        # re-read a results dir's records
 ```
 
-Needs `uv`, `git`, `claude` on PATH, and an Anthropic API key: `ANTHROPIC_API_KEY`, or
-the macOS keychain item `anthropic-api-key`. Results go to
-`evals/law/results/<law>/<UTC time>/` unless `--out` names a directory.
+Runs go through `harness/` (see `harness/README.md`), so they need what it needs: `uv`,
+`tmux`, `git`, `claude` on PATH and its config dir logged in once with
+`harness/bin/harness login`. Results go to `evals/law/results/<law>/<UTC time>/` unless
+`--out` names a directory.
 
 ## Arms and isolation
 
@@ -24,13 +25,10 @@ the macOS keychain item `anthropic-api-key`. Results go to
   system prompt with `--append-system-prompt-file`. The record keeps the resolved commit
   and the text's sha256.
 
-Every run is `claude -p --bare --model <model>` in a fresh copy of the fixture with a
-fresh, empty `CLAUDE_CONFIG_DIR`. `--bare` skips hooks, plugins, auto-memory and
-CLAUDE.md discovery. The empty config dir means no installed plugin is there to
-resolve. The harness reads the session's init message and refuses any run that loaded
-a non-builtin plugin or an MCP server, or that reported a different model than the one
-requested. `--bare` only accepts an API key, so runs bill to the API rather than to a
-subscription.
+Every run is one `harness/` session in a fresh copy of the fixture: the interactive TUI on
+the subscription login, sent `request.md` as its one turn. The harness admits nothing but
+the arm's guidance and refuses any run that loaded something else or was served by another
+model than the one requested.
 
 ## A case
 
@@ -57,15 +55,17 @@ the verdict is `inconclusive`.
 
 ## Records
 
-- `runs/<run>.json`: one per run, conforming to `schema/run-record.schema.json`. It
-  holds the case and a digest of the case and oracle code that judged it, the law, arm
-  and skill ref, the model requested, the model the session
-  reported, and the models it was billed for, plus the Claude Code version, turns,
-  tokens, cost, oracle verdict, and paths to the transcript and the agent's diff.
+- `runs/<run>/`: the harness's run dir: `run.json` (`harness/schema/run-record.schema.json`:
+  login, model served, Claude Code version, what loaded, tokens) or `failure.json`, and the
+  session's transcript.
+- `records/<run>.json`: one per run, conforming to `schema/run-record.schema.json`. It
+  holds the case and a digest of the case and oracle code that judged it, the law, arm,
+  skill ref and model, the oracle verdict, and paths to the harness record and the agent's
+  diff.
 - `summaries/<scenario>.json`: the case's sensitivity record, conforming to
   `schema/case-summary.schema.json`. It is derived from `runs/` every time, never edited.
-- `failed-runs.json`: present only when some runs ended without a record (a timeout, a
-  nonzero `claude` exit, an oracle crash). A summary counts only recorded runs.
+- `failed-runs.json`: present only when some runs ended without a record (a session the
+  harness failed, an oracle crash). A summary counts only recorded runs.
 
 A summary reads each arm against `none`, counting only the runs that reached the
 decision:

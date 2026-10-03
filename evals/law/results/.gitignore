@@ -1,0 +1,3 @@
+# The harness launch scratch: the editor script, the prompt and a copy of the guidance,
+# which the record pins by commit and sha256.
+**/runs/*/control/

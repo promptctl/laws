@@ -7,7 +7,7 @@
 
     evals/law/sensitivity.py <results-dir>
 
-Rewrites <results-dir>/summaries/<scenario>.json from runs/*.json and prints the table.
+Rewrites <results-dir>/summaries/<scenario>.json from records/*.json and prints the table.
 run.py calls the same functions at the end of a run, so a summary is always derived
 from the records on disk and never kept as a second copy of them.
 
@@ -85,7 +85,7 @@ def summarize(records: list[dict]) -> list[dict]:
             "schema_version": 1,
             "law": runs[0]["law"],
             "case": case,
-            "models": sorted({r["model"]["session"] for r in runs}),
+            "models": sorted({r["model"] for r in runs}),
             "arms": arms,
             "comparisons": comparisons,
         }
@@ -95,9 +95,9 @@ def summarize(records: list[dict]) -> list[dict]:
 
 
 def load_records(results_dir: Path) -> list[dict]:
-    paths = sorted((results_dir / "runs").glob("*.json"))
+    paths = sorted((results_dir / "records").glob("*.json"))
     if not paths:
-        sys.exit(f"no run records under {results_dir / 'runs'}")
+        sys.exit(f"no run records under {results_dir / 'records'}")
     records = [json.loads(p.read_text()) for p in paths]
     for path, record in zip(paths, records):
         try:
