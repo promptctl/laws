@@ -1,0 +1,17 @@
+{
+  "SKILL.md": {
+    "model": "claude-opus-5-5",
+    "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833",
+    "tokens": 28009
+  },
+  "references/rung-s.md": {
+    "model": "claude-opus-5-5",
+    "sha256": "fd5afad30993468a79b4441268a7016b881f642e2fc1e2aceb856643765f8ef1",
+    "tokens": 9754
+  },
+  "references/rung-m.md": {
+    "model": "claude-opus-5-5",
+    "sha256": "7521f5f3e3e05dc50e9b41f1faa17118f75a214b771830062f389ee027eef0bd",
+    "tokens": 14305
+  }
+}

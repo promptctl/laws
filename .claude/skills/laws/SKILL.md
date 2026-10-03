@@ -42,12 +42,19 @@ care. Simple is the goal, not a step toward something more impressive.
 3. `plugins/laws/skills/code/SKILL.md` is generated. Never edit it. Edit its sources
    under `plugins/laws/source/code/`: one file per law and per framing, plus the
    preamble, bindings, recap, and `skeleton.md` for order and part headings. Then run
-   `python3 plugins/laws/source/generate.py` and commit both. The header comment's rule
+   `python3 plugins/laws/source/generate.py`, which also writes the S and M projections
+   under `plugins/laws/skills/code/references/`, and `python3 plugins/laws/source/count.py`,
+   which records each output's token count in `plugins/laws/source/counts.json` (it reads a
+   credential from the macOS keychain; `--keychain-service` picks the entry). Commit the
+   sources, the outputs and `counts.json` together: the cap test fails on a count recorded
+   for other text, and on SKILL.md over the budget in `profiles/default.toml`. A law's rung
+   is a one-line edit to that profile. The header comment's rule
    against deduplicating or compressing applies to the sources. A source is that file
    cut at its seams, not a new place to tidy. The `<!-- rung: S -->` and
    `<!-- rung: M -->` lines mark which paragraphs serve which rung of hold. Keep them on
    the statement, the Diagnostic line, and the lineage line (S), and on the temptation
-   script (M). The generator refuses a law whose statement, directly under the heading, is not
+   script and its redirect (M); when the redirect is a procedure, mark each of its
+   paragraphs M. The generator refuses a law whose statement, directly under the heading, is not
    S-marked, or that has no S-marked Diagnostic.
 
 ## Workflow
