@@ -75,6 +75,14 @@ class Readings(unittest.TestCase):
         self.assertEqual(label, "separate")
         self.assertLess(p, 0.05)
 
+    def test_regressed_is_not_saturated(self):
+        label, p = sensitivity.reading(counts(5, 0), counts(0, 5))
+        self.assertEqual(label, "regressed")
+        self.assertLess(p, 0.05)
+
+    def test_regressed_is_not_separate(self):
+        self.assertEqual(sensitivity.reading(counts(4, 1), counts(0, 5))[0], "regressed")
+
     def test_indistinguishable(self):
         self.assertEqual(sensitivity.reading(counts(2, 3), counts(3, 2))[0], "indistinguishable")
 
@@ -118,6 +126,16 @@ class Schema(unittest.TestCase):
     def test_schema_rejects_an_unknown_verdict(self):
         with self.assertRaises(jsonschema.ValidationError):
             jsonschema.validate(record(verdict="passed"), sensitivity.RUN_SCHEMA)
+
+
+class Differential(unittest.TestCase):
+    def test_nondeterminism_is_inconclusive_even_when_the_job_check_fails(self):
+        import differential
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "prog.py").write_text("import uuid; print(uuid.uuid4())\n")
+            env = lambda: differential.Environment(("prog.py",), {}, {})  # noqa: E731
+            verdict = differential.judge(Path(tmp), env, env, lambda healthy, failing: (False, "stdout is not EXPECTED"))
+        self.assertEqual(verdict["verdict"], "inconclusive")
 
 
 class Isolation(unittest.TestCase):

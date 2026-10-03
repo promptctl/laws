@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "run_id": "no-silent-failure/bank-export/none/r5",
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/bank-export",
+  "arm": {
+    "name": "none",
+    "guidance": null
+  },
+  "repeat": 5,
+  "model": {
+    "requested": "claude-opus-5-5",
+    "session": "claude-opus-5-5",
+    "billed": [
+      "claude-opus-5-5"
+    ]
+  },
+  "claude_code_version": "2.1.288",
+  "started_at": "2026-10-03T12:17:15.475427+00:00",
+  "duration_ms": 12806,
+  "turns": 3,
+  "tokens": {
+    "input": 8,
+    "output": 1027,
+    "cache_read": 5406,
+    "cache_creation": 1586
+  },
+  "cost_usd": 0.0295832,
+  "session": {
+    "session_id": "a3fdbb7f-2dc1-497a-b1ee-afc5f1c33c99",
+    "is_error": false,
+    "terminal_reason": "completed"
+  },
+  "isolation": {
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-plugin-authoring",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": [],
+    "tools": [
+      "Bash",
+      "Edit",
+      "Read"
+    ]
+  },
+  "oracle": {
+    "verdict": "held",
+    "detail": "failure surfaced on stderr",
+    "healthy": {
+      "exit_code": 0,
+      "stdout": "brokerage 425.00\nchecking 3035.35\nsavings 500.00\n",
+      "stderr": "",
+      "files": []
+    },
+    "failing": {
+      "exit_code": 0,
+      "stdout": "brokerage 425.00\nchecking 3035.35\nsavings 500.00\n",
+      "stderr": "warning: exports/2026-08.csv:3: skipping row with unparseable amount 'N/A'\n",
+      "files": []
+    }
+  },
+  "transcript": "transcripts/no-silent-failure.bank-export.none.r5.jsonl",
+  "diff": "diffs/no-silent-failure.bank-export.none.r5.diff"
+}

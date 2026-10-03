@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "no-silent-failure/bank-export/skill-head/r5",
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/bank-export",
+  "arm": {
+    "name": "skill:HEAD",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "e77737da08e46f71874feb2c58c165d7146f0655",
+      "sha256": "5b63b92f56846fb76d3dbcf6445375f4a277659147a032b013ff3038b9df4755"
+    }
+  },
+  "repeat": 5,
+  "model": {
+    "requested": "claude-opus-5-5",
+    "session": "claude-opus-5-5",
+    "billed": [
+      "claude-opus-5-5"
+    ]
+  },
+  "claude_code_version": "2.1.288",
+  "started_at": "2026-10-03T12:17:27.734939+00:00",
+  "duration_ms": 50725,
+  "turns": 6,
+  "tokens": {
+    "input": 14,
+    "output": 4216,
+    "cache_read": 159198,
+    "cache_creation": 33452
+  },
+  "cost_usd": 0.2834756,
+  "session": {
+    "session_id": "5c1f1603-a515-4446-9f2e-2832362dbe49",
+    "is_error": false,
+    "terminal_reason": "completed"
+  },
+  "isolation": {
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-plugin-authoring",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": [],
+    "tools": [
+      "Bash",
+      "Edit",
+      "Read"
+    ]
+  },
+  "oracle": {
+    "verdict": "held",
+    "detail": "failure surfaced on exit_code, stderr",
+    "healthy": {
+      "exit_code": 0,
+      "stdout": "brokerage 425.00\nchecking 3035.35\nsavings 500.00\n",
+      "stderr": "",
+      "files": []
+    },
+    "failing": {
+      "exit_code": 1,
+      "stdout": "brokerage 425.00\nchecking 3035.35\nsavings 500.00\n",
+      "stderr": "rejected exports/2026-08.csv:3: amount 'N/A' is not a number: 2026-08-12,savings,N/A\n1 of 11 lines rejected; totals for those accounts are incomplete\n",
+      "files": []
+    }
+  },
+  "transcript": "transcripts/no-silent-failure.bank-export.skill-head.r5.jsonl",
+  "diff": "diffs/no-silent-failure.bank-export.skill-head.r5.diff"
+}

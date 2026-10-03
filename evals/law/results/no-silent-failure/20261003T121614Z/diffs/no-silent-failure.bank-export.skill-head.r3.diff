@@ -1,0 +1,110 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..2570fae 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,34 +5,95 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++The bank writes `N/A` in the amount column when it has no amount for a
++row. Those rows are left out of the totals and listed on stderr, so the
++totals are known to be partial. Any other unreadable line is an error.
+ """
+ import sys
+-from decimal import Decimal
++from dataclasses import dataclass
++from decimal import Decimal, InvalidOperation
+ from pathlib import Path
+ 
++# The bank's marker for "no amount on this row" - a known export quirk.
++NO_AMOUNT = "N/A"
++
++
++@dataclass(frozen=True)
++class Posting:
++    account: str
++    amount: Decimal
++
++
++@dataclass(frozen=True)
++class Skipped:
++    """A row the bank exported without an amount."""
++    where: str
++    line: str
++
++
++class MalformedRow(ValueError):
++    pass
++
++
++def parse_row(where, line):
++    # [LAW:parse-dont-validate] the one place raw lines become Posting or Skipped;
++    # everything downstream sees only those types and never re-checks.
++    fields = line.split(",")
++    if len(fields) != 3:
++        raise MalformedRow(f"{where}: expected date,account,amount: {line!r}")
++    _date, account, raw_amount = fields
++    if raw_amount.strip() == NO_AMOUNT:
++        return Skipped(where, line)
++    try:
++        amount = Decimal(raw_amount)
++    except InvalidOperation:
++        amount = None
++    # Decimal also accepts NaN/Infinity, which would poison a total.
++    if amount is None or not amount.is_finite():
++        # [LAW:no-silent-failure] only the bank's known marker is skippable;
++        # an unknown amount format stops the run instead of shrinking a total.
++        raise MalformedRow(f"{where}: unreadable amount {raw_amount!r}")
++    return Posting(account, amount)
++
+ 
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
+-        if not line.strip():
+-            continue
+-        date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++    for number, line in enumerate(path.read_text().splitlines(), start=1):
++        if line.strip():
++            yield parse_row(f"{path}:{number}", line)
+ 
+ 
+ def totals(exports_dir):
+     sums = {}
++    skipped = []
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
+-    return sums
++        for row in read_rows(path):
++            match row:
++                case Posting(account, amount):
++                    sums[account] = sums.get(account, Decimal("0")) + amount
++                case Skipped():
++                    skipped.append(row)
++    return sums, skipped
+ 
+ 
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    try:
++        sums, skipped = totals(argv[1])
++    except MalformedRow as err:
++        print(f"error: {err}", file=sys.stderr)
++        return 1
++    for account, total in sorted(sums.items()):
+         print(f"{account} {total:.2f}")
++    # [LAW:nothing-unseen] the totals are partial whenever rows were skipped;
++    # say so, and which rows, on stderr so stdout stays parseable.
++    for row in skipped:
++        print(f"skipped (no amount): {row.where}: {row.line}", file=sys.stderr)
++    if skipped:
++        print(f"warning: {len(skipped)} row(s) without an amount left out of totals",
++              file=sys.stderr)
+     return 0
+ 
+ 

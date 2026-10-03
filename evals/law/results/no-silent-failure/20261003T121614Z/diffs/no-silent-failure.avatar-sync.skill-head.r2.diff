@@ -1,0 +1,53 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..c13a35a 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -4,18 +4,28 @@ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+ <AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++A 404 from the CDN means the user deleted their avatar: it is counted, not raised.
++Any other failure still raises, so cron reports it.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar bytes, or None when the CDN says the avatar was deleted (404)."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as err:
++        # [LAW:no-silent-failure] only 404 is the domain's "deleted" answer; every other status re-raises
++        if err.code == 404:
++            return None
++        raise
+ 
+ 
+ def main(argv):
+@@ -25,9 +35,14 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
+-    for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++    avatars = {user_id: fetch(user_id) for user_id in users}
++    deleted = [user_id for user_id, data in avatars.items() if data is None]
++    for user_id, data in avatars.items():
++        if data is not None:
++            (out / f"{user_id}.png").write_bytes(data)
++    # [LAW:nothing-unseen] deleted avatars are a visible count on stdout, distinct from synced ones
++    print(f"synced {len(users) - len(deleted)} avatars, {len(deleted)} deleted upstream"
++          + (f": {', '.join(deleted)}" if deleted else ""))
+     return 0
+ 
+ 

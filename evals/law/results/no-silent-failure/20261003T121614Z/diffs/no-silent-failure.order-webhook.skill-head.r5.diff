@@ -1,0 +1,56 @@
+diff --git a/work/__pycache__/shipping.cpython-312.pyc b/work/__pycache__/shipping.cpython-312.pyc
+new file mode 100644
+index 0000000..46bd4c0
+Binary files /dev/null and b/work/__pycache__/shipping.cpython-312.pyc differ
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..e3fb046 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -4,6 +4,15 @@ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+ priced order to the shipping webhook as it goes.
++
++A webhook failure does not stop pricing: every order is still priced and
++printed. Each failed notification is reported on stderr with its order id,
++and a one-line JSON run summary is always written to stderr last.
++
++Exit codes:
++  0  every order priced and notified
++  1  every order priced, but one or more notifications failed (see stderr)
++  2  usage error
+ """
+ import json
+ import sys
+@@ -22,11 +31,29 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    unnotified = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++        # [LAW:no-silent-failure] pricing must not depend on the webhook, but a
++        # missed notification is surfaced per order and in the exit code, never dropped.
++        # OSError covers URLError/HTTPError and raw socket timeouts during the read.
++        try:
++            shipping.notify(order["id"], total)
++        except OSError as e:
++            print(f"ERROR: shipping notify failed for {order['id']}: {e!r}", file=sys.stderr)
++            unnotified.append(order["id"])
++    # [LAW:nothing-unseen] one record per run: zero orders and "never ran" look different.
++    print(json.dumps({
++        "event": "orders.run",
++        "counts": {
++            "priced": len(orders),
++            "notified": len(orders) - len(unnotified),
++            "notify_failed": len(unnotified),
++        },
++        "notify_failed_ids": unnotified,
++    }), file=sys.stderr)
++    return 1 if unnotified else 0
+ 
+ 
+ if __name__ == "__main__":

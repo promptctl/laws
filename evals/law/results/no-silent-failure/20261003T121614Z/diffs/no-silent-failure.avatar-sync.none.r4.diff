@@ -1,0 +1,48 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..a5cc183 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -8,14 +8,23 @@ users.json is a list of user ids. Each avatar is fetched from
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar bytes, or None if the user has no avatar (CDN 404)."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as e:
++        # A deleted avatar is a normal state, not an error. Anything else
++        # (5xx, 403, timeouts, ...) still propagates so cron reports it.
++        if e.code == 404:
++            return None
++        raise
+ 
+ 
+ def main(argv):
+@@ -25,9 +34,15 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    synced = missing = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        data = fetch(user_id)
++        if data is None:
++            missing += 1
++            continue
++        (out / f"{user_id}.png").write_bytes(data)
++        synced += 1
++    print(f"synced {synced} avatars, {missing} without an avatar (404)")
+     return 0
+ 
+ 
