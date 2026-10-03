@@ -1,5 +1,11 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.35.0 - 2026-10-03
+
+- laws(code): SKILL.md is generated from per-law sources under `plugins/laws/source/code/` and is byte-identical to v0.34.0; two projections ship beside it, `references/rung-s.md` (each law's statement, diagnostic and lineage) and `references/rung-m.md` (S plus each temptation and its redirect) (promptctl-layers-4c0.1, promptctl-layers-4c0.2)
+- laws(router): session-start names the path of `references/rung-s.md`, so an audit or review pass outside the plugin reads the S projection instead of the whole body (promptctl-layers-4c0.3)
+- laws(router): `LAWS_PER_TURN_S=1` replaces the per-message engagement paragraph with the S projection - 9,790 tokens per message against 216 off; default 0 (promptctl-layers-4c0.3)
+
 ## v0.34.0 - 2026-10-03
 
 - laws(prose, spec, application-spec): each docs medium states domain language in its own words - write in the subject's vocabulary, reaching for its word before coining one; the project's own names alongside, spelled as the project spells them; a narrower corner adds its own terms; the layers combine and never replace one another. Paid for by cutting older text, mostly unmeasured frequency and causal claims, so each skill's token count goes down (prose craft -59, spec -56, application-spec craft -33) (promptctl-domain-language-ghn)

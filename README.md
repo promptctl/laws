@@ -81,6 +81,11 @@ the point of the plugin. It's what keeps the point from eating itself.
 That gives you the skills and the craft-compatibility hooks. The hooks are pure bash -
 no dependencies, nothing to configure. Nothing else is required.
 
+One optional setting, for comparing sessions: `LAWS_PER_TURN_S=1` in Claude Code's
+environment makes the per-message hook inject the short form of the code laws
+(`skills/code/references/rung-s.md`, about 9,800 tokens) in place of its engagement
+paragraph. It is off by default.
+
 ## Looking for memento?
 
 The `next`, `message-in-a-bottle` and `address-pr-reviews` skills used to ship from
