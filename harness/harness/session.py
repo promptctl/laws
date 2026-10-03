@@ -185,6 +185,8 @@ class Session:
         self.binary = claude.resolve_binary(spec.claude_version)
         self.auth = claude.auth(self.binary, home.CONFIG_DIR)
         plugin_root = self.run_dir / "plugins"
+        if len(set(spec.plugins)) != len(spec.plugins):
+            raise HarnessError("spec", f"a plugin is admitted twice: {list(spec.plugins)}")
         self.pinned = [plugins.pin(p, plugin_root) for p in spec.plugins]
         names = [p.name for p in self.pinned]
         if len(set(names)) != len(names):

@@ -13,8 +13,10 @@ RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def run(spec: Spec, prompts: list[str], run_dir: Path, run_id: str) -> dict:
-    """Returns the run record, written to <run_dir>/run.json. On any failure writes
-    <run_dir>/failure.json and raises the HarnessError; there is no third outcome."""
+    """Returns the run record, written to <run_dir>/run.json. Arguments that are not
+    accepted (the run id, the prompts, a run dir with contents) raise before anything is
+    written. Past them, any failure writes <run_dir>/failure.json and raises the
+    HarnessError; there is no third outcome."""
     if not RUN_ID_RE.match(run_id):
         raise HarnessError("spec", f"run id {run_id!r} must match {RUN_ID_RE.pattern}")
     if not prompts:

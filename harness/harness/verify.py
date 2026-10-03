@@ -62,8 +62,9 @@ def verify(model: str, out: Path | None) -> int:
     clean_transcript = root / "clean" / clean["transcript"]
     checks.check("transcript captured", clean_transcript.is_file(), str(clean_transcript))
     checks.check("nothing left in the config dir", not _left_behind(clean), clean["session_id"])
-    jsonschema.validate(json.loads((root / "clean" / "run.json").read_text()), record.RUN_SCHEMA)
-    checks.check("run record conforms to the schema", True, str(root / "clean" / "run.json"))
+    schema_errors = [e.message for e in jsonschema.Draft202012Validator(record.RUN_SCHEMA).iter_errors(
+        json.loads((root / "clean" / "run.json").read_text()))]
+    checks.check("run record conforms to the schema", not schema_errors, json.dumps(schema_errors) if schema_errors else str(root / "clean" / "run.json"))
 
     print("== control session: each kind of load is seen, and refused when not admitted ==")
     control_work = root / "control-work"
