@@ -57,15 +57,19 @@ the verdict is `inconclusive`.
 
 - `runs/<run>/`: the harness's run dir: `run.json` (`harness/schema/run-record.schema.json`:
   login, model served, Claude Code version, what loaded, tokens) or `failure.json`, and the
-  session's transcript.
+  session's transcript. The transcript is never committed: Claude Code writes the login's
+  account email into it.
 - `records/<run>.json`: one per run, conforming to `schema/run-record.schema.json`. It
   holds the case and a digest of the case and oracle code that judged it, the law, arm,
   skill ref and model, the oracle verdict, and paths to the harness record and the agent's
   diff.
 - `summaries/<scenario>.json`: the case's sensitivity record, conforming to
-  `schema/case-summary.schema.json`. It is derived from `runs/` every time, never edited.
+  `schema/case-summary.schema.json`. It is derived from `records/` and `failed-runs.json`
+  every time, never edited, and refuses records of one case judged by two versions of its
+  code, or of one arm run on two guidance texts.
 - `failed-runs.json`: present only when some runs ended without a record (a session the
-  harness failed, an oracle crash). A summary counts only recorded runs.
+  harness failed, an oracle crash). A summary counts them as runs that did not reach the
+  decision.
 
 A summary reads each arm against `none`, counting only the runs that reached the
 decision:

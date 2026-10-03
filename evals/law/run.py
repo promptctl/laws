@@ -18,7 +18,8 @@ prompt). Each run is one session on harness/ (repo root) in a fresh copy of the 
 the interactive TUI on the subscription login, admitting nothing but the arm's guidance.
 
 Writes <out>/runs/<run>/ (the harness's run dir: run.json or failure.json, and the
-transcript), <out>/records/<run>.json (schema/run-record.schema.json), <out>/diffs/ and
+transcript, which stays out of git: it carries the login's account identity),
+<out>/records/<run>.json (schema/run-record.schema.json), <out>/diffs/ and
 <out>/summaries/<scenario>.json (schema/case-summary.schema.json).
 """
 from __future__ import annotations
@@ -45,10 +46,10 @@ REPO = HERE.parent.parent
 sys.path.insert(0, str(REPO / "harness"))
 
 from harness import run as harness_run  # noqa: E402
+from harness import tmux  # noqa: E402
 from harness.session import Spec  # noqa: E402
 
 SKILL_PATH = "plugins/laws/skills/code/SKILL.md"
-RUN_SCHEMA = json.loads((HERE / "schema" / "run-record.schema.json").read_text())
 ORACLE_TIMEOUT_SECS = 600
 # Local build residue never reaches the agent (it differs per checkout and names the case's
 # path) and never reaches a committed diff.
@@ -111,8 +112,13 @@ def load_cases(law: str) -> list[Case]:
     if not law_dir.is_dir():
         known = sorted(p.name for p in (HERE / "cases").iterdir() if p.is_dir())
         die(f"no cases for law {law!r}; laws with cases: {', '.join(known)}")
+    # A name the record schema refuses would cost every run of the case a full session first.
+    name_pattern = re.compile(sensitivity.RUN_SCHEMA["properties"]["law"]["pattern"])
     cases = []
     for root in sorted(d for d in law_dir.iterdir() if d.is_dir()):
+        for name in (law, root.name):
+            if not name_pattern.match(name):
+                die(f"case {law}/{root.name}: {name!r} must match {name_pattern.pattern}")
         for part in ("fixture", "request.md", "oracle.py"):
             if not (root / part).exists():
                 die(f"case {law}/{root.name} is missing {part}")
@@ -135,13 +141,18 @@ def run_id_of(case: Case, arm: Arm, repeat: int) -> str:
     return f"{case.law}/{case.scenario}/{arm.slug}/r{repeat}"
 
 
+def tmux_name_of(run_id: str) -> str:
+    # The harness names a tmux session after its run id, and tmux allows no "/" or ".".
+    return run_id.replace("/", "_")
+
+
 def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path) -> dict:
     run_id = run_id_of(case, arm, repeat)
-    # The harness names a tmux session after its run id, and tmux allows no "/" or ".".
-    stem = run_id.replace("/", "_")
+    stem = tmux_name_of(run_id)
     log(f"start {run_id}")
     with tempfile.TemporaryDirectory(prefix="law-eval-run-") as tmp:
-        workdir, pristine = Path(tmp) / "work", Path(tmp) / "fixture"
+        # Resolved: the harness judges isolation on resolved paths, and macOS's temp dir is a symlink.
+        workdir, pristine = Path(tmp).resolve() / "work", Path(tmp).resolve() / "fixture"
         shutil.copytree(case.root / "fixture", workdir, ignore=FIXTURE_IGNORE)
         shutil.copytree(case.root / "fixture", pristine, ignore=FIXTURE_IGNORE)
         guidance_file = None
@@ -187,7 +198,7 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path) -> dict:
         "session": f"runs/{stem}/run.json",
         "diff": str(diff.relative_to(out)),
     }
-    jsonschema.validate(record, RUN_SCHEMA)
+    jsonschema.validate(record, sensitivity.RUN_SCHEMA)
     (out / "records" / f"{stem}.json").write_text(json.dumps(record, indent=2) + "\n")
     log(
         f"done  {run_id}: {verdict['verdict']} ({verdict['detail']}); "
@@ -224,23 +235,34 @@ def main() -> None:
     log(f"{len(cases)} case(s) x {len(arms)} arm(s) x {args.repeats} repeat(s) on {args.model} -> {out}")
 
     jobs = [(case, arm, n) for case in cases for arm in arms for n in range(1, args.repeats + 1)]
-    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = [(run_id_of(case, arm, n), pool.submit(run_one, case, arm, n, args.model, out)) for case, arm, n in jobs]
-        failures = []
-        for run_id, future in futures:
+    pool = ThreadPoolExecutor(max_workers=args.jobs)
+    futures = [(case, arm, run_id_of(case, arm, n), pool.submit(run_one, case, arm, n, args.model, out)) for case, arm, n in jobs]
+    failures = []
+    try:
+        for case, arm, run_id, future in futures:
             try:
                 future.result()
             except Exception as error:  # every failure is collected and reported below, then fails the command
-                failures.append({"run_id": run_id, "error": f"{type(error).__name__}: {error}"})
+                failures.append({"run_id": run_id, "case": case.id, "arm": arm.name, "error": f"{type(error).__name__}: {error}"})
                 log(f"FAILED {run_id}: {error}")
-    # A summary counts only the runs that have records; this file is what says others are missing.
+    except KeyboardInterrupt:
+        # Ctrl-C reaches only this thread. Queued runs are dropped, and ending the live
+        # sessions' tmux sessions makes each running harness turn fail and record it.
+        pool.shutdown(wait=False, cancel_futures=True)
+        for _, _, run_id, future in futures:
+            if future.running():
+                tmux.kill(tmux_name_of(run_id))
+        pool.shutdown(wait=True)
+        die(f"interrupted; partial results in {out}")
+    pool.shutdown(wait=True)
+    # A summary counts these in its arm's runs; they are the runs with no record.
     if failures:
         (out / "failed-runs.json").write_text(json.dumps(failures, indent=2) + "\n")
     listing = "\n  ".join(f"{f['run_id']}: {f['error']}" for f in failures)
 
     if len(failures) == len(jobs):
         die(f"every run failed:\n  {listing}")
-    summaries = sensitivity.summarize(sensitivity.load_records(out))
+    summaries = sensitivity.summarize(*sensitivity.load_results(out))
     sensitivity.write_summaries(out, summaries)
     print(sensitivity.table(summaries))
     print(f"\nresults: {out}")
