@@ -1,0 +1,32 @@
+# The profile laws:code ships: each law's rung, and the token budget its SKILL.md must fit.
+# Rungs: S = statement, Diagnostic, lineage; M = S plus the temptation and its redirect; L = all.
+# Changing a rung is a one-line edit here; regenerate, then recount (count.py).
+
+model = "claude-opus-5-5"
+budget = 28009  # the all-L document, counted 2026-10-03
+
+[rungs]
+decomposition = "L"
+types-are-the-program = "L"
+composability = "L"
+carrying-cost = "L"
+polishing-by-subtraction = "L"
+no-ambient-temporal-coupling = "L"
+effects-at-boundaries = "L"
+one-source-of-truth = "L"
+domain-language = "L"
+single-enforcer = "L"
+comments-carry-meaning = "L"
+dataflow-not-control-flow = "L"
+one-type-per-behavior = "L"
+no-mode-explosion = "L"
+parse-dont-validate = "L"
+no-defensive-null-guards = "L"
+locality-or-seam = "L"
+one-way-deps = "L"
+no-shared-mutable-globals = "L"
+verifiable-goals = "L"
+behavior-not-structure = "L"
+no-silent-failure = "L"
+nothing-unseen = "L"
+escape-local-minima = "L"
