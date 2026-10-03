@@ -47,6 +47,17 @@ they ignored. Agent testers are given tasks and watched, not asked for their opi
 sections that lets the next iteration be built. What is still unknown stays visible as a
 dash and an open issue rather than being resolved on paper.
 
+**The documents are written in the language of the product's subject.** Someone fluent
+in the subject should be immediately at home in the PRD, FSD, and Spec. The subject's
+vocabulary is the top layer and holds in every document and section. The project's own
+names for its parts sit alongside it, spelled as the project spells them, and a narrower
+part of the product can add more specific terms of its own. The layers combine and never
+replace one another, so the subject's vocabulary still holds in the narrowest section.
+This is a preference, not a prohibition: the writer reaches for the subject's word before
+coining one, and the skill makes no claim about what a coined term implies. It is
+separate from the industry-standard section names, which are the documents' own
+vocabulary rather than the product's.
+
 ## Deliberately absent
 
 The five templates are carried as the owner supplied them. The skill points at them and
