@@ -10,18 +10,17 @@ The reader's time is the budget. Every sentence spends it. Write accordingly.
 ## Start from the goal
 
 Before the first sentence, answer one question: what is this document *for*? Not its
-topic - its intent. And the honest answer is almost always plural. A README has to
-convince a stranger the project is worth their attention, get a ready user running in
-a minute, and hand the committed reader a path deeper - three goals, three different
-readers, one page. Most documents carry a stack like that, and some goals are quiet:
-the release note that also reassures, the API reference that also teaches the mental
-model, the error message that also tells the user it wasn't their fault. List the
-goals before you draft. The ones you don't name, you won't serve.
+topic - its intent. The honest answer can be plural. A README has to convince a
+stranger the project is worth their attention, get a ready user running in a minute,
+and hand the committed reader a path deeper - three goals, three readers, one page.
+Some goals are quiet: the release note that also reassures, the API reference that
+also teaches the mental model, the error message that also tells the user it wasn't
+their fault. List the goals before you draft. The ones you don't name, you won't serve.
 
 The goals are what set the floor described in the next section: a fact is load-bearing
 when some goal needs it, and noise when none do. They also decide structure, because
-one document usually serves several familiarity levels at once. Layer it - the value
-and the quick-start where the newcomer and the hurried both land, the depth below and
+one document can serve several familiarity levels at once. Layer it - the value and
+the quick-start where the newcomer and the hurried both land, the depth below and
 behind links where only the committed go. Give each layer a heading that front-loads
 its keywords, so a reader skimming for their level can smell the right path before
 reading it. A good document is a gateway, not a wall: every reader reaches their level
@@ -29,10 +28,9 @@ fast, and none are forced to wade through someone else's.
 
 The standing obstacle is the curse of knowledge - you know the project, so you can no
 longer feel what the stranger doesn't, and your draft quietly writes the reader into
-your own head. It is the most common cause of unclear writing, and you cannot
-introspect your way out of it. Name the specific reader for each goal, picture them
-stuck, and treat the sentence that feels too obvious to write as the one most likely
-to be a cliff for them.
+your own head. You cannot introspect your way out of it. Name the specific reader for
+each goal, picture them stuck, and treat the sentence that feels too obvious to write
+as the one most likely to be a cliff for them.
 
 ## The aim: simplicity
 
@@ -45,7 +43,7 @@ friction. Piling on qualifiers and important-sounding abstractions is the cheap
 direction: it looks like effort while offloading the real work onto the reader. Finding
 the one plain sentence that carries the whole idea demands that you understand the idea
 completely - which is why plainness is sophistication, not its absence. Complexity on
-the page is usually a tell: either you haven't understood the thing well enough to
+the page is a warning sign: either you haven't understood the thing well enough to
 simplify it, or you're dressing thin understanding in language that sounds deep.
 
 But simplicity has a floor: *as simple as possible, but not simpler.* The target is the
@@ -64,10 +62,10 @@ fully serves this reader, here.
 
 You reach it by subtraction. *Perfection is achieved not when there is nothing more to
 add, but when there is nothing left to take away.* Understand the thing completely
-first - muddy prose is almost always muddy thinking, and no edit rescues a sentence
-whose author isn't sure what it means. Then say it in the plainest true words and
-remove, one element at a time, until the next thing you'd cut is load-bearing. That
-stopping point is the floor, and it's the target the core moves below serve.
+first - no edit rescues a sentence whose author isn't sure what it means. Then say it
+in the plainest true words and remove, one element at a time, until the next thing
+you'd cut is load-bearing. That stopping point is the floor, and it's the target the
+core moves below serve.
 
 - COMPLEX (thin idea, thick words): "We leverage a multi-faceted methodology to
   holistically optimize stakeholder outcomes."
@@ -87,26 +85,29 @@ should leave with the most important thing, not the background. If you catch you
 warming up ("In today's fast-paced environment...", "Before we dive in..."), delete
 the warm-up; the real first sentence is hiding right after it.
 
-**Write for a specific reader.** Before writing, answer: who reads this, what do they
-already know, and what will they *do* after reading? A README is read by someone
-deciding whether to use the thing and then trying to run it - so lead with what it is
-and get to the install command fast. A report is read by someone making a decision -
-so lead with the recommendation. Text that serves "everyone" serves no one.
+**Write for a specific reader.** Know what they already know and what they will *do*
+after reading, and lead with what that action needs: a README with what the thing is
+and the install command, a report with the recommendation. Text that serves "everyone" serves no one.
 
 **Prefer plain words and active sentences.** "Use" beats "utilize," "because" beats
 "due to the fact that," "the parser fails on X" beats "a failure may be experienced
 when X is encountered." Name the actor: "the script deletes the cache," not "the
 cache is deleted."
 
+**Use the subject's own words.** Someone fluent in the subject should feel at home
+from the first line, so reach for the term the field already uses before coining your
+own: a payroll guide says "gross pay" and "withholding," not "base amount" and
+"removed portion." The project's own names stand alongside those terms, written
+exactly as the project writes them, and a narrower corner - one component's guide, one
+team's runbook - adds terms specific to it. Each layer adds to the others and none
+replaces one; the subject's language still holds in the narrowest corner.
+
 **Mind where a sentence puts its weight.** A sentence lands hardest on its last few
 words - the stress position, where the reader's ear leans - and opens most smoothly on
 what the reader already knows. So when a sentence reads flat, the fix is often to end
 it on the new or important thing rather than trail off: "After copying the rows, the
 migration deletes the old table" hits harder than "The migration deletes the old table
-after copying the rows, for reference." But this is a tendency to listen for, not a
-transform to run on every sentence - apply it mechanically and the prose flattens into
-sameness. Reach for it when a line reads wrong; let variety and the ear overrule the
-formula.
+after copying the rows, for reference."
 
 **One idea per paragraph, and paragraphs over fragments.** Prose that flows carries
 reasoning; a wall of three-word bullets carries only assertions. Use a list when the
@@ -141,9 +142,6 @@ the goal.
 - Symmetrical filler ("not only X but also Y", "it's not just X - it's Y").
 - Every paragraph the same length; every sentence the same shape. Vary the rhythm.
 - Adjectives standing where evidence should be ("blazingly fast" - give the number).
-- Fluent phrases that never cash out into something you could picture or verify -
-  "becomes residue," "seamlessly integrates," "powerful and flexible." Sophistication
-  is not information.
 - The point buried mid-sentence while filler holds the emphatic last slot ("…deletes
   the old table after copying the rows, for reference"). It usually wants the end.
 

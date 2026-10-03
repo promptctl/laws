@@ -11,10 +11,10 @@
 You are about to spend a long session producing one artifact: a functional,
 clean-room specification of an existing application. A team that has never seen
 the target - and never will - receives your spec and nothing else, and builds a
-behaviorally equivalent system from it. You are on the contaminated side: you have
-read the source, run the binary, probed the endpoints. The spec is the only thing
-that crosses to the clean side, and it makes one trip. That is mechanics, not
-drama - but it is the mechanics everything below follows from.
+behaviorally equivalent system from it. You are on the contaminated side: you read
+the source, run the binary, probe the endpoints. The spec is the only thing that
+crosses to the clean side, and it makes one trip. That is mechanics, not drama -
+but it is the mechanics everything below follows from.
 
 ## The boundary test [APPSPEC:boundary-decides]
 
@@ -63,9 +63,9 @@ confirms it?
 The target may be a repo, a CLI, a UI, a SaaS, a CI system - anything with a
 boundary. **The kind of target never changes what the spec looks like; it only
 changes where you stand to observe.** Source, a runnable binary, a live endpoint,
-a drivable UI are **evidence channels** - ways of holding instruments to the case
-- and you use *every channel available*, not the one matching the target's genre
-(a repo usually gives source *and* a runnable build: use both). The spec's
+a drivable UI are **evidence channels** - ways of holding instruments to the
+case - and you use *every channel available*, not the one matching the target's
+genre (a repo can give source *and* a runnable build: use both). The spec's
 structure - the sweep below - is invariant. Same case, same ports, different
 instruments: a CLI's port is argv/stdin/stdout, a service's is HTTP, a UI's is
 what a user can do and see.
@@ -73,10 +73,10 @@ what a user can do and see.
 The temptation arrives dressed as efficiency: *"this is a CLI - I'll use my CLI
 template."* Refuse it. Per-kind templates are the named anti-pattern: a template
 encodes one kind's blind spots (the CLI template has no slot to catch the daemon's
-socket; the web template no line for exit codes), and the next target is always a
-hybrid it never imagined. The universal sweep plus every-channel evidence covers
-all kinds with zero forks. Where a surface doesn't exist - no persistent state,
-say - record it as absent: absence at a port is itself a boundary fact.
+socket; the web template no line for exit codes). The universal sweep plus
+every-channel evidence covers all kinds with zero forks. Where a surface doesn't
+exist - no persistent state, say - record it as absent: absence at a port is
+itself a boundary fact.
 
 - BAD: a spec organized as "Commands" because the target is a CLI, with lifecycle
   and external interactions nowhere because the template had no slot for them.
@@ -113,13 +113,10 @@ interrogate each. Sweep these surfaces, explicitly, every time, for every target
    contractual or observably depended on, and mark them as such - otherwise the
    clean team inherits accidental constants as requirements.
 
-This enumeration is the requester's own list - "all APIs, including application
-startup requirements, when it shuts down, when it throws errors, and any
-interactions with external systems, along with all functional requirements" -
-fixed into a walk so none of it is covered only if you happen to think of it. The
-temptation, deep in the session, is fatigue in a reasonable voice: *"I've
-documented everything the app does - I'm done."* Refuse it. "Everything it does"
-is a claim about your imagination; "every surface swept" is a claim about a
+The enumeration is fixed so that no surface is covered only if you happen to think
+of it. The temptation, deep in the session, is fatigue in a reasonable voice:
+*"I've documented everything the app does - I'm done."* Refuse it. "Everything it
+does" is a claim about your imagination; "every surface swept" is a claim about a
 checklist. The port you skip because nothing came to mind is exactly where the
 reimplementation diverges - silently, because nobody on the clean side knows to
 ask.
@@ -146,8 +143,7 @@ clean team will faithfully build that simpler one.
 The temptation: *"the error paths are obvious - it fails, it prints an error, who
 needs that written down."* Refuse it. "It fails" is where the contract hides:
 *which* exit code - callers branch on it; *which* stream - pipelines depend on it;
-does the half-written output file remain - the next run depends on it. If it were
-obvious, every application would fail the same way, and none do.
+does the half-written output file remain - the next run depends on it.
 
 - BAD: "Invalid input is rejected with an error message."
 - GOOD: "Given a config file that is not valid YAML, the process writes one
@@ -172,8 +168,7 @@ The temptation: *"startup and shutdown are boilerplate - the interesting behavio
 is in the features."* Refuse it. To every operator, supervisor, and calling
 script, lifecycle *is* the interface. A reimplementation that becomes ready at a
 different moment, or drops in-flight work on SIGTERM where the original drained
-it, is observably a different application, and fails in production in ways feature
-tests never see.
+it, is observably a different application.
 
 - BAD: "The service starts up and connects to the database."
 - GOOD: "On start with `$DATABASE_URL` unset, writes one diagnostic line to
@@ -186,14 +181,14 @@ know when it is up, how to stop it safely, and what a crash costs?
 
 ## External interactions are wire-level contracts [APPSPEC:wire-level-contracts]
 
-The boundary carries traffic in both directions, and outbound is the direction
-writers forget: **everything the application itself sends to other systems, what
-it expects back, and what it does when the other side misbehaves.** The other
-system is an outside observer too - it sees requests, queries, messages, files; it
-never sees your app's libraries. Record what the peer would see and send: requests
-made (methods, paths, payload shapes, auth scheme), responses expected, retry and
-timeout behavior, the observable consequence of the peer being down, slow, or
-wrong. Put the tap on the wire and transcribe the traffic.
+The boundary carries traffic in both directions, outbound included: **everything
+the application itself sends to other systems, what it expects back, and what it
+does when the other side misbehaves.** The other system is an outside observer
+too - it sees requests, queries, messages, files; it never sees your app's
+libraries. Record what the peer would see and send: requests made (methods, paths,
+payload shapes, auth scheme), responses expected, retry and timeout behavior, the
+observable consequence of the peer being down, slow, or wrong. Put the tap on the
+wire and transcribe the traffic.
 
 The temptation: *"it talks to Postgres through the ORM - that's the
 interaction."* Refuse it. The ORM is a gear; "uses library X" is a fact about the
@@ -219,20 +214,18 @@ instincts turn against you. No algorithms. No internal architecture. No internal
 names. No code excerpts. No "how it works" narration. If confirming a sentence
 requires opening the case, it is not spec - however true, however useful it feels.
 
-Here is the counter-proverb to disarm, arriving with the authority of every
-documentation genre you know: **"good documentation explains how it works."**
-Grant it its home turf - for ordinary docs it is exactly right; maintainers
-deserve mechanism, and a README that hides its architecture is a bad README. But
-this genre *inverts* it. The clean team's entire legal standing is that they never
-learned how the original works inside; depth past the boundary is not thoroughness
-here - it is the one thing the deliverable exists to exclude. In this genre the
-architecture overview is not a favor to the reader. It is the defect.
+Here is the counter-proverb to disarm: **"good documentation explains how it
+works."** Grant it its home turf - for ordinary docs it is right; maintainers
+deserve mechanism. But this genre *inverts* it. The clean team's entire legal
+standing is that they never learned how the original works inside; depth past the
+boundary is not thoroughness here - it is the one thing the deliverable exists to
+exclude. In this genre the architecture overview is not a favor to the reader. It
+is the defect.
 
-Which is why the most dangerous temptation of the session is the most
-respectable-sounding one: *"the implementer needs to know how this works inside -
-I'll add a short architecture overview for context."* Refuse it, and recognize its
-costumes: the "design rationale" paragraph, the algorithm sketch "so they
-understand the intent," the module map "just for orientation." Each is
+The most respectable-sounding temptation: *"the implementer needs to know how this
+works inside - I'll add a short architecture overview for context."* Refuse it,
+and recognize its costumes: the "design rationale" paragraph, the algorithm sketch
+"so they understand the intent," the module map "just for orientation." Each is
 contamination wearing helpfulness. The implementer needs the boundary completely;
 give them that, and the inside is theirs to invent.
 
@@ -268,14 +261,13 @@ that flips the behavior, version skew against the deployed thing. Wherever a
 channel exists to run, call, click, or probe, verify by observation before the
 sentence goes in.
 
-The temptation: *"I read the code, so I know what it does."* Refuse it - this is
-how confident falsehoods enter a spec, and a confident falsehood is the worst
-artifact a spec can contain: an omission the clean team can discover as a gap, but
-a false statement they will *build on*, and the divergence surfaces months later
-with your sentence as its source. Where behavior cannot be determined, mark it
-`UNVERIFIED`, state what was tried, and state the hypothesis as a hypothesis. An
-honest `UNVERIFIED` is the spec doing its job; a guess wearing declarative grammar
-is the spec failing its one duty - to be the thing the clean side can trust.
+The temptation: *"I read the code, so I know what it does."* Refuse it. A
+confident falsehood is the worst artifact a spec can contain: an omission the
+clean team can discover as a gap, but a false statement they will *build on*.
+Where behavior cannot be determined, mark it `UNVERIFIED`, state what was tried,
+and state the hypothesis as a hypothesis. An honest `UNVERIFIED` is the spec doing
+its job; a guess wearing declarative grammar is the spec failing its one duty - to
+be the thing the clean side can trust.
 
 - BAD: "Retries three times on failure." (source read, never exercised; the retry
   wrapper is behind a flag that defaults off)
@@ -321,16 +313,30 @@ available, what was verified by observation versus derived from source; then the
 surfaces. The artifact is the one courier across the boundary - one trip, no
 luggage following later.
 
-So: **no references into the source tree - ever.** The temptation: *"this parser
-is intricate - I'll just point them at `src/parser/grammar.js` rather than
-re-derive it all."* Refuse it, and note that this refusal *inverts* a habit the
-rest of this plugin teaches. Elsewhere, point-don't-transcribe is right - a
-filename beats a copied excerpt when your reader can open the file. Here the
-medium flips the rule: your reader is forbidden from opening the file. A pointer
-into the source is a door in the boundary wall, broken twice - it invites the
-clean team through (voiding their clean status the moment they follow it) and it
-fails the handoff (the spec no longer stands alone). Transcribe the boundary fact
-exactly; point at nothing. Craft from other media does not carry in.
+The one thing the clean team does bring is fluency in the application's subject -
+accounting, mail delivery, build pipelines, whatever the application is for. Write
+the spec in that subject's language, so a reader fluent in it is at home from the
+first page: reach for the subject's established word before coining one of your
+own. Alongside it, use the names the application puts at its boundary - commands,
+fields, concept names, even ones only a human reads - spelled exactly as the
+application spells them: a name is not prose. Where a surface serves a narrower
+part of the subject - the payroll screens of an accounting application, say - its
+sentences take that narrower field's terms as well. The layers combine: the
+subject's language holds in every section, the application's names sit within it,
+and a narrower surface adds to both without replacing either. Names that exist
+only inside the application belong to none of these layers; they stay out under
+[APPSPEC:behavior-not-mechanism].
+
+**No references into the source tree - ever.** The temptation: *"this parser is
+intricate - I'll just point them at `src/parser/grammar.js` rather than re-derive
+it all."* Refuse it, and note that this refusal *inverts* a habit the rest of this
+plugin teaches. Elsewhere, point-don't-transcribe is right - a filename beats a
+copied excerpt when your reader can open the file. Here the medium flips the rule:
+your reader is forbidden from opening the file. A pointer into the source is a
+door in the boundary wall, broken twice - it invites the clean team through
+(voiding their clean status the moment they follow it) and it fails the handoff
+(the spec no longer stands alone). Transcribe the boundary fact exactly; point at
+nothing. Craft from other media does not carry in.
 
 - BAD: "Accepted expression syntax: see `src/parser/grammar.js`."
 - GOOD: "Accepted expression syntax (verified against the running tool):
@@ -338,8 +344,8 @@ exactly; point at nothing. Craft from other media does not carry in.
   parentheses for grouping; any other token yields exit 2 and a stderr diagnostic
   naming the offending character's position."
 
-Diagnostic: delete the entire target from the universe - repo, binary,
-deployment. Does every sentence of the spec still resolve?
+Diagnostic: delete the entire target from the universe - repo, binary, deployment.
+Does every sentence of the spec still resolve?
 
 ## Two audits before you ship [APPSPEC:two-audit-passes]
 
@@ -350,7 +356,7 @@ mandatory, against the finished spec.
 not your memory of writing them. Is each addressed? Is any *thin* - entries
 without error behavior, outputs without formats, lifecycle without its
 unmet-requirement cases? Is every absent surface recorded with how absence was
-verified? Thin sections are where you were tired; the sweep doesn't get tired.
+verified?
 
 **The purity reread.** Every sentence against the one question: could an outside
 observer confirm this? Hunt the respectable leaks - the "for context" phrase, the
@@ -358,14 +364,11 @@ internal name that slipped in as vocabulary, the mechanism verb ("caches,"
 "indexes," "queues") asserting a gear where only a signal was observed. Rewrite
 each as its observable effect, or cut it.
 
-Two separate passes, two mindsets - the sweep hunts holes, the reread hunts leaks
-- because one combined pass does whichever was primed last and skimps the other.
+Two separate passes, two mindsets - the sweep hunts holes, the reread hunts leaks.
 The shelf gets the level held both ways before it leaves the shop. The temptation,
 arriving when you most want to be done: *"I applied the test as I wrote - a final
-reread is redundant."* Refuse it. You applied it with a writer's attention, hours
-apart; the audits apply an auditor's attention across the whole artifact at once,
-and the thin section and the leaked gear are exactly what the writing mind cannot
-see, because it produced them.
+reread is redundant."* Refuse it. You applied it one sentence at a time; the
+audits read the whole artifact at once.
 
 - BAD: finishing the last section, skimming once, shipping - "looks complete."
 - GOOD: a sweep pass producing a findings list ("no crash-residue statement;
@@ -377,7 +380,7 @@ Diagnostic: can you point at where each pass happened and what each changed?
 ## Recap - the tokens
 
 Cite these as `[APPSPEC:<token>]` at the moment of use while writing spec
-sentences - naming the rule as you apply it keeps it active.
+sentences.
 
 - `[APPSPEC:boundary-decides]` - one test, two directions: outside-observable and
   missing is a defect; inside-only and present is a defect. Every port, no gears.
