@@ -2,8 +2,8 @@
 
 Two sessions. The clean one admits nothing and is driven for two turns, the second a
 prompt large enough that a paste would arrive wrapped. The control one admits one of each
-thing a session can load (a work-dir CLAUDE.md, a project hook, a --settings hook, a
-plugin, an MCP server) and
+thing a session can load (a work-dir CLAUDE.md, a project skill and agent, a project
+hook, a --settings hook, a plugin with a hook of its own, an MCP server) and
 proves the transcript readers see each load: a reader that saw nothing would make the
 clean session's empty reading worthless. The control session's loads are then checked
 against an empty admission, which must refuse every one of them.
@@ -67,6 +67,12 @@ def verify(model: str, out: Path | None) -> int:
     control_work.mkdir(parents=True)
     (control_work / "CLAUDE.md").write_text("This project is a harness verification fixture.\n")
     (control_work / ".claude").mkdir()
+    (control_work / ".claude" / "skills" / "probe-skill").mkdir(parents=True)
+    (control_work / ".claude" / "skills" / "probe-skill" / "SKILL.md").write_text(
+        "---\nname: probe-skill\ndescription: Exists so verify can see a project skill load. Never use it.\n---\n\nNothing to do.\n")
+    (control_work / ".claude" / "agents").mkdir()
+    (control_work / ".claude" / "agents" / "probe-agent.md").write_text(
+        "---\nname: probe-agent\ndescription: Exists so verify can see a project agent load. Never use it.\n---\n\nNothing to do.\n")
     (control_work / ".claude" / "settings.json").write_text(json.dumps(
         {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "echo harness verification hook"}]}]}}))
     guidance = root / "guidance.md"
@@ -84,17 +90,19 @@ def verify(model: str, out: Path | None) -> int:
         return _finish(checks, root, out)
     seen = control["loaded"]
     checks.check("work-dir CLAUDE.md is seen", str(control_work.resolve() / "CLAUDE.md") in seen["claude_md"], json.dumps(seen["claude_md"]))
-    checks.check("admitted hooks are seen", {"SessionStart", "Stop"} <= set(seen["hooks"]), json.dumps(seen["hooks"]))
+    checks.check("admitted hooks are seen", {"SessionStart", "Stop", "UserPromptSubmit"} <= set(seen["hooks"]), json.dumps(seen["hooks"]))
     checks.check("admitted plugin's skill is seen", "harness-probe:probe" in seen["plugin_skills"], json.dumps(seen["plugin_skills"]))
     checks.check("admitted MCP server is seen", "harness-probe" in seen["mcp_servers"], json.dumps(seen["mcp_servers"]))
+    checks.check("project skill is seen", seen["project_skills"] == ["probe-skill"], json.dumps(seen["project_skills"]))
+    checks.check("project agent is seen", seen["project_agents"] == ["probe-agent"], json.dumps(seen["project_agents"]))
     checks.check("nothing left in the config dir", not _left_behind(control), control["session_id"])
     control_records = transcript.load(root / "control" / control["transcript"])
     checks.check("appended guidance is in the system prompt", GUIDANCE_MARKER in transcript.system_prompt(control_records),
                  control["admitted"]["append_system_prompt"]["sha256"])
-    loads = transcript.loaded(control_records)
+    loads = transcript.loaded(control_records, frozenset({"probe-skill"}))
     nothing = {"plugins": [], "hook_events": [], "mcp_servers": [], "project_settings": False}
-    refused = record.isolation_violations(loads, nothing, clean_work.resolve())
-    kinds = {"CLAUDE.md", "hook", "plugin skill", "MCP server"}
+    refused = record.isolation_violations(loads, nothing, control_work.resolve())
+    kinds = {"CLAUDE.md", "hook", "plugin skill", "project skill", "project agent", "MCP server"}
     checks.check("an empty admission refuses every load", all(any(v.startswith(k) for v in refused) for k in kinds), json.dumps(refused))
     return _finish(checks, root, out)
 

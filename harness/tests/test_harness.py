@@ -19,6 +19,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from harness import HarnessError, boot, claude, home, plugins, record, tmux, transcript  # noqa: E402
+from harness import session as session_module  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 TWO_TURNS = transcript.load(FIXTURES / "two-turns.jsonl")
@@ -43,6 +44,23 @@ class TranscriptReaders(unittest.TestCase):
         self.assertEqual(transcript.served_models(TWO_TURNS), ["claude-haiku-4-5-20251001"])
         self.assertEqual(transcript.claude_versions(TWO_TURNS), ["2.1.288"])
 
+    def test_a_compaction_summary_is_not_a_prompt(self):
+        summary = {"type": "user", "isSidechain": False, "isCompactSummary": True, "isVisibleInTranscriptOnly": True,
+                   "message": {"role": "user", "content": "This session is being continued from a previous conversation."}}
+        last_duration = max(i for i, r in enumerate(TWO_TURNS) if r.get("subtype") == "turn_duration")
+        records = TWO_TURNS[:last_duration] + [summary] + TWO_TURNS[last_duration:]
+        self.assertEqual(transcript.prompts(records), transcript.prompts(TWO_TURNS))
+        self.assertEqual(transcript.turns(records), transcript.turns(TWO_TURNS))
+
+    def test_synthetic_messages_are_not_a_served_model_and_api_errors_are_read(self):
+        def synthetic(text, error):
+            return {"type": "assistant", "isApiErrorMessage": error,
+                    "message": {"model": "<synthetic>", "content": [{"type": "text", "text": text}]}}
+        records = TWO_TURNS + [synthetic("No response requested.", False), synthetic("API Error: 529 Overloaded.", True)]
+        self.assertEqual(transcript.served_models(records), ["claude-haiku-4-5-20251001"])
+        self.assertEqual(transcript.api_errors(records), ["API Error: 529 Overloaded."])
+        self.assertEqual(transcript.api_errors(TWO_TURNS), [])
+
     def test_system_prompt_is_read_from_the_last_snapshot(self):
         records = [attachment("prompt_snapshot", systemPrompt=["a", "b"]), attachment("prompt_snapshot", systemPrompt=["c"])]
         self.assertEqual(transcript.system_prompt(records), "c")
@@ -66,15 +84,17 @@ class TranscriptReaders(unittest.TestCase):
             attachment("mcp_instructions_delta", addedNames=["docs"], addedBlocks=[], removedNames=[]),
             attachment("deferred_tools_delta", addedNames=["mcp__search__find"], surfacedNames=[],
                        failedMcpServers=["broken"], pendingMcpServers=[]),
-            attachment("skill_listing", names=["simplify", "laws:code"]),
-            attachment("agent_listing_delta", addedTypes=["Plan", "laws:auditor"], builtInTypes=["Plan"]),
+            attachment("skill_listing", names=["simplify", "laws:code", "deploy"]),
+            attachment("agent_listing_delta", addedTypes=["Plan", "laws:auditor", "reviewer"], builtInTypes=["Plan"]),
         ]
-        loaded = transcript.loaded(records)
+        loaded = transcript.loaded(records, frozenset({"deploy"}))
         self.assertEqual(loaded.claude_md, ("/Users/x/.claude/CLAUDE.md",))
         self.assertEqual(loaded.hooks, ("PreCompact", "SessionStart", "Stop"))
         self.assertEqual(loaded.mcp_servers, ("broken", "docs", "search"))
         self.assertIn("laws:code", loaded.plugin_skills)
-        self.assertIn("laws:auditor", loaded.plugin_agents)
+        self.assertEqual(loaded.plugin_agents, ("laws:auditor",))
+        self.assertEqual(loaded.project_skills, ("deploy",))
+        self.assertEqual(loaded.project_agents, ("reviewer",))
 
     def test_a_transcript_without_its_listings_is_refused(self):
         stripped = [r for r in TWO_TURNS if r.get("attachment", {}).get("type") != "skill_listing"]
@@ -92,10 +112,12 @@ class TranscriptReaders(unittest.TestCase):
 
 class Isolation(unittest.TestCase):
     WORK = Path("/work/case")
-    NOTHING = {"plugins": [], "hook_events": [], "mcp_servers": []}
+    NOTHING = {"plugins": [], "hook_events": [], "mcp_servers": [], "project_settings": False}
+    PROJECT = NOTHING | {"project_settings": True}
 
     def loaded(self, **fields) -> transcript.Loaded:
-        base = {"claude_md": (), "hooks": (), "plugin_skills": (), "plugin_agents": (), "mcp_servers": ()}
+        base = {"claude_md": (), "hooks": (), "plugin_skills": (), "plugin_agents": (), "project_skills": (),
+                "project_agents": (), "mcp_servers": ()}
         return transcript.Loaded(**(base | fields))
 
     def test_nothing_loaded_is_clean(self):
@@ -103,13 +125,20 @@ class Isolation(unittest.TestCase):
 
     def test_claude_md_outside_the_work_dir_is_foreign(self):
         found = record.isolation_violations(
-            self.loaded(claude_md=("/work/case/CLAUDE.md", "/work/CLAUDE.md", "/Users/x/.claude/CLAUDE.md")), self.NOTHING, self.WORK)
+            self.loaded(claude_md=("/work/case/CLAUDE.md", "/work/CLAUDE.md", "/Users/x/.claude/CLAUDE.md")), self.PROJECT, self.WORK)
         self.assertEqual(found, ["CLAUDE.md /work/CLAUDE.md", "CLAUDE.md /Users/x/.claude/CLAUDE.md"])
+
+    def test_project_loads_are_foreign_unless_project_settings_are_admitted(self):
+        loaded = self.loaded(claude_md=("/work/case/sub/CLAUDE.md",), project_skills=("deploy",), project_agents=("reviewer",))
+        self.assertEqual(record.isolation_violations(loaded, self.NOTHING, self.WORK),
+                         ["CLAUDE.md /work/case/sub/CLAUDE.md", "project skill deploy", "project agent reviewer"])
+        self.assertEqual(record.isolation_violations(loaded, self.PROJECT, self.WORK), [])
 
     def test_unadmitted_hooks_plugins_and_servers_are_foreign(self):
         loaded = self.loaded(hooks=("Stop",), plugin_skills=("laws:code",), plugin_agents=("memento:x",), mcp_servers=("docs",))
         self.assertEqual(len(record.isolation_violations(loaded, self.NOTHING, self.WORK)), 4)
-        admitted = {"plugins": [{"name": "laws"}, {"name": "memento"}], "hook_events": ["Stop"], "mcp_servers": ["docs"]}
+        admitted = self.NOTHING | {"plugins": [{"name": "laws"}, {"name": "memento"}], "hook_events": ["Stop"],
+                                   "mcp_servers": ["docs"]}
         self.assertEqual(record.isolation_violations(loaded, admitted, self.WORK), [])
 
 
@@ -261,10 +290,33 @@ class Locking(unittest.TestCase):
 
 
 class Plugins(unittest.TestCase):
-    def test_dir_plugin_is_pinned_by_digest(self):
-        pinned = plugins.pin(plugins.DirPlugin(FIXTURES / "probe-plugin"), Path(tempfile.mkdtemp()))
+    def test_dir_plugin_is_loaded_from_a_copy_pinned_by_digest(self):
+        source = Path(tempfile.mkdtemp()) / "probe"
+        subprocess.run(["cp", "-R", str(FIXTURES / "probe-plugin"), str(source)], check=True)
+        into = Path(tempfile.mkdtemp())
+        pinned = plugins.pin(plugins.DirPlugin(source), into)
         self.assertEqual(pinned.name, "harness-probe")
-        self.assertEqual(pinned.provenance["sha256"], plugins.tree_digest(FIXTURES / "probe-plugin"))
+        self.assertTrue(pinned.plugin_dir.is_relative_to(into))
+        self.assertEqual(pinned.provenance["sha256"], plugins.tree_digest(source))
+        (source / "skills" / "probe" / "SKILL.md").write_text("changed mid-run")
+        self.assertEqual(plugins.tree_digest(pinned.plugin_dir), pinned.provenance["sha256"])
+
+    def test_hook_events_come_from_every_place_a_plugin_declares_them(self):
+        root = Path(tempfile.mkdtemp())
+        (root / ".claude-plugin").mkdir()
+        (root / "hooks").mkdir()
+        (root / "cfg").mkdir()
+        (root / "hooks" / "hooks.json").write_text(json.dumps({"hooks": {"Stop": []}}))
+        (root / "cfg" / "more.json").write_text(json.dumps({"hooks": {"PreCompact": []}}))
+        manifest = root / ".claude-plugin" / "plugin.json"
+        manifest.write_text(json.dumps({"name": "p", "hooks": ["./cfg/more.json", {"SessionStart": []}]}))
+        self.assertEqual(plugins.pin(plugins.DirPlugin(root), Path(tempfile.mkdtemp())).hook_events,
+                         ("PreCompact", "SessionStart", "Stop"))
+        self.assertEqual(plugins.pin(plugins.DirPlugin(FIXTURES / "probe-plugin"), Path(tempfile.mkdtemp())).hook_events,
+                         ("UserPromptSubmit",))
+        manifest.write_text(json.dumps({"name": "p", "hooks": "./cfg/missing.json"}))
+        with self.assertRaisesRegex(HarnessError, "not a file"):
+            plugins.pin(plugins.DirPlugin(root), Path(tempfile.mkdtemp()))
 
     def test_git_plugin_is_pinned_to_a_commit(self):
         repo = Path(tempfile.mkdtemp())
@@ -274,19 +326,87 @@ class Plugins(unittest.TestCase):
         subprocess.run([*git, "add", "."], check=True)
         subprocess.run([*git, "commit", "-qm", "x"], check=True)
         commit = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-        pinned = plugins.pin(plugins.GitPlugin(str(repo), "HEAD", "plugin"), Path(tempfile.mkdtemp()))
+        into = Path(tempfile.mkdtemp())
+        pinned = plugins.pin(plugins.GitPlugin(str(repo), "HEAD", "plugin"), into)
         self.assertEqual((pinned.name, pinned.provenance["commit"]), ("harness-probe", commit))
         self.assertTrue((pinned.plugin_dir / "skills" / "probe" / "SKILL.md").is_file())
+        # A second plugin from the same repo at the same commit shares the snapshot.
+        again = plugins.pin(plugins.GitPlugin(str(repo), "HEAD", "plugin"), into)
+        self.assertEqual(again.plugin_dir, pinned.plugin_dir)
+
+    def test_a_relative_repo_path_is_resolved_against_the_caller(self):
+        cwd = Path(tempfile.mkdtemp()).resolve()
+        (cwd / "repo").mkdir()
+        before = os.getcwd()
+        os.chdir(cwd)
+        try:
+            parsed = plugins.parse_spec({"repo": "repo", "ref": "HEAD", "subdir": "p"})
+        finally:
+            os.chdir(before)
+        self.assertEqual(parsed.repo, str(cwd / "repo"))
+        self.assertEqual(plugins.parse_spec({"repo": "https://example.com/r.git", "ref": "HEAD", "subdir": "p"}).repo,
+                         "https://example.com/r.git")
 
     def test_a_spec_must_be_one_shape_or_the_other(self):
         with self.assertRaisesRegex(HarnessError, "a plugin is"):
             plugins.parse_spec({"dir": "x", "ref": "y"})
 
 
+class SessionLaunch(unittest.TestCase):
+    def session(self, **spec_fields) -> session_module.Session:
+        work = Path(tempfile.mkdtemp()).resolve()
+        return session_module.Session(session_module.Spec(work_dir=work, model="claude-x", **spec_fields),
+                                      Path(tempfile.mkdtemp()), "r1")
+
+    def test_admission_reads_the_work_dir_at_launch(self):
+        session = self.session(project_settings=True, settings={"hooks": {"Stop": []}})
+        (session.spec.work_dir / ".claude").mkdir()
+        settings = session.spec.work_dir / ".claude" / "settings.json"
+        settings.write_text(json.dumps({"hooks": {"SessionStart": []}}))
+        guidance = session.run_dir / "guidance.md"
+        guidance.write_text("g")
+        admitted = session._admit(guidance)
+        self.assertEqual(admitted["hook_events"], ["SessionStart", "Stop"])
+        settings.write_text("{not json")
+        with self.assertRaisesRegex(HarnessError, "is not JSON"):
+            session._admit(None)
+
+    def test_a_work_dir_without_project_settings_admits_none_of_its_hooks(self):
+        session = self.session()
+        (session.spec.work_dir / ".claude").mkdir()
+        (session.spec.work_dir / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": []}}))
+        self.assertEqual(session._admit(None)["hook_events"], [])
+
+    def test_the_work_dirs_skills_and_commands_are_named(self):
+        work = Path(tempfile.mkdtemp())
+        (work / ".claude" / "skills" / "deploy").mkdir(parents=True)
+        (work / ".claude" / "skills" / "deploy" / "SKILL.md").write_text("x")
+        (work / ".claude" / "skills" / "empty").mkdir()
+        (work / ".claude" / "commands").mkdir()
+        (work / ".claude" / "commands" / "ship.md").write_text("x")
+        self.assertEqual(session_module._work_dir_skills(work), frozenset({"deploy", "ship"}))
+
+    def test_a_claude_that_will_not_exit_is_killed_and_said_so(self):
+        session = self.session()
+        # Detached, as claude is: tmux, not the harness, is its parent and reaps it.
+        session._pid = int(subprocess.run(["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"],
+                                          capture_output=True, text=True, check=True).stdout)
+        with mock.patch.object(session_module, "EXIT_TIMEOUT_SECS", 0.3):
+            said = session._await_exit()
+        self.assertIn("was killed", said)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(session._pid, 0)
+
+
 class Schemas(unittest.TestCase):
     def test_failure_record_conforms(self):
         failure = record.failure("r1", HarnessError("boot", "never ready"), None)
         self.assertEqual(failure["stage"], "boot")
+
+    def test_a_failure_carries_the_notes_added_to_it(self):
+        error = HarnessError("turn", "claude exited mid-turn")
+        error.add_note("[teardown] claude (pid 1) was killed")
+        self.assertEqual(record.failure("r1", error, None)["error"], "claude exited mid-turn\n[teardown] claude (pid 1) was killed")
 
 
 @unittest.skipUnless(subprocess.run(["which", "tmux"], capture_output=True).returncode == 0, "tmux not installed")

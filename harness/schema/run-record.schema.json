@@ -48,18 +48,20 @@
         },
         "hook_events": {"type": "array", "items": {"type": "string"}},
         "mcp_servers": {"type": "array", "items": {"type": "string"}},
-        "project_settings": {"type": "boolean", "description": "the work dir's CLAUDE.md and .claude/settings*.json were allowed to load"}
+        "project_settings": {"type": "boolean", "description": "the work dir's CLAUDE.md, .claude/settings*.json, skills and agents were allowed to load"}
       }
     },
     "loaded": {
       "type": "object", "additionalProperties": false,
-      "required": ["claude_md", "hooks", "plugin_skills", "plugin_agents", "mcp_servers"],
+      "required": ["claude_md", "hooks", "plugin_skills", "plugin_agents", "project_skills", "project_agents", "mcp_servers"],
       "description": "what the session's transcript records loading beyond Claude Code's builtins; every entry was admitted",
       "properties": {
         "claude_md": {"type": "array", "items": {"type": "string"}},
         "hooks": {"type": "array", "items": {"type": "string"}},
         "plugin_skills": {"type": "array", "items": {"type": "string"}},
         "plugin_agents": {"type": "array", "items": {"type": "string"}},
+        "project_skills": {"type": "array", "items": {"type": "string"}},
+        "project_agents": {"type": "array", "items": {"type": "string"}},
         "mcp_servers": {"type": "array", "items": {"type": "string"}}
       }
     },
