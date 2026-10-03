@@ -43,6 +43,12 @@ class TranscriptReaders(unittest.TestCase):
         self.assertEqual(transcript.served_models(TWO_TURNS), ["claude-haiku-4-5-20251001"])
         self.assertEqual(transcript.claude_versions(TWO_TURNS), ["2.1.288"])
 
+    def test_system_prompt_is_read_from_the_last_snapshot(self):
+        records = [attachment("prompt_snapshot", systemPrompt=["a", "b"]), attachment("prompt_snapshot", systemPrompt=["c"])]
+        self.assertEqual(transcript.system_prompt(records), "c")
+        with self.assertRaisesRegex(HarnessError, "prompt_snapshot"):
+            transcript.system_prompt([])
+
     def test_tokens_count_each_api_message_once(self):
         message = {"id": "msg_1", "model": "m", "content": [], "usage": {"input_tokens": 3, "output_tokens": 5}}
         records = [{"type": "assistant", "message": message}, {"type": "assistant", "message": message}]
@@ -55,7 +61,8 @@ class TranscriptReaders(unittest.TestCase):
         records = TWO_TURNS + [
             attachment("instructions", files=[{"path": "/Users/x/.claude/CLAUDE.md", "type": "User", "content": "x"}]),
             attachment("hook_success", hookName="SessionStart:startup", hookEvent="SessionStart"),
-            attachment("hook_some_outcome_never_seen", hookName="Stop", hookEvent="Stop"),
+            attachment("hook_some_outcome_never_seen", hookName="PreCompact", hookEvent="PreCompact"),
+            {"type": "system", "subtype": "stop_hook_summary", "hookCount": 1},
             attachment("mcp_instructions_delta", addedNames=["docs"], addedBlocks=[], removedNames=[]),
             attachment("deferred_tools_delta", addedNames=["mcp__search__find"], surfacedNames=[],
                        failedMcpServers=["broken"], pendingMcpServers=[]),
@@ -64,7 +71,7 @@ class TranscriptReaders(unittest.TestCase):
         ]
         loaded = transcript.loaded(records)
         self.assertEqual(loaded.claude_md, ("/Users/x/.claude/CLAUDE.md",))
-        self.assertEqual(loaded.hooks, ("SessionStart", "Stop"))
+        self.assertEqual(loaded.hooks, ("PreCompact", "SessionStart", "Stop"))
         self.assertEqual(loaded.mcp_servers, ("broken", "docs", "search"))
         self.assertIn("laws:code", loaded.plugin_skills)
         self.assertIn("laws:auditor", loaded.plugin_agents)
@@ -127,6 +134,11 @@ class BootStates(unittest.TestCase):
         self.assertEqual(boot.state("Accessing workspace:\n/tmp/x\n❯ 1. Yes, I trust this folder"), boot.UNTRUSTED)
         self.assertEqual(boot.state("WARNING: Claude Code running in Bypass Permissions mode"), boot.BYPASS_DISCLAIMER)
         self.assertEqual(boot.state(""), boot.FORMING)
+
+    def test_trust_is_confirmed_only_with_the_cursor_on_yes(self):
+        dialog = "Accessing workspace:\n /tmp/x\n ❯ No, exit\n   Yes, I trust this folder\n"
+        self.assertFalse(boot.trust_selected(dialog))
+        self.assertTrue(boot.trust_selected(dialog.replace(" ❯ No", "   No").replace("   Yes", " ❯ Yes")))
 
 
 def fake_claude(directory: Path, status: dict | None, version: str = "2.1.288 (Claude Code)") -> Path:
@@ -205,6 +217,13 @@ class ConfigDir(unittest.TestCase):
         home.check_config_dir()
         (self.config / "CLAUDE.md").write_text("x")
         with self.assertRaisesRegex(HarnessError, "CLAUDE.md"):
+            home.check_config_dir()
+
+    def test_a_marketplace_catalog_is_not_an_install(self):
+        (self.config / "plugins" / "marketplaces").mkdir(parents=True)
+        home.check_config_dir()
+        (self.config / home.INSTALLED_PLUGINS).write_text(json.dumps({"version": 2, "plugins": {"laws@x": [{}]}}))
+        with self.assertRaisesRegex(HarnessError, "installed plugins"):
             home.check_config_dir()
 
     def test_enabled_plugins_in_settings_are_refused(self):

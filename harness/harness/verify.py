@@ -2,7 +2,8 @@
 
 Two sessions. The clean one admits nothing and is driven for two turns, the second a
 prompt large enough that a paste would arrive wrapped. The control one admits one of each
-thing a session can load (a work-dir CLAUDE.md, a hook, a plugin, an MCP server) and
+thing a session can load (a work-dir CLAUDE.md, a project hook, a --settings hook, a
+plugin, an MCP server) and
 proves the transcript readers see each load: a reader that saw nothing would make the
 clean session's empty reading worthless. The control session's loads are then checked
 against an empty admission, which must refuse every one of them.
@@ -23,6 +24,7 @@ from .plugins import DirPlugin
 
 HERE = Path(__file__).resolve().parent.parent
 PROBE_PLUGIN = HERE / "tests" / "fixtures" / "probe-plugin"
+GUIDANCE_MARKER = "HARNESS-VERIFY-GUIDANCE-3c91"
 LARGE_PROMPT = "\n".join(f"Line {i}: filler that makes this prompt larger than a paste may be." for i in range(80)) \
     + "\nReply with exactly the word BRAVO and nothing else."
 
@@ -63,9 +65,15 @@ def verify(model: str, out: Path | None) -> int:
     control_work = root / "control-work"
     control_work.mkdir(parents=True)
     (control_work / "CLAUDE.md").write_text("This project is a harness verification fixture.\n")
+    (control_work / ".claude").mkdir()
+    (control_work / ".claude" / "settings.json").write_text(json.dumps(
+        {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "echo harness verification hook"}]}]}}))
+    guidance = root / "guidance.md"
+    guidance.write_text(f"{GUIDANCE_MARKER}: this line exists so verify can find it in the system prompt.\n")
     control_spec = Spec(
-        work_dir=control_work.resolve(), model=model, plugins=(DirPlugin(PROBE_PLUGIN),),
-        settings={"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "true"}]}]}},
+        work_dir=control_work.resolve(), model=model, plugins=(DirPlugin(PROBE_PLUGIN),), project_settings=True,
+        append_system_prompt=guidance.resolve(),
+        settings={"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "true"}]}]}},
         mcp_config={"mcpServers": {"harness-probe": {"command": "/usr/bin/false"}}},
     )
     try:
@@ -75,11 +83,14 @@ def verify(model: str, out: Path | None) -> int:
         return _finish(checks, root, out)
     seen = control["loaded"]
     checks.check("work-dir CLAUDE.md is seen", str(control_work.resolve() / "CLAUDE.md") in seen["claude_md"], json.dumps(seen["claude_md"]))
-    checks.check("admitted hook is seen", "SessionStart" in seen["hooks"], json.dumps(seen["hooks"]))
+    checks.check("admitted hooks are seen", {"SessionStart", "Stop"} <= set(seen["hooks"]), json.dumps(seen["hooks"]))
     checks.check("admitted plugin's skill is seen", "harness-probe:probe" in seen["plugin_skills"], json.dumps(seen["plugin_skills"]))
     checks.check("admitted MCP server is seen", "harness-probe" in seen["mcp_servers"], json.dumps(seen["mcp_servers"]))
-    loads = transcript.loaded(transcript.load(root / "control" / control["transcript"]))
-    nothing = {"plugins": [], "hook_events": [], "mcp_servers": []}
+    control_records = transcript.load(root / "control" / control["transcript"])
+    checks.check("appended guidance is in the system prompt", GUIDANCE_MARKER in transcript.system_prompt(control_records),
+                 control["admitted"]["append_system_prompt"]["sha256"])
+    loads = transcript.loaded(control_records)
+    nothing = {"plugins": [], "hook_events": [], "mcp_servers": [], "project_settings": False}
     refused = record.isolation_violations(loads, nothing, clean_work.resolve())
     kinds = {"CLAUDE.md", "hook", "plugin skill", "MCP server"}
     checks.check("an empty admission refuses every load", all(any(v.startswith(k) for v in refused) for k in kinds), json.dumps(refused))

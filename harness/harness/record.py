@@ -17,6 +17,13 @@ RUN_SCHEMA = json.loads((SCHEMA_DIR / "run-record.schema.json").read_text())
 FAILURE_SCHEMA = json.loads((SCHEMA_DIR / "failure.schema.json").read_text())
 
 
+def _project_hook_events(spec) -> set[str]:
+    if not spec.project_settings:
+        return set()
+    files = [spec.work_dir / ".claude" / name for name in ("settings.json", "settings.local.json")]
+    return {event for f in files if f.is_file() for event in json.loads(f.read_text()).get("hooks", {})}
+
+
 def admitted(session: Session) -> dict:
     spec = session.spec
     prompt = spec.append_system_prompt
@@ -24,8 +31,10 @@ def admitted(session: Session) -> dict:
         "plugins": [{"name": p.name, **p.provenance} for p in session.pinned],
         "append_system_prompt": None if prompt is None else {
             "path": str(prompt), "sha256": hashlib.sha256(prompt.read_bytes()).hexdigest()},
-        "hook_events": sorted({e for p in session.pinned for e in p.hook_events} | set(spec.settings.get("hooks", {}))),
+        "hook_events": sorted({e for p in session.pinned for e in p.hook_events} | set(spec.settings.get("hooks", {}))
+                              | _project_hook_events(spec)),
         "mcp_servers": sorted((spec.mcp_config or {}).get("mcpServers", {})),
+        "project_settings": spec.project_settings,
     }
 
 

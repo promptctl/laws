@@ -36,7 +36,7 @@
       }
     },
     "admitted": {
-      "type": "object", "additionalProperties": false, "required": ["plugins", "append_system_prompt", "hook_events", "mcp_servers"],
+      "type": "object", "additionalProperties": false, "required": ["plugins", "append_system_prompt", "hook_events", "mcp_servers", "project_settings"],
       "properties": {
         "plugins": {"type": "array", "items": {"$ref": "#/$defs/plugin"}},
         "append_system_prompt": {
@@ -47,7 +47,8 @@
           ]
         },
         "hook_events": {"type": "array", "items": {"type": "string"}},
-        "mcp_servers": {"type": "array", "items": {"type": "string"}}
+        "mcp_servers": {"type": "array", "items": {"type": "string"}},
+        "project_settings": {"type": "boolean", "description": "the work dir's CLAUDE.md and .claude/settings*.json were allowed to load"}
       }
     },
     "loaded": {
