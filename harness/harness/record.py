@@ -29,6 +29,8 @@ def isolation_violations(loaded: transcript.Loaded, allowed: dict, work_dir: Pat
               if not (project and Path(path).resolve().is_relative_to(work_dir))]
     found += [f"project skill {name}" for name in loaded.project_skills if not project]
     found += [f"project agent {name}" for name in loaded.project_agents if not project]
+    found += [f"parent-directory skill {name}" for name in loaded.other_skills]
+    found += [f"agent {name} from outside the work dir" for name in loaded.other_agents]
     found += [f"hook {event}" for event in loaded.hooks if event not in allowed["hook_events"]]
     found += [f"plugin skill {name}" for name in loaded.plugin_skills if name.split(":", 1)[0] not in plugin_names]
     found += [f"plugin agent {name}" for name in loaded.plugin_agents if name.split(":", 1)[0] not in plugin_names]
@@ -42,7 +44,10 @@ def build(session: Session) -> dict:
     was admitted."""
     if session.transcript_path is None:
         raise HarnessError("record", "the session is not closed; its transcript has not been captured")
-    records = transcript.load(session.transcript_path)
+    main = transcript.load(session.transcript_path)
+    # Subagents write their own transcripts; every check but the turns covers them too.
+    sidecar = session.transcript_path.with_suffix("") / "subagents"
+    records = main + [r for f in sorted(sidecar.glob("*.jsonl")) for r in transcript.load(f)]
     spec, binary = session.spec, session.binary
     errors = transcript.api_errors(records)
     if errors:
@@ -54,11 +59,11 @@ def build(session: Session) -> dict:
     if versions != [binary.version]:
         raise HarnessError("binary", f"resolved Claude Code {binary.version}; the transcript records {versions}")
     allowed = session.admitted
-    loaded = transcript.loaded(records, session.work_dir_skills)
+    loaded = transcript.loaded(records, session.project_defs)
     foreign = isolation_violations(loaded, allowed, spec.work_dir)
     if foreign:
         raise HarnessError("isolation", f"the session loaded what the caller did not admit: {foreign}")
-    turns = transcript.turns(records)
+    turns = transcript.turns(main)
     record = {
         "schema_version": 1,
         "run_id": session.run_id,

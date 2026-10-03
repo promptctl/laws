@@ -37,10 +37,14 @@ Needs `uv`, `tmux`, `git` and `claude` on PATH. A spec:
 
 Only `work_dir` and `model` are required. `project_settings` lets the work dir's own
 `CLAUDE.md`, `.claude/settings.json`, skills and agents load; off, any of them that loads
-fails the run. What is admitted is read once at launch, because the session can rewrite its
-own work dir. A run leaves `DIR/run.json`
+fails the run. A parent directory's are never admitted. What is admitted is read once at
+launch, because the session can rewrite its own work dir. Settings that bring another
+credential or provider (`apiKeyHelper`, `env.ANTHROPIC_API_KEY`, ...) are refused. A prompt
+is sent exactly as written, so one with surrounding whitespace or a leading `/`, `!` or `#`
+is refused. A run whose arguments are accepted leaves `DIR/run.json`
 (`schema/run-record.schema.json`) or `DIR/failure.json` (`schema/failure.schema.json`),
-never both and never neither, plus `DIR/transcript/<session>.jsonl`. From Python, an eval
+never both and never neither, plus `DIR/transcript/<session>.jsonl`; arguments that are not
+accepted raise before anything is written. From Python, an eval
 calls `harness.run.run(Spec(...), prompts, run_dir, run_id)`.
 
 Tests: `uv run --with jsonschema python -m unittest discover -s harness/tests`.
@@ -58,7 +62,7 @@ The sources were the single-session harness restored from `cf5a570^` (`evals/iso
 | proving isolation | read from the session's own transcript records (`instructions`, `hook_*`, `skill_listing`, `agent_listing_delta`, MCP deltas), checked against what the caller admitted; `verify` runs a positive control for each kind of load so an empty reading cannot pass by accident. A hook that prints nothing leaves no transcript record; the config-dir check and `--setting-sources` keep those out | evals/law (read what the session reports loading, never ask the model); the transcript records replace the `-p` init message, which an interactive session does not print |
 | plugin admission and pinning | each admitted plugin is snapshotted (`git archive` of the whole tree at one commit, or a copy of a directory pinned by its digest) and loaded with `--plugin-dir`; nothing is installed into the config dir. A plugin's hooks are admitted from `hooks/hooks.json` and the manifest's `hooks`; its MCP servers do not load under `--strict-mcp-config` | horizon (`git archive` snapshot of the whole tree, admitted set is exactly what the caller lists) |
 | claude version pinning | `claude` resolved once through the installer's symlink, launched by that resolved path, an optional exact pin, and every transcript record's `version` checked against it; `DISABLE_AUTOUPDATER=1` | horizon (`horizon_claude_path`, version pin, autoupdater off) |
-| model verification | the caller names a full model id; every assistant message in the transcript must carry exactly that model, and a session that showed an API error in place of a reply fails as `api` | evals/law (refuse a run whose session reports another model), read from the API responses rather than the init message |
+| model verification | the caller names a full model id; subagents are launched on it too (`CLAUDE_CODE_SUBAGENT_MODEL`), and every assistant message in the transcript and its subagents' transcripts must carry exactly that model, and a session that showed an API error in place of a reply fails as `api` | evals/law (refuse a run whose session reports another model), read from the API responses rather than the init message |
 | driving turns | tmux, the pane process launched with no shell; each prompt is typed through the TUI's external-editor key (`$EDITOR` is a harness script), confirmed by the transcript recording it byte for byte, and the turn is done when the transcript records `turn_duration` | evals/driver (tmux, confirm the send, never return a partial turn); the editor route is new because a large bracketed paste reaches the model wrapped in `<pasted_content>` tags |
 | boot gates | the pane classified by a pure function, banner first, the login notice read only from the status row; onboarding written once at login; the trust dialog answered "yes" only once the cursor is seen on it (in bypass mode its default is "No, exit") | horizon `horizon_boot_state`; trust handling from evals/isolation |
 | transcript capture | the session's transcript (and its subagent directory) moved out of the config dir into the run dir when the session ends, on every exit path | horizon `horizon_capture_transcripts` |

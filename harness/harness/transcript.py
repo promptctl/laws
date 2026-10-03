@@ -15,11 +15,7 @@ from pathlib import Path
 from . import HarnessError
 
 
-def parse(text: str, complete: bool = True) -> list[dict]:
-    """`complete=False` reads a transcript still being written: its unterminated last line
-    is a record mid-write and is left for the next read."""
-    if not complete and not text.endswith("\n"):
-        text = text[:text.rfind("\n") + 1]
+def parse(text: str) -> list[dict]:
     records = []
     for number, line in enumerate(text.splitlines(), 1):
         if not line.strip():
@@ -81,7 +77,9 @@ def turns(records: list[dict]) -> list[Turn]:
         elif record.get("type") == "assistant" and not record.get("isSidechain") and prompt is not None:
             texts += [b["text"] for b in record["message"].get("content", []) if b.get("type") == "text"]
         elif record.get("type") == "system" and record.get("subtype") == "turn_duration" and prompt is not None:
-            finished.append(Turn(prompt, "\n\n".join(texts), int(record.get("durationMs", 0))))
+            if "durationMs" not in record:
+                raise HarnessError("transcript", "a turn_duration record carries no durationMs")
+            finished.append(Turn(prompt, "\n\n".join(texts), int(record["durationMs"])))
             prompt, texts = None, []
     return finished
 
@@ -122,7 +120,10 @@ def tokens(records: list[dict]) -> dict[str, int]:
     usage_by_message: dict[str, dict] = {}
     for r in records:
         if r.get("type") == "assistant" and r["message"].get("id"):
-            usage_by_message[r["message"]["id"]] = r["message"].get("usage") or {}
+            usage = r["message"].get("usage") or {}
+            if "input_tokens" not in usage or "output_tokens" not in usage:
+                raise HarnessError("transcript", f"API message {r['message']['id']} carries no input/output token usage")
+            usage_by_message[r["message"]["id"]] = usage
     keys = {"input": "input_tokens", "output": "output_tokens",
             "cache_read": "cache_read_input_tokens", "cache_creation": "cache_creation_input_tokens"}
     return {name: sum(int(u.get(key) or 0) for u in usage_by_message.values()) for name, key in keys.items()}
@@ -135,26 +136,41 @@ def _summary_event(record: dict) -> str:
 
 
 @dataclass(frozen=True)
+class ProjectDefs:
+    """The skills and agents defined on disk around a work dir, by the names a session
+    lists them under: in the work dir's own .claude, and in its parent directories' (which
+    Claude Code also loads as project definitions)."""
+    work_skills: frozenset[str] = frozenset()
+    work_agents: frozenset[str] = frozenset()
+    parent_skills: frozenset[str] = frozenset()
+    parent_agents: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
 class Loaded:
     """What the session put in front of the model besides Claude Code's own builtins."""
     claude_md: tuple[str, ...]
     hooks: tuple[str, ...]
     plugin_skills: tuple[str, ...]
     plugin_agents: tuple[str, ...]
-    project_skills: tuple[str, ...]
+    project_skills: tuple[str, ...]  # defined in the work dir
     project_agents: tuple[str, ...]
+    other_skills: tuple[str, ...]  # defined in a parent directory
+    other_agents: tuple[str, ...]  # neither builtin, a plugin's nor the work dir's
     mcp_servers: tuple[str, ...]
 
     def as_record(self) -> dict:
         return {k: list(v) for k, v in self.__dict__.items()}
 
 
-def loaded(records: list[dict], work_dir_skills: frozenset[str] = frozenset()) -> Loaded:
+def loaded(records: list[dict], defs: ProjectDefs = ProjectDefs()) -> Loaded:
     """Read the loaded set from the session's own records.
 
-    A plugin's skills and agents are named `plugin:name`. An agent that is neither a plugin's
-    nor a builtin came from a project. The skill listing does not mark builtins, so a
-    project skill is told apart by name: `work_dir_skills` is what the work dir defines.
+    The listings do not say where a skill or agent came from, so each is placed by name:
+    the project definitions on disk first (a nested project command is `dir:name`), then
+    `plugin:name`, then for an agent the listing's own builtin set. A skill defined
+    nowhere on disk is a builtin; one that shares a builtin's name counts as the project's,
+    so that collision fails a run rather than passing it.
 
     skill_listing and agent_listing_delta are required: every session writes them, so their
     absence means the format moved and nothing below could be trusted. CLAUDE.md files,
@@ -185,9 +201,12 @@ def loaded(records: list[dict], work_dir_skills: frozenset[str] = frozenset()) -
     for a in _attachments(records, "deferred_tools_delta"):
         mcp |= {s if isinstance(s, str) else s.get("name", str(s)) for s in a.get("failedMcpServers", []) + a.get("pendingMcpServers", [])}
         mcp |= {n.split("__")[1] for n in a.get("addedNames", []) + a.get("surfacedNames", []) if n.startswith("mcp__")}
-    plugin_skills = sorted(n for n in skills if ":" in n)
-    project_skills = sorted(n for n in skills if ":" not in n and n in work_dir_skills)
-    plugin_agents = sorted(a for a in agents - builtin_agents if ":" in a)
-    project_agents = sorted(a for a in agents - builtin_agents if ":" not in a)
-    return Loaded(tuple(claude_md), tuple(hooks), tuple(plugin_skills), tuple(plugin_agents),
-                  tuple(project_skills), tuple(project_agents), tuple(sorted(mcp)))
+    project_skills = sorted(skills & defs.work_skills)
+    other_skills = sorted((skills & defs.parent_skills) - defs.work_skills)
+    plugin_skills = sorted(n for n in skills - defs.work_skills - defs.parent_skills if ":" in n)
+    added = agents - builtin_agents
+    project_agents = sorted(added & defs.work_agents)
+    plugin_agents = sorted(a for a in added - defs.work_agents if ":" in a)
+    other_agents = sorted(a for a in added - defs.work_agents if ":" not in a)
+    return Loaded(tuple(claude_md), tuple(hooks), tuple(plugin_skills), tuple(plugin_agents), tuple(project_skills),
+                  tuple(project_agents), tuple(other_skills), tuple(other_agents), tuple(sorted(mcp)))

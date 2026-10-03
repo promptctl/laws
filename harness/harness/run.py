@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from . import HarnessError, record
-from .session import Session, Spec
+from .session import Session, Spec, check_prompt
 
 # The run id names the tmux session, and tmux rewrites "." in a session name to "_".
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -19,6 +19,8 @@ def run(spec: Spec, prompts: list[str], run_dir: Path, run_id: str) -> dict:
         raise HarnessError("spec", f"run id {run_id!r} must match {RUN_ID_RE.pattern}")
     if not prompts:
         raise HarnessError("spec", "a run needs at least one prompt")
+    for prompt in prompts:
+        check_prompt(prompt)
     if run_dir.exists() and any(run_dir.iterdir()):
         raise HarnessError("spec", f"run dir already has contents: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)

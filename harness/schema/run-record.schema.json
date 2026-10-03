@@ -53,7 +53,7 @@
     },
     "loaded": {
       "type": "object", "additionalProperties": false,
-      "required": ["claude_md", "hooks", "plugin_skills", "plugin_agents", "project_skills", "project_agents", "mcp_servers"],
+      "required": ["claude_md", "hooks", "plugin_skills", "plugin_agents", "project_skills", "project_agents", "other_skills", "other_agents", "mcp_servers"],
       "description": "what the session's transcript records loading beyond Claude Code's builtins; every entry was admitted",
       "properties": {
         "claude_md": {"type": "array", "items": {"type": "string"}},
@@ -62,6 +62,8 @@
         "plugin_agents": {"type": "array", "items": {"type": "string"}},
         "project_skills": {"type": "array", "items": {"type": "string"}},
         "project_agents": {"type": "array", "items": {"type": "string"}},
+        "other_skills": {"type": "array", "items": {"type": "string"}, "description": "defined in a parent of the work dir"},
+        "other_agents": {"type": "array", "items": {"type": "string"}, "description": "neither builtin, a plugin's nor the work dir's"},
         "mcp_servers": {"type": "array", "items": {"type": "string"}}
       }
     },

@@ -55,6 +55,8 @@ class Spec:
         unknown = set(data) - allowed
         if unknown:
             raise HarnessError("spec", f"unknown spec fields {sorted(unknown)}")
+        if "work_dir" not in data:
+            raise HarnessError("spec", "a session spec needs a work_dir")
         if not str(data.get("model", "")).startswith("claude-"):
             raise HarnessError("spec", f"model must be a full model id (claude-...), not {data.get('model')!r}")
         return Spec(
@@ -67,6 +69,25 @@ class Spec:
             mcp_config=data.get("mcp_config"),
             project_settings=bool(data.get("project_settings", False)),
         )
+
+
+def check_prompt(prompt: object) -> str:
+    """A prompt the TUI submits as typed text and records byte for byte. A leading "/",
+    "!" or "#" would run a command, a shell line or a memory edit, and the input box trims
+    surrounding whitespace, so each is refused rather than sent and found changed."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise HarnessError("spec", f"a prompt is non-empty text, not {prompt!r}")
+    if prompt != prompt.strip():
+        raise HarnessError("spec", f"a prompt cannot start or end with whitespace: {prompt[:60]!r}")
+    if prompt[0] in "/!#":
+        raise HarnessError("spec", f"a prompt cannot start with {prompt[0]!r}, which the TUI reads as a command: {prompt[:60]!r}")
+    return prompt
+
+
+def launch_env(spec: Spec, editor: Path) -> dict[str, str]:
+    # Subagents run on the requested model too, so every response can be held to it.
+    return claude.session_env(home.CONFIG_DIR, {"EDITOR": str(editor), "VISUAL": str(editor),
+                                                "CLAUDE_CODE_SUBAGENT_MODEL": spec.model})
 
 
 def _sha256(text: str) -> str:
@@ -99,7 +120,10 @@ class Session:
         # What the caller admitted, read once at launch: the session runs with permissions
         # skipped and can rewrite its own work dir, so nothing is read from it afterwards.
         self.admitted: dict | None = None
-        self.work_dir_skills: frozenset[str] = frozenset()
+        self.project_defs = transcript.ProjectDefs()
+        self._live_path: Path | None = None
+        self._live_offset = 0
+        self._live_records: list[dict] = []
         self.transcript_path: Path | None = None  # set once the session is closed and the file moved
         self._lock = None
         self._launched = False
@@ -130,11 +154,12 @@ class Session:
                     return
                 try:
                     self._capture_transcript()
-                except HarnessError:
-                    # A session that failed before it wrote a transcript has nothing to
-                    # capture; the failure that stopped it is the one to report.
+                except HarnessError as error:
+                    # The failure that stopped the session is the one to report; why its
+                    # transcript could not be captured rides along on it.
                     if exc is None:
                         raise
+                    exc.add_note(str(error))
                 if forced is not None:
                     # A failure already in flight is the one to report; the forced exit
                     # rides along on it rather than replacing it.
@@ -167,13 +192,13 @@ class Session:
             guidance = control / "append-system-prompt.md"
             shutil.copyfile(spec.append_system_prompt, guidance)
         self.admitted = self._admit(guidance)
-        self.work_dir_skills = _work_dir_skills(spec.work_dir)
+        self.project_defs = project_defs(spec.work_dir)
         editor = control / "editor.sh"
         editor.write_text(f"#!/bin/sh\ncp {shlex.quote(str(control / 'prompt.txt'))} \"$1\" && touch {shlex.quote(str(control / 'editor.done'))}\n")
         editor.chmod(0o755)
 
         argv = ["/usr/bin/env", "-i"]
-        argv += [f"{k}={v}" for k, v in claude.session_env(home.CONFIG_DIR, {"EDITOR": str(editor), "VISUAL": str(editor)}).items()]
+        argv += [f"{k}={v}" for k, v in launch_env(spec, editor).items()]
         # The resolved versioned file, launched under a symlink named `claude` so the process
         # is recognisable by name and cannot be repointed by an update mid-run.
         link = control / "claude"
@@ -197,15 +222,18 @@ class Session:
 
     def _admit(self, guidance: Path | None) -> dict:
         spec = self.spec
+        claude.refuse_credential_settings(spec.settings, "the spec's settings")
         project_hooks: set[str] = set()
         if spec.project_settings:
             # settings.local.json is the "local" setting source, which never loads.
             f = spec.work_dir / ".claude" / "settings.json"
             if f.is_file():
                 try:
-                    project_hooks |= set(json.loads(f.read_text()).get("hooks", {}))
+                    project = json.loads(f.read_text())
                 except json.JSONDecodeError as error:
                     raise HarnessError("spec", f"{f} is not JSON: {error}") from None
+                claude.refuse_credential_settings(project, str(f))
+                project_hooks |= set(project.get("hooks", {}))
         return {
             "plugins": [{"name": p.name, **p.provenance} for p in self.pinned],
             "append_system_prompt": None if guidance is None else {
@@ -247,13 +275,22 @@ class Session:
     def records(self) -> list[dict]:
         if self.transcript_path is not None:
             return transcript.load(self.transcript_path)
-        live = self._live_transcript()
-        # claude is still appending: a last line without its newline is a record mid-write.
-        return transcript.parse(live.read_text(), complete=False) if live is not None else []
+        if self._live_path is None:
+            self._live_path = self._live_transcript()
+            if self._live_path is None:
+                return []
+        # claude only appends, so each read parses just the lines added since the last. A
+        # last line without its newline is a record mid-write, left for the next read.
+        with self._live_path.open("rb") as f:
+            f.seek(self._live_offset)
+            added = f.read()
+        complete = added[:added.rfind(b"\n") + 1]
+        self._live_records += transcript.parse(complete.decode())
+        self._live_offset += len(complete)
+        return self._live_records
 
     def turn(self, prompt: str, timeout: float = TURN_TIMEOUT_SECS) -> transcript.Turn:
-        if not prompt:
-            raise HarnessError("turn", "an empty prompt")
+        check_prompt(prompt)
         name = self.tmux_name
         pane = lambda: tmux.capture(name)  # noqa: E731
         records = self.records()
@@ -262,10 +299,14 @@ class Session:
         done = control / "editor.done"
         done.unlink(missing_ok=True)
         (control / "prompt.txt").write_text(prompt)
-        empty_box = pane()
+        # The prompt's last line is where the box's cursor sits, so it is on screen however
+        # long the prompt is; it is in the box once the pane shows it once more than before.
+        tail = prompt.splitlines()[-1][-60:]
+        shown_before = pane().count(tail)
         tmux.send_keys(name, "C-g")
         _wait("the editor writing the prompt", "turn", EDITOR_TIMEOUT_SECS, done.exists, pane)
-        _wait("the prompt appearing in the input box", "turn", EDITOR_TIMEOUT_SECS, lambda: pane() != empty_box, pane)
+        _wait("the prompt appearing in the input box", "turn", EDITOR_TIMEOUT_SECS,
+              lambda: pane().count(tail) > shown_before, pane)
         tmux.send_keys(name, "Enter")
 
         def submitted() -> bool:
@@ -326,9 +367,39 @@ class Session:
         self.transcript_path = target / live.name
 
 
-def _work_dir_skills(work_dir: Path) -> frozenset[str]:
-    """The skills and commands the work dir defines, which load as project skills."""
-    claude_dir = work_dir / ".claude"
-    skills = {d.name for d in (claude_dir / "skills").glob("*") if (d / "SKILL.md").is_file()}
-    commands = {f.stem for f in (claude_dir / "commands").glob("*.md")}
-    return frozenset(skills | commands)
+
+def _named(path: Path) -> str:
+    """A skill or agent file's `name:` frontmatter, else its file name."""
+    lines = path.read_text().splitlines()
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            if line.startswith("name:") and line[5:].strip():
+                return line[5:].strip().strip("'\"")
+    return path.parent.name if path.name == "SKILL.md" else path.stem
+
+
+def _defined(claude_dir: Path) -> tuple[set[str], set[str]]:
+    """The skill and agent names one .claude directory defines. A command in a
+    subdirectory is listed as `dir:name`."""
+    skills = {_named(d / "SKILL.md") for d in (claude_dir / "skills").glob("*") if (d / "SKILL.md").is_file()}
+    commands = claude_dir / "commands"
+    skills |= {":".join(f.relative_to(commands).with_suffix("").parts) for f in commands.rglob("*.md")}
+    agents = {_named(f) for f in (claude_dir / "agents").glob("*.md")}
+    return skills, agents
+
+
+def project_defs(work_dir: Path) -> transcript.ProjectDefs:
+    """What the work dir and its parent directories define. Parents reach the owner's home,
+    whose .claude is the owner's own setup; those names are listed too, and none of them
+    may load."""
+    work_skills, work_agents = _defined(work_dir / ".claude")
+    parent_skills: set[str] = set()
+    parent_agents: set[str] = set()
+    for parent in work_dir.parents:
+        skills, agents = _defined(parent / ".claude")
+        parent_skills |= skills
+        parent_agents |= agents
+    return transcript.ProjectDefs(frozenset(work_skills), frozenset(work_agents),
+                                  frozenset(parent_skills), frozenset(parent_agents))
