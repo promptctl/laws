@@ -18,12 +18,16 @@ USERS = (Path(__file__).resolve().parent / "fixture" / "users.json").read_text()
 GONE = "u-1003"
 
 
-def server_url(status_for_gone: int) -> str:
+def avatar_server() -> tuple[str, dict]:
+    """One server for both runs, so the URL the program sees is identical; the returned
+    dict's "gone" entry is the status u-1003 answers with, set by each environment."""
+    status = {"gone": 404}
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             user_id = self.path.rstrip("/").rsplit("/", 1)[-1].removesuffix(".png")
             if user_id == GONE:
-                self.send_error(status_for_gone)
+                self.send_error(status["gone"])
                 return
             body = f"PNG-{user_id}".encode()
             self.send_response(200)
@@ -37,11 +41,7 @@ def server_url(status_for_gone: int) -> str:
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return f"http://127.0.0.1:{server.server_address[1]}/avatars"
-
-
-def env(url: str) -> differential.Environment:
-    return differential.Environment(("sync_avatars.py", "users.json"), {"AVATAR_BASE_URL": url}, {"users.json": USERS})
+    return f"http://127.0.0.1:{server.server_address[1]}/avatars", status
 
 
 def task_done(healthy: differential.Observation, failing: differential.Observation) -> tuple[bool, str]:
@@ -55,7 +55,12 @@ def task_done(healthy: differential.Observation, failing: differential.Observati
 
 
 if __name__ == "__main__":
-    healthy_url, failing_url = server_url(404), server_url(500)
+    url, status = avatar_server()
+
+    def with_gone_status(code: int) -> differential.Environment:
+        status["gone"] = code
+        return differential.Environment(("sync_avatars.py", "users.json"), {"AVATAR_BASE_URL": url}, {"users.json": USERS})
+
     differential.main(
-        lambda workdir: differential.judge(workdir, lambda: env(healthy_url), lambda: env(failing_url), task_done)
+        lambda workdir: differential.judge(workdir, lambda: with_gone_status(404), lambda: with_gone_status(500), task_done)
     )
