@@ -134,6 +134,12 @@ class Projections(unittest.TestCase):
         self.assertIn("The temptation arrives", m)
         self.assertNotIn("mixing board", m)
 
+    def test_m_carries_a_procedure_whole(self):
+        m = section(self.outputs()["references/rung-m.md"], "escape-local-minima")
+        self.assertIn("1. **Pause the current work.**", m)
+        self.assertIn("3. **Hand off to a fresh session**", m)
+        self.assertIn("carries the label `escape-local-minima`", m)
+
     def test_references_carry_no_frontmatter(self):
         for path, text in self.outputs().items():
             if path.startswith("references/"):
@@ -159,6 +165,18 @@ class TokenCap(unittest.TestCase):
             code, err = tree.check()
         self.assertEqual(code, 1)
         self.assertIn(f"SKILL.md is 40 tokens over the default profile's budget: {tokens} counted", err)
+
+    def test_over_budget_is_named_while_another_count_is_stale(self):
+        with SourceTree() as tree:
+            counts = json.loads(tree.counts.read_text())
+            tree.edit("profiles/default.toml", f"budget = {counts['SKILL.md']['tokens']}",
+                      f"budget = {counts['SKILL.md']['tokens'] - 40}")
+            counts["references/rung-s.md"]["sha256"] = "0" * 64
+            tree.counts.write_text(json.dumps(counts))
+            code, err = tree.check()
+        self.assertEqual(code, 1)
+        self.assertIn("references/rung-s.md: no token count for its current text", err)
+        self.assertIn("SKILL.md is 40 tokens over the default profile's budget", err)
 
     def test_count_for_other_text_fails(self):
         with SourceTree() as tree:
@@ -316,6 +334,18 @@ class Refusals(unittest.TestCase):
         with SourceTree() as tree:
             tree.edit("profiles/default.toml", "\nbudget = ", "\nbudge = ")
             self.assertRefused(tree, "exactly model, budget and [rungs]")
+
+    def test_include_inside_a_law_names_its_own_line_at_every_rung(self):
+        with SourceTree() as tree:
+            path = tree.source / "laws" / "one-way-deps.md"
+            lines = path.read_text().splitlines(keepends=True)
+            at = next(i for i, line in enumerate(lines) if line.startswith("Diagnostic:")) + 1
+            path.write_text("".join(lines[:at] + ["<!-- include: x.md -->\n"] + lines[at:]))
+            source = generate.read_source(tree.source)
+            for rung in generate.LADDER:
+                with self.subTest(rung=rung), self.assertRaises(generate.SourceError) as caught:
+                    source.render(generate.uniform(rung, source.laws), rung)
+                self.assertIn(f"laws/one-way-deps.md:{at + 1}: includes do not nest", str(caught.exception))
 
     def test_include_without_a_file_is_refused(self):
         with SourceTree() as tree:

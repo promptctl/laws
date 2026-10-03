@@ -1,5 +1,6 @@
 # The profile laws:code ships: each law's rung, and the token budget its SKILL.md must fit.
-# Rungs: S = statement, Diagnostic, lineage; M = S plus the temptation and its redirect; L = all.
+# Rungs: S = statement, Diagnostic, lineage; M = S plus the temptation and its redirect, where a
+# law whose redirect is a procedure marks the procedure; L = all.
 # Changing a rung is a one-line edit here; regenerate, then recount (count.py).
 
 model = "claude-opus-5-5"

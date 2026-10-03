@@ -23,12 +23,17 @@ import urllib.request
 import generate
 
 ENDPOINT = "https://api.anthropic.com/v1/messages/count_tokens"
+TIMEOUT_SECONDS = 60
 
 
 def credential_headers(service: str) -> dict[str, str]:
-    secret = subprocess.run(
-        ["security", "find-generic-password", "-s", service, "-w"], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    found = subprocess.run(["security", "find-generic-password", "-s", service, "-w"], capture_output=True, text=True)
+    if found.returncode != 0:
+        raise SystemExit(
+            f"count: no credential in keychain service {service!r} (security exited {found.returncode}:"
+            f" {found.stderr.strip()}); pass --keychain-service"
+        )
+    secret = found.stdout.strip()
     if secret.startswith("sk-ant-oat"):
         return {"authorization": f"Bearer {secret}", "anthropic-beta": "oauth-2025-04-20"}
     if secret.startswith("sk-ant-api"):
@@ -42,7 +47,7 @@ def count_tokens(text: str, model: str, headers: dict[str, str]) -> int:
         **headers, "anthropic-version": "2023-06-01", "content-type": "application/json",
     })
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             return json.load(response)["input_tokens"]
     except urllib.error.HTTPError as e:
         raise SystemExit(f"count: count_tokens refused ({e.code}): {e.read().decode()}") from e

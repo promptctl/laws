@@ -6,12 +6,12 @@
   },
   "references/rung-s.md": {
     "model": "claude-opus-5-5",
-    "sha256": "43cc181c314dc984d0c35c12aaa97169b03a244e995321ee8d657e475d46820d",
-    "tokens": 9718
+    "sha256": "fd5afad30993468a79b4441268a7016b881f642e2fc1e2aceb856643765f8ef1",
+    "tokens": 9754
   },
   "references/rung-m.md": {
     "model": "claude-opus-5-5",
-    "sha256": "582a9ef2c72b788972193e9bc382d5bf500c8395ae3512a5b1837ebce22de160",
-    "tokens": 14155
+    "sha256": "7521f5f3e3e05dc50e9b41f1faa17118f75a214b771830062f389ee027eef0bd",
+    "tokens": 14305
   }
 }

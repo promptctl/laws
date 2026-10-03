@@ -41,6 +41,7 @@ procedure is mandatory:
    carries its own task and nothing else; trust the process to bring the paused work
    back.
 
+<!-- rung: M -->
 Cite this law where its decision lands: on the paused ticket's comment and on the
 escape ticket, and in code only as an exception when the minimum is knowingly kept.
 Every ticket filed under it carries the label `escape-local-minima`, the token spelled

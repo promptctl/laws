@@ -64,10 +64,9 @@ INDEX_WIDTH = 84
 DIRECTIVE = re.compile(r"^<!-- (include|rung|law-index|framing-index|generated-notice)(?:: (\S+))? -->$")
 SINGLE_LINE_COMMENT = re.compile(r"^<!--.*-->$")
 KIND_BY_DIR = {"laws": "LAW", "framings": "FRAMING"}
-RUNGS = ("S", "M")  # the rungs a marker can name; unmarked text is L
 Rung = Literal["S", "M", "L"]
-LADDER: tuple[Rung, ...] = ("S", "M", "L")
-SHOWN: dict[Rung, set[str]] = {"S": {"S"}, "M": {"S", "M"}}  # marked paragraphs kept below L
+LADDER: tuple[Rung, ...] = ("S", "M", "L")  # each rung shows its own paragraphs and those of every rung before it
+RUNGS = LADDER[:-1]  # the rungs a marker can name; unmarked text is the top rung
 
 
 class SourceError(Exception):
@@ -129,20 +128,22 @@ def read_unit(path: Path, kind: str, lines: list[str]) -> Unit:
     return unit
 
 
-def project(lines: list[str], rung: Rung) -> list[str]:
-    """A law's lines at rung: verbatim at L; below it, the heading and the paragraphs marked
-    with a rung the rung shows, each kept with its marker so rendering treats them alike."""
-    if rung == "L":
+def project(lines: list[tuple[str, str]], rung: Rung) -> list[tuple[str, str]]:
+    """A law's (line, where) pairs at rung: verbatim at L; below it, the heading and the
+    paragraphs marked with a rung the rung shows, each kept with its marker so rendering
+    treats them alike."""
+    if rung == LADDER[-1]:
         return lines
+    shown = LADDER[:LADDER.index(rung) + 1]
     out = [lines[0]]
     i = 1
     while i < len(lines):
-        d = directive(lines[i], "")
-        if d is not None and d[0] == "rung" and d[1] in SHOWN[rung]:
+        d = directive(*lines[i])
+        if d is not None and d[0] == "rung" and d[1] in shown:
             end = i + 1
-            while end < len(lines) and lines[end].strip():
+            while end < len(lines) and lines[end][0].strip():
                 end += 1
-            out += ["\n", *lines[i:end]]
+            out += [("\n", lines[i][1]), *lines[i:end]]
             i = end
         else:
             i += 1
@@ -220,10 +221,7 @@ class Source:
             raise SourceError(f"{where}: rungs must name every law once; missing {missing}, unknown {unknown}")
         out: list[str] = []
         for piece in self.pieces:
-            lines = piece.lines
-            if piece.law is not None:
-                kept = project([line for line, _ in lines], rungs[piece.law])
-                lines = [(line, lines[0][1]) for line in kept]
+            lines = piece.lines if piece.law is None else project(piece.lines, rungs[piece.law])
             for line, at in lines:
                 d = directive(line, at)
                 if d is None:
@@ -289,7 +287,10 @@ def as_reference(skill: str, rung: Rung) -> str:
     if not skill.startswith("---\n"):
         raise SourceError("the rendered skill does not open with frontmatter")
     body = skill[skill.index("\n---\n", 3) + len("\n---\n"):].lstrip("\n")
-    return f"<!-- {GENERATED} Every law at rung {rung}. -->\n\n{body}"
+    return (
+        f"<!-- {GENERATED} A projection of SKILL.md: every law at rung {rung}, its other paragraphs"
+        f" left out; the text outside the laws is SKILL.md's. -->\n\n{body}"
+    )
 
 
 @dataclass(frozen=True)
@@ -328,13 +329,17 @@ def read_counts(path: Path) -> dict[str, dict]:
 def count_problems(built: Build, counts: dict[str, dict]) -> list[str]:
     """Why the recorded token counts cannot be trusted for these outputs, or SKILL.md is over
     budget; empty when neither."""
-    problems = []
-    for output in built.outputs:
-        entry = counts.get(output.path)
-        if entry is None or entry["sha256"] != sha256(output.text) or entry["model"] != built.profile.model:
-            problems.append(f"{output.path}: no token count for its current text on {built.profile.model}; run count.py")
-    skill = counts.get("SKILL.md")
-    if not problems and skill["tokens"] > built.profile.budget:
+    current = {
+        output.path: counts[output.path] for output in built.outputs
+        if output.path in counts and counts[output.path]["sha256"] == sha256(output.text)
+        and counts[output.path]["model"] == built.profile.model
+    }
+    problems = [
+        f"{output.path}: no token count for its current text on {built.profile.model}; run count.py"
+        for output in built.outputs if output.path not in current
+    ]
+    skill = current.get("SKILL.md")
+    if skill is not None and skill["tokens"] > built.profile.budget:
         problems.append(
             f"SKILL.md is {skill['tokens'] - built.profile.budget} tokens over the {built.profile.name} profile's"
             f" budget: {skill['tokens']} counted on {built.profile.model}, budget {built.profile.budget}"
