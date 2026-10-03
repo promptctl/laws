@@ -55,7 +55,7 @@ def fisher_two_sided(a: int, b: int, c: int, d: int) -> float:
 
 def reading(control: dict, arm: dict) -> tuple[str, float | None]:
     on_fork = lambda counts: counts["held"] + counts["violated"]  # noqa: E731
-    if any(on_fork(c) * 2 < c["runs"] + c["failed"] or c["runs"] == 0 for c in (control, arm)):
+    if any(on_fork(c) * 2 < c["runs"] + c["failed"] for c in (control, arm)):
         return "unmeasurable", None
     p = fisher_two_sided(arm["held"], arm["violated"], control["held"], control["violated"])
     if p < ALPHA:
@@ -66,8 +66,9 @@ def reading(control: dict, arm: dict) -> tuple[str, float | None]:
 
 
 def summarize(records: list[dict], failures: list[dict]) -> list[dict]:
-    """One summary per case. A case's records must all come from one digest of its code,
-    and an arm's from one guidance text: a reading pooled across either measures neither."""
+    """One summary per case. A case's records must all come from one digest of its code
+    and one model, and an arm's from one guidance text: a reading pooled across any of
+    them measures none of them."""
     by_case: dict[str, list[dict]] = {}
     for record in records:
         by_case.setdefault(record["case"], []).append(record)
@@ -80,6 +81,9 @@ def summarize(records: list[dict], failures: list[dict]) -> list[dict]:
         digests = {r["case_sha256"] for r in runs}
         if len(digests) > 1:
             sys.exit(f"{case}: records come from {len(digests)} different case digests {sorted(digests)}; summarize each separately")
+        models = {r["model"] for r in runs}
+        if len(models) > 1:
+            sys.exit(f"{case}: records come from {len(models)} models {sorted(models)}; summarize each separately")
         arms: dict[str, dict] = {}
         names = {r["arm"]["name"] for r in runs} | {f["arm"] for f in failed}
         for name in sorted(names, key=lambda n: (n != CONTROL, n)):
@@ -104,7 +108,7 @@ def summarize(records: list[dict], failures: list[dict]) -> list[dict]:
             "schema_version": 2,
             "law": case.split("/")[0],
             "case": case,
-            "models": sorted({r["model"] for r in runs}),
+            "model": next(iter(models), None),
             "arms": arms,
             "comparisons": comparisons,
         }
@@ -145,7 +149,7 @@ def table(summaries: list[dict]) -> str:
             r = readings.get(name)
             note = "" if r is None else r["reading"] + ("" if r["p_value"] is None else f" (p={r['p_value']:.3f})")
             lines.append(f"{s['case']:<34} {name:<16} {c['held']:>4} {c['violated']:>4} {c['off_fork']:>4} {c['inconclusive']:>4} {c['failed']:>4}   {note}")
-        lines.append(f"{'':<34} models: {', '.join(s['models'])}")
+        lines.append(f"{'':<34} model: {s['model']}")
     return "\n".join(lines)
 
 

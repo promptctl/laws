@@ -2,9 +2,7 @@
   "schema_version": 2,
   "law": "no-silent-failure",
   "case": "no-silent-failure/avatar-sync",
-  "models": [
-    "claude-opus-5-5"
-  ],
+  "model": "claude-opus-5-5",
   "arms": {
     "none": {
       "runs": 5,

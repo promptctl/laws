@@ -4,12 +4,12 @@
   "title": "Sensitivity record of one law-eval case: verdict counts per arm, and each arm read against the no-guidance arm",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "law", "case", "models", "arms", "comparisons"],
+  "required": ["schema_version", "law", "case", "model", "arms", "comparisons"],
   "properties": {
     "schema_version": {"const": 2},
     "law": {"type": "string"},
     "case": {"type": "string"},
-    "models": {"type": "array", "items": {"type": "string"}, "description": "distinct models the case's runs were asked for (and, per the harness, served by)"},
+    "model": {"type": ["string", "null"], "description": "the one model every recorded run was asked for (and, per the harness, served by); null when no run has a record"},
     "arms": {
       "type": "object",
       "additionalProperties": {

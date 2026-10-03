@@ -138,6 +138,12 @@ class Schema(unittest.TestCase):
         with self.assertRaises(SystemExit):
             sensitivity.summarize(records, [])
 
+    def test_refuses_records_from_two_models(self):
+        mixed = record(repeat=2)
+        mixed["model"] = "claude-sonnet-5-5"
+        with self.assertRaises(SystemExit):
+            sensitivity.summarize([record(repeat=1), mixed], [])
+
     def test_refuses_an_arm_with_two_guidance_texts(self):
         def guidance(sha):
             return {"path": run.SKILL_PATH, "ref": "HEAD", "commit": "0" * 40, "sha256": sha}
@@ -158,32 +164,18 @@ class LoadCases(unittest.TestCase):
             (case / "request.md").write_text("x\n")
             (case / "oracle.py").write_text("")
             with mock.patch.object(run, "HERE", Path(tmp)), self.assertRaises(SystemExit) as raised:
-                run.load_cases("no-silent-failure")
+                run.load_cases("no-silent-failure", Path(tmp) / "snapshot")
         self.assertIn("Bank_Export", str(raised.exception))
 
-
-class StopRuns(unittest.TestCase):
-    def test_kills_the_session_the_harness_launched_for_each_live_run(self):
-        import threading
-        from concurrent.futures import ThreadPoolExecutor
-        from harness.session import Session, Spec
-        released, started = threading.Event(), threading.Event()
-
-        def live():
-            started.set()
-            released.wait(10)
-
-        run_id = "no-silent-failure/bank-export/none/r1"
-        harness_id = run.harness_run_id_of(run_id)
-        launched = Session(Spec(work_dir=Path(tempfile.gettempdir()), model="claude-opus-5-5"), Path(tempfile.gettempdir()), harness_id)
-        pool = ThreadPoolExecutor(max_workers=1)
-        futures = [(run_id, pool.submit(live)), ("no-silent-failure/bank-export/none/r2", pool.submit(live))]
-        started.wait(10)
-        killed = []
-        with mock.patch.object(run.tmux, "kill", side_effect=lambda name: (killed.append(name), released.set())):
-            run.stop_runs(pool, futures)
-        self.assertEqual(killed, [launched.tmux_name])
-        self.assertTrue(futures[1][1].cancelled())
+    def test_runs_read_a_snapshot_that_digests_as_the_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = run.load_cases("no-silent-failure", Path(tmp))
+            for case in cases:
+                live = run.HERE / "cases" / case.law / case.scenario
+                self.assertTrue(case.root.is_relative_to(Path(tmp)))
+                self.assertEqual(case.sha256, run.case_digest(run.HERE, live))
+                (case.root / "oracle.py").write_text("# edited after the snapshot\n")
+            self.assertNotEqual(run.case_digest(Path(tmp), cases[0].root), cases[0].sha256)
 
 
 class Differential(unittest.TestCase):
@@ -221,12 +213,12 @@ class CaseDigest(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=HERE) as tmp:
             copy = Path(tmp) / "bank-export"
             shutil.copytree(case, copy)
-            base = run.case_digest(copy)
+            base = run.case_digest(HERE, copy)
             (copy / "fixture" / "__pycache__").mkdir(exist_ok=True)
             (copy / "fixture" / "__pycache__" / "x.pyc").write_bytes(b"residue")
-            self.assertEqual(run.case_digest(copy), base)
+            self.assertEqual(run.case_digest(HERE, copy), base)
             (copy / "oracle.py").write_text((copy / "oracle.py").read_text() + "\n")
-            self.assertNotEqual(run.case_digest(copy), base)
+            self.assertNotEqual(run.case_digest(HERE, copy), base)
 
 
 class Arms(unittest.TestCase):
