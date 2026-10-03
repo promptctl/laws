@@ -111,6 +111,12 @@ def _wait(what: str, stage: str, timeout: float, probe: Callable[[], object], pa
     raise HarnessError(stage, f"{what} did not happen within {timeout:.0f}s. The pane showed:\n{pane()}")
 
 
+def tmux_name(run_id: str) -> str:
+    """The tmux session a run's claude lives in. A caller that must end a live run from
+    outside (Ctrl-C reaches only its main thread) kills this."""
+    return f"harness-{run_id}"
+
+
 class Session:
     """Use as a context manager. Leaving the block, by any path, ends the tmux session and
     moves the transcript into the run dir."""
@@ -118,7 +124,7 @@ class Session:
     def __init__(self, spec: Spec, run_dir: Path, run_id: str):
         self.spec, self.run_dir, self.run_id = spec, run_dir, run_id
         self.session_id = str(uuid.uuid4())
-        self.tmux_name = f"harness-{run_id}"
+        self.tmux_name = tmux_name(run_id)
         self.started_at = datetime.now(timezone.utc)
         self.binary: claude.Binary | None = None
         self.auth: claude.Auth | None = None
