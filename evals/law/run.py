@@ -167,8 +167,14 @@ def parse_stream(lines: list[str]) -> tuple[dict, dict]:
 def exit_reason(proc: subprocess.CompletedProcess) -> str:
     """Why a session failed: its result message names an API error ("Credit balance is too
     low") that stderr leaves empty."""
-    results = [m for m in map(json.loads, filter(str.strip, proc.stdout.splitlines())) if m.get("type") == "result"]
-    said = results[-1].get("result", "") if results else ""
+    said = ""
+    for line in proc.stdout.splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a failing CLI may print plain text; the transcript keeps it verbatim
+        if isinstance(message, dict) and message.get("type") == "result":
+            said = str(message.get("result", ""))
     return f"{said} {proc.stderr.strip()[-2000:]}".strip()
 
 
