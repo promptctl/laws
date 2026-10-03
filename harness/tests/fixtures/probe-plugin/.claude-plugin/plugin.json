@@ -1,0 +1,5 @@
+{
+  "name": "harness-probe",
+  "version": "0.0.0",
+  "description": "A plugin whose only job is to be seen loading."
+}
