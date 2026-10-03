@@ -325,5 +325,74 @@ case "$rt_mut_out" in
 esac
 rm -rf "$rtmut"
 
+# 16. session-start names the S projection's path, and the path is a readable file. A consumer
+#     outside the plugin (sheriff-is-in-town) has no other way to find it.
+s_path=$(printf '%s' "$rt_out" | sed -n 's/.*instead): \([^"]*\)".*/\1/p')
+if [ -n "$s_path" ] && [ -r "$s_path" ] && head -1 "$s_path" | grep -q 'every law at rung S'; then
+  ok "session-start names a readable S projection: $s_path"
+else
+  bad "session-start names a readable S projection (parsed '$s_path' from: $rt_out)"
+fi
+
+# 17. The per-turn S arm. Off by default: engage carries the exhortation, not the laws.
+law_line='**Divide the program along the natural joints'  # a line of the S projection, absent from the routing and engagement text
+grep -qF "$law_line" "$s_path" || bad "test fixture: '$law_line' is not in the S projection - pick another line"
+off_out=$(printf '{}' | env -u LAWS_PER_TURN_S "$ROUTER" engage 2>/dev/null)
+case "$off_out" in
+  *'consider the laws and devices of your craft'*) ok "engage with the flag unset carries the engagement text";;
+  *) bad "engage with the flag unset carries the engagement text (got: $off_out)";;
+esac
+case "$off_out" in
+  *"$law_line"*) bad "engage with the flag unset injects the S projection";;
+  *) ok "  ... and not the S projection";;
+esac
+on_out=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage 2>/dev/null)
+case "$on_out" in
+  *'identify the medium of your primary deliverable'*"$law_line"*) ok "LAWS_PER_TURN_S=1 injects the routing text, then the S projection";;
+  *) bad "LAWS_PER_TURN_S=1 injects the routing text, then the S projection (got: ${on_out:0:300})";;
+esac
+case "$on_out" in
+  *'consider the laws and devices of your craft'*) bad "  ... the S projection replaces the engagement text, but both were emitted";;
+  *) ok "  ... in place of the engagement text";;
+esac
+# The S projection is ~27k of markdown: every raw control character must have been escaped, or
+# the payload is not JSON. The only one allowed is the newline printf ends the line with.
+if [ "$(printf '%s' "$on_out" | LC_ALL=C tr -d -c '\001-\037' | wc -c | tr -d ' ')" = 0 ]; then
+  ok "  ... with no raw control character in the JSON"
+else
+  bad "  ... with no raw control character in the JSON"
+fi
+
+# 17a. Any other value refuses the prompt, loudly, rather than running an arm nobody chose.
+bad_err=$(printf '{}' | LAWS_PER_TURN_S=yes "$ROUTER" engage 2>&1 >/dev/null); bad_rc=$?
+if [ "$bad_rc" -eq 2 ] && case "$bad_err" in *"must be 0 or 1, got 'yes'"*) true;; *) false;; esac; then
+  ok "LAWS_PER_TURN_S=yes exits 2 naming the bad value"
+else
+  bad "LAWS_PER_TURN_S=yes exits 2 naming the bad value (rc=$bad_rc, stderr: $bad_err)"
+fi
+
+# 17b. The arm on with the S projection missing refuses the prompt too: a session that silently
+#      ran the arm with nothing injected would be read as the arm's result.
+nos=$(mktemp -d)
+mkdir -p "$nos/hooks/scripts"
+cp "$ROUTER" "$HERE/incompatible-crafts.txt" "$nos/hooks/scripts/"
+nos_err=$(printf '{}' | LAWS_PER_TURN_S=1 "$nos/hooks/scripts/skill-router.sh" engage 2>&1 >/dev/null); nos_rc=$?
+if [ "$nos_rc" -eq 2 ] && case "$nos_err" in *"S projection is unreadable"*) true;; *) false;; esac; then
+  ok "LAWS_PER_TURN_S=1 with no S projection exits 2"
+else
+  bad "LAWS_PER_TURN_S=1 with no S projection exits 2 (rc=$nos_rc, stderr: $nos_err)"
+fi
+
+# 17c. The shipped S projection has no tab or carriage return, so 17 cannot see whether those are
+#      escaped. A generated file can gain one; this one has both.
+mkdir -p "$nos/skills/code/references"
+printf 'a\tb\r\nc\n' > "$nos/skills/code/references/rung-s.md"
+tab_out=$(printf '{}' | LAWS_PER_TURN_S=1 "$nos/hooks/scripts/skill-router.sh" engage 2>/dev/null)
+case "$tab_out" in
+  *'a\tb\r\nc'*) ok "a tab and a carriage return in the S projection are JSON-escaped";;
+  *) bad "a tab and a carriage return in the S projection are JSON-escaped (got: $tab_out)";;
+esac
+rm -rf "$nos"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
