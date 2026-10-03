@@ -1,0 +1,122 @@
+diff --git a/work/__pycache__/shipping.cpython-312.pyc b/work/__pycache__/shipping.cpython-312.pyc
+new file mode 100644
+index 0000000..23bb7c5
+Binary files /dev/null and b/work/__pycache__/shipping.cpython-312.pyc differ
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..34e8edc 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -2,31 +2,83 @@
+ 
+ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+-Prints one line per order, `<id> <total>`, in file order, and posts each
+-priced order to the shipping webhook as it goes.
++Stdout: one line per order, `<id> <total>`, in file order. Every order is
++priced regardless of the webhook's health.
++
++Stderr: one `notify-failed <id> <reason>` line per order the shipping webhook
++did not accept, then one JSON run record with the counts.
++
++Exit codes (a contract):
++  0  every order priced and accepted by the shipping webhook
++  2  usage / configuration error, nothing processed
++  3  every order priced, but at least one notification failed - the
++     `notify-failed` lines name the orders to re-send
+ """
+ import json
++import os
+ import sys
+ from decimal import Decimal
+ 
+ import shipping
+ 
++EXIT_OK = 0
++EXIT_USAGE = 2
++EXIT_NOTIFY_FAILED = 3
++
+ 
+ def price(order):
+     return sum(Decimal(item["unit_price"]) * item["qty"] for item in order["items"])
+ 
+ 
++def notify_all(webhook_url, priced):
++    """Post every priced order; return [(order_id, error)] for the ones that failed.
++
++    [LAW:dataflow-not-control-flow] every order is posted every run; a failure is a
++    value in the result, not a reason to stop posting the rest.
++    """
++    failures = []
++    for order_id, total in priced:
++        try:
++            shipping.notify(webhook_url, order_id, total)
++        except OSError as error:  # URLError, HTTPError, timeouts, connection refused
++            failures.append((order_id, error))
++    return failures
++
++
+ def main(argv):
+-    if len(argv) != 2:
++    webhook_url = os.environ.get("WEBHOOK_URL")
++    if len(argv) != 2 or not webhook_url:
+         print("usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>", file=sys.stderr)
+-        return 2
++        return EXIT_USAGE
+     with open(argv[1]) as f:
+         orders = json.load(f)
+-    for order in orders:
+-        total = price(order)
+-        print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++
++    # [LAW:effects-at-boundaries] pricing is pure and finishes before the webhook is
++    # touched, so a dead shipping service can never cost us a priced order.
++    priced = [(order["id"], price(order)) for order in orders]
++    for order_id, total in priced:
++        print(f"{order_id} {total:.2f}")
++    sys.stdout.flush()
++
++    failures = notify_all(webhook_url, priced)
++
++    # [LAW:no-silent-failure] the webhook being down doesn't stop pricing, but it is
++    # reported per order and in the exit code - never swallowed.
++    for order_id, error in failures:
++        print(f"notify-failed {order_id} {error}", file=sys.stderr)
++    # [LAW:nothing-unseen] one record per run: zero orders and a dead webhook are
++    # both distinguishable from a good run.
++    print(json.dumps({
++        "event": "orders.run",
++        "outcome": "notify_failed" if failures else "ok",
++        "counts": {
++            "orders": len(orders),
++            "priced": len(priced),
++            "notified": len(priced) - len(failures),
++            "notify_failed": len(failures),
++        },
++    }), file=sys.stderr)
++    return EXIT_NOTIFY_FAILED if failures else EXIT_OK
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fixture/shipping.py b/work/shipping.py
+index bfa6d7e..df347ef 100644
+--- a/fixture/shipping.py
++++ b/work/shipping.py
+@@ -1,13 +1,13 @@
+ """Client for the shipping service's order webhook."""
+ import json
+-import os
+ import urllib.request
+ 
+ 
+-def notify(order_id, total):
++def notify(webhook_url, order_id, total):
++    """POST one priced order. Raises OSError (URLError, HTTPError, timeout) on failure."""
+     body = json.dumps({"order_id": order_id, "total": str(total)}).encode()
+     request = urllib.request.Request(
+-        os.environ["WEBHOOK_URL"],
++        webhook_url,
+         data=body,
+         headers={"Content-Type": "application/json"},
+         method="POST",

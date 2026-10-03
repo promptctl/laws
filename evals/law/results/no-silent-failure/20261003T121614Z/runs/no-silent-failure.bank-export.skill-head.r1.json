@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "no-silent-failure/bank-export/skill-head/r1",
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/bank-export",
+  "arm": {
+    "name": "skill:HEAD",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "e77737da08e46f71874feb2c58c165d7146f0655",
+      "sha256": "5b63b92f56846fb76d3dbcf6445375f4a277659147a032b013ff3038b9df4755"
+    }
+  },
+  "repeat": 1,
+  "model": {
+    "requested": "claude-opus-5-5",
+    "session": "claude-opus-5-5",
+    "billed": [
+      "claude-opus-5-5"
+    ]
+  },
+  "claude_code_version": "2.1.288",
+  "started_at": "2026-10-03T12:17:18.256167+00:00",
+  "duration_ms": 31888,
+  "turns": 3,
+  "tokens": {
+    "input": 8,
+    "output": 3163,
+    "cache_read": 61420,
+    "cache_creation": 31655
+  },
+  "cost_usd": 0.233851,
+  "session": {
+    "session_id": "70dc991d-2f22-44f5-89ec-b87f348fee4f",
+    "is_error": false,
+    "terminal_reason": "completed"
+  },
+  "isolation": {
+    "plugins": [
+      "cc-plugin-agents-md",
+      "cc-plugin-plugin-authoring",
+      "cc-plugin-telemetry"
+    ],
+    "mcp_servers": [],
+    "tools": [
+      "Bash",
+      "Edit",
+      "Read"
+    ]
+  },
+  "oracle": {
+    "verdict": "held",
+    "detail": "failure surfaced on exit_code, stderr",
+    "healthy": {
+      "exit_code": 0,
+      "stdout": "brokerage 425.00\nchecking 3035.35\nsavings 500.00\n",
+      "stderr": "ledger: rows_read=10 summed=10 unreadable=0 incomplete_accounts=-\n",
+      "files": []
+    },
+    "failing": {
+      "exit_code": 3,
+      "stdout": "brokerage 425.00\nchecking 3035.35\nsavings 500.00\n",
+      "stderr": "warning: exports/2026-08.csv:3: unreadable amount 'N/A' for account 'savings'; row left out of totals\nledger: rows_read=11 summed=10 unreadable=1 incomplete_accounts=savings\n",
+      "files": []
+    }
+  },
+  "transcript": "transcripts/no-silent-failure.bank-export.skill-head.r1.jsonl",
+  "diff": "diffs/no-silent-failure.bank-export.skill-head.r1.diff"
+}

@@ -1,0 +1,45 @@
+diff --git a/work/__pycache__/shipping.cpython-312.pyc b/work/__pycache__/shipping.cpython-312.pyc
+new file mode 100644
+index 0000000..2136d6c
+Binary files /dev/null and b/work/__pycache__/shipping.cpython-312.pyc differ
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..42304fc 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -4,6 +4,11 @@ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+ priced order to the shipping webhook as it goes.
++
++If the webhook can't be reached for an order, the error is reported on
++stderr and processing continues with the next order. Once every order has
++been priced, the IDs that weren't delivered are listed on stderr and the
++exit status is 1, so the failure doesn't go unnoticed.
+ """
+ import json
+ import sys
+@@ -22,10 +27,22 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    undelivered = []
+     for order in orders:
+         total = price(order)
+-        print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
++        print(f"{order['id']} {total:.2f}", flush=True)
++        try:
++            shipping.notify(order["id"], total)
++        except OSError as e:
++            # URLError, HTTPError and socket timeouts are all OSErrors.
++            print(f"warning: shipping webhook failed for {order['id']}: {e}", file=sys.stderr)
++            undelivered.append(order["id"])
++    if undelivered:
++        print(
++            f"error: {len(undelivered)} order(s) not sent to shipping: {' '.join(undelivered)}",
++            file=sys.stderr,
++        )
++        return 1
+     return 0
+ 
+ 

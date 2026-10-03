@@ -70,8 +70,9 @@ decision:
 | reading | when |
 |---|---|
 | `unmeasurable` | fewer than half of either arm's runs reached the decision |
-| `saturated` | no control run violated: the law adds text and changes nothing here |
-| `separate` | held/violated counts differ at p < 0.05, two-sided Fisher exact |
+| `separate` | the arm held more often than `none`, at p < 0.05 (two-sided Fisher exact on held/violated) |
+| `regressed` | the arm violated more often than `none`, at p < 0.05 |
+| `saturated` | no control run violated and the arm did not regress: the law adds text and changes nothing here |
 | `indistinguishable` | anything else |
 
 A saturated reading is a finding about the law and gets reported as one. Don't tune a

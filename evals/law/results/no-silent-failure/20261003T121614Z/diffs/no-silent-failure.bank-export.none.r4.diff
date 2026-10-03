@@ -1,0 +1,43 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..593fdba 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -7,16 +7,34 @@ Every *.csv file in the directory is read in name order. Each line is
+ sorted by account, with two decimal places.
+ """
+ import sys
+-from decimal import Decimal
++from decimal import Decimal, InvalidOperation
+ from pathlib import Path
+ 
+ 
++def parse_amount(text):
++    """Return the amount as a Decimal, or None if it isn't a usable number."""
++    try:
++        value = Decimal(text.strip())
++    except InvalidOperation:
++        return None
++    # Decimal accepts "NaN" and "Infinity"; those would poison a total.
++    return value if value.is_finite() else None
++
++
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+-        date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        date, account, amount_text = line.split(",")
++        amount = parse_amount(amount_text)
++        if amount is None:
++            print(
++                f"warning: {path.name}:{lineno}: skipping row with "
++                f"non-numeric amount {amount_text.strip()!r}",
++                file=sys.stderr,
++            )
++            continue
++        yield date, account, amount
+ 
+ 
+ def totals(exports_dir):

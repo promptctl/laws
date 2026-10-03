@@ -55,6 +55,11 @@ RUN_SCHEMA = json.loads((HERE / "schema" / "run-record.schema.json").read_text()
 MAX_TURNS = 40
 RUN_TIMEOUT_SECS = 1200
 ORACLE_TIMEOUT_SECS = 600
+# Local build residue never reaches the agent: it differs per checkout and names the case's path.
+FIXTURE_IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache")
+# The only variables the session sees besides its config dir and key; anything else in the
+# operator's shell (other credentials, CLAUDE_CODE_* switches) would leak or change the run.
+PASSED_ENV = ("PATH", "LANG", "LC_ALL", "TMPDIR")
 
 
 def log(message: str) -> None:
@@ -155,9 +160,12 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, key: str, out: Path) 
     stem = run_id.replace("/", ".")
     log(f"start {run_id}")
     with tempfile.TemporaryDirectory(prefix="law-eval-run-") as tmp:
-        workdir, config = Path(tmp) / "work", Path(tmp) / "config"
-        shutil.copytree(case.root / "fixture", workdir)
+        workdir, pristine = Path(tmp) / "work", Path(tmp) / "fixture"
+        config, home = Path(tmp) / "config", Path(tmp) / "home"
+        shutil.copytree(case.root / "fixture", workdir, ignore=FIXTURE_IGNORE)
+        shutil.copytree(case.root / "fixture", pristine, ignore=FIXTURE_IGNORE)
         config.mkdir()
+        home.mkdir()
         argv = [
             "claude", "-p", "--bare",
             "--model", model,
@@ -175,7 +183,12 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, key: str, out: Path) 
             argv,
             input=(case.root / "request.md").read_text(),
             cwd=workdir,
-            env={**os.environ, "CLAUDE_CONFIG_DIR": str(config), "ANTHROPIC_API_KEY": key},
+            env={
+                **{k: os.environ[k] for k in PASSED_ENV if k in os.environ},
+                "HOME": str(home),
+                "CLAUDE_CONFIG_DIR": str(config),
+                "ANTHROPIC_API_KEY": key,
+            },
             capture_output=True,
             text=True,
             timeout=RUN_TIMEOUT_SECS,
@@ -191,18 +204,19 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, key: str, out: Path) 
         init, result = parse_stream(proc.stdout.splitlines())
         if init.get("model") != model:
             raise RuntimeError(f"{run_id}: asked for model {model}, session reported {init.get('model')}")
+        isolation = isolation_of(init)
 
         diff = out / "diffs" / f"{stem}.diff"
         # `git diff --no-index` exits 1 when the trees differ, which is the expected case.
         changes = subprocess.run(
-            ["git", "diff", "--no-index", "--", str(case.root / "fixture"), str(workdir)],
-            capture_output=True, text=True,
+            ["git", "diff", "--no-index", "--", pristine.name, workdir.name],
+            cwd=tmp, capture_output=True, text=True,
         )
         if changes.returncode not in (0, 1):
             raise RuntimeError(f"{run_id}: diffing the work dir failed: {changes.stderr.strip()}")
         if key in changes.stdout:
             raise RuntimeError(f"{run_id}: the agent wrote the API key into its work dir; diff not written")
-        diff.write_text(changes.stdout.replace(str(case.root / "fixture"), "fixture").replace(str(workdir), "work"))
+        diff.write_text(changes.stdout)
 
         oracle = subprocess.run(
             [sys.executable, str(case.root / "oracle.py"), str(workdir)],
@@ -237,7 +251,7 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, key: str, out: Path) 
             "is_error": bool(result.get("is_error")),
             "terminal_reason": str(result.get("terminal_reason") or result.get("subtype") or ""),
         },
-        "isolation": isolation_of(init),
+        "isolation": isolation,
         "oracle": verdict,
         "transcript": str(transcript.relative_to(out)),
         "diff": str(diff.relative_to(out)),
@@ -290,6 +304,8 @@ def main() -> None:
                 failures.append(str(error))
                 log(f"FAILED {error}")
 
+    if len(failures) == len(jobs):
+        die(f"every run failed:\n  " + "\n  ".join(failures))
     summaries = sensitivity.summarize(sensitivity.load_records(out))
     sensitivity.write_summaries(out, summaries)
     print(sensitivity.table(summaries))
