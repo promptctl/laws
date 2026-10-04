@@ -16,6 +16,7 @@ received, so the boundary itself
 from a worker that merely received the raw type, wherever the agent put it.
 
     trace(program_dir, environment) -> (Observation, [Call])
+    received(call, opened) -> what the call was handed, with or without what its lists hold
     crossing(calls, worker, is_raw, is_proof) -> the functions that are the boundary
     inland(calls, worker, crossing) -> the calls into `worker` that are not part of it
     upstream(calls, crossing) -> the functions that called the crossing
@@ -73,21 +74,27 @@ class Call:
         return dict(self.args).get(name)
 
 
+def received(call: Call, opened: bool) -> tuple[tuple[str, ArgType], ...]:
+    """(what, its type) for everything the call was handed: its arguments and, when the
+    case opens containers, the items of the lists, tuples and sets among them."""
+    return call.args + (tuple((f"an item of {p}", t) for p, t in call.held) if opened else ())
+
+
 def crossing(calls: list[Call], worker: str, is_raw: Callable[[ArgType], bool],
-             is_proof: Callable[[ArgType], bool],
-             handed: Callable[[Call], tuple[Site, ...]] = lambda call: call.sources) -> set[Site]:
+             is_proof: Callable[[ArgType], bool], opened: bool = False) -> set[Site]:
     """The functions, in any file, that took a raw value, returned a proof, and whose proof
     a call into `worker` - one not made from inside them - then received. A worker that
     takes the raw value and returns a report of what it did is not one while nothing
     inland is handed its report; one whose report is handed back inland reads as the
     crossing, which is why a verdict names the crossing it found.
 
-    `handed` says where a call's proofs come from: its arguments alone, or the items of a
-    list it received as well (`call.sources + call.item_sources`). The second is for a
-    fixture whose worker returns no list of its own objects; where one does, that worker
-    would read as the crossing."""
-    candidates = {c.site for c in calls if any(is_raw(t) for _, t in c.args) and any(is_proof(t) for t in c.returned)}
-    return {s for c in calls if c.file == worker for s in handed(c)
+    `opened` is the case's choice, the same one it reads `received` with: whether a raw
+    value or a proof inside a list counts as handed over. It is for a fixture whose raw
+    value travels in lists and whose worker returns no list of its own objects; where one
+    does, that worker would read as the crossing."""
+    candidates = {c.site for c in calls
+                  if any(is_raw(t) for _, t in received(c, opened)) and any(is_proof(t) for t in c.returned)}
+    return {s for c in calls if c.file == worker for s in c.sources + (c.item_sources if opened else ())
             if s in candidates and s != c.site and s not in c.callers}
 
 
