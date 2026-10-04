@@ -65,12 +65,15 @@ def short(fid: str) -> str:
     return fid.rsplit("/", 1)[1]
 
 
-def verdict_line(v: dict, same_pr: bool) -> str:
+def verdict_line(v: dict, pr_key: str) -> str:
+    """One verdict as a line inside `pr_key`'s document. A cause in this PR is shortened
+    to its `F<i>`; a cause in another PR keeps its whole id, or it would read as this
+    PR's finding of the same number."""
     parts = [PREMISE[v["premise"]], RESPONSE[v["response"]], CORRECT[v["response_correct"]]]
     if v["response_correct"] != "yes":
         parts.append(f"should have: {RESPONSE[v['should_have']]}")
     if v["caused_by"]:
-        cause = short(v["caused_by"]) if same_pr else v["caused_by"]
+        cause = short(v["caused_by"]) if v["caused_by"].rsplit("/", 1)[0] == pr_key else v["caused_by"]
         parts.append(f"caused by {cause} ({CAUSE[v['cause_kind']]})")
     if v["law_cited_by_agent"]:
         parts.append(f"cited {', '.join(f'`{t}`' for t in v['law_cited_by_agent'])} {APT[v['law_citation_apt']]}")
@@ -103,7 +106,7 @@ def render_pr(key: str, pr: dict, pv: dict, rows: list[dict]) -> str:
         sev = f" · S{f['severity']}" if f["severity"] else ""
         out.append(f'<a id="{short(f["id"]).lower()}"></a>')
         out.append(f"### {short(f['id'])} · `{f['path']}:{f['line'] or f['original_line'] or '?'}` · round {f['round']}{sev}{flags(f)}")
-        out += ["", f"**Verdict:** {verdict_line(v, same_pr=True)}", ""]
+        out += ["", f"**Verdict:** {verdict_line(v, key)}", ""]
         out += [f"**{f['reviewer']} wrote:** {clip(f['body'], FINDING_BODY_CHARS)}", ""]
         out += [f"**Evidence:** {v['evidence']}", ""]
         if v["guidance_note"]:

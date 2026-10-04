@@ -58,11 +58,11 @@ def commit_oids(pr: dict) -> list[str]:
     return sorted({c["commit"]["oid"] for c in pr["commits"]}) if pr["reviewThreads"] else []
 
 
-TRANSCRIPT_STATES = ("stored", "expired", "never_archived", "run_failed")
+TRANSCRIPT_STATES = ("stored", "expired", "never_archived", "run_failed", "in_progress")
 
 
 def transcript_state(run: dict, artifact: dict | None) -> str:
-    """Which of the four things is true about this run's transcript.
+    """Which of the five things is true about this run's transcript.
 
     Every run gets one of these; none is an absence. A run we cannot fetch a transcript for
     is a row saying why, because "the reviewer archived nothing here" may be a bug in the
@@ -73,6 +73,8 @@ def transcript_state(run: dict, artifact: dict | None) -> str:
         return "stored"
     if artifact:
         return "expired"
+    if run["conclusion"] is None:  # still running: its transcript may yet arrive
+        return "in_progress"
     return "never_archived" if run["conclusion"] == "success" else "run_failed"
 
 
@@ -114,7 +116,11 @@ def sync_runs(bank: Bank, org: str, repo: str) -> collections_Counter:
         if state == "stored" and not dest.exists():
             github.download_artifact(org, repo, record["transcript"]["artifact_id"], dest)
             tally["downloaded"] += 1
-        bank.put(run_ref(repo, run["id"]), record, run["updated_at"])
+        ref = run_ref(repo, run["id"])
+        # The record changes without updated_at moving (an artifact expires), so the
+        # stored record itself is the comparison; an unchanged run writes nothing.
+        if bank.version_of(ref) is None or bank.get(ref) != record:
+            bank.put(ref, record, run["updated_at"])
     return tally
 
 

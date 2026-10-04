@@ -15,7 +15,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from report import batch_judged, finding_ids, judged_prs, load_jsonl, load_verdicts
+from report import batch_judged, finding_ids, judged_prs, lacks_should_have, load_jsonl, load_verdicts
 
 ENUMS = {
     "premise": {"correct", "partly", "wrong", "uncertain"},
@@ -51,8 +51,8 @@ def check_rows(rows: list[dict], expected_by_pr: dict[str, set[str]]) -> list[st
         for field, legal in ENUMS.items():
             if r.get(field) not in legal:
                 problems.append(f"{r['finding']}: {field}={r.get(field)!r}")
-        if r.get("response_correct") == "no" and not r.get("should_have"):
-            problems.append(f"{r['finding']}: response_correct=no without should_have")
+        if lacks_should_have(r):
+            problems.append(f"{r['finding']}: response_correct={r.get('response_correct')!r} without should_have")
         if r.get("caused_by") and not r.get("cause_kind"):
             problems.append(f"{r['finding']}: caused_by without cause_kind")
     if not prs:
@@ -79,18 +79,17 @@ def main(argv: list[str]) -> int:
         failed += bool(problems)
         print(f"{path.name}: {status}")
 
-    # [LAW:no-silent-failure] a finding judged by two files is a duplicate no per-file
-    # check can see, and it double-counts in every report.py table. Batch ids renumber
-    # on a re-bundle, so a PR can land in a differently-named batch and be judged twice.
+    # [LAW:no-silent-failure] a finding or PR judged by two files is a duplicate no
+    # per-file check can see, and report.py refuses it. Batch ids renumber on a
+    # re-bundle, so a PR can land in a differently-named batch and be judged twice.
     owners: dict[str, set[str]] = defaultdict(set)
     for path, rows in by_file.items():
         for r in rows:
-            if "finding" in r:
-                owners[r["finding"]].add(path.name)
-    for fid, names in sorted(owners.items()):
+            owners[r.get("finding") or r["pr"]].add(path.name)
+    for key, names in sorted(owners.items()):
         if len(names) > 1:
             failed += 1
-            print(f"{fid}: judged by {len(names)} files: {' '.join(sorted(names))}")
+            print(f"{key}: judged by {len(names)} files: {' '.join(sorted(names))}")
 
     judged = judged_prs(r for rows in by_file.values() for r in rows)
     batches = json.loads(args.batches.read_text())

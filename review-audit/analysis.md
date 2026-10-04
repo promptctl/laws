@@ -13,7 +13,7 @@ This ticket proposes guidance changes. It makes none.
 | Agent never answered | 424 (5%); wrong to leave it 242 times |
 | Reviewer premise correct or partly correct | 7,598 (94%) |
 | **Findings caused by the agent's own earlier fix** | **2,217 (28%)** |
-| **Review rounds containing such a finding** (derived, `report.py`) | **967 of 3,247 (30%)** |
+| **Review rounds containing such a finding** (derived, `report.py`) | **967 of 3,186 (30%)** |
 
 The agent judges findings well. The rounds come from its fixes. More than a quarter of everything the reviewer raised is about code the agent wrote in response to an earlier finding on the same PR.
 
