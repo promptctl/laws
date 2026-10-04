@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r2_e997298f",
+  "session_id": "4be669b8-5d18-421e-a92a-d0c54fdc7a55",
+  "started_at": "2026-10-04T06:42:49.237918+00:00",
+  "duration_ms": 73472,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-db8hb_qd/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it touches any snapshot, and exits with status 1 and a list of every mistake if anything is wrong. I ran it against a scratch copy of the project, not your real `snapshots/`; with your current `policy.json` it prints this and deletes nothing:\n\n```\nprune.py: policy.json is not a valid policy; nothing was deleted:\n  - rules[2] (prefix \"logs-\"): missing \"keep\"\n  - rules[2] (prefix \"logs-\"): unknown key \"kepe\" (did you mean \"keep\"?)\n```\n\nI did not fix the `kepe` typo in `policy.json` \u2014 that's still there, so tonight's run will stop with the message above until you correct it. With the typo corrected in the scratch copy, the run pruned all three families as expected.\n\nThe checking lives in `retention.py` (`parse_policy`); `prune.py` just reports the result. Besides a missing or misspelled key, it also stops on:\n\n- **Unknown top-level keys**: a misspelled `dry_run` (e.g. `dryrun`) would otherwise delete for real.\n- **Bad `keep`**: must be a whole number, 0 or more. A negative `keep` would previously have deleted the newest snapshots.\n- **Bad `prefix`**: empty, or containing `* ? [ / \\`, which would match files outside the family.\n- **Overlapping prefixes**: e.g. `db-` and `db-prod-`, where one file falls under two rules and the smaller `keep` wins. This is the one check that could reject a policy someone wrote on purpose; say so if you want it removed.\n- **Missing `snapshot_dir`**: the directory must exist, where before a wrong path silently did nothing.\n- **Unreadable or invalid JSON**: a one-line error instead of a traceback.\n\nOne thing this does not cover: if a delete itself fails partway (permissions, say), you can still get a partial cleanup.",
+      "duration_ms": 67739
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 6860,
+    "cache_read": 205016,
+    "cache_creation": 44418
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-db8hb_qd/work",
+  "transcript": "transcript/4be669b8-5d18-421e-a92a-d0c54fdc7a55.jsonl"
+}

@@ -1,0 +1,168 @@
+diff --git a/fixture/prune.py b/work/prune.py
+index f0bf84d..7fcb785 100644
+--- a/fixture/prune.py
++++ b/work/prune.py
+@@ -5,6 +5,9 @@ Usage: python3 prune.py <policy.json>
+ The policy names the snapshot directory and one rule per snapshot family: every
+ `<prefix>*.tar` file in the directory belongs to that rule, and the newest `keep`
+ of them are kept. With "dry_run": true nothing is deleted, only listed.
++
++The whole policy is checked first. If anything in it is wrong, every problem is
++reported, nothing is deleted, and the exit status is 1.
+ """
+ import json
+ import sys
+@@ -16,9 +19,20 @@ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 prune.py <policy.json>", file=sys.stderr)
+         return 2
+-    with open(argv[1]) as f:
+-        policy = json.load(f)
+-    retention.apply(policy)
++    try:
++        with open(argv[1]) as f:
++            policy = json.load(f)
++    except (OSError, json.JSONDecodeError) as e:
++        print(f"prune.py: cannot read policy {argv[1]}: {e}", file=sys.stderr)
++        return 1
++    try:
++        retention.apply(policy)
++    except retention.PolicyError as e:
++        print(f"prune.py: {argv[1]} is not a valid policy; nothing was deleted:",
++              file=sys.stderr)
++        for problem in e.problems:
++            print(f"  - {problem}", file=sys.stderr)
++        return 1
+     return 0
+ 
+ 
+diff --git a/fixture/retention.py b/work/retention.py
+index 1fe863f..a15ad53 100644
+--- a/fixture/retention.py
++++ b/work/retention.py
+@@ -1,22 +1,116 @@
+ """Delete the snapshots a retention policy no longer keeps."""
+ from pathlib import Path
+ 
++POLICY_KEYS = {"snapshot_dir", "dry_run", "rules"}
++RULE_KEYS = {"prefix", "keep"}
++# A prefix is matched as a glob inside snapshot_dir, so these would change its meaning.
++PREFIX_FORBIDDEN = set("*?[]/\\")
+ 
+-def apply(policy):
+-    root = Path(policy["snapshot_dir"])
+-    for rule in policy["rules"]:
+-        prune(root, rule, dry_run=policy.get("dry_run", False))
+ 
++class PolicyError(ValueError):
++    """The policy is not safe to apply; `problems` lists every reason why."""
+ 
+-def snapshots(root, prefix):
+-    """Newest first: names end in an ISO date, so name order is age order."""
+-    return sorted(root.glob(f"{prefix}*.tar"), reverse=True)
++    def __init__(self, problems):
++        super().__init__("; ".join(problems))
++        self.problems = problems
++
++
++def validate(policy):
++    """Return a list of everything wrong with the policy (empty if it is fine)."""
++    if not isinstance(policy, dict):
++        return ["policy must be a JSON object"]
++    problems = []
++
++    for key in sorted(set(policy) - POLICY_KEYS):
++        problems.append(f"unknown key {key!r} (expected {_names(POLICY_KEYS)})")
+ 
++    if "snapshot_dir" not in policy:
++        problems.append("missing 'snapshot_dir'")
++    elif not isinstance(policy["snapshot_dir"], str) or not policy["snapshot_dir"]:
++        problems.append("'snapshot_dir' must be a non-empty string")
++    elif not Path(policy["snapshot_dir"]).is_dir():
++        problems.append(f"'snapshot_dir' {policy['snapshot_dir']!r} is not a directory")
++
++    if "dry_run" in policy and not isinstance(policy["dry_run"], bool):
++        problems.append("'dry_run' must be true or false")
++
++    if "rules" not in policy:
++        problems.append("missing 'rules'")
++    elif not isinstance(policy["rules"], list):
++        problems.append("'rules' must be a list")
++    else:
++        problems.extend(_validate_rules(policy["rules"]))
++    return problems
++
++
++def _validate_rules(rules):
++    problems = []
++    prefixes = []  # (rule number, prefix) of the rules whose prefix is usable
++    for n, rule in enumerate(rules, 1):
++        where = f"rule {n}"
++        if not isinstance(rule, dict):
++            problems.append(f"{where}: must be an object with 'prefix' and 'keep'")
++            continue
++        prefix = rule.get("prefix")
++        if isinstance(prefix, str) and prefix:
++            where = f"rule {n} ({prefix!r})"
++
++        for key in sorted(set(rule) - RULE_KEYS):
++            problems.append(f"{where}: unknown key {key!r} (expected {_names(RULE_KEYS)})")
++
++        if "prefix" not in rule:
++            problems.append(f"{where}: missing 'prefix'")
++        elif not isinstance(prefix, str) or not prefix:
++            problems.append(f"{where}: 'prefix' must be a non-empty string")
++        elif PREFIX_FORBIDDEN & set(prefix):
++            problems.append(f"{where}: 'prefix' must not contain any of * ? [ ] / \\")
++        else:
++            prefixes.append((n, prefix))
+ 
+-def prune(root, rule, dry_run):
+-    for path in snapshots(root, rule["prefix"])[rule["keep"]:]:
++        if "keep" not in rule:
++            problems.append(f"{where}: missing 'keep'")
++        elif type(rule["keep"]) is not int or rule["keep"] < 0:
++            problems.append(f"{where}: 'keep' must be a whole number, 0 or more")
++
++    # Each snapshot must belong to exactly one rule.
++    for i, (n1, p1) in enumerate(prefixes):
++        for n2, p2 in prefixes[i + 1:]:
++            if p1 == p2:
++                problems.append(f"rules {n1} and {n2} have the same prefix {p1!r}")
++            elif p1.startswith(p2) or p2.startswith(p1):
++                problems.append(
++                    f"rules {n1} and {n2} overlap: prefixes {p1!r} and {p2!r} "
++                    "match some of the same files"
++                )
++    return problems
++
++
++def _names(keys):
++    return ", ".join(repr(k) for k in sorted(keys))
++
++
++def apply(policy):
++    """Apply the policy. Raises PolicyError, before deleting anything, if it is invalid."""
++    problems = validate(policy)
++    if problems:
++        raise PolicyError(problems)
++    root = Path(policy["snapshot_dir"])
++    dry_run = policy.get("dry_run", False)
++    # Work out everything to delete before deleting any of it.
++    doomed = [path for rule in policy["rules"] for path in expired(root, rule)]
++    for path in doomed:
+         if dry_run:
+             print(f"would delete {path}")
+         else:
+             path.unlink()
+             print(f"deleted {path}")
++
++
++def snapshots(root, prefix):
++    """Newest first: names end in an ISO date, so name order is age order."""
++    return sorted(root.glob(f"{prefix}*.tar"), reverse=True)
++
++
++def expired(root, rule):
++    """The snapshots of this rule's family beyond the newest `keep`."""
++    return snapshots(root, rule["prefix"])[rule["keep"]:]

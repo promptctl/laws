@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_hours-breakdown_none_r3_e997298f",
+  "session_id": "bfe495a9-6961-4274-b1b6-24018aa6f71a",
+  "started_at": "2026-10-04T06:36:52.354162+00:00",
+  "duration_ms": 20072,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "cc27581e9807f8c7a52df3a47e2893f3963443dbd01b3bc8c8b77c663a01c1e2",
+      "reply": "The weekly report now lists each project's hours under its week, biggest first. Running it on `timesheet.csv` gives:\n\n```\n2026-W37 38.50\n  acme 18.25\n  harbor 16.75\n  internal 3.50\n2026-W38 33.25\n  harbor 16.50\n  acme 16.00\n  internal 0.75\n```\n\nThe change is in `render` in `report.py`. Two behaviours you didn't specify:\n\n- **Ties:** projects with equal hours in a week are listed in name order.\n- **Name matching:** project names are grouped exactly as written, so `Acme` and `acme` would show up as separate lines.",
+      "duration_ms": 13745
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1252,
+    "cache_read": 122013,
+    "cache_creation": 10448
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-vs3vl0gs/work",
+  "transcript": "transcript/bfe495a9-6961-4274-b1b6-24018aa6f71a.jsonl"
+}

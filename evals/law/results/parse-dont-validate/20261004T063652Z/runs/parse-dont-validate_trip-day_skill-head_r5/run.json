@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_skill-head_r5_e997298f",
+  "session_id": "8d3ec043-e107-40a8-812b-261e928c5c35",
+  "started_at": "2026-10-04T06:51:46.011459+00:00",
+  "duration_ms": 37312,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-0h8cexeu/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "A bad `day` now gets a 400 with a JSON error saying what's wrong, and no traceback reaches the error log. I checked by calling the WSGI app directly with your two logged values plus a few others; there's no test suite in the project, so nothing else was run.\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 \u2014 `day='2026-09-31' is not a valid date (day is out of range for month); expected YYYY-MM-DD` |\n| `day=14/09/2026` | 400 \u2014 `day='14/09/2026' is not a valid date (Invalid isoformat string: '14/09/2026'); expected YYYY-MM-DD` |\n| `day=` or no `day` at all | 400 \u2014 same shape of message (this also used to be a 500) |\n| `day=2026-09-13` | 200, same summary as before |\n\nThe change is in two places:\n\n- **`app.py`**: a new `parse_day` turns the query string into a date once, and `application` returns the 400 if that fails.\n- **`trips.py`**: `trips_on`, `busiest_stations` and `summary` now take a `date` instead of a string. Anything else that calls them with a string needs updating; in this project only `app.py` does.\n\nThe `day` field in the response is now always written as `YYYY-MM-DD`. Python's ISO parser also accepts compact forms like `20260913`, which were accepted before and still are; they used to be echoed back verbatim and are now normalised.",
+      "duration_ms": 30986
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2764,
+    "cache_read": 204734,
+    "cache_creation": 39957
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-0h8cexeu/work",
+  "transcript": "transcript/8d3ec043-e107-40a8-812b-261e928c5c35.jsonl"
+}

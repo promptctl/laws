@@ -1,0 +1,186 @@
+diff --git a/work/policy.py b/work/policy.py
+new file mode 100644
+index 0000000..fa9bed6
+--- /dev/null
++++ b/work/policy.py
+@@ -0,0 +1,95 @@
++"""Parse the contents of a retention policy file into a Policy, or say what is wrong with it."""
++from dataclasses import dataclass
++from difflib import get_close_matches
++from pathlib import Path
++
++
++class PolicyError(ValueError):
++    """Every problem found in a policy, one message per problem."""
++
++    def __init__(self, problems):
++        super().__init__("; ".join(problems))
++        self.problems = problems
++
++
++@dataclass(frozen=True)
++class Rule:
++    prefix: str
++    keep: int
++
++
++@dataclass(frozen=True)
++class Policy:
++    snapshot_dir: Path
++    dry_run: bool
++    rules: tuple[Rule, ...]
++
++
++def parse(raw):
++    """Turn decoded policy JSON into a Policy; raise PolicyError listing every mistake."""
++    # [LAW:parse-dont-validate] The only place policy shape is checked: retention
++    # takes a Policy, so no rule can reach a deletion with a field missing.
++    if not isinstance(raw, dict):
++        raise PolicyError(["the policy must be a JSON object"])
++    problems = _unknown_keys(raw, ("snapshot_dir", "dry_run", "rules"), "policy")
++
++    snapshot_dir = raw.get("snapshot_dir")
++    if not isinstance(snapshot_dir, str) or not snapshot_dir:
++        problems.append(f'policy: "snapshot_dir" must be a non-empty string, got {_show(raw, "snapshot_dir")}')
++
++    dry_run = raw.get("dry_run", False)
++    if not isinstance(dry_run, bool):
++        problems.append(f'policy: "dry_run" must be true or false, got {dry_run!r}')
++
++    raw_rules = raw.get("rules")
++    if not isinstance(raw_rules, list):
++        problems.append(f'policy: "rules" must be a list, got {_show(raw, "rules")}')
++        raw_rules = []
++    for index, raw_rule in enumerate(raw_rules):
++        problems += _rule_problems(raw_rule, f"rules[{index}]")
++    if problems:
++        raise PolicyError(problems)
++
++    rules = tuple(Rule(r["prefix"], r["keep"]) for r in raw_rules)
++    problems = _overlapping_prefixes(rules)
++    if problems:
++        raise PolicyError(problems)
++    return Policy(Path(snapshot_dir), dry_run, rules)
++
++
++def _rule_problems(raw_rule, where):
++    if not isinstance(raw_rule, dict):
++        return [f"{where}: a rule must be a JSON object, got {raw_rule!r}"]
++    problems = _unknown_keys(raw_rule, ("prefix", "keep"), where)
++    prefix = raw_rule.get("prefix")
++    if not isinstance(prefix, str) or not prefix:
++        problems.append(f'{where}: "prefix" must be a non-empty string, got {_show(raw_rule, "prefix")}')
++    keep = raw_rule.get("keep")
++    # bool is an int subclass: without the type check, "keep": true would mean keep 1.
++    if type(keep) is not int or keep < 0:
++        problems.append(f'{where}: "keep" must be a whole number, 0 or more, got {_show(raw_rule, "keep")}')
++    return problems
++
++
++def _unknown_keys(obj, known, where):
++    problems = []
++    for key in obj:
++        if key not in known:
++            close = get_close_matches(key, known, n=1)
++            hint = f' (did you mean "{close[0]}"?)' if close else ""
++            problems.append(f'{where}: unknown key "{key}"{hint}')
++    return problems
++
++
++def _overlapping_prefixes(rules):
++    """A snapshot must belong to one rule, so no prefix may start with another."""
++    return [
++        f'rules[{i}] and rules[{j}]: prefixes "{a.prefix}" and "{b.prefix}" match the same snapshots'
++        for i, a in enumerate(rules)
++        for j, b in enumerate(rules)
++        if i < j and (a.prefix.startswith(b.prefix) or b.prefix.startswith(a.prefix))
++    ]
++
++
++def _show(obj, key):
++    return repr(obj[key]) if key in obj else "nothing (the key is missing)"
+diff --git a/fixture/prune.py b/work/prune.py
+index f0bf84d..dd7d6cd 100644
+--- a/fixture/prune.py
++++ b/work/prune.py
+@@ -5,10 +5,14 @@ Usage: python3 prune.py <policy.json>
+ The policy names the snapshot directory and one rule per snapshot family: every
+ `<prefix>*.tar` file in the directory belongs to that rule, and the newest `keep`
+ of them are kept. With "dry_run": true nothing is deleted, only listed.
++
++The whole policy is checked before anything is deleted. If it has a mistake,
++every problem is printed to stderr, nothing is deleted, and the exit status is 1.
+ """
+ import json
+ import sys
+ 
++import policy
+ import retention
+ 
+ 
+@@ -16,10 +20,24 @@ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 prune.py <policy.json>", file=sys.stderr)
+         return 2
+-    with open(argv[1]) as f:
+-        policy = json.load(f)
+-    retention.apply(policy)
+-    return 0
++    # Everything that can be wrong with the policy is found here, before delete runs.
++    try:
++        with open(argv[1]) as f:
++            parsed = policy.parse(json.load(f))
++        doomed = retention.plan(parsed)
++    except OSError as e:
++        problems = [str(e)]
++    except json.JSONDecodeError as e:
++        problems = [f"not valid JSON: {e}"]
++    except policy.PolicyError as e:
++        problems = e.problems
++    else:
++        retention.delete(doomed, parsed.dry_run)
++        return 0
++    print(f"prune.py: {argv[1]} has a mistake; nothing was deleted:", file=sys.stderr)
++    for problem in problems:
++        print(f"  {problem}", file=sys.stderr)
++    return 1
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fixture/retention.py b/work/retention.py
+index 1fe863f..2cb912c 100644
+--- a/fixture/retention.py
++++ b/work/retention.py
+@@ -1,11 +1,16 @@
+ """Delete the snapshots a retention policy no longer keeps."""
+-from pathlib import Path
++from policy import PolicyError
+ 
+ 
+-def apply(policy):
+-    root = Path(policy["snapshot_dir"])
+-    for rule in policy["rules"]:
+-        prune(root, rule, dry_run=policy.get("dry_run", False))
++def plan(policy):
++    """Every snapshot the policy no longer keeps, worked out before any is deleted."""
++    if not policy.snapshot_dir.is_dir():
++        raise PolicyError([f'policy: "snapshot_dir" {str(policy.snapshot_dir)!r} is not a directory'])
++    return [
++        path
++        for rule in policy.rules
++        for path in snapshots(policy.snapshot_dir, rule.prefix)[rule.keep:]
++    ]
+ 
+ 
+ def snapshots(root, prefix):
+@@ -13,8 +18,8 @@ def snapshots(root, prefix):
+     return sorted(root.glob(f"{prefix}*.tar"), reverse=True)
+ 
+ 
+-def prune(root, rule, dry_run):
+-    for path in snapshots(root, rule["prefix"])[rule["keep"]:]:
++def delete(paths, dry_run):
++    for path in paths:
+         if dry_run:
+             print(f"would delete {path}")
+         else:

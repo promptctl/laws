@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r3_e997298f",
+  "session_id": "9a649e23-d2d7-4206-a28d-fda5f265da0e",
+  "started_at": "2026-10-04T06:42:51.597977+00:00",
+  "duration_ms": 90166,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-tuqn8b7j/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it deletes anything, and a mistake stops the run with exit code 1 and a list of every problem. Run against your current `policy.json`, which still has the typo, it prints this and leaves all 16 snapshots in place:\n\n```\nprune: policy.json is not a usable policy; nothing was deleted:\n  - rules[2]: unknown key \"kepe\" (did you mean \"keep\"?)\n  - rules[2]: missing \"keep\"\n```\n\nI did not fix the typo in `policy.json` itself. Once you change `kepe` to `keep`, the next run will delete the two oldest logs snapshots.\n\nWhat counts as a mistake now:\n\n- **Keys:** any unknown or missing key, at the top level or in a rule. A mistyped `dry_run` is rejected rather than ignored, which would otherwise have deleted for real.\n- **Values:** `keep` must be a whole number of 0 or more, `prefix` must be a non-empty string with no `/`, and `dry_run` must be true or false.\n- **Overlapping prefixes:** two rules such as `db-` and `db-prod-` are rejected, because some snapshots would match both. This is stricter than before, so say if you rely on overlapping rules.\n- **File and directory:** invalid JSON, or a `snapshot_dir` that doesn't exist.\n\nTwo other things changed:\n\n- **Summary line:** each rule now prints one after its deletions, e.g. `logs-: kept 4, deleted 2`. A prefix that matches nothing shows as `kept 0, deleted 0`.\n- **Glob characters:** `*`, `?` and `[` in a prefix are now matched literally instead of as wildcards.\n\nThe checking lives in a new `policy.py`, and `retention.py` now works out the full list of deletions before removing the first file. I also added `test_prune.py` (7 tests, all passing, run with `python3 -m unittest test_prune`), which works only on temporary directories.",
+      "duration_ms": 84489
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 8586,
+    "cache_read": 205167,
+    "cache_creation": 45380
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-tuqn8b7j/work",
+  "transcript": "transcript/9a649e23-d2d7-4206-a28d-fda5f265da0e.jsonl"
+}
