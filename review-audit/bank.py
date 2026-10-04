@@ -112,14 +112,18 @@ def sync_runs(bank: Bank, org: str, repo: str) -> collections_Counter:
         record = run_record(repo, run, artifacts.get(run["id"]))
         state = record["transcript"]["state"]
         tally[state] += 1
+        ref = run_ref(repo, run["id"])
+        banked = bank.get(ref) if bank.version_of(ref) is not None else None
         dest = transcript_path(bank.root, repo, run["id"])
-        if state == "stored" and not dest.exists():
+        # A re-run attempt replaces the run's artifact under the same run id, so the zip
+        # on disk is current only if the banked record names the same artifact.
+        held = dest.exists() and banked is not None and banked["transcript"]["artifact_id"] == record["transcript"]["artifact_id"]
+        if state == "stored" and not held:
             github.download_artifact(org, repo, record["transcript"]["artifact_id"], dest)
             tally["downloaded"] += 1
-        ref = run_ref(repo, run["id"])
         # The record changes without updated_at moving (an artifact expires), so the
         # stored record itself is the comparison; an unchanged run writes nothing.
-        if bank.version_of(ref) is None or bank.get(ref) != record:
+        if banked != record:
             bank.put(ref, record, run["updated_at"])
     return tally
 

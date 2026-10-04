@@ -288,7 +288,7 @@ def review_runs(org: str, repo: str) -> list[dict]:
     Keyed off the workflow's PATH, not its name: the display name has changed over the
     corpus ("AI Code Review" now) while `.github/workflows/code-review.yml` has not.
     """
-    workflows = rest(f"/repos/{org}/{repo}/actions/workflows")["workflows"]
+    workflows = rest_pages(f"/repos/{org}/{repo}/actions/workflows", "workflows")
     runs: list[dict] = []
     for wf in workflows:
         if wf["path"].endswith("code-review.yml"):

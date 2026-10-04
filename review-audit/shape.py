@@ -79,13 +79,14 @@ def derive(repo: str, pr: dict, patches_of: dict[str, dict[str, str]]) -> tuple[
     # commits banked, so a commit outside that set offers nothing here - the same shape as
     # a commit that changed no files. [LAW:dataflow-not-control-flow]
 
-    # A round is one review submission by anyone other than the PR author. GitHub wraps
-    # every thread reply in a COMMENTED review; one with no body that opens no thread
-    # is only that container, whoever wrote it, so it is not a round.
+    # A round is one submitted review by anyone other than the PR author; a PENDING
+    # review has no submittedAt and was never seen. GitHub wraps every thread reply in a
+    # COMMENTED review; one with no body that opens no thread is only that container,
+    # whoever wrote it, so it is not a round.
     opened_threads = {(t["comments"][0]["pullRequestReview"] or {}).get("id") for t in pr["reviewThreads"] if t["comments"]}
     rounds = [
         r for r in pr["reviews"]
-        if ((r["author"] or {}).get("login") or "ghost") != author
+        if r["submittedAt"] and ((r["author"] or {}).get("login") or "ghost") != author
         and not (r["state"] == "COMMENTED" and not (r["body"] or "").strip() and r["id"] not in opened_threads)
     ]
     round_of_review = {r["id"]: i for i, r in enumerate(rounds)}
