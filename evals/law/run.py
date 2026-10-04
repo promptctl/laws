@@ -57,11 +57,12 @@ from harness.session import Spec  # noqa: E402
 
 SKILL_PATH = "plugins/laws/skills/code/SKILL.md"
 DILUTION_DIR = HERE / "dilution"
-DILUTED = "+diluted"
+DILUTED = sensitivity.DILUTED
 CASE_SCHEMA = json.loads((HERE / "schema" / "case.schema.json").read_text())
 # The oracles' shared code, each digested into the cases whose oracle imports it.
 HELPERS = ("differential.py", "calltrace.py", "identifiers.py")
-DEFAULT_ARMS = ("none", "skill:HEAD", f"none{DILUTED}", f"skill:HEAD{DILUTED}")
+CONTROL = sensitivity.CONTROL
+DEFAULT_ARMS = (CONTROL, "skill:HEAD", f"{CONTROL}{DILUTED}", f"skill:HEAD{DILUTED}")
 ORACLE_TIMEOUT_SECS = 600
 # Local build residue never reaches the agent (it differs per checkout and names the case's
 # path) and never reaches a committed diff.
@@ -112,14 +113,13 @@ class Arm:
 
     @property
     def control(self) -> str:
-        """The no-guidance arm in this arm's context: what its reading is measured against."""
-        return "none" + (DILUTED if self.context else "")
+        return sensitivity.control_of(self.name)
 
 
 def resolve_arm(spec: str, dilution: Context) -> Arm:
     base = spec.removesuffix(DILUTED)
     context = dilution if base != spec else None
-    if base == "none":
+    if base == CONTROL:
         return Arm(spec, None, None, context)
     if not base.startswith("skill:") or base == "skill:":
         die(f"an arm is `none` or `skill:<git-ref>`, optionally suffixed {DILUTED}, not {spec!r}")

@@ -7,11 +7,13 @@ each argument. A function inland of the boundary that still receives the raw typ
 `dict` json.load returned, the `str` a query string carried) was handed unchecked data,
 whatever was checked above it. One that receives a type the program defines, or a
 stdlib type that cannot hold the raw value (a `datetime`, not the `str`), was handed the
-proof. What each function returned is recorded too, so the boundary itself - raw type in,
-proving type out - can be told from a worker that merely received the raw type, wherever
-the agent put it.
+proof. What each function returned is recorded too (a constructor returns the object it
+built), and which function produced each argument a call received, so the boundary itself
+- raw type in, proving type out, and that proof is what inland is handed - can be told
+from a worker that merely received the raw type, wherever the agent put it.
 
     trace(program_dir, environment) -> (Observation, [Call])
+    inland(calls, worker, is_raw, is_proof) -> the calls into `worker` that are not the crossing
 
 runs the program as differential.observe does (a fresh copy, its own HOME, the oracle's
 inputs written over the agent's) under a profiler, so the run's channels are observed too.
@@ -22,6 +24,7 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,16 +44,39 @@ class ArgType:
         return f"{self.module}.{self.name}" + (" (program)" if self.local else "")
 
 
+Site = tuple[str, str]  # (file relative to the program dir, qualified name): one function of the program
+
+
 @dataclass(frozen=True)
 class Call:
     function: str  # the function's qualified name
     file: str  # relative to the program dir
     args: tuple[tuple[str, ArgType], ...]  # (parameter, type of the value it received)
-    returned: tuple[ArgType, ...]  # every type this function returned, over the whole run
-    callers: tuple[str, ...]  # the program's own functions on the stack above this call, innermost first
+    returned: tuple[ArgType, ...]  # every type this function returned, over the whole run; a constructor's own class
+    callers: tuple[Site, ...]  # the program's own functions on the stack above this call, innermost first
+    sources: tuple[Site, ...]  # the program's functions that returned an argument this call received
+
+    @property
+    def site(self) -> Site:
+        return (self.file, self.function)
 
     def arg(self, name: str) -> ArgType | None:
         return dict(self.args).get(name)
+
+
+def inland(calls: list[Call], worker: str, is_raw: Callable[[ArgType], bool],
+           is_proof: Callable[[ArgType], bool]) -> list[Call]:
+    """The calls into `worker` that are not part of the crossing.
+
+    The crossing is a function, in any file, that took a raw value, returned a proof, and
+    whose proof a call into `worker` - one not made from inside it - then received. A worker
+    that takes the raw value and returns a report of what it did is not one: nothing inland
+    is handed its result. The crossing's own helpers take the raw value by design, so every
+    call made from inside it is part of it too."""
+    candidates = {c.site for c in calls if any(is_raw(t) for _, t in c.args) and any(is_proof(t) for t in c.returned)}
+    boundary = {s for c in calls if c.file == worker for s in c.sources
+                if s in candidates and s != c.site and s not in c.callers}
+    return [c for c in calls if c.file == worker and c.site not in boundary and not boundary.intersection(c.callers)]
 
 
 def trace(program_dir: Path, environment: differential.Environment) -> tuple[differential.Observation, list[Call]]:
@@ -68,7 +94,8 @@ def trace(program_dir: Path, environment: differential.Environment) -> tuple[dif
         returned = {(r["file"], r["function"]): tuple(ArgType(**t) for t in r["types"]) for r in trace_data["returns"]}
         calls = [
             Call(c["function"], c["file"], tuple((p, ArgType(**t)) for p, t in c["args"]),
-                 returned.get((c["file"], c["function"]), ()), tuple(c["callers"]))
+                 returned.get((c["file"], c["function"]), ()), tuple(map(tuple, c["callers"])),
+                 tuple(map(tuple, c["sources"])))
             for c in trace_data["calls"]
         ]
     return observation, calls
@@ -84,6 +111,9 @@ def _run_traced() -> None:
     seen: set[str] = set()
     returns: dict[tuple[str, str], list[dict]] = {}
     type_cache: dict[type, dict] = {}
+    file_cache: dict[str, str | None] = {}
+    # id -> (the object, held so its id is not reused; the program functions that returned it)
+    produced: dict[int, tuple[object, set[tuple[str, str]]]] = {}
 
     def describe(cls: type) -> dict:
         if cls not in type_cache:
@@ -99,32 +129,49 @@ def _run_traced() -> None:
         """The code's file relative to the program dir, or None if it is not the program's own.
         The script runs by a relative path; frozen and generated code is named "<frozen runpy>"
         or "<string>", which is no file at all."""
-        path = (root / code.co_filename).resolve()
-        return str(path.relative_to(root)) if path.is_relative_to(root) and path.is_file() else None
+        if code.co_filename not in file_cache:
+            path = (root / code.co_filename).resolve()
+            file_cache[code.co_filename] = (
+                str(path.relative_to(root)) if path.is_relative_to(root) and path.is_file() else None)
+        return file_cache[code.co_filename]
+
+    def program_function(code) -> str | None:
+        """program_file, for a function the agent wrote: not a module or class body (which
+        run once, on import), a lambda or comprehension, or the `__annotate__` the compiler
+        generates for annotations."""
+        if not code.co_flags & inspect.CO_OPTIMIZED or code.co_name.startswith("<") or code.co_name == "__annotate__":
+            return None
+        return program_file(code)
 
     def profile(frame, event, arg):
         if event not in ("call", "return"):
             return
         code = frame.f_code
-        if code.co_name.startswith("<"):
-            return
-        rel = program_file(code)
+        rel = program_function(code)
         if rel is None:
             return
+        site = (rel, code.co_qualname)
         if event == "return":
-            types = returns.setdefault((rel, code.co_qualname), [])
-            if describe(type(arg)) not in types:
-                types.append(describe(type(arg)))
+            # A constructor returns None; what it made is the object it initialized.
+            value = frame.f_locals.get("self") if code.co_name == "__init__" else arg
+            types = returns.setdefault(site, [])
+            if describe(type(value)) not in types:
+                types.append(describe(type(value)))
+            # A builtin value (the raw dict, a str, a count) proves nothing, so where it came from is not kept.
+            if type(value).__module__ != "builtins":
+                produced.setdefault(id(value), (value, set()))[1].add(site)
             return
         count = code.co_argcount + code.co_kwonlyargcount
         params = [n for n in code.co_varnames[:count] if n not in ("self", "cls")]
-        args = [[name, describe(type(frame.f_locals[name]))] for name in params if name in frame.f_locals]
+        values = [(name, frame.f_locals[name]) for name in params if name in frame.f_locals]
+        args = [[name, describe(type(value))] for name, value in values]
+        sources = sorted({s for _, value in values if (p := produced.get(id(value))) and p[0] is value for s in p[1]})
         callers, caller = [], frame.f_back
         while caller is not None:
-            if not caller.f_code.co_name.startswith("<") and program_file(caller.f_code) is not None:
-                callers.append(caller.f_code.co_qualname)
+            if (outer := program_function(caller.f_code)) is not None:
+                callers.append((outer, caller.f_code.co_qualname))
             caller = caller.f_back
-        entry = {"function": code.co_qualname, "file": rel, "args": args, "callers": callers}
+        entry = {"function": code.co_qualname, "file": rel, "args": args, "callers": callers, "sources": sources}
         # One record per distinct call shape keeps a loop over 10k rows from writing 10k records.
         key = json.dumps(entry, sort_keys=True)
         if key not in seen:

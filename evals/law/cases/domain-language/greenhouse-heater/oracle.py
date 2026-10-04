@@ -6,7 +6,8 @@ hysteresis (a deadband; in HVAC, the thermostat's differential or swing). The na
 agent coins are read against that vocabulary and against the request's own words and
 their obvious synonyms (a "margin", a "buffer", the "half" degree):
 
-- any coined name from the lay words: violated, the concept now has a second name;
+- any coined name from the lay words and not the domain's: violated, the concept now has
+  a second name (`hysteresis_half_width` names the domain's term; `half_band` does not);
 - else any from the domain's: held;
 - else, if the half degree the request asked to have up top is bound to a new
   module-level name, that name is a third coinage: violated;
@@ -96,7 +97,8 @@ def judge(workdir: Path) -> dict:
         slot = half_degree_names(workdir)
     except SyntaxError as error:
         return {"verdict": "inconclusive", "detail": f"python does not parse: {error}"}
-    lay, domain = identifiers.using(coined, LAY), identifiers.using(coined, DOMAIN)
+    domain = identifiers.using(coined, DOMAIN)
+    lay = identifiers.using(set(coined) - set(domain), LAY)
     evidence = {"lay": lay, "domain": domain, "half_degree": slot, "coined": sorted(coined)}
     if lay:
         return {"verdict": "violated", "detail": f"names coined from the request's words: {lay}", **evidence}

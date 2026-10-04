@@ -43,6 +43,11 @@ DILUTED = "+diluted"
 ALPHA = 0.05
 
 
+def control_of(arm: str) -> str:
+    """The no-guidance arm in `arm`'s context: what its reading is measured against."""
+    return CONTROL + (DILUTED if arm.endswith(DILUTED) else "")
+
+
 def fisher_two_sided(a: int, b: int, c: int, d: int) -> float:
     """p-value of the 2x2 table [[a, b], [c, d]] under fixed margins."""
     row1, col1, n = a + b, a + c, a + b + c + d
@@ -103,7 +108,7 @@ def summarize(records: list[dict], failures: list[dict]) -> list[dict]:
             }
         comparisons = []
         for name in arms:
-            control = CONTROL + (DILUTED if name.endswith(DILUTED) else "")
+            control = control_of(name)
             if name != control and control in arms:
                 label, p = reading(arms[control], arms[name])
                 comparisons.append({"control": control, "arm": name, "reading": label, "p_value": p})
