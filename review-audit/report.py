@@ -20,8 +20,11 @@ from pathlib import Path
 
 
 def load_jsonl(path: Path) -> list[dict]:
+    """Every row of a JSONL file. Records end at "\n" and nowhere else: JSON allows a raw
+    U+2028 inside a string, and review bodies carry them, so str.splitlines() - which
+    also breaks there - would cut a record in half."""
     rows = []
-    for n, line in enumerate(path.read_text().splitlines(), 1):
+    for n, line in enumerate(path.read_text().split("\n"), 1):
         if not line.strip():
             continue
         try:

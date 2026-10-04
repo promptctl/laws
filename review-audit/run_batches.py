@@ -74,7 +74,7 @@ def run_one(batch: dict, prompt: Path, bundles: Path, verdicts: Path, model: str
         return bid, f"agent reported an error: {str(report.get('result'))[:300]}"
     if not out.exists():
         return bid, f"agent wrote no file; it said: {str(report.get('result'))[:300]}"
-    for n, line in enumerate(out.read_text().splitlines(), 1):
+    for n, line in enumerate(out.read_text().split("\n"), 1):  # not splitlines: see report.load_jsonl
         if line.strip():
             try:
                 json.loads(line)

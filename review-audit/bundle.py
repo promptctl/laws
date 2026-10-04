@@ -18,6 +18,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from report import load_jsonl
+
 HUNK_TAIL_LINES = 30
 ROUND_BODY_CHARS = 1800
 
@@ -129,8 +131,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--batch-bytes", type=int, default=250_000, help="max packet bytes per batch")
     args = ap.parse_args(argv)
 
-    prs = [json.loads(l) for l in (args.derived / "prs.jsonl").read_text().splitlines()]
-    findings = [json.loads(l) for l in (args.derived / "findings.jsonl").read_text().splitlines()]
+    prs = load_jsonl(args.derived / "prs.jsonl")
+    findings = load_jsonl(args.derived / "findings.jsonl")
     by_pr: dict[tuple[str, int], list[dict]] = defaultdict(list)
     for f in findings:
         by_pr[(f["repo"], f["number"])].append(f)
