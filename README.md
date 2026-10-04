@@ -83,7 +83,7 @@ no dependencies, nothing to configure. Nothing else is required.
 
 One optional setting, for comparing sessions: `LAWS_PER_TURN_S=1` in Claude Code's
 environment makes the per-message hook inject the short form of the code laws
-(`skills/code/references/rung-s.md`, about 9,800 tokens) in place of its engagement
+(`skills/code/references/rung-s.md`, about 9,850 tokens, in parts of under 10,000 characters each) in place of its engagement
 paragraph. It is off by default.
 
 ## Looking for memento?

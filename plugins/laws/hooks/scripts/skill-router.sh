@@ -6,6 +6,8 @@
 #                    engaged-craft set when the session is genuinely fresh (see guard, below).
 #   engage         - fires on every user message (UserPromptSubmit): re-assert routing
 #                    AND re-activate the laws for that specific request.
+#   engage-s <k>   - also on every user message: part k of the S projection when the
+#                    per-turn S arm is on (LAWS_PER_TURN_S=1), nothing when it is off.
 #   guard          - fires before every Skill load (PreToolUse, matcher Skill): the one
 #                    checkpoint that enforces craft compatibility. Routing only ASKS the
 #                    agent which craft to load; nothing before this observed the actual
@@ -24,7 +26,8 @@
 # same durability as a line in a system prompt: a long or compacted session can bury a
 # single session-start injection, but a per-message re-injection is present on every
 # turn. This is deliberate - the plugin owns routing end to end and needs nothing in any
-# CLAUDE.md to stay loaded. Engagement rides along in the same per-message text.
+# CLAUDE.md to stay loaded. Engagement rides along in the same per-message text, or, with
+# the per-turn S arm on, the S projection does in its place.
 #
 # No external dependencies - pure bash (3.2+), so it runs anywhere Claude Code does.
 # The guard parses a few string fields out of the hook's JSON stdin without jq. That is
@@ -116,11 +119,18 @@ S_POINTER="The laws of code at rung S, for auditing or reviewing code against th
 # The per-turn S arm. LAWS_PER_TURN_S=1 replaces ENGAGE_TEXT with the S projection on every
 # user message, so a session can be compared with and without the laws re-injected each turn.
 # Default 0: whether it becomes the default is an eval result, not a setting chosen here.
-# Measured 2026-10-03 with count_tokens on claude-opus-5-5: 9,790 tokens per turn with the arm
-# on (the routing sentence plus rung-s.md), against 216 off.
 # Any value but 0 or 1 refuses the prompt (exit 2 shows stderr to the user): a typo in an eval
 # arm's flag would otherwise run the wrong arm with nothing to say so. [LAW:no-silent-failure]
 PER_TURN_S="${LAWS_PER_TURN_S:-0}"
+
+# Claude Code caps each hook's additionalContext at 10,000 characters and replaces a longer
+# one with a file path and a 2,000-character preview, so the model would get the projection's
+# preamble and none of its laws. The cap is per hook, so the projection is cut at its headings
+# into parts of at most S_PART_BYTES (bytes, so never more characters than that) and
+# hooks.json runs `engage-s <k>` once for each k in 1..S_PARTS. More parts than entries
+# refuses the prompt rather than dropping the tail.
+S_PART_BYTES=9500
+S_PARTS=4
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin.
 #
@@ -197,18 +207,20 @@ EOF
 # --- emitters -------------------------------------------------------------------------
 # Escaping a value for inclusion in a JSON string. Every emitter goes through here, so the
 # rule has one home instead of a copy per call site that can drift - the divergence [LAW:one-source-of-truth] exists to prevent. Backslash first,
-# or it would re-escape the escapes the other substitutions introduce.
+# or it would re-escape the escapes the other substitutions introduce. Every control character
+# is escaped, since the S projection is a generated file anyone's paste can reach. awk, not
+# ${s//...}: bash 3.2 (macOS /bin/bash) substitutes in quadratic time, 25 seconds on the S
+# projection. A trailing newline in the value is dropped.
 json_escape() {
-  local s=$1
-  s=${s//\\/\\\\}
-  s=${s//\"/\\\"}
-  s=${s//$'\t'/\\t}
-  s=${s//$'\r'/\\r}
-  printf '%s' "${s//$'\n'/\\n}"
+  printf '%s' "$1" | LC_ALL=C awk '
+    BEGIN { for (c = 1; c < 32; c++) if (c != 9 && c != 10 && c != 13) ctl[sprintf("%c", c)] = sprintf("\\u%04x", c) }
+    {
+      gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); gsub(/\r/, "\\r")
+      for (k in ctl) gsub(k, ctl[k])
+      printf "%s%s", (NR > 1 ? "\\n" : ""), $0
+    }'
 }
 
-# The escaping is defensive here: the routing text as written needs none, but a later edit
-# could reintroduce a backslash or newline, and either would silently break the emitted JSON.
 emit() {
   printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$1" "$(json_escape "$2")"
 }
@@ -217,6 +229,45 @@ emit() {
 # from a skill name, so it can carry a quote in principle.
 deny() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$(json_escape "$1")"
+}
+
+# The S projection must be there, and not empty, before anything names or injects it: an empty
+# file injects nothing, and a session that ran the arm with nothing in it would be read as the
+# arm's result. Exit 2 shows the reason to the user. [LAW:no-silent-failure]
+require_s_projection() {
+  if [ ! -s "$S_PROJECTION" ]; then
+    echo "laws: the S projection is missing or empty: $S_PROJECTION" >&2
+    exit 2
+  fi
+}
+
+# Any value of LAWS_PER_TURN_S but 0 or 1 refuses the prompt; see PER_TURN_S above.
+require_per_turn_s_flag() {
+  case "$PER_TURN_S" in
+    0|1) ;;
+    *) echo "laws: LAWS_PER_TURN_S must be 0 or 1, got '$PER_TURN_S'" >&2; exit 2 ;;
+  esac
+}
+
+# Part $1 of the S projection: its sections, cut before each heading line, packed in order into
+# parts of at most S_PART_BYTES. Prints part $1, or nothing past the last part. The exit status
+# is the number of parts, or 255 when one section alone is over S_PART_BYTES.
+s_part() {
+  LC_ALL=C awk -v want="$1" -v max="$S_PART_BYTES" '
+    function add(sec) {
+      if (length(sec) > max) { oversize = 1; return }
+      if (cur != "" && length(cur) + length(sec) > max) { n++; if (n == want) out = cur; cur = "" }
+      cur = cur sec
+    }
+    /^#/ && sec != "" { add(sec); sec = "" }
+    { sec = sec $0 "\n" }
+    END {
+      add(sec)
+      if (oversize) exit 255
+      n++; if (n == want) out = cur
+      printf "%s", out
+      exit n
+    }' "$S_PROJECTION"
 }
 
 case "$HOOK_TYPE" in
@@ -233,6 +284,7 @@ case "$HOOK_TYPE" in
         [ -n "$sid" ] && rm -rf "$(lock_dir_for "$sid")"
         ;;
     esac
+    require_s_projection
     emit "SessionStart" "$ROUTE_TEXT $S_POINTER"
     ;;
 
@@ -241,20 +293,39 @@ case "$HOOK_TYPE" in
     # full routing text here - not a short reminder - is what gives it CLAUDE.md-grade
     # durability: the complete instruction is present on every turn, so even a compacted
     # context that dropped the session-start load still carries it.
+    # With the per-turn S arm on, the engage-s entries carry the S projection in place of
+    # ENGAGE_TEXT.
+    require_per_turn_s_flag
     case "$PER_TURN_S" in
       0) emit "UserPromptSubmit" "$ROUTE_TEXT $ENGAGE_TEXT" ;;
-      1)
-        if [ ! -r "$S_PROJECTION" ]; then
-          echo "laws: LAWS_PER_TURN_S=1 but the S projection is unreadable: $S_PROJECTION" >&2
-          exit 2
-        fi
-        emit "UserPromptSubmit" "$ROUTE_TEXT"$'\n\n'"$(cat "$S_PROJECTION")"
-        ;;
-      *)
-        echo "laws: LAWS_PER_TURN_S must be 0 or 1, got '$PER_TURN_S'" >&2
-        exit 2
-        ;;
+      1) emit "UserPromptSubmit" "$ROUTE_TEXT" ;;
     esac
+    ;;
+
+  engage-s)
+    require_per_turn_s_flag
+    [ "$PER_TURN_S" = 1 ] || exit 0
+    k=$2
+    case "$k" in
+      [1-9]) [ "$k" -le "$S_PARTS" ] ;;
+      *) false ;;
+    esac || { echo "laws: engage-s takes a part number from 1 to $S_PARTS, got '$k'" >&2; exit 2; }
+    require_s_projection
+    part=$(s_part "$k")
+    n=$?
+    if [ "$n" -eq 255 ]; then
+      echo "laws: a section of $S_PROJECTION is over $S_PART_BYTES bytes, so no part can hold it" >&2
+      exit 2
+    fi
+    if [ "$n" -gt "$S_PARTS" ]; then
+      echo "laws: the S projection needs $n parts but hooks.json runs engage-s for $S_PARTS; add entries and raise S_PARTS" >&2
+      exit 2
+    fi
+    # The label names the arm and the part on the hook's output, so a transcript shows which
+    # arm ran, and the model can tell parts that arrive out of order belong to one document.
+    if [ -n "$part" ]; then
+      emit "UserPromptSubmit" "The laws of code at rung S, part $k of $n:"$'\n\n'"$part"
+    fi
     ;;
 
   guard)
