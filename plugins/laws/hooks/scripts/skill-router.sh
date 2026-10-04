@@ -125,12 +125,12 @@ PER_TURN_S="${LAWS_PER_TURN_S:-0}"
 
 # Claude Code caps each hook's additionalContext at 10,000 characters and replaces a longer
 # one with a file path and a 2,000-character preview, so the model would get the projection's
-# preamble and none of its laws. The cap is per hook, so the projection is cut at its headings
-# into parts of at most S_PART_BYTES (bytes, so never more characters than that) and
-# hooks.json runs `engage-s <k>` once for each k in 1..S_PARTS. More parts than entries
-# refuses the prompt rather than dropping the tail.
+# preamble and none of its laws. The cap is per hook, so the projection is cut at its top-level
+# headings into parts of at most S_PART_BYTES (bytes, so never more characters than that), and each
+# `engage-s <k>` entry in hooks.json emits part k. The entries are the one count of parts the
+# hooks can carry; more parts than entries refuses the prompt rather than dropping the tail.
 S_PART_BYTES=9500
-S_PARTS=4
+HOOKS_JSON="$SCRIPT_DIR/../hooks.json"
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin.
 #
@@ -254,9 +254,11 @@ require_per_turn_s_flag() {
   esac
 }
 
-# Part $1 of the S projection: its sections, cut before each heading line, packed in order into
-# parts of at most S_PART_BYTES. Prints part $1, or nothing past the last part. The exit status
-# is the number of parts, or 255 when one section alone is over S_PART_BYTES.
+# Part $1 of the S projection: its categories, cut before each top-level "# " heading, packed in
+# order into parts of at most S_PART_BYTES, so every law arrives under its own category heading
+# whatever order the parts arrive in. Prints the number of parts on the first line, then part $1
+# (nothing past the last part). The exit status is for failure only: 3 when one category alone is
+# over S_PART_BYTES, and awk's own when it cannot read the file.
 s_part() {
   LC_ALL=C awk -v want="$1" -v max="$S_PART_BYTES" '
     function add(sec) {
@@ -264,14 +266,13 @@ s_part() {
       if (cur != "" && length(cur) + length(sec) > max) { n++; if (n == want) out = cur; cur = "" }
       cur = cur sec
     }
-    /^#/ && sec != "" { add(sec); sec = "" }
+    /^# / && sec != "" { add(sec); sec = "" }
     { sec = sec $0 "\n" }
     END {
       add(sec)
-      if (oversize) exit 255
+      if (oversize) exit 3
       n++; if (n == want) out = cur
-      printf "%s", out
-      exit n
+      printf "%d\n%s", n, out
     }' "$S_PROJECTION"
 }
 
@@ -310,20 +311,28 @@ case "$HOOK_TYPE" in
   engage-s)
     require_per_turn_s_flag
     [ "$PER_TURN_S" = 1 ] || exit 0
+    s_parts=$(grep -c 'skill-router.sh\\" engage-s [0-9]' "$HOOKS_JSON")
     k=$2
     case "$k" in
-      [1-9]) [ "$k" -le "$S_PARTS" ] ;;
+      [1-9]) [ "$k" -le "$s_parts" ] ;;
       *) false ;;
-    esac || { echo "laws: engage-s takes a part number from 1 to $S_PARTS, got '$k'" >&2; exit 2; }
+    esac || { echo "laws: engage-s takes a part number from 1 to the $s_parts engage-s entries in $HOOKS_JSON, got '$k'" >&2; exit 2; }
     require_s_projection
-    part=$(s_part "$k")
-    n=$?
-    if [ "$n" -eq 255 ]; then
-      echo "laws: a section of $S_PROJECTION is over $S_PART_BYTES bytes, so no part can hold it" >&2
+    parts=$(s_part "$k")
+    rc=$?
+    if [ "$rc" -eq 3 ]; then
+      echo "laws: a category of $S_PROJECTION is over $S_PART_BYTES bytes, so no part can hold it" >&2
       exit 2
     fi
-    if [ "$n" -gt "$S_PARTS" ]; then
-      echo "laws: the S projection needs $n parts but hooks.json runs engage-s for $S_PARTS; add entries and raise S_PARTS" >&2
+    if [ "$rc" -ne 0 ]; then
+      echo "laws: could not cut $S_PROJECTION into parts (awk exited $rc)" >&2
+      exit 2
+    fi
+    n=${parts%%$'\n'*}
+    part=${parts#"$n"}
+    part=${part#$'\n'}
+    if [ "$n" -gt "$s_parts" ]; then
+      echo "laws: the S projection needs $n parts but $HOOKS_JSON runs engage-s for $s_parts; add entries" >&2
       exit 2
     fi
     # The label names the arm and the part on the hook's output, so a transcript shows which
