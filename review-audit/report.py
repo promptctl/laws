@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Join the reviewing agents' verdicts onto the derived findings and print the
+aggregate tables the analysis reads from. Pure over derived/*.jsonl and
+verdicts/*.jsonl.
+
+    review-audit/report.py --derived review-audit/derived --verdicts review-audit/verdicts [--out review-audit/derived/joined.jsonl]
+
+Every finding id in the verdicts must exist in the derived findings and vice
+versa for the PRs that were reviewed; a mismatch is an error, not a footnote.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections import Counter, defaultdict
+from collections.abc import Iterable
+from pathlib import Path
+
+
+def load_jsonl(path: Path) -> list[dict]:
+    """Every row of a JSONL file. Records end at "\n" and nowhere else: JSON allows a raw
+    U+2028 inside a string, and review bodies carry them, so str.splitlines() - which
+    also breaks there - would cut a record in half."""
+    rows = []
+    for n, line in enumerate(path.read_text().split("\n"), 1):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as e:  # [LAW:no-silent-failure]
+            raise SystemExit(f"{path}:{n}: not JSON: {e}\n{line[:200]}")
+    return rows
+
+
+def load_verdicts(verdicts: Path) -> dict[Path, list[dict]]:
+    """Every verdict file's rows, by path. [LAW:effects-at-boundaries] the one read of
+    the verdicts directory; everything below this line is pure over its result."""
+    return {p: load_jsonl(p) for p in sorted(verdicts.glob("*.jsonl"))}
+
+
+def judged_prs(rows: Iterable[dict]) -> set[str]:
+    """Every `<repo>#<number>` a verdict record names. [LAW:one-source-of-truth] this is
+    the definition of judged, and the only one: a PR is judged when some verdict record
+    claims it, whatever the file carrying it is called. Batch ids are positional, so a
+    re-bundle renames every batch after the first one that changes size - but the PRs a
+    file judged do not move, and neither do the finding ids inside it."""
+    return {r["pr"] for r in rows if "pr" in r}
+
+
+def batch_judged(batch: dict, judged: set[str]) -> bool:
+    """A batch is done when every PR in it is."""
+    return all(f"{batch['repo']}#{n}" in judged for n in batch["prs"])
+
+
+def finding_ids(findings: list[dict]) -> dict[str, dict]:
+    """`<repo>#<number>/F<i>` for every derived finding, i counting per PR in raised order.
+    [LAW:one-source-of-truth] the same ordering bundle.py renders."""
+    by_pr: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    for f in findings:
+        by_pr[(f["repo"], f["number"])].append(f)
+    ids: dict[str, dict] = {}
+    for (repo, number), fs in by_pr.items():
+        for i, f in enumerate(sorted(fs, key=lambda f: (f["raised_at"], f["thread_id"])), 1):
+            ids[f"{repo}#{number}/F{i}"] = f
+    return ids
+
+
+def lacks_should_have(row: dict) -> bool:
+    """A correct response is its own should_have; any other must say what should have
+    happened. [LAW:one-source-of-truth] check.py refuses and report.py fills by this rule."""
+    return not row.get("should_have") and row.get("response_correct") != "yes"
+
+
+def should_have(row: dict, path: Path) -> dict:
+    """[LAW:parse-dont-validate] the field is filled or refused here, never guessed
+    downstream."""
+    if lacks_should_have(row):
+        raise SystemExit(f"{path}: {row['finding']} has response_correct={row.get('response_correct')!r} but no should_have")
+    return row if row.get("should_have") else row | {"should_have": row["response"]}
+
+
+def table(title: str, counter: Counter, total: int | None = None) -> str:
+    total = total if total is not None else sum(counter.values())
+    lines = [f"### {title}", "", "| key | n | % |", "|---|---|---|"]
+    for key, n in counter.most_common():
+        lines.append(f"| {key} | {n} | {100 * n / total:.0f}% |" if total else f"| {key} | {n} | |")
+    return "\n".join(lines) + "\n"
+
+
+def cross(title: str, rows: list[tuple[str, str]]) -> str:
+    """A two-way count table."""
+    a_keys = sorted({a for a, _ in rows})
+    b_keys = sorted({b for _, b in rows})
+    c = Counter(rows)
+    lines = [f"### {title}", "", "| | " + " | ".join(b_keys) + " | total |", "|---|" + "---|" * (len(b_keys) + 1)]
+    for a in a_keys:
+        lines.append(f"| {a} | " + " | ".join(str(c[(a, b)]) for b in b_keys) + f" | {sum(c[(a, b)] for b in b_keys)} |")
+    return "\n".join(lines) + "\n"
+
+
+class Joined:
+    """Everything downstream stages read: derived PRs and findings keyed by id, and the
+    verdicts joined onto them. [LAW:one-source-of-truth] the single join of verdicts to
+    derived rows; report.py and render.py both consume it."""
+
+    def __init__(self, prs: dict[str, dict], findings: dict[str, dict], finding_verdicts: dict[str, dict], pr_verdicts: dict[str, dict]):
+        self.prs = prs
+        self.findings = findings
+        self.finding_verdicts = finding_verdicts
+        self.pr_verdicts = pr_verdicts
+
+    @property
+    def rows(self) -> list[dict]:
+        """Derived finding rows carrying their verdict under `verdict`, in id order."""
+        return [self.findings[fid] | {"id": fid, "verdict": v} for fid, v in self.finding_verdicts.items()]
+
+
+def join(derived: Path, verdicts: Path) -> Joined:
+    """Load derived rows and every verdict file, refusing duplicates and unknown ids."""
+    findings = finding_ids(load_jsonl(derived / "findings.jsonl"))
+    prs = {f"{p['repo']}#{p['number']}": p for p in load_jsonl(derived / "prs.jsonl")}
+    finding_verdicts: dict[str, dict] = {}
+    pr_verdicts: dict[str, dict] = {}
+    for path in sorted(verdicts.glob("*.jsonl")):
+        for row in load_jsonl(path):
+            if "finding" in row:
+                if row["finding"] in finding_verdicts:
+                    raise SystemExit(f"{path}: duplicate verdict for {row['finding']}")
+                if row["finding"] not in findings:
+                    raise SystemExit(f"{path}: verdict for unknown finding {row['finding']}")
+                finding_verdicts[row["finding"]] = should_have(row, path) | {"batch": path.stem}
+            elif "pr" in row:
+                if row["pr"] in pr_verdicts:
+                    raise SystemExit(f"{path}: duplicate verdict for {row['pr']}, already in {pr_verdicts[row['pr']]['batch']}")
+                if row["pr"] not in prs:
+                    raise SystemExit(f"{path}: verdict for unknown PR {row['pr']}")
+                pr_verdicts[row["pr"]] = row | {"batch": path.stem}
+            else:
+                raise SystemExit(f"{path}: row is neither a finding nor a PR verdict: {json.dumps(row)[:200]}")
+    return Joined(prs, findings, finding_verdicts, pr_verdicts)
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--derived", type=Path, required=True)
+    ap.add_argument("--verdicts", type=Path, required=True)
+    ap.add_argument("--out", type=Path, help="write joined finding rows here as JSONL")
+    args = ap.parse_args(argv)
+
+    j = join(args.derived, args.verdicts)
+    findings, prs, finding_verdicts, pr_verdicts = j.findings, j.prs, j.finding_verdicts, j.pr_verdicts
+
+    reviewed_prs = set(pr_verdicts)
+    expected = {fid for fid, f in findings.items() if f"{f['repo']}#{f['number']}" in reviewed_prs}
+    missing = sorted(expected - set(finding_verdicts))
+    if missing:  # [LAW:no-silent-failure] the docstring's contract: an error, not a footnote
+        raise SystemExit(f"{len(missing)} findings of reviewed PRs have no verdict, e.g. {missing[:5]}")
+
+    joined = j.rows
+    if args.out:
+        args.out.write_text("".join(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in joined))
+
+    era = lambda f: "copilot" if f["reviewer"].startswith("copilot") else ("copirate" if f["reviewer"] == "github-actions" else "human")
+    out: list[str] = []
+    out.append(f"## Coverage\n\n{len(pr_verdicts)} PRs with verdicts of {len(prs)} derived · {len(joined)} findings with verdicts of {len(findings)} derived\n")
+    out.append(table("response (what the agent did)", Counter(r["verdict"]["response"] for r in joined)))
+    out.append(table("premise (was the reviewer right)", Counter(r["verdict"]["premise"] for r in joined)))
+    out.append(cross("response × response_correct", [(r["verdict"]["response"], r["verdict"]["response_correct"]) for r in joined]))
+    out.append(cross("response × should_have", [(r["verdict"]["response"], r["verdict"]["should_have"]) for r in joined]))
+    out.append(cross("premise × response", [(r["verdict"]["premise"], r["verdict"]["response"]) for r in joined]))
+    out.append(cross("era × response_correct", [(era(r), r["verdict"]["response_correct"]) for r in joined]))
+    caused = [r for r in joined if r["verdict"].get("caused_by")]
+    out.append(f"### findings caused by an earlier fix\n\n{len(caused)} of {len(joined)} ({100 * len(caused) / max(1, len(joined)):.0f}%)\n")
+    out.append(table("cause_kind", Counter(r["verdict"]["cause_kind"] or "null" for r in caused)))
+    out.append(cross("cause_kind × era", [(r["verdict"]["cause_kind"] or "null", era(r)) for r in caused]))
+    out.append(cross("flag vs verdict: on_named_fix_commit × caused_by set", [(str(r["on_named_fix_commit"]), str(bool(r["verdict"].get("caused_by")))) for r in joined]))
+    out.append(cross("flag vs verdict: on_post_review_commit × caused_by set", [(str(r["on_post_review_commit"]), str(bool(r["verdict"].get("caused_by")))) for r in joined]))
+    cited = [r for r in joined if r["verdict"].get("law_cited_by_agent")]
+    out.append(cross("law citation aptness × response", [(r["verdict"]["law_citation_apt"], r["verdict"]["response"]) for r in cited]))
+    law_apt: Counter = Counter()
+    for r in cited:
+        for law in r["verdict"]["law_cited_by_agent"]:
+            law_apt[(law, r["verdict"]["law_citation_apt"])] += 1
+    out.append(cross("law × aptness", [k for k, n in law_apt.items() for _ in range(n)]))
+    out.append(table("severity of findings caused by fixes", Counter(f"S{r['severity']}" if r["severity"] else "none" for r in caused)))
+    rounds = Counter(v["rounds"] for v in pr_verdicts.values())
+    out.append(table("rounds per PR", rounds))
+    avoidable = sum(v["avoidable_rounds"] for v in pr_verdicts.values())
+    judged_rounds = sum(v["rounds"] for v in pr_verdicts.values())
+    out.append(f"### avoidable rounds (judged, a floor)\n\n{avoidable} of {judged_rounds} judged rounds ({100 * avoidable / max(1, judged_rounds):.0f}%) across {len(pr_verdicts)} PRs; {sum(1 for v in pr_verdicts.values() if v['avoidable_rounds'])} PRs had at least one. Agents read the definition differently, so this is not comparable across batches; the derived count below is.\n")
+    # Computed, not judged: every finding carries its round and caused_by is judged per
+    # finding, so this reads the same way for every batch whatever the agent's arithmetic.
+    fix_rounds = {(r["repo"], r["number"], r["round"]) for r in caused}
+    total_rounds = sum(prs[k]["n_rounds"] for k in pr_verdicts)
+    out.append(f"### rounds containing a fix-caused finding (derived)\n\n{len(fix_rounds)} of {total_rounds} derived rounds ({100 * len(fix_rounds) / max(1, total_rounds):.0f}%); {len({(repo, n) for repo, n, _ in fix_rounds})} PRs had at least one\n")
+    out.append(table("chain lengths", Counter(len(c) for v in pr_verdicts.values() for c in v.get("chains", []))))
+    out.append(table("per repo: findings caused by fixes / findings", Counter(r["repo"] for r in caused)))
+    print("\n".join(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
