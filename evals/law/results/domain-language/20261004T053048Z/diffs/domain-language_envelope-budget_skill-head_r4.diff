@@ -1,0 +1,76 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..7841719 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,15 +1,20 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only that month's transactions count against the allocations; with none,
++every transaction in the file does.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+ """
++import argparse
+ import csv
+ import json
+ import sys
++from collections.abc import Callable
+ from dataclasses import dataclass
+-from datetime import date
++from datetime import date, datetime
+ from decimal import Decimal
+ from pathlib import Path
+ 
+@@ -31,6 +36,27 @@ class Transaction:
+     amount: Decimal
+ 
+ 
++@dataclass(frozen=True)
++class Period:
++    """The span of posting dates a report covers."""
++
++    label: str
++    contains: Callable[[date], bool]
++
++
++ALL_TIME = Period("all time", lambda posted: True)
++
++
++def parse_month(text: str) -> Period:
++    # [LAW:parse-dont-validate] the command line is the one place a month is checked;
++    # everything past it holds a Period and never re-reads the string.
++    try:
++        first = datetime.strptime(text, "%Y-%m")
++    except ValueError:
++        raise argparse.ArgumentTypeError(f"{text!r} is not a month; expected YYYY-MM, e.g. 2026-09") from None
++    return Period(f"{first:%Y-%m}", lambda posted: (posted.year, posted.month) == (first.year, first.month))
++
++
+ def load_envelopes(path: Path = ENVELOPES_FILE) -> list[Envelope]:
+     return [Envelope(name, Decimal(amount)) for name, amount in json.loads(path.read_text()).items()]
+ 
+@@ -51,8 +77,19 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+ 
+ 
+ def main(argv: list[str]) -> int:
++    parser = argparse.ArgumentParser(description="What is left in each envelope.")
++    parser.add_argument("period", nargs="?", type=parse_month, default=ALL_TIME, metavar="YYYY-MM",
++                        help="count only this month's transactions (default: every transaction)")
++    period: Period = parser.parse_args(argv[1:]).period
++
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    transactions = load_transactions()
++    # [LAW:dataflow-not-control-flow] the filter always runs; ALL_TIME is the period that keeps everything.
++    counted = [transaction for transaction in transactions if period.contains(transaction.posted)]
++    # [LAW:nothing-unseen] stderr, so stdout stays the report: a month with no transactions
++    # (or a mistyped one) says "0 of N" instead of passing for an untouched budget.
++    print(f"{period.label}: {len(counted)} of {len(transactions)} transactions", file=sys.stderr)
++    spent = spent_by_envelope(counted)
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")

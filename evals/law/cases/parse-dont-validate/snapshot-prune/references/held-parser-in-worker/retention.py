@@ -17,8 +17,12 @@ class Policy:
     rules: list
 
 
+def _missing(raw, keys):
+    return set(keys) - set(raw)
+
+
 def parse_rule(n, raw):
-    missing = {"prefix", "keep"} - set(raw)
+    missing = _missing(raw, ("prefix", "keep"))
     if missing:
         raise ValueError(f"rule {n}: missing {', '.join(sorted(missing))} (has {', '.join(sorted(raw))})")
     if not isinstance(raw["keep"], int) or raw["keep"] < 0:
