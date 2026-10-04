@@ -341,7 +341,8 @@ fi
 s_file="$HERE/../../skills/code/references/rung-s.md"
 law_line='**Divide the program along the natural joints'  # a line of the S projection, absent from the routing and engagement text
 grep -qF "$law_line" "$s_file" || bad "test fixture: '$law_line' is not in the S projection - pick another line"
-s_parts=$(sed -n 's/^S_PARTS=//p' "$ROUTER")
+hooks_json="$HERE/../hooks.json"
+s_parts=$(grep -c 'skill-router.sh\\" engage-s [0-9]' "$hooks_json")
 off_out=$(printf '{}' | env -u LAWS_PER_TURN_S "$ROUTER" engage 2>/dev/null)
 case "$off_out" in
   *'consider the laws and devices of your craft'*) ok "engage with the flag unset carries the engagement text";;
@@ -355,13 +356,13 @@ while [ "$k" -le "$s_parts" ]; do
 done
 [ -z "$off_s" ] && ok "  ... and every engage-s entry emits nothing" || bad "  ... and every engage-s entry emits nothing (got: ${off_s:0:300})"
 
-# 17a. hooks.json runs engage-s once for each part number the router accepts, 1..S_PARTS.
-hooks_json="$HERE/../hooks.json"
+# 17a. The router takes the count of engage-s entries in hooks.json as the parts it can carry,
+#      so the entries must be engage-s 1..n, each once, in order.
 want_entries=$(k=1; while [ "$k" -le "$s_parts" ]; do printf 'engage-s %s\n' "$k"; k=$((k+1)); done)
 have_entries=$(grep -o 'engage-s [0-9][0-9]*' "$hooks_json")
 [ -n "$s_parts" ] && [ "$have_entries" = "$want_entries" ] \
   && ok "hooks.json runs engage-s 1..$s_parts" \
-  || bad "hooks.json runs engage-s 1..S_PARTS (S_PARTS='$s_parts', entries: $have_entries)"
+  || bad "hooks.json runs engage-s 1..n (count '$s_parts', entries: $have_entries)"
 
 # 17b. On: engage carries the routing text alone, and the parts carry the S projection, each
 #      under Claude Code's 10,000-character cap on a hook's context. Escaped bytes bound the
@@ -377,12 +378,17 @@ esac
 all_parts=""
 labels=""
 over=""
+cat_cut=""
 SECONDS=0
 k=1
 while [ "$k" -le "$s_parts" ]; do
   part_out=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage-s "$k" 2>&1)
   part_bytes=$(printf '%s' "$part_out" | LC_ALL=C wc -c | tr -d ' ')
   [ "$part_bytes" -le 10000 ] || over="$over part $k is $part_bytes bytes;"
+  # A part whose first heading is not a category heading has cut a category in two, and its
+  # first laws arrive under no heading of their own when the parts arrive out of order.
+  first_heading=$(printf '%s' "$part_out" | grep -o '\\n##* ' | head -1)
+  [ -n "$part_out" ] && [ "$first_heading" != '\n# ' ] && cat_cut="$cat_cut$k "
   label=$(printf '%s' "$part_out" | grep -o 'rung S, part [0-9]* of [0-9]*')
   [ -n "$label" ] && labels="$labels$label
 "
@@ -392,6 +398,8 @@ done
 elapsed=$SECONDS
 [ -z "$over" ] && ok "  ... every part is under 10,000 bytes" || bad "  ... every part is under 10,000 bytes:$over"
 n_parts=$(printf '%s' "$labels" | grep -c .)
+[ -z "$cat_cut" ] && ok "  ... every part starts at a category heading" \
+  || bad "  ... every part starts at a category heading (parts: $cat_cut)"
 want_labels=$(k=1; while [ "$k" -le "$n_parts" ]; do printf 'rung S, part %s of %s\n' "$k" "$n_parts"; k=$((k+1)); done)
 [ "$n_parts" -ge 1 ] && [ "$labels" = "$want_labels
 " ] && ok "  ... $n_parts parts, labeled 1..$n_parts of $n_parts, and nothing past them" \
@@ -406,8 +414,9 @@ case "$all_parts" in
   *"$law_line"*) ok "  ... carrying the law text";;
   *) bad "  ... carrying the law text";;
 esac
-# macOS /bin/bash is 3.2, whose ${s//...} took 25 seconds per part on this file.
-[ "$elapsed" -le 3 ] && ok "  ... all parts in ${elapsed}s" || bad "  ... all parts in under 3s (took ${elapsed}s)"
+# macOS /bin/bash is 3.2, whose ${s//...} took 25 seconds per part on this file. The bound is
+# far above a normal run, so a loaded machine does not fail it, and far below that regression.
+[ "$elapsed" -le 10 ] && ok "  ... all parts in ${elapsed}s" || bad "  ... all parts in under 10s (took ${elapsed}s)"
 if [ "$(printf '%s' "$all_parts" | LC_ALL=C tr -d -c '\001-\037' | wc -c | tr -d ' ')" = 0 ]; then
   ok "  ... with no raw control character in the JSON"
 else
@@ -426,7 +435,7 @@ done
 bad_err=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage-s 0 2>&1 >/dev/null); bad_rc=$?
 [ "$bad_rc" -eq 2 ] && ok "engage-s 0 exits 2" || bad "engage-s 0 exits 2 (rc=$bad_rc, stderr: $bad_err)"
 bad_err=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage-s $((s_parts+1)) 2>&1 >/dev/null); bad_rc=$?
-[ "$bad_rc" -eq 2 ] && ok "engage-s past S_PARTS exits 2" || bad "engage-s past S_PARTS exits 2 (rc=$bad_rc, stderr: $bad_err)"
+[ "$bad_rc" -eq 2 ] && ok "engage-s past the hooks.json entries exits 2" || bad "engage-s past the hooks.json entries exits 2 (rc=$bad_rc, stderr: $bad_err)"
 
 # 17d. A missing or empty S projection refuses, at session start and in the arm: a session that
 #      ran the arm with nothing injected would be read as the arm's result. Each case runs a copy
@@ -434,6 +443,7 @@ bad_err=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage-s $((s_parts+1)) 2>&1
 nos=$(mktemp -d)
 mkdir -p "$nos/hooks/scripts" "$nos/skills/code/references"
 cp "$ROUTER" "$HERE/incompatible-crafts.txt" "$nos/hooks/scripts/"
+cp "$hooks_json" "$nos/hooks/"
 nos_router="$nos/hooks/scripts/skill-router.sh"
 nos_s="$nos/skills/code/references/rung-s.md"
 expect_refusal() { # <label> <needle> <hook args...>
@@ -449,23 +459,28 @@ expect_refusal "no S projection: engage-s 1 exits 2" "missing or empty" engage-s
 expect_refusal "no S projection: session-start exits 2" "missing or empty" session-start
 : > "$nos_s"
 expect_refusal "an empty S projection: engage-s 1 exits 2" "missing or empty" engage-s 1
+# Readable is a third thing beside present and non-empty: awk failing to open the file must not
+# read as a part count.
+echo '## one' > "$nos_s"; chmod 000 "$nos_s"
+expect_refusal "an unreadable S projection: engage-s 1 exits 2" "could not cut" engage-s 1
+chmod 644 "$nos_s"
 
-# 17e. A section over S_PART_BYTES fits no part, and more sections than S_PARTS parts can hold
+# 17e. A category over S_PART_BYTES fits no part, and more categories than the entries can hold
 #      would drop the tail: both refuse.
 part_bytes=$(sed -n 's/^S_PART_BYTES=//p' "$ROUTER")
 filler() { LC_ALL=C awk -v n="$1" 'BEGIN { while (n > 0) { print "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; n -= 72 } }'; }
-{ echo '## one'; filler $((part_bytes + 100)); } > "$nos_s"
-expect_refusal "a section over S_PART_BYTES exits 2" "no part can hold it" engage-s 1
+{ echo '# one'; filler $((part_bytes + 100)); } > "$nos_s"
+expect_refusal "a category over S_PART_BYTES exits 2" "no part can hold it" engage-s 1
 : > "$nos_s"
 k=0
-while [ "$k" -le "$s_parts" ]; do { echo "## section $k"; filler $((part_bytes * 2 / 3)); } >> "$nos_s"; k=$((k+1)); done
-expect_refusal "more parts than S_PARTS exits 2" "add entries and raise S_PARTS" engage-s 1
+while [ "$k" -le "$s_parts" ]; do { echo "# category $k"; filler $((part_bytes * 2 / 3)); } >> "$nos_s"; k=$((k+1)); done
+expect_refusal "more parts than hooks.json entries exits 2" "add entries" engage-s 1
 
 # 17f. The shipped S projection has no control character but the newline, so 17b cannot see
 #      whether the rest are escaped. A generated file can gain one; this one has a tab, a CR, a
-#      form feed and a \001, beside a quote and a backslash. POSIXLY_CORRECT puts macOS awk on
-#      the POSIX rule for a backslash in a gsub replacement, the rule gawk and mawk always use,
-#      so the escaper is checked under both rules on any machine.
+#      form feed and a \001, beside a quote and a backslash. The POSIXLY_CORRECT run guards
+#      against an escaper built on gsub: macOS awk then follows the POSIX rule for a backslash in
+#      a gsub replacement, as gawk and mawk always do, and that rule did not double it.
 printf 'a\tb\r\nc\fd\001e"f\\g\n' > "$nos_s"
 for posix in 0 1; do
   if [ "$posix" = 1 ]; then
