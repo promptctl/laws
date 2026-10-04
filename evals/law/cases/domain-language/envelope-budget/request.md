@@ -1,0 +1,1 @@
+budget.py adds up every transaction in the file, so after a couple of months every envelope looks overspent. Can you make it take an optional month, like `python3 budget.py 2026-09`, and only count that month's transactions? With no month it should keep working the way it does now.
