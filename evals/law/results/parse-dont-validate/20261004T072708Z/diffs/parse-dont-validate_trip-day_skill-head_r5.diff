@@ -1,0 +1,78 @@
+diff --git a/fixture/app.py b/work/app.py
+index 5b65a45..e19d46d 100644
+--- a/fixture/app.py
++++ b/work/app.py
+@@ -5,6 +5,7 @@
+ Run locally with `python3 app.py` (port 8051); production serves `application` under gunicorn.
+ """
+ import json
++from datetime import date
+ from pathlib import Path
+ from urllib.parse import parse_qs
+ from wsgiref.simple_server import make_server
+@@ -20,11 +21,29 @@ def respond(start_response, status, payload):
+     return [body]
+ 
+ 
++class BadDay(ValueError):
++    """The request's `day` parameter is missing or is not a calendar date."""
++
++
++# [LAW:parse-dont-validate] The one place the query string becomes a date; trips.py only ever sees a date.
++def parse_day(query_string):
++    values = parse_qs(query_string).get("day")
++    if not values:
++        raise BadDay("missing day parameter; expected day=YYYY-MM-DD")
++    raw = values[0]
++    try:
++        return date.fromisoformat(raw)
++    except ValueError as e:
++        raise BadDay(f"bad day {raw!r}: {e}; expected day=YYYY-MM-DD") from e
++
++
+ def application(environ, start_response):
+     if environ.get("PATH_INFO") != "/trips":
+         return respond(start_response, "404 Not Found", {"error": "not found"})
+-    params = parse_qs(environ.get("QUERY_STRING", ""))
+-    day = params.get("day", [""])[0]
++    try:
++        day = parse_day(environ.get("QUERY_STRING", ""))
++    except BadDay as e:
++        return respond(start_response, "400 Bad Request", {"error": str(e)})
+     return respond(start_response, "200 OK", trips.summary(TRIPS, day))
+ 
+ 
+diff --git a/fixture/trips.py b/work/trips.py
+index 81f4942..e8b9b54 100644
+--- a/fixture/trips.py
++++ b/work/trips.py
+@@ -2,7 +2,7 @@
+ import csv
+ from collections import Counter
+ from dataclasses import dataclass
+-from datetime import date, datetime
++from datetime import datetime
+ 
+ 
+ @dataclass(frozen=True)
+@@ -24,8 +24,7 @@ def load_trips(path):
+ 
+ 
+ def trips_on(trips, day):
+-    wanted = date.fromisoformat(day)
+-    return [t for t in trips if t.started.date() == wanted]
++    return [t for t in trips if t.started.date() == day]
+ 
+ 
+ def busiest_stations(trips, day, limit=3):
+@@ -36,8 +35,8 @@ def busiest_stations(trips, day, limit=3):
+ def summary(trips, day):
+     on_day = trips_on(trips, day)
+     return {
+-        "day": day,
+-        "title": date.fromisoformat(day).strftime("%A %d %B %Y"),
++        "day": day.isoformat(),
++        "title": day.strftime("%A %d %B %Y"),
+         "trips": len(on_day),
+         "minutes": sum(t.minutes for t in on_day),
+         "bikes": len({t.bike for t in on_day}),

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_skill-head_r3_9bc48e9f",
+  "session_id": "db399b2d-0cec-4258-a173-3af4bc267670",
+  "started_at": "2026-10-04T07:42:39.361612+00:00",
+  "duration_ms": 34298,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-_8011f9f/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "A bad `day` on `/trips` now gets a 400 with a JSON error saying what's wrong, instead of a 500 and a traceback. I exercised the endpoint in-process with both values from your access log, plus a few others:\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `day='2026-09-31' is not a real calendar date: day is out of range for month` |\n| `day=14/09/2026` | 400 `day='14/09/2026' is not formatted YYYY-MM-DD (e.g. day=2026-09-14)` |\n| `day=` or no `day` at all | 400 `day is required, formatted YYYY-MM-DD (e.g. day=2026-09-14)` |\n| `day=2026-09-13` | 200, same summary as before |\n\nThe repo has no test suite, so that check was a one-off script and I didn't add tests.\n\n- **The fix:** `app.py` now has a `parse_day` function that turns the query string into a `date` once, and `application` returns the 400 when it fails.\n- **Signature change in `trips.py`:** `trips_on`, `busiest_stations` and `summary` now take a `date` rather than a string, so they no longer re-parse it. Anything else that calls them with a string would need updating; `app.py` is the only caller in this directory.\n- **Stricter than before:** only `YYYY-MM-DD` is accepted. Compact or week-style ISO dates such as `20260913` or `2026-W38-1`, which newer Python versions parse, now get a 400 rather than a summary.\n\nThe date picker is still sending these values; this only makes the API answer them properly.",
+      "duration_ms": 29025
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2879,
+    "cache_read": 204736,
+    "cache_creation": 40145
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-_8011f9f/work",
+  "transcript": "transcript/db399b2d-0cec-4258-a173-3af4bc267670.jsonl"
+}

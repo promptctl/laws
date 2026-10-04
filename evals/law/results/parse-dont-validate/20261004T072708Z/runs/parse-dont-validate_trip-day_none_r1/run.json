@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r1_9bc48e9f",
+  "session_id": "72d306cd-903c-4539-9506-70fdd6710172",
+  "started_at": "2026-10-04T07:40:52.027927+00:00",
+  "duration_ms": 27891,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed in `app.py`: a bad `day` now gets a 400 with a JSON error saying what's wrong, and no traceback is logged. I checked it by calling the WSGI app directly with a range of good and bad values; there's no test suite in the project, so nothing permanent was added.\n\nThe two cases from your access log now answer:\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `day '2026-09-31' is not a real calendar date` |\n| `day=14/09/2026` | 400 `day must be formatted YYYY-MM-DD, got '14/09/2026'` |\n\nTwo behaviours you might not assume:\n\n- **Missing or empty `day`:** this also used to 500; it now returns 400 `day is required, as YYYY-MM-DD`.\n- **Strict format:** only zero-padded `YYYY-MM-DD` is accepted, so `20260914` and `2026-9-14` are rejected.\n\nA valid date with no trips (e.g. `2030-01-01`) still returns 200 with a zero-count summary, as before.\n\nThe check lives in a new `day_error()` helper in `app.py`, called before `trips.summary`; `trips.py` is untouched.",
+      "duration_ms": 21910
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2050,
+    "cache_read": 120661,
+    "cache_creation": 10518
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-j087x0f8/work",
+  "transcript": "transcript/72d306cd-903c-4539-9506-70fdd6710172.jsonl"
+}

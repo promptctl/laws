@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r2_9bc48e9f",
+  "session_id": "9ea96565-78ab-415b-a08a-9663e3bc4f26",
+  "started_at": "2026-10-04T07:41:20.186555+00:00",
+  "duration_ms": 32388,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed in `app.py`: a bad `day` now gets a 400 with a JSON `{\"error\": ...}` body instead of a 500 and a traceback. I checked it by calling the WSGI app directly with good and bad values; there are no tests in the project and I didn't add any.\n\nThe two cases from your access log now return:\n\n- **`day=2026-09-31`** \u2192 400, `day '2026-09-31' is not a real date: day is out of range for month`\n- **`day=14/09/2026`** \u2192 400, `day must look like YYYY-MM-DD, got '14/09/2026'`\n\nValid days still return 200 as before, including days with no trips.\n\nTwo behaviours you might not assume:\n\n- **Missing or empty `day`** (`/trips` or `/trips?day=`) was also a 500 and is now a 400 with `day is required, as YYYY-MM-DD`. The literal `/trips?day=` in your message suggests the picker sometimes sends this too.\n- **Only strict `YYYY-MM-DD` is accepted.** Compact forms like `20260913` now get a 400 rather than a 200, to match the format the API documents.\n\nThe check lives in a new `day_problem()` helper at `app.py:26`, called from `application` before `trips.summary`; `trips.py` is untouched.\n\nThe picker is still sending these values, so the dashboard side will want a look as well: this only changes how the API answers them.",
+      "duration_ms": 25701
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1924,
+    "cache_read": 120673,
+    "cache_creation": 10526
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-kqmtb741/work",
+  "transcript": "transcript/9ea96565-78ab-415b-a08a-9663e3bc4f26.jsonl"
+}
