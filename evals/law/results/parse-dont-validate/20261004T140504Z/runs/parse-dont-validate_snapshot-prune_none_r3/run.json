@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_none_r3_c6fd2586",
+  "session_id": "463a088b-1c54-40af-b92c-4379d55afa3d",
+  "started_at": "2026-10-04T14:10:18.807442+00:00",
+  "duration_ms": 58164,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it deletes anything; on a bad policy it lists every problem, deletes nothing and exits with status 1.\n\nRun against a scratch copy of your snapshots, your current `policy.json` now gives this and leaves all 16 files in place:\n\n```\npolicy.json: invalid policy, nothing was deleted:\n  - rules[2] (prefix 'logs-'): unknown key 'kepe'\n  - rules[2] (prefix 'logs-'): missing 'keep'\n```\n\nWith the typo corrected in the scratch copy, it pruned all three families as before. I did not touch your real `policy.json` or the real `snapshots` directory, so the `kepe` typo is still there for you to fix.\n\nThe check lives in `retention.py`, with `prune.py` printing the result. It rejects:\n\n- **Unknown keys**, at the top level or in a rule. This catches `kepe`, and also something like `dryrun: true`, which would otherwise be ignored and delete for real.\n- **Missing or wrong-typed values**: `snapshot_dir`, `rules`, `prefix`, `keep` (must be a whole number, 0 or more) and `dry_run` (must be true or false).\n- **A `snapshot_dir` that isn't an existing directory**, which previously did nothing silently.\n- **Unsafe prefixes**: empty, or containing wildcards or path separators, since those could match files outside the intended family.\n- **Overlapping prefixes** such as `db-` and `db-prod-`, where one file would fall under two rules.\n- **Unreadable or malformed JSON**, which now gives a one-line message instead of a traceback.\n\nTwo things you might not expect:\n\n- `keep: 0` is still accepted and deletes every snapshot in that family.\n- The overlapping-prefix rule is stricter than what you asked for; if you rely on nested prefixes on purpose, say so and I'll drop that check.",
+      "duration_ms": 51538
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 5104,
+    "cache_read": 127948,
+    "cache_creation": 14956
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-znz_knfa/work",
+  "transcript": "transcript/463a088b-1c54-40af-b92c-4379d55afa3d.jsonl"
+}

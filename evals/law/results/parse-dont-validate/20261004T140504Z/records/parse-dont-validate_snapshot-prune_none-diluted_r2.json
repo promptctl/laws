@@ -1,0 +1,26 @@
+{
+  "schema_version": 3,
+  "run_id": "parse-dont-validate/snapshot-prune/none-diluted/r2",
+  "law": "parse-dont-validate",
+  "case": "parse-dont-validate/snapshot-prune",
+  "case_kind": "fork",
+  "split": "tuning",
+  "case_sha256": "44145b91ff9f19553f9bd46abca01e9c7d14ca7667dda1b849bced760960f6ae",
+  "arm": {
+    "name": "none+diluted",
+    "guidance": null,
+    "context": {
+      "name": "diluted",
+      "turns": 3,
+      "sha256": "5f4ffc703fac539c25ea19b0e9c34f2f70018e768d8b6ecb7852dc45bf193e6a"
+    }
+  },
+  "repeat": 2,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "violated",
+    "detail": "retention.apply received builtins.dict for policy; retention.check received builtins.dict for policy; retention.unknown_keys received builtins.dict for mapping; retention.check_rules received builtins.dict for an item of rules; retention.unknown_keys received builtins.dict for mapping; retention.prune received builtins.dict for rule; crossing: none found"
+  },
+  "session": "runs/parse-dont-validate_snapshot-prune_none-diluted_r2/run.json",
+  "diff": "diffs/parse-dont-validate_snapshot-prune_none-diluted_r2.diff"
+}

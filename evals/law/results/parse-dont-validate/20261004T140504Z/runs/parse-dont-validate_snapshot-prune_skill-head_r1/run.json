@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r1_c6fd2586",
+  "session_id": "ae4b6247-ef8e-461a-8ce6-15d38b2fd8b6",
+  "started_at": "2026-10-04T14:11:15.160432+00:00",
+  "duration_ms": 65642,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-k3vle60i/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it touches any snapshot, and if anything is wrong it lists every problem and exits 1 with nothing deleted.\n\nAgainst your current `policy.json` it now prints:\n\n```\nprune.py: invalid policy policy.json, nothing deleted:\n  - rules[2] ('logs-'): unknown key \"kepe\" (did you mean \"keep\"?)\n  - rules[2] ('logs-'): missing \"keep\"\n```\n\nI ran this on a scratch copy of the directory: the typo'd policy, several other broken policies, unreadable JSON and a missing file all left all 16 snapshots in place. With the typo corrected, the copy pruned normally (3 db, 2 media, 4 logs kept).\n\nI did not fix the `kepe` typo in `policy.json` itself, so the real run will keep refusing until someone changes it to `keep`.\n\nThe checking lives in a new `policy.py`; `retention.py` now only accepts an already-checked policy. Besides misspelled or missing keys, it rejects a few things that would previously have deleted the wrong files or silently done nothing:\n\n- **Bad `keep`:** a negative number, a non-integer, or `true`/`false`.\n- **Empty `prefix`:** it would match every `.tar` in the directory.\n- **Overlapping prefixes:** for example `lo` and `logs-`, where one rule would delete what another keeps.\n- **`snapshot_dir` that isn't a directory:** a typo there used to exit 0 having done nothing.\n- **Non-boolean `dry_run`:** for example `\"no\"`, which Python would have treated as true.\n\nThe overlapping-prefix rule is the one most likely to reject a policy you consider valid; say if you rely on nested prefixes and I'll drop it.",
+      "duration_ms": 58243
+    }
+  ],
+  "tokens": {
+    "input": 10,
+    "output": 5481,
+    "cache_read": 280700,
+    "cache_creation": 43438
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-k3vle60i/work",
+  "transcript": "transcript/ae4b6247-ef8e-461a-8ce6-15d38b2fd8b6.jsonl"
+}

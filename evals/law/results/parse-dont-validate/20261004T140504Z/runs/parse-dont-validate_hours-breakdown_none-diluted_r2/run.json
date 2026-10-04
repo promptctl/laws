@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_hours-breakdown_none-diluted_r2_c6fd2586",
+  "session_id": "e99b89c6-a897-40d5-b994-ae3485428565",
+  "started_at": "2026-10-04T14:05:53.518855+00:00",
+  "duration_ms": 94997,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "**Picking matching blocks.** `get_matching_blocks` starts with the whole of `a` and `b`, asks `find_longest_match` for the single longest contiguous block the two share, records it, and then repeats on the piece to the left of that block and the piece to the right. It uses an explicit queue instead of recursion. Because each sub-search is confined to the region on the same side of the earlier match, the blocks can never cross. At the end it sorts the blocks, merges any that are directly adjacent in both sequences, and appends the `(len(a), len(b), 0)` sentinel. This is a greedy \"biggest anchor first\" strategy, not a minimal edit script, which is why the output tends to look natural but can be longer than what `diff` would give.\n\n**Finding the longest match.** `find_longest_match` relies on `b2j`, an index built once per `b` that maps each element to the list of positions where it occurs in `b`. It walks `a[alo:ahi]` one element at a time and keeps `j2len[j]`, the length of the match ending at `a[i-1]` and `b[j]`. For each position `j` where `a[i]` occurs in `b`, the new length is `j2len[j-1] + 1`. The best is only replaced on a strictly greater length, so ties go to the block starting earliest in `a`, then earliest in `b`.\n\n**What junk does.** `isjunk` is only ever applied to the elements of `b`, and junk elements are deleted from `b2j`. Three things follow from that:\n\n- **Junk cannot seed a match.** The inner loop never sees a junk element, and a junk element in the middle breaks a run. The \"longest\" block is therefore chosen by its junk-free length.\n- **Junk is absorbed afterwards.** Once the winner is chosen, two pairs of `while` loops grow it outward: first over matching non-junk elements, then over matching junk elements. Junk ends up inside matching blocks only when it sits next to a real match.\n- **It changes which block wins, not just its edges.** In the docstring example, with blank as junk, `\" abcd\"` against `\"abcd abcd\"` matches the leftmost `abcd` (size 4) rather than the `\" abcd\"` at the tail (size 5).\n\nOne quirk: if a region has no junk-free match at all, the extension loops still run from `(alo, blo)`, so identical junk at the very start of both sub-ranges can still match.\n\n**What autojunk does.** When `autojunk` is true and `len(b) >= 200`, any non-junk element that occurs more than `len(b) // 100 + 1` times in `b` is put in `bpopular` and also deleted from `b2j`. This is mainly a speed measure: the inner loop's cost is proportional to the number of occurrences, so lines like blank lines or `return NULL;` are what make it quadratic. Popular elements also cannot seed a match, but they are not in `bjunk`, so the first extension pass (the \"non-junk\" one) picks them up. In practice they behave like junk for anchoring and like ordinary elements for extending.\n\n**Consequences for the result.**\n\n- **Small alphabets collapse.** If you compare long strings character by character, such as DNA or any text of 200+ characters, nearly every character is \"popular\". `b2j` ends up nearly empty, few or no blocks are found, and `ratio()` can come out near 0 for sequences that are almost identical. Passing `autojunk=False` fixes that, at the cost of speed.\n- **Results are asymmetric.** Both junk and popularity are computed from `b` alone, so swapping the arguments can change the blocks and the ratio.\n- **Line diffs are affected too.** `unified_diff`, `context_diff` and `Differ` all build their line-level matcher with autojunk on, so in files of 200+ lines, frequently repeated lines cannot act as sync points on their own.",
+      "duration_ms": 26626
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "**What the loop computes.** The loop is the Euclidean algorithm on `n/d`, and each quotient `a = n//d` is the next term of the continued fraction of `self`. Alongside it, `p0/q0` and `p1/q1` are the last two convergents (the fractions you get by truncating the continued fraction), built by the standard recurrence `p2 = p0 + a*p1`, `q2 = q0 + a*q1`. The loop stops as soon as the next convergent's denominator `q2` would exceed `max_denominator` (call it M). At that point `p1/q1` is the last convergent that fits. The code then takes `k = (M - q0)//q1`, the largest step for which `q0 + k*q1` still fits, giving a second candidate `(p0 + k*p1)/(q0 + k*q1)`, a \"semiconvergent\".\n\n**Why one of those two is the answer.** Three facts do the work:\n\n- **They bracket `self`.** Successive convergents alternate sides of the true value, and since `k` is less than the full quotient `a`, the semiconvergent stays on the `p0/q0` side. So `self` lies between the two candidates.\n- **They are neighbours.** The recurrence preserves `|p0*q1 - p1*q0| = 1`, and that also holds for the semiconvergent against `p1/q1`. For two fractions related this way, any fraction strictly between them has a denominator at least the sum of theirs.\n- **That sum is too big.** The sum is `q0 + (k+1)*q1`, which exceeds M by the choice of `k`.\n\nSo no fraction with denominator \u2264 M lies strictly between the candidates, and the closest admissible fraction to `self` must be one of the two.\n\n**The final comparison.** The gap between the candidates is `1/(q1*(q0+k*q1))`. The loop also maintains `d = |p1*D - q1*N|`, where `N/D` is `self`, so the distance from `p1/q1` to `self` is `d/(q1*D)`. `p1/q1` wins if that distance is at most half the gap, which rearranges to the integer test `2*d*(q0+k*q1) <= self._denominator`. On a tie the `<=` picks `p1/q1`, which is the one with the smaller denominator, as the comment promises.\n\n**Why not just round.** Rounding, as in `round(self * M) / M`, only finds the best fraction whose denominator divides M, not the best among all denominators up to M. For \u03c0 with M = 10, rounding gives 31/10 (error about 0.04), while the actual answer is 22/7 (error about 0.001). The best denominator is usually not the largest one allowed.\n\nYou could fix that by rounding against every denominator from 1 to M and keeping the best, but that is M iterations, a million by default. The continued-fraction loop gets there in O(log M) steps, because the denominators `q` grow at least as fast as Fibonacci numbers. It also uses only integer arithmetic, so the result is exact.",
+      "duration_ms": 23537
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` and `monthdayscalendar`.** It only decides which weekday sits in column 0 of each row. The day numbers are the same; what changes is the zero padding: `(day1 - firstweekday) % 7` leading zeros before day 1, and enough trailing zeros to fill the last week. Because the padding shifts, the number of rows can change too (4 to 6 weeks). For example, February 2021 starts on a Monday, so with `firstweekday=0` it is exactly 4 rows with no zeros, but with `firstweekday=6` (Sunday) it gets one leading zero and spills into 5 rows.\n\n**`itermonthdates` at the edges.** The surprise is that it can fail for months that are themselves entirely valid, and whether it fails depends on `firstweekday`. It converts the padding days from the neighbouring months into `datetime.date` objects, and those neighbours can fall outside `datetime`'s year range of 1 to 9999.\n\n- **December 9999:** the 31st is a Friday, so with the default Monday start the week is padded with 1\u20132 January 10000, and `datetime.date(10000, 1, 1)` raises `ValueError`. With `firstweekday=5` (Saturday) the week ends on that Friday, no padding is needed, and it works.\n- **January of year 1:** the 1st is a Monday, so the default works. Any other `firstweekday` needs padding from December of year 0 and raises.\n- **The error is lazy.** It is a generator, so nothing fails at call time. For December 9999 you get all 31 valid dates (plus the leading padding) and then the exception mid-iteration. `monthdatescalendar` calls `list()` on it, so it fails outright.\n\nThe other iterators do not have this problem. `itermonthdays3` and `itermonthdays4` yield plain tuples such as `(10000, 1, 1)`, and `itermonthdays` and `monthdayscalendar` work for any year at all, because `weekday()` maps out-of-range years onto an equivalent year in the 400-year cycle.",
+      "duration_ms": 17700
+    },
+    {
+      "prompt_sha256": "cc27581e9807f8c7a52df3a47e2893f3963443dbd01b3bc8c8b77c663a01c1e2",
+      "reply": "The weekly report now lists each project's hours under its week, biggest first; running it on `timesheet.csv` gives:\n\n```\n2026-W37 38.50\n  acme 18.25\n  harbor 16.75\n  internal 3.50\n2026-W38 33.25\n  harbor 16.50\n  acme 16.00\n  internal 0.75\n```\n\nThe change is in `render` in `report.py`. If two projects have the same hours in a week, they are listed alphabetically.",
+      "duration_ms": 16061
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 6908,
+    "cache_read": 544682,
+    "cache_creation": 70585
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-0qnrompa/work",
+  "transcript": "transcript/e99b89c6-a897-40d5-b994-ae3485428565.jsonl"
+}

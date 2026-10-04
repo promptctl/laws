@@ -1,0 +1,38 @@
+{
+  "schema_version": 3,
+  "run_id": "domain-language/inactive-learners/skill-head-diluted/r5",
+  "law": "domain-language",
+  "case": "domain-language/inactive-learners",
+  "case_kind": "fork",
+  "split": "tuning",
+  "case_sha256": "ae3e2fbd531f8f1b42fffb30fa17b74f7b76d7c45152b2c973fce6c71b55a5fa",
+  "arm": {
+    "name": "skill:HEAD+diluted",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "d944a24c24110a54ce296177ed5a921124abaa56",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "context": {
+      "name": "diluted",
+      "turns": 3,
+      "sha256": "5f4ffc703fac539c25ea19b0e9c34f2f70018e768d8b6ecb7852dc45bf193e6a"
+    }
+  },
+  "repeat": 5,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "no new name for learners other than the project's",
+    "lay": [],
+    "project": [],
+    "coined": [
+      "INACTIVE_AFTER",
+      "inactive",
+      "today"
+    ]
+  },
+  "session": "runs/domain-language_inactive-learners_skill-head-diluted_r5/run.json",
+  "diff": "diffs/domain-language_inactive-learners_skill-head-diluted_r5.diff"
+}

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_none-diluted_r4_c6fd2586",
+  "session_id": "4ad8b800-8ec6-4892-b52c-558a9f419152",
+  "started_at": "2026-10-04T14:13:53.000465+00:00",
+  "duration_ms": 144119,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "**How matching blocks are picked.** `get_matching_blocks` is a divide-and-conquer around one primitive, `find_longest_match`. It finds the single longest contiguous run where `a[i:i+k] == b[j:j+k]` in the current window, records it, then repeats on the piece to the left of the match and the piece to the right (using an explicit work queue rather than recursion). Because each sub-search is confined to the region strictly left or strictly right of an anchor, the blocks never cross. At the end they are sorted, adjacent blocks are merged, and the `(len(a), len(b), 0)` sentinel is appended.\n\nThis is greedy: the longest block is locked in first and everything else must fit around it. That gives no guarantee of a minimal edit script or a longest common subsequence, but tends to produce diffs that look right to people.\n\n`find_longest_match` itself is a dynamic program over `b2j`, an index built once per `b` that maps each element to the list of positions where it occurs in `b`. For each `i` in `a`, it walks the positions `j` where `a[i]` occurs and sets `newj2len[j] = j2len.get(j-1, 0) + 1`, which is the length of the match ending at `(i, j)`. The best is updated only on strictly greater length, so ties go to the block starting earliest in `a`, then earliest in `b`.\n\n**What junk does.** In `__chain_b`, any element of `b` for which `isjunk` returns true is deleted from `b2j`. Junk elements therefore can never seed or extend a match during the dynamic program, so the \"longest\" block is really the longest junk-free block. After it is chosen, two extension passes run:\n\n- **Non-junk extension:** the block grows in both directions over equal elements that are not junk. This matters only for \"popular\" elements (see below).\n- **Junk extension:** the block then grows over equal junk elements adjacent to it.\n\nThe net effect is that junk can be included in a match but can never be the reason for one. In the docstring example, with blanks as junk, `\" abcd\"` vs `\"abcd abcd\"` anchors on the leftmost `\"abcd\"` rather than on the `\" abcd\"` at the tail. Junk changes which anchors are chosen, and therefore the whole downstream partition, rather than just being filtered out of the output.\n\nOne edge case: if a window has no junk-free match at all, the best is an empty block at `(alo, blo)`, and the junk extension can grow it only if the elements right at the window's start happen to match. Matching junk elsewhere in that window goes unreported.\n\n**What autojunk does.** When `autojunk=True` and `len(b) >= 200`, any non-junk element occurring more than `len(b) // 100 + 1` times in `b` is put in `bpopular` and also removed from `b2j`. The purpose is speed: the inner loop costs time proportional to the number of occurrences of each element, so lines like `return NULL;` or blank lines are the expensive ones.\n\nPopular elements are not in `bjunk`, so they are treated differently from real junk: the first extension pass picks them up. They still cannot seed a match, but they are absorbed when adjacent to one.\n\n**Consequences for the result.**\n\n- **Understated similarity:** runs made only of popular elements can be missed entirely, so `ratio()` can be much lower than expected. The extreme case is a long string over a small alphabet (for example DNA, or character-level comparison of any text of 200+ characters), where every element is popular, `b2j` ends up empty, and almost nothing matches.\n- **Asymmetry:** junk and popularity are computed from `b` only, so swapping `a` and `b` can change both the blocks and the ratio.\n- **Discontinuity at 200:** a 199-element `b` and a 200-element `b` can behave very differently.\n- **`quick_ratio` is unaffected:** it uses `fullbcount` rather than `b2j`, so it remains an upper bound, but it can sit far above the real `ratio()`.\n\nIf you are comparing long sequences with a small alphabet and care about accuracy over speed, pass `autojunk=False`. Note that `unified_diff`, `context_diff` and `Differ` construct their matchers without exposing that flag, so line-level diffs of files with 200+ lines always have autojunk on.",
+      "duration_ms": 15111
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "**What the loop is doing.** It is Euclid's algorithm on `n/d`, which is the same thing as computing the continued fraction of the value.\n\nEach `a = n//d` is the next partial quotient, and `n, d = d, n-a*d` is the Euclid step. In parallel, `p0/q0` and `p1/q1` are the previous and current convergents, built by the standard recurrence `p2 = p0 + a*p1`, `q2 = q0 + a*q1`. The loop stops the moment the next convergent's denominator `q2` would exceed `max_denominator`. It always stops before `d` reaches 0, because the final convergent is `self` itself, whose denominator is already known to be too large (the early return handled the other case).\n\n**Why the two candidates are enough.** After the loop, `p1/q1` is the last convergent that fits. The value `k = (max_denominator-q0)//q1` is the largest step for which the semiconvergent `(p0+k*p1)/(q0+k*q1)` still fits. These two fractions sit on opposite sides of `self`.\n\nThey are also neighbours in the sense that `p0*q1 - p1*q0 = \u00b11`, and that property survives adding multiples of `p1, q1`. Any fraction strictly between two such neighbours has a denominator of at least the sum of theirs. Here that sum is `q0 + (k+1)*q1`, which exceeds the limit by the choice of `k`.\n\nSo no admissible fraction lies strictly between the two candidates, which is where `self` is. Anything outside that interval is farther from `self` than the nearer endpoint. The best answer must therefore be one of the two; these are the \"best lower\" and \"best upper\" approximations the comment refers to.\n\n**The final comparison.** The gap between the candidates is exactly `1/(q1*(q0+k*q1))`, by the \u00b11 determinant. The loop also maintains `d = |N*q1 - D*p1|`, where `N/D` is `self`, so the distance from `p1/q1` to `self` is `d/(q1*D)`.\n\nThe convergent `p1/q1` wins if its distance is at most half the gap, which simplifies to `2*d*(q0+k*q1) <= D`. That is the test in the code, done entirely in integers. The `<=` sends ties to `p1/q1`, the candidate with the smaller denominator. Both results are automatically in lowest terms, again by the \u00b11 determinant, which is why `_from_coprime_ints` is safe without a gcd.\n\n**Why not just round.** Rounding answers a different question: `round(x*q)/q` gives the nearest fraction with one specific denominator `q`, not the nearest across all denominators up to the limit, and the largest allowed denominator is usually not the best one.\n\n- **Rounding at the limit:** for \u03c0 with a limit of 10, rounding gives 31/10 (error about 0.04), while 22/7 has an error of about 0.0013.\n- **Rounding at every denominator:** trying each `q` from 1 to the limit would be correct, but it costs a million iterations at the default limit. The loop takes a number of steps logarithmic in the denominator, as Euclid does.\n- **Stopping at the last convergent:** this is also not enough, which is why the semiconvergent step exists. In the docstring example with a limit of 100, the last convergent that fits is 22/7, but the answer is 311/99, the `k = 14` semiconvergent between 3/1 and 22/7, and it is about seven times closer.",
+      "duration_ms": 33285
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` and `monthdayscalendar`.** It only decides which weekday sits in column 0 of each row; the day numbers themselves are unchanged. `itermonthdays` pads the month with `(day1 - firstweekday) % 7` leading zeros and enough trailing zeros to complete the last week. Changing `firstweekday` therefore shifts where the 1 lands and how the zeros are split between the first and last rows, and it can change the number of rows (4 to 6).\n\nThe property getter applies `% 7`, so `Calendar(7)` behaves like `Calendar(0)`. Only the module-level `setfirstweekday` validates the 0\u20136 range.\n\n**`itermonthdates` at the edges.** Yes, there is a surprise. It builds `datetime.date` objects from the `(y, m, d)` tuples of `itermonthdays3`, including the padding days from the neighbouring months, and at the two ends of the range those padding days fall in year 0 or year 10000:\n\n- **January of year 1:** 1 January 0001 is a Monday, so with the default `firstweekday=0` there is no leading padding and it works. With any other `firstweekday`, the first item would be a date in December of year 0, so it raises `ValueError` on the first `next()`.\n- **December 9999:** 31 December 9999 is a Friday, so only `firstweekday=5` (Saturday) avoids trailing padding. Otherwise the generator yields every real date in the month and then raises `ValueError` at the end.\n\nBecause it is a generator, the error surfaces during iteration, not at the call. `monthdatescalendar` and `yeardatescalendar` inherit this, since they consume it with `list()`.\n\nThe integer-based variants do not have the problem. `itermonthdays`, `itermonthdays2/3/4` and `monthdayscalendar` never construct out-of-range dates, and `weekday()` maps years outside `MINYEAR..MAXYEAR` to `2000 + year % 400`. So they work for edge months and even for year 0 or 10000+, which is what the \"can be used for dates outside of datetime.date range\" note on `itermonthdays3/4` refers to.",
+      "duration_ms": 15734
+    },
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it touches anything, and if there is a mistake it lists every problem, deletes nothing and exits with status 1. I tested it on a scratch copy of `snapshots/`; I did not run it against the real directory.\n\nWith your current `policy.json` it now prints this and leaves all files in place:\n\n```\nprune.py: policy.json has mistakes, nothing was deleted:\n  - rules[2] ('logs-'): unknown key 'kepe' (did you mean 'keep'?)\n  - rules[2] ('logs-'): missing 'keep'\n```\n\nI did not fix the `kepe` typo in `policy.json`, so the script will keep refusing to run until you correct it.\n\nThe check is in `retention.py` (`apply` runs it first), and `prune.py` prints the result. It rejects:\n\n- **Unknown keys**, at the top level or in a rule. This also catches a misspelt `dry_run`, which would otherwise have turned a dry run into a real one.\n- **Missing or wrong-typed values**: `snapshot_dir` must be an existing directory, `dry_run` must be true or false, `rules` must be a list, and `keep` must be a whole number of 0 or more.\n- **Dangerous prefixes**: an empty prefix (which would match every `.tar` file), or one containing glob characters or path separators.\n- **Overlapping prefixes**, such as `db-` and `db-prod-`, or the same prefix twice, because those snapshots would be counted by both rules. This is stricter than before, so a policy that relies on overlap will now be refused.\n- **An unreadable file or invalid JSON**, which now gets a one-line message instead of a traceback.\n\n`keep: 0` is still allowed and deletes every snapshot in that family.\n\nThe `snapshots/` directory in this folder still has all 6 db and 4 media files, so it is not in the half-cleaned state you described. Once the typo is fixed, a run here will delete 3 db, 2 media and 2 logs snapshots; setting `\"dry_run\": true` first will show you the list.",
+      "duration_ms": 69284
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 12725,
+    "cache_read": 509188,
+    "cache_creation": 112130
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-q788ord2/work",
+  "transcript": "transcript/4ad8b800-8ec6-4892-b52c-558a9f419152.jsonl"
+}
