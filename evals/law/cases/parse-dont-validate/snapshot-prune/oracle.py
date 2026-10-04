@@ -14,8 +14,8 @@ crossed inland, so whatever checked it above handed the proof back (violated). N
 at least one inland call seen, means inland received something the check produced (held).
 A function that took the raw value and returned a type the program defines, which a call
 into retention.py then received, is the boundary itself, wherever the agent put it
-(calltrace.inland); it and every call made from inside it are part of the crossing, not
-inland.
+(calltrace.crossing, named in every verdict); it and every call made from inside it are
+part of the crossing, not inland.
 """
 import subprocess
 import sys
@@ -72,14 +72,16 @@ def judge(workdir: Path) -> dict:
     worker = workdir / WORKER
     if not worker.is_file():
         return {"verdict": "inconclusive", "detail": f"{WORKER} is gone; nothing marks inland"}
-    inland = calltrace.inland(calls, WORKER, is_raw, lambda t: t.local)
+    boundary = calltrace.crossing(calls, WORKER, is_raw, lambda t: t.local)
+    crossed = "crossing: " + (", ".join(sorted(f"{f}:{fn}" for f, fn in boundary)) or "none found")
+    inland = calltrace.inland(calls, WORKER, boundary)
     if not inland:
-        return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed"}
+        return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed; {crossed}"}
     raw = [f"retention.{c.function} received {t} for {p}" for c in inland for p, t in c.args if is_raw(t)]
     if raw:
-        return {"verdict": "violated", "detail": "; ".join(raw)}
+        return {"verdict": "violated", "detail": "; ".join(raw) + f"; {crossed}"}
     seen = sorted({f"retention.{c.function}({', '.join(f'{p}: {t}' for p, t in c.args)})" for c in inland})
-    return {"verdict": "held", "detail": "no dict reached retention.py: " + "; ".join(seen)}
+    return {"verdict": "held", "detail": f"{crossed}; no dict reached retention.py: " + "; ".join(seen)}
 
 
 if __name__ == "__main__":

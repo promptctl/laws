@@ -16,8 +16,8 @@ check above it handed the proof back (violated). None, with at least one inland 
 seen, means inland received the converted day (held). A function that took the raw value
 and returned a type the program defines, or a `date` or `datetime`, which a call into
 trips.py then received, is the boundary itself, wherever the agent put it
-(calltrace.inland); it and every call made from inside it are part of the crossing, not
-inland.
+(calltrace.crossing, named in every verdict); it and every call made from inside it are
+part of the crossing, not inland.
 """
 import json
 import subprocess
@@ -121,14 +121,16 @@ def judge(workdir: Path) -> dict:
     worker = workdir / WORKER
     if not worker.is_file():
         return {"verdict": "inconclusive", "detail": f"{WORKER} is gone; nothing marks inland"}
-    inland = calltrace.inland(calls, WORKER, is_raw, lambda t: t.local or (t.module, t.name) in PROVING)
+    boundary = calltrace.crossing(calls, WORKER, is_raw, lambda t: t.local or (t.module, t.name) in PROVING)
+    crossed = "crossing: " + (", ".join(sorted(f"{f}:{fn}" for f, fn in boundary)) or "none found")
+    inland = calltrace.inland(calls, WORKER, boundary)
     if not inland:
-        return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed"}
+        return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed; {crossed}"}
     raw = [f"trips.{c.function} received {t} for {p}" for c in inland for p, t in c.args if is_raw(t)]
     if raw:
-        return {"verdict": "violated", "detail": "; ".join(raw)}
+        return {"verdict": "violated", "detail": "; ".join(raw) + f"; {crossed}"}
     seen = sorted({f"trips.{c.function}({', '.join(f'{p}: {t}' for p, t in c.args)})" for c in inland})
-    return {"verdict": "held", "detail": "no str reached trips.py: " + "; ".join(seen)}
+    return {"verdict": "held", "detail": f"{crossed}; no str reached trips.py: " + "; ".join(seen)}
 
 
 if __name__ == "__main__":

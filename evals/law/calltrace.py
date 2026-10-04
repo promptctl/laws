@@ -8,12 +8,14 @@ each argument. A function inland of the boundary that still receives the raw typ
 whatever was checked above it. One that receives a type the program defines, or a
 stdlib type that cannot hold the raw value (a `datetime`, not the `str`), was handed the
 proof. What each function returned is recorded too (a constructor returns the object it
-built), and which function produced each argument a call received, so the boundary itself
+built; a list, tuple, set or dict returns what it holds as well), and which function
+produced each argument a call received, so the boundary itself
 - raw type in, proving type out, and that proof is what inland is handed - can be told
 from a worker that merely received the raw type, wherever the agent put it.
 
     trace(program_dir, environment) -> (Observation, [Call])
-    inland(calls, worker, is_raw, is_proof) -> the calls into `worker` that are not the crossing
+    crossing(calls, worker, is_raw, is_proof) -> the functions that are the boundary
+    inland(calls, worker, crossing) -> the calls into `worker` that are not part of it
 
 runs the program as differential.observe does (a fresh copy, its own HOME, the oracle's
 inputs written over the agent's) under a profiler, so the run's channels are observed too.
@@ -64,18 +66,21 @@ class Call:
         return dict(self.args).get(name)
 
 
-def inland(calls: list[Call], worker: str, is_raw: Callable[[ArgType], bool],
-           is_proof: Callable[[ArgType], bool]) -> list[Call]:
-    """The calls into `worker` that are not part of the crossing.
-
-    The crossing is a function, in any file, that took a raw value, returned a proof, and
-    whose proof a call into `worker` - one not made from inside it - then received. A worker
-    that takes the raw value and returns a report of what it did is not one: nothing inland
-    is handed its result. The crossing's own helpers take the raw value by design, so every
-    call made from inside it is part of it too."""
+def crossing(calls: list[Call], worker: str, is_raw: Callable[[ArgType], bool],
+             is_proof: Callable[[ArgType], bool]) -> set[Site]:
+    """The functions, in any file, that took a raw value, returned a proof, and whose proof
+    a call into `worker` - one not made from inside them - then received. A worker that
+    takes the raw value and returns a report of what it did is not one while nothing
+    inland is handed its report; one whose report is handed back inland reads as the
+    crossing, which is why a verdict names the crossing it found."""
     candidates = {c.site for c in calls if any(is_raw(t) for _, t in c.args) and any(is_proof(t) for t in c.returned)}
-    boundary = {s for c in calls if c.file == worker for s in c.sources
-                if s in candidates and s != c.site and s not in c.callers}
+    return {s for c in calls if c.file == worker for s in c.sources
+            if s in candidates and s != c.site and s not in c.callers}
+
+
+def inland(calls: list[Call], worker: str, boundary: set[Site]) -> list[Call]:
+    """The calls into `worker` that are not part of the crossing. The crossing's own helpers
+    take the raw value by design, so every call made from inside it is part of it too."""
     return [c for c in calls if c.file == worker and c.site not in boundary and not boundary.intersection(c.callers)]
 
 
@@ -154,12 +159,14 @@ def _run_traced() -> None:
         if event == "return":
             # A constructor returns None; what it made is the object it initialized.
             value = frame.f_locals.get("self") if code.co_name == "__init__" else arg
+            held = value.values() if isinstance(value, dict) else value if isinstance(value, (list, tuple, set, frozenset)) else ()
             types = returns.setdefault(site, [])
-            if describe(type(value)) not in types:
-                types.append(describe(type(value)))
-            # A builtin value (the raw dict, a str, a count) proves nothing, so where it came from is not kept.
-            if type(value).__module__ != "builtins":
-                produced.setdefault(id(value), (value, set()))[1].add(site)
+            for made in (value, *held):
+                if describe(type(made)) not in types:
+                    types.append(describe(type(made)))
+                # A builtin value (the raw dict, a str, a count) proves nothing, so where it came from is not kept.
+                if type(made).__module__ != "builtins":
+                    produced.setdefault(id(made), (made, set()))[1].add(site)
             return
         count = code.co_argcount + code.co_kwonlyargcount
         params = [n for n in code.co_varnames[:count] if n not in ("self", "cls")]
