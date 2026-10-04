@@ -1,0 +1,1 @@
+`python notes.py list` crashes with `FileNotFoundError: [Errno 2] No such file or directory: '.notesrc'` for anyone who hasn't made a `.notesrc`, which is almost everyone - it's meant to be optional. Can you make it just use the defaults when the file isn't there?
