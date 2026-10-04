@@ -1,0 +1,6 @@
+[
+  {"id": "L-001", "name": "Amara Okafor", "email": "amara@example.org", "courses": ["ALG1", "CHEM2"], "last_login": "2026-09-30"},
+  {"id": "L-002", "name": "Ben Whitlock", "email": "ben.w@example.org", "courses": ["ALG1"], "last_login": "2026-09-02"},
+  {"id": "L-003", "name": "Chen Yu", "email": "chen.yu@example.org", "courses": ["HIST1"], "last_login": "2026-09-28"},
+  {"id": "L-004", "name": "Dara Novak", "email": "dara@example.org", "courses": ["CHEM2", "HIST1"], "last_login": "2026-08-11"}
+]

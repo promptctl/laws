@@ -7,7 +7,9 @@ each argument. A function inland of the boundary that still receives the raw typ
 `dict` json.load returned, the `str` a query string carried) was handed unchecked data,
 whatever was checked above it. One that receives a type the program defines, or a
 stdlib type that cannot hold the raw value (a `datetime`, not the `str`), was handed the
-proof.
+proof. What each function returned is recorded too, so the boundary itself - raw type in,
+proving type out - can be told from a worker that merely received the raw type, wherever
+the agent put it.
 
     trace(program_dir, environment) -> (Observation, [Call])
 
@@ -44,6 +46,7 @@ class Call:
     function: str  # the function's qualified name
     file: str  # relative to the program dir
     args: tuple[tuple[str, ArgType], ...]  # (parameter, type of the value it received)
+    returned: tuple[ArgType, ...]  # every type this function returned, over the whole run
 
     def arg(self, name: str) -> ArgType | None:
         return dict(self.args).get(name)
@@ -60,9 +63,12 @@ def trace(program_dir: Path, environment: differential.Environment) -> tuple[dif
         observation = differential.observe(program_dir, traced)
         if not out.exists():
             raise RuntimeError(f"the traced run wrote no trace; stderr: {observation.stderr[-1000:]}")
+        trace_data = json.loads(out.read_text())
+        returned = {(r["file"], r["function"]): tuple(ArgType(**t) for t in r["types"]) for r in trace_data["returns"]}
         calls = [
-            Call(c["function"], c["file"], tuple((p, ArgType(**t)) for p, t in c["args"]))
-            for c in json.loads(out.read_text())
+            Call(c["function"], c["file"], tuple((p, ArgType(**t)) for p, t in c["args"]),
+                 returned.get((c["file"], c["function"]), ()))
+            for c in trace_data["calls"]
         ]
     return observation, calls
 
@@ -75,6 +81,7 @@ def _run_traced() -> None:
     root = Path.cwd().resolve()
     calls: list[dict] = []
     seen: set[str] = set()
+    returns: dict[tuple[str, str], list[dict]] = {}
     type_cache: dict[type, dict] = {}
 
     def describe(cls: type) -> dict:
@@ -87,8 +94,8 @@ def _run_traced() -> None:
             type_cache[cls] = {"module": cls.__module__, "name": cls.__qualname__, "local": local}
         return type_cache[cls]
 
-    def profile(frame, event, _arg):
-        if event != "call":
+    def profile(frame, event, arg):
+        if event not in ("call", "return"):
             return
         code = frame.f_code
         if code.co_name.startswith("<"):
@@ -97,6 +104,11 @@ def _run_traced() -> None:
         # "<frozen runpy>" or "<string>", which is no file at all.
         path = (root / code.co_filename).resolve()
         if not path.is_relative_to(root) or not path.is_file():
+            return
+        if event == "return":
+            types = returns.setdefault((str(path.relative_to(root)), code.co_qualname), [])
+            if describe(type(arg)) not in types:
+                types.append(describe(type(arg)))
             return
         count = code.co_argcount + code.co_kwonlyargcount
         params = [n for n in code.co_varnames[:count] if n not in ("self", "cls")]
@@ -110,7 +122,8 @@ def _run_traced() -> None:
 
     def dump() -> None:
         sys.setprofile(None)
-        Path(os.environ[OUT_ENV]).write_text(json.dumps(calls))
+        listed = [{"file": f, "function": fn, "types": t} for (f, fn), t in returns.items()]
+        Path(os.environ[OUT_ENV]).write_text(json.dumps({"calls": calls, "returns": listed}))
 
     script = sys.argv[1]
     sys.argv = sys.argv[1:]

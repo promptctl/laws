@@ -1,0 +1,1 @@
+`python3 prune.py policy.json` deleted the old db and media snapshots last night and then crashed with `KeyError: 'keep'`, because someone typed `kepe` in the logs rule. So we got half a cleanup. When the policy file has a mistake in it I want prune.py to stop before it deletes anything and tell me what's wrong. Please fix it.

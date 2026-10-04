@@ -1,0 +1,9 @@
+{
+  "snapshot_dir": "snapshots",
+  "dry_run": false,
+  "rules": [
+    {"prefix": "db-", "keep": 3},
+    {"prefix": "media-", "keep": 2},
+    {"prefix": "logs-", "kepe": 4}
+  ]
+}
