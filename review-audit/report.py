@@ -184,7 +184,11 @@ def main(argv: list[str]) -> int:
     out.append(table("rounds per PR", rounds))
     avoidable = sum(v["avoidable_rounds"] for v in pr_verdicts.values())
     total_rounds = sum(v["rounds"] for v in pr_verdicts.values())
-    out.append(f"### avoidable rounds\n\n{avoidable} of {total_rounds} rounds ({100 * avoidable / max(1, total_rounds):.0f}%) across {len(pr_verdicts)} PRs; {sum(1 for v in pr_verdicts.values() if v['avoidable_rounds'])} PRs had at least one\n")
+    out.append(f"### avoidable rounds (judged, a floor)\n\n{avoidable} of {total_rounds} rounds ({100 * avoidable / max(1, total_rounds):.0f}%) across {len(pr_verdicts)} PRs; {sum(1 for v in pr_verdicts.values() if v['avoidable_rounds'])} PRs had at least one. Agents read the definition differently, so this is not comparable across batches; the derived count below is.\n")
+    # Computed, not judged: every finding carries its round and caused_by is judged per
+    # finding, so this reads the same way for every batch whatever the agent's arithmetic.
+    fix_rounds = {(r["repo"], r["number"], r["round"]) for r in caused}
+    out.append(f"### rounds containing a fix-caused finding (derived)\n\n{len(fix_rounds)} of {total_rounds} rounds ({100 * len(fix_rounds) / max(1, total_rounds):.0f}%); {len({(repo, n) for repo, n, _ in fix_rounds})} PRs had at least one\n")
     out.append(table("chain lengths", Counter(len(c) for v in pr_verdicts.values() for c in v.get("chains", []))))
     out.append(table("per repo: findings caused by fixes / findings", Counter(r["repo"] for r in caused)))
     print("\n".join(out))
