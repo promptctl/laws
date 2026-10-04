@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_greenhouse-heater_skill-head_r1_7815ef33",
+  "session_id": "53abffd1-f388-4cb0-942b-2304f1aa3c08",
+  "started_at": "2026-10-04T07:03:38.031697+00:00",
+  "duration_ms": 23426,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-k_hx6cxw/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "19672b708fd638075aec886e0b46e64e7fb61b2be287854e9a029fc8de1611d9",
+      "reply": "The heater now holds its state inside a half-degree band either side of the target. Replaying last night's log gives 2 relay switches instead of 12: on at 04:26 (19.3\u00b0C) and off at 04:40 (20.6\u00b0C).\n\nThe setting is `HYSTERESIS_C = 0.5`, directly under `TARGET_C` at the top of `greenhouse.py`. The heater turns on at or below `TARGET_C - HYSTERESIS_C` (19.5\u00b0C) and off at or above `TARGET_C + HYSTERESIS_C` (20.5\u00b0C).\n\nTwo things to be aware of:\n- **Colder dips before heating:** the heater now waits for 19.5\u00b0C instead of kicking in just under 20\u00b0C. Last night it stayed off through the 19.6\u201319.9\u00b0C readings between 04:08 and 04:24.\n- **The Pi itself:** this folder only contains the replay script. If the controller on the Pi runs its own copy of the decision, it needs the same change before the relay actually stops clicking.",
+      "duration_ms": 18134
+    }
+  ],
+  "tokens": {
+    "input": 6,
+    "output": 1664,
+    "cache_read": 144330,
+    "cache_creation": 37876
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-k_hx6cxw/work",
+  "transcript": "transcript/53abffd1-f388-4cb0-942b-2304f1aa3c08.jsonl"
+}

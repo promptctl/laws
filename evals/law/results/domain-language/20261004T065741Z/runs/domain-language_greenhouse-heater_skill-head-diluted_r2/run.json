@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_greenhouse-heater_skill-head-diluted_r2_7815ef33",
+  "session_id": "ea7e1b24-98e8-4b28-b0d4-a3c7a2b3e626",
+  "started_at": "2026-10-04T07:06:01.290896+00:00",
+  "duration_ms": 93513,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-0ncep80_/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "**How blocks are picked.** `SequenceMatcher` does not compute a longest common subsequence or a minimal edit script. `get_matching_blocks` finds the single longest contiguous run shared by `a` and `b`, pins it as an anchor, and then repeats the search on the region to the left of the anchor and the region to the right (using an explicit stack rather than recursion). At the end it sorts the blocks, merges any that turn out to be adjacent, and appends the `(len(a), len(b), 0)` sentinel. Because the choice is greedy, one long block can rule out a set of shorter blocks that together would have matched more elements. That is the trade the docstring describes: diffs that \"look right\" rather than minimal ones.\n\n**How one longest match is found.** `__chain_b` precomputes `b2j`, a map from each element of `b` to the list of positions where it occurs. `find_longest_match` then walks `a` one element at a time, keeping `j2len[j]`, the length of the match ending at `a[i]` and `b[j]`. Each new row is built from the previous one with `j2len.get(j-1, 0) + 1`. The best is only replaced on a strictly longer match, so ties go to the block starting earliest in `a`, then earliest in `b`. The cost is proportional to the number of `(i, j)` pairs where `a[i] == b[j]`, so an element that occurs hundreds of times in `b` is expensive.\n\n**What junk does.** Elements for which `isjunk` is true are deleted from `b2j`, so they can never seed or sit inside the core match. After the junk-free core is found, it is extended in two steps:\n\n1. It grows outward over matching non-junk elements. This only matters for \"popular\" elements, described below.\n2. It grows outward over matching junk elements.\n\nSo junk is matched only when it is directly adjacent to an interesting match; it is never something to sync on. The practical effects are:\n\n- The matcher will not align two files on blank lines, or two strings on spaces, which is what the `private volatile Thread` comment near `IS_LINE_JUNK` describes.\n- A region whose only common elements are junk mostly comes out as a `replace`. With an empty core, the extension starts at `(alo, blo)` and can only grow forward, so junk is matched only if it lines up at the very start of both regions.\n- `ratio()` drops accordingly, since unmatched junk still counts in the total length.\n\n**What autojunk does.** If `autojunk` is true and `len(b) >= 200`, any non-junk element occurring more than `len(b) // 100 + 1` times is also removed from `b2j` and recorded in `bpopular`. This is mainly a speed heuristic, aimed at things like hundreds of `return NULL;` lines. Popular elements are not in `bjunk`, so they are picked up by the first extension step rather than the second, but the effect is the same: they can extend a match and never start one.\n\nThis gives reasonable results for line-level diffs of code. It can give poor results for character-level comparison of long strings: in a 200+ character string almost every character occurs more than three times, so `b2j` is nearly empty. Two strings that are obviously similar can then get very few blocks and a very low `ratio()`. Passing `autojunk=False` avoids this at the cost of the quadratic worst case.\n\n**Asymmetry.** Both junk and popularity are computed from `b` only. `isjunk` is never called on elements of `a`, and the 200-element threshold and the counts are `b`'s. Swapping the arguments can therefore change the blocks and the ratio, on top of the asymmetry already introduced by the earliest-in-`a` tie-break.",
+      "duration_ms": 24769
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "**What the loop computes.** The loop is the Euclidean algorithm on `n/d`, and each quotient `a = n//d` is the next term of the continued fraction of `self`. Alongside it, the standard recurrence builds the convergents: `p1/q1` is the latest one, `p0/q0` the one before, and the next would be `(p0 + a*p1)/(q0 + a*q1)`. Convergent denominators grow strictly, and the final convergent is `self` itself, whose denominator exceeds `max_denominator` (the early return handled the other case). So the loop always breaks, at the first convergent that would overshoot the limit.\n\n**Why the answer is one of two candidates.** At the break, `p1/q1` is the last convergent that fits. The full step of `a` is too big, but a partial step may still fit: `k = (max_denominator - q0)//q1` is the largest `k` with `q0 + k*q1 <= max_denominator`, giving the semiconvergent `(p0 + k*p1)/(q0 + k*q1)`. Convergents alternate sides of the target, and this semiconvergent lies on the same side as `p0/q0`, so the two candidates bracket `self`. The theorem cited in the comment says the best approximations from above and from below are always convergents or semiconvergents. These two are therefore the best approximation on each side with denominator within the limit, and the overall best is whichever is closer.\n\n**How it decides which is closer.** The final comparison uses only integers, relying on two identities:\n\n- Consecutive convergents satisfy `p1*q0 - p0*q1 = \u00b11`, so the gap between the two candidates is exactly `1/(q1*(q0 + k*q1))`.\n- The loop preserves `q1*n + q0*d == self._denominator`, which makes the distance from `p1/q1` to `self` exactly `d/(q1*self._denominator)`.\n\nThe convergent wins when its distance is at most half the gap, which rearranges to `2*d*(q0 + k*q1) <= self._denominator`. The `<=` sends ties to `p1/q1`, the candidate with the smaller denominator, as the comment promises. The same \u00b11 identity means both candidates are already in lowest terms, which is why `_from_coprime_ints` can skip the gcd.\n\n**Why not just round.** Rounding answers a different question. `round(self * M) / M` gives the nearest fraction whose denominator is `M` (or a divisor of it), not the nearest among all denominators up to `M`. The best one usually has an unrelated denominator:\n\n| Limit | Rounding to that denominator | `limit_denominator` |\n|---|---|---|\n| 10 | 31/10, off by about 0.04 | 22/7, off by about 0.001 |\n| 100 | 314/100 | 311/99, the semiconvergent with `k = 14` between 22/7 and 333/106 |\n\nYou could make rounding correct by trying every denominator from 1 to `M` and keeping the best, but that is a million iterations at the default limit. The loop runs once per continued-fraction term, which is logarithmic in the denominator. It also stays in exact integer arithmetic throughout, so there is no float error in a method whose main use is cleaning up fractions that came from floats.",
+      "duration_ms": 21671
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` and `monthdayscalendar`.** It only decides which weekday sits in column 0, which changes the zero padding and therefore where the rows break. The day numbers themselves are unaffected.\n\n- The leading zeros are `(day1 - firstweekday) % 7` and the trailing zeros fill out the last week.\n- The row count can change as a result. February 2021 starts on a Monday, so it is 4 rows with `firstweekday=0` but 5 rows with `firstweekday=6`.\n- Nothing in the output labels the columns; you have to know the setting, or use `monthdays2calendar` to get the weekday alongside each day.\n- `Calendar` does not validate the value, it just reduces it mod 7 when read. Only the module-level `setfirstweekday` rejects values outside 0\u20136, and that one mutates the shared instance behind `calendar.monthcalendar`.\n\n**`itermonthdates` at the edges.** Yes, there is a surprise: it builds a `datetime.date` for every padding day too, and nothing clamps the neighbouring month, so the edge months can raise `ValueError` depending on `firstweekday`.\n\n- **January of year 1:** 1 January 0001 is a Monday. With `firstweekday=0` there is no leading padding and it works. With any other setting, the first thing it tries to build is a date in December of year 0, so it fails on the first `next()`.\n- **December 9999:** 31 December 9999 is a Friday. Unless the week ends on Friday (`firstweekday=5`), the generator yields the entire month successfully and then raises when it reaches the trailing padding in January 10000.\n- **`monthdatescalendar`:** it wraps the generator in `list()`, so for these months it fails outright instead of returning partial data.\n\nThe day-number variants do not have this problem. `weekday()` maps out-of-range years onto an equivalent year in the 400-year cycle, so `itermonthdays`, `itermonthdays2`, `monthdayscalendar` and friends work for any year. `itermonthdays3` and `itermonthdays4` exist to give you the year/month/day tuples without constructing `date` objects, which makes them the safe choice at the edges.",
+      "duration_ms": 16000
+    },
+    {
+      "prompt_sha256": "19672b708fd638075aec886e0b46e64e7fb61b2be287854e9a029fc8de1611d9",
+      "reply": "The heater now holds its state inside a half-degree band either side of the target. Replaying last night's log gives 2 relay switches instead of 12: on at 04:26 (19.3\u00b0C) and off at 04:40 (20.6\u00b0C).\n\nThe half degree is `HYSTERESIS_C = 0.5`, directly under `TARGET_C` at the top of `greenhouse.py`.\n\n- **Pi controller:** the docstring says the real controller runs on the Pi, and this folder only has the replay script. If the Pi runs its own copy of the decision, it needs the same change before the relay actually stops clicking.\n- **Exact thresholds:** the heater switches when the temperature reaches the threshold exactly, so it turns on at 19.5\u00b0C and off at 20.5\u00b0C.\n- **Start-up:** the replay starts with the heater off, so if a log begins inside the band (say 19.8\u00b0C) the heater stays off until it drops to 19.5\u00b0C.",
+      "duration_ms": 18971
+    }
+  ],
+  "tokens": {
+    "input": 18,
+    "output": 7602,
+    "cache_read": 579320,
+    "cache_creation": 98448
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-0ncep80_/work",
+  "transcript": "transcript/ea7e1b24-98e8-4b28-b0d4-a3c7a2b3e626.jsonl"
+}

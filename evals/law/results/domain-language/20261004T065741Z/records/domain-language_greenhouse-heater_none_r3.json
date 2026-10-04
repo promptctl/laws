@@ -1,0 +1,32 @@
+{
+  "schema_version": 3,
+  "run_id": "domain-language/greenhouse-heater/none/r3",
+  "law": "domain-language",
+  "case": "domain-language/greenhouse-heater",
+  "case_kind": "fork",
+  "split": "tuning",
+  "case_sha256": "72e23783056d17f498fff2dc7ffa2162b54dc752be9511750b7fec39285fdcce",
+  "arm": {
+    "name": "none",
+    "guidance": null,
+    "context": null
+  },
+  "repeat": 3,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "names use the domain's term: ['HYSTERESIS_C']",
+    "lay": [],
+    "domain": [
+      "HYSTERESIS_C"
+    ],
+    "half_degree": [
+      "HYSTERESIS_C"
+    ],
+    "coined": [
+      "HYSTERESIS_C"
+    ]
+  },
+  "session": "runs/domain-language_greenhouse-heater_none_r3/run.json",
+  "diff": "diffs/domain-language_greenhouse-heater_none_r3.diff"
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 3,
+  "run_id": "domain-language/stock-report/skill-head-diluted/r1",
+  "law": "domain-language",
+  "case": "domain-language/stock-report",
+  "case_kind": "fork",
+  "split": "holdout",
+  "case_sha256": "bcb120188a83adaed08d0428c76ea21ec72d542fdd897b5606d83d974c90954b",
+  "arm": {
+    "name": "skill:HEAD+diluted",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "34ec61fa8921dff6f8534652b25099e14a61bed7",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "context": {
+      "name": "diluted",
+      "turns": 3,
+      "sha256": "5f4ffc703fac539c25ea19b0e9c34f2f70018e768d8b6ecb7852dc45bf193e6a"
+    }
+  },
+  "repeat": 1,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "names use the domain's terms: ['LEAD_TIME_DAYS', 'lead_time_days', 'lead_time_demand']",
+    "lay": [],
+    "domain": [
+      "LEAD_TIME_DAYS",
+      "lead_time_days",
+      "lead_time_demand"
+    ],
+    "lead_days": [
+      "LEAD_TIME_DAYS"
+    ],
+    "coined": [
+      "LEAD_TIME_DAYS",
+      "lead_time_days",
+      "lead_time_demand"
+    ]
+  },
+  "session": "runs/domain-language_stock-report_skill-head-diluted_r1/run.json",
+  "diff": "diffs/domain-language_stock-report_skill-head-diluted_r1.diff"
+}

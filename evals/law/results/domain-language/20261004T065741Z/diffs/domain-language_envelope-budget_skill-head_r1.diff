@@ -1,0 +1,78 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..f3cc449 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,13 +1,18 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only that month's transactions are counted; with none, every transaction
++in the file is.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+ """
+ import csv
+ import json
++import re
+ import sys
++from collections.abc import Callable
+ from dataclasses import dataclass
+ from datetime import date
+ from decimal import Decimal
+@@ -31,6 +36,38 @@ class Transaction:
+     amount: Decimal
+ 
+ 
++# [LAW:dataflow-not-control-flow] The period is a value: transactions are always
++# filtered by one, and "no month given" is simply the period that contains every date.
++Period = Callable[[date], bool]
++
++MONTH_PATTERN = re.compile(r"(\d{4})-(0[1-9]|1[0-2])")
++
++
++class UsageError(Exception):
++    pass
++
++
++def every_date(posted: date) -> bool:
++    return True
++
++
++def calendar_month(year: int, month: int) -> Period:
++    return lambda posted: (posted.year, posted.month) == (year, month)
++
++
++def parse_period(args: list[str]) -> Period:
++    """[LAW:parse-dont-validate] The command line becomes a Period here or is rejected."""
++    match args:
++        case []:
++            return every_date
++        case [text] if found := MONTH_PATTERN.fullmatch(text):
++            return calendar_month(int(found[1]), int(found[2]))
++        case [text]:
++            raise UsageError(f"not a month (expected YYYY-MM): {text!r}")
++        case _:
++            raise UsageError(f"expected at most one month, got {len(args)} arguments")
++
++
+ def load_envelopes(path: Path = ENVELOPES_FILE) -> list[Envelope]:
+     return [Envelope(name, Decimal(amount)) for name, amount in json.loads(path.read_text()).items()]
+ 
+@@ -51,8 +88,13 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+ 
+ 
+ def main(argv: list[str]) -> int:
++    try:
++        in_period = parse_period(argv[1:])
++    except UsageError as error:
++        print(f"budget.py: {error}\nusage: python3 budget.py [YYYY-MM]", file=sys.stderr)
++        return 2
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    spent = spent_by_envelope([t for t in load_transactions() if in_period(t.posted)])
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")

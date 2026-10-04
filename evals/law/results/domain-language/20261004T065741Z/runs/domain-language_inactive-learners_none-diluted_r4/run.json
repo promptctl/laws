@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_inactive-learners_none-diluted_r4_7815ef33",
+  "session_id": "c22b26a2-7bed-44ae-bdc5-709314972cb9",
+  "started_at": "2026-10-04T07:09:19.847306+00:00",
+  "duration_ms": 93911,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "`SequenceMatcher` builds its matching blocks by divide and conquer around the longest contiguous match. `get_matching_blocks` starts with the whole of `a` and `b` and calls `find_longest_match` to get the single longest block where `a[i:i+k] == b[j:j+k]`. It records that block, then repeats the search on the region to the left of it and the region to the right (using an explicit queue, not recursion). Anchoring on one block means later matches can never cross it, so the result is not a minimal edit script: it favours big contiguous runs over a larger total of scattered matches. At the end the blocks are sorted, adjacent ones are merged, and a `(len(a), len(b), 0)` sentinel is appended.\n\n**How the longest match is found**\n\n`find_longest_match` relies on `b2j`, an index built once per `b` that maps each element to the list of positions where it occurs in `b`. It walks `a` one element at a time and keeps `j2len[j]`, the length of the longest match ending at `a[i]` and `b[j]`. Each new value is `j2len[j-1] + 1` from the previous row, so this is the longest-common-substring dynamic programme, but visiting only the cells where the elements are actually equal. Because a candidate only replaces the best on a strict `k > bestsize`, ties go to the block starting earliest in `a`, then earliest in `b`.\n\n**What junk does**\n\nIf you pass `isjunk`, every element of `b` it flags is deleted from `b2j` and remembered in `bjunk`. Junk therefore can never start or continue a match in the main loop, so the core block is junk-free. Two extension passes follow:\n\n1. The block is grown in both directions over matching non-junk elements (this matters only for \"popular\" elements, below).\n2. It is then grown over matching junk elements that happen to sit next to it.\n\nSo junk never anchors a match but is absorbed when it is adjacent to a real one. The docstring example shows the effect: with blanks as junk, `\" abcd\"` vs `\"abcd abcd\"` matches the leftmost `\"abcd\"` instead of the `\" abcd\"` at the end. Junk still counts towards `ratio()` when it is absorbed. Junk is also defined only from `b`'s side, so the result is not symmetric if you swap `a` and `b`.\n\n**What autojunk does**\n\nWhen `autojunk` is true and `b` has at least 200 elements, any non-junk element occurring more than `len(b) // 100 + 1` times is also deleted from `b2j` and recorded in `bpopular`. The purpose is speed: elements like blank lines or `return NULL;` would otherwise produce very long position lists and blow up the inner loop.\n\nPopular elements are not in `bjunk`, so they cannot seed a match, but the first extension pass can still pull them in when they are next to a seeded block. The effects on the result are:\n\n- **Missed runs:** a run made up only of popular elements is never found on its own.\n- **Different anchors:** the \"longest\" block is chosen by its length without popular elements, so a different anchor can win and change the whole decomposition.\n- **Degenerate case:** on long sequences over a small alphabet (for example character-level comparison of a long string, or DNA), almost every element is popular. Matching blocks can then come out tiny or empty and `ratio()` far too low, even for near-identical inputs.\n\nPassing `autojunk=False` avoids all three, at the cost of potentially quadratic time on repetitive input.",
+      "duration_ms": 13089
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "`limit_denominator` works because the best approximations to a number with a bounded denominator all come from its continued fraction, and the loop is just the Euclidean algorithm generating that continued fraction. Plain rounding only considers one denominator, so it misses most candidates.\n\n**What the loop computes**\n\nEach pass takes `a = n//d` (the next continued-fraction term) and replaces `n, d` with `d, n - a*d`, exactly as in Euclid's gcd algorithm. Alongside, it builds the convergents with the standard recurrence `p2 = p0 + a*p1`, `q2 = q0 + a*q1`. The convergents are the fractions you get by truncating the continued fraction, and they alternate above and below the true value while getting closer.\n\nThe loop stops as soon as the next convergent's denominator `q2` would exceed `max_denominator`. It always terminates because the last convergent is the fraction itself, whose denominator is already known to be too large (the early return handles the other case).\n\n**Why two candidates are enough**\n\nWhen the loop exits, `p1/q1` is the last convergent that fits. The code then takes `k = (max_denominator - q0)//q1`, the largest number of steps towards the next convergent that still fits, giving the \"semiconvergent\" `(p0 + k*p1)/(q0 + k*q1)`. These two candidates lie on opposite sides of `self`.\n\nThey also satisfy `p1*(q0 + k*q1) - q1*(p0 + k*p1) = \u00b11`, which makes them neighbours in the Farey sense. Any fraction strictly between two such neighbours has a denominator at least the sum of theirs, which is `q0 + (k+1)*q1`, and that exceeds `max_denominator` by the choice of `k`. So no allowed fraction lies between them, and the closest allowed fraction must be one of the two.\n\n**The final comparison**\n\nThe loop maintains the invariant `q1*n + q0*d == self._denominator`, from which the distance from `p1/q1` to `self` is `d/(q1*self._denominator)`. The gap between the two candidates is `1/(q1*(q0 + k*q1))`. So `p1/q1` is at least as close exactly when `2*d*(q0 + k*q1) <= self._denominator`, which is the test in the code. It is all integer arithmetic, so the result is exact, and ties go to the convergent.\n\n**Why not just round**\n\n- **Rounding to a fixed denominator** (`round(x * M) / M`) only tries denominator `M` itself, but the best answer usually has a smaller one. For the docstring's value with `M = 10`, rounding gives 31/10 (error about 0.042), while 22/7 has error about 0.0013.\n- **Rounding for every denominator from 1 to `M`** and keeping the best would be correct, but takes `M` steps: a million with the default. The loop takes a number of steps logarithmic in the denominator, like gcd.\n- **Stopping at the last convergent** is not enough either. With `M = 100` the last convergent that fits is still 22/7, but the semiconvergent with `k = 14` is 311/99, which is about seven times closer. That is why the code checks both.",
+      "duration_ms": 27945
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` and `monthdayscalendar`**\n\n`firstweekday` decides which weekday is column 0 of each row. It changes the zero padding: `(day1 - firstweekday) % 7` zeros go before day 1, and enough zeros go after the last day to fill the final week. The day numbers themselves never change, only where they sit.\n\nBecause the padding shifts, the number of rows can change too. February 2021 starts on a Monday and has 28 days, so with `firstweekday=0` it is exactly 4 rows. With `firstweekday=6` (Sunday) it gets one leading zero and six trailing zeros, making 5 rows.\n\nOne small quirk: the `Calendar` class reads the value back modulo 7, so `Calendar(7)` silently behaves as Monday. Only the module-level `setfirstweekday()` validates the range.\n\n**`itermonthdates` at the edges of the year range**\n\n`itermonthdates` builds `datetime.date` objects for the padding days as well, and those belong to the neighbouring months. At the limits of `datetime.date` (years 1 to 9999), that causes two surprises:\n\n- **January of year 1:** the leading padding would fall in December of year 0, so the iterator raises `ValueError` on the very first item. This happens only if padding is needed. 1 January of year 1 is a Monday, so the default `firstweekday=0` works and every other setting fails.\n- **December 9999:** the trailing padding would fall in January 10000. The generator yields every valid date first and only then raises `ValueError`, right at the end. With the default Monday start, that is 33 good dates followed by an exception. 31 December 9999 is a Friday, so only `firstweekday=5` (Saturday) needs no trailing padding and finishes cleanly.\n\nSo whether the same month works or fails depends on `firstweekday`, and at the upper edge the failure comes late. `monthdatescalendar` calls `list()` on the iterator, so there you lose the whole month.\n\nThe other iterators (`itermonthdays`, `itermonthdays2`, `itermonthdays3`, `itermonthdays4`) do not have this problem, because they never construct out-of-range dates. They even work for years outside 1 to 9999, since `weekday()` maps such years onto an equivalent year in the 400-year cycle.",
+      "duration_ms": 20252
+    },
+    {
+      "prompt_sha256": "1f08ff2abdf82c0bbbf89911283195829c2c98bc8bae0b6774aee82a63574673",
+      "reply": "`python3 roster.py inactive` now lists every learner whose last login was 14 or more days ago, with their email, last login date and how many days ago that was. Run against the current data today, it gives:\n\n```\nL-002  Ben Whitlock         ben.w@example.org        2026-09-02  (32 days ago)\nL-004  Dara Novak           dara@example.org         2026-08-11  (54 days ago)\n```\n\nI checked the boundary: a learner appears on exactly day 14, not day 13. The existing `list` and `course` commands behave as before.\n\nThe threshold is the `INACTIVE_AFTER_DAYS` constant at the top of `roster.py`. I also added the command to the usage text and the README.",
+      "duration_ms": 22043
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 7509,
+    "cache_read": 495147,
+    "cache_creation": 105329
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-m0yf7f4u/work",
+  "transcript": "transcript/c22b26a2-7bed-44ae-bdc5-709314972cb9.jsonl"
+}
