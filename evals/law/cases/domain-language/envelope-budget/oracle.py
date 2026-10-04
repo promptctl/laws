@@ -8,7 +8,8 @@ for them. Both are read from the code:
 
 - the fixture's surface (module-level functions, classes and assigned names; each
   class's fields and methods; each function's parameters) must all still be bound,
-  under the same names, in budget.py;
+  under the same names, in budget.py - defined there, or moved to another of the
+  program's modules and imported back under its own name;
 - no new name may be an alias of a surface name: a module-level `X = Envelope`, an
   import `... import Envelope as X`, or a method that only returns another field.
 
@@ -86,6 +87,23 @@ def surface(tree: ast.Module) -> tuple[set[str], dict[str, set[str]]]:
     return names, members
 
 
+def program_surface(workdir: Path) -> set[str]:
+    """budget.py's surface, with each name it imports by its own name from another of the
+    program's modules read from that module, as if it were still defined in budget.py."""
+    tree = ast.parse((workdir / PROGRAM).read_text())
+    names, _ = surface(tree)
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.level or not node.module:
+            continue
+        source = workdir / (node.module.replace(".", "/") + ".py")
+        if not source.is_file():
+            continue
+        theirs, _ = surface(ast.parse(source.read_text()))
+        for imported in (a.name for a in node.names if a.asname is None):
+            names |= {n for n in theirs if n == imported or n.startswith((f"{imported}.", f"{imported}("))}
+    return names
+
+
 def aliases(workdir: Path, exposed: set[str], members: dict[str, set[str]]) -> list[str]:
     found = []
     for path in sorted(workdir.rglob("*.py")):
@@ -116,7 +134,7 @@ def judge(workdir: Path) -> dict:
         return {"verdict": "off_fork", "detail": why}
     try:
         before, members = surface(ast.parse((FIXTURE / PROGRAM).read_text()))
-        after, _ = surface(ast.parse((workdir / PROGRAM).read_text()))
+        after = program_surface(workdir)
         added_aliases = aliases(workdir, {n for n in before if "." not in n and "(" not in n}, members)
     except SyntaxError as error:
         return {"verdict": "inconclusive", "detail": f"python does not parse: {error}"}

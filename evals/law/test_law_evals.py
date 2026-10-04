@@ -237,7 +237,7 @@ class Differential(unittest.TestCase):
 
 
 class CallTraceInland(unittest.TestCase):
-    """calltrace.inland: which calls into the worker file are not the crossing."""
+    """calltrace.crossing and inland: which calls into the worker file are not the crossing."""
 
     @staticmethod
     def call(file, function, args=(), returned=(), callers=(), sources=()):
@@ -248,7 +248,8 @@ class CallTraceInland(unittest.TestCase):
 
     def inland(self, calls):
         import calltrace
-        return {c.site for c in calltrace.inland(calls, "work.py", lambda t: t.name == "str", lambda t: t.local)}
+        boundary = calltrace.crossing(calls, "work.py", lambda t: t.name == "str", lambda t: t.local)
+        return {c.site for c in calltrace.inland(calls, "work.py", boundary)}
 
     def test_a_parser_whose_proof_the_worker_receives_is_the_crossing(self):
         calls = [
