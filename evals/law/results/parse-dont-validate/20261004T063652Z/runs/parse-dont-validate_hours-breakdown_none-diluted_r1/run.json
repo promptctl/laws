@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_hours-breakdown_none-diluted_r1_e997298f",
+  "session_id": "85513683-c7ca-40ba-adca-9a7dbecdd314",
+  "started_at": "2026-10-04T06:37:33.934449+00:00",
+  "duration_ms": 87636,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "`SequenceMatcher` builds its matching blocks by repeatedly finding the longest contiguous run that `a` and `b` share, then doing the same on what is left on either side of it. Junk and autojunk both work by removing elements of `b` from the index that search uses, so those elements can never start a match, only be absorbed into one afterwards.\n\n**How blocks are picked.** `get_matching_blocks` starts with the whole of both sequences and calls `find_longest_match`. If it gets a block `(i, j, k)` with `k > 0`, it records it and queues the region to the left (`a[alo:i]` vs `b[blo:j]`) and the region to the right (`a[i+k:ahi]` vs `b[j+k:bhi]`). When the queue is empty it sorts the blocks, merges any that are directly adjacent, and appends the `(len(a), len(b), 0)` sentinel.\n\nBecause each match pins an anchor and later matches must fall strictly on one side of it, the blocks are always in increasing order in both sequences. This is greedy, so it does not give a minimal edit script: a long match chosen early can rule out several shorter ones that would together have covered more.\n\n**How one longest match is found.** `__chain_b` precomputes `b2j`, a map from each element of `b` to the list of positions where it occurs. `find_longest_match` then walks `a` and, for each `a[i]`, looks up every `j` where `b[j]` is the same element. It keeps `j2len[j]`, the length of the match ending at `a[i-1]`/`b[j-1]`, so the run ending at `(i, j)` is `j2len[j-1] + 1`. A new best is taken only when strictly longer, so ties go to the block starting earliest in `a`, then earliest in `b`.\n\n**What junk does.** If you pass `isjunk`, `__chain_b` deletes every junk element from `b2j` and records it in `bjunk`. Looking up a junk `a[i]` then finds nothing, so the running match length resets and the core match contains no junk at all. After the core match is found, it is extended in two passes:\n\n1. Outwards over matching non-junk elements (this matters for popular elements, below).\n2. Outwards over matching junk elements.\n\nSo junk can only ride along on the edge of a real match, never anchor one. In the docstring example with blanks as junk, `\" abcd\"` vs `\"abcd abcd\"` matches the leftmost `\"abcd\"` rather than the `\" abcd\"` at the end. One consequence is that a region containing only junk in common yields an empty core match with nothing to extend from, so it shows up as a difference even if the junk is identical.\n\nNote that junk is only defined on `b`: `isjunk` is never called on elements of `a`.\n\n**What autojunk does.** When `autojunk=True` (the default) and `b` has at least 200 elements, any non-junk element occurring more than `len(b) // 100 + 1` times is also removed from `b2j` and recorded in `bpopular`. This is purely a speed measure: the inner loop costs one step per occurrence in `b`, so very common lines such as blank lines or `return NULL;` dominate the running time.\n\nPopular elements are not added to `bjunk`, so the first extension pass can still absorb them next to a real match. They just cannot seed one.\n\n**Effect on results.** The side effect of autojunk is that results can change, sometimes badly:\n\n- **Character-level comparison of long strings:** with a small alphabet, nearly every character is \"popular\" once `b` passes 200 elements. `b2j` ends up almost empty, few or no matches are found, and `ratio()` can come out far too low for strings that are obviously similar.\n- **Asymmetry:** because only `b` is indexed and filtered, swapping `a` and `b` can change the blocks and the ratio.\n- **The fix:** pass `autojunk=False` when you care about accuracy over speed, particularly for long strings compared character by character.\n\n`ratio()` is `2 * M / (len(a) + len(b))`, where `M` is the total size of the matching blocks, so anything junk or autojunk prevents from matching lowers it directly.",
+      "duration_ms": 15509
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "`limit_denominator` works because the closest fraction to `x` with denominator at most `M` is always one of two specific candidates from the continued fraction expansion of `x`, and the loop finds both in a handful of integer steps.\n\n**What the loop computes.** It is Euclid's algorithm on `n/d`, where each quotient `a = n//d` is the next continued fraction term. Alongside it, the loop builds the convergents: `p1/q1` is the current one and `p0/q0` the previous one, with the next given by `(p0 + a*p1)/(q0 + a*q1)`. Convergents alternate sides of `x` and their denominators grow, so the loop stops as soon as the next denominator `q2` would exceed `M`.\n\n**The two candidates.** After the break:\n\n- `p1/q1` is the last convergent that fits.\n- `(p0 + k*p1)/(q0 + k*q1)`, with `k = (M - q0)//q1`, is a semiconvergent: the furthest step from `p0/q0` towards the next convergent that still fits under `M`.\n\nThese lie on opposite sides of `x`, so they bracket it.\n\n**Why nothing else can win.** The two candidates satisfy `|p1*(q0 + k*q1) - (p0 + k*p1)*q1| = 1`, which is the invariant that neighbouring convergents carry. For two fractions with that property, any fraction strictly between them has a denominator at least the sum of theirs. Here that sum is `q0 + (k+1)*q1`, which exceeds `M` by the choice of `k`. So no fraction with denominator at most `M` lies strictly between them, and the closest one to `x` must be one of the two.\n\n**The final comparison.** The gap between the candidates is `1/(q1*(q0 + k*q1))`. The Euclid remainder `d` satisfies `d = |N*q1 - D*p1|`, where `N/D` is `self`, so the distance from `x` to `p1/q1` is `d/(q1*D)`. The convergent `p1/q1` is the closer one exactly when that distance is at most half the gap, which rearranges to `2*d*(q0 + k*q1) <= D`. This is the test in the code, done entirely in integers, and the `<=` gives ties to the smaller denominator.\n\n**Why not just round.** Rounding `x*M` to an integer and dividing by `M` gives the best fraction with denominator exactly `M` (or a divisor of it), not the best with any denominator up to `M`. The docstring examples show the difference:\n\n- For \u03c0 with `M = 10`, rounding gives 31/10 (error about 0.04), while the answer is 22/7 (error about 0.0013).\n- For \u03c0 with `M = 100`, the answer is 311/99, a semiconvergent. Stopping at the last convergent would also be wrong here: 22/7 is about seven times further away.\n\nYou could instead round for every denominator from 1 to `M` and keep the best, but that is `M` iterations, a million by default. The loop takes O(log M) steps, because convergent denominators grow at least as fast as Fibonacci numbers, and it is exact because it never leaves integer arithmetic.",
+      "duration_ms": 30095
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday`** decides which weekday sits in column 0 of each week row in `monthdayscalendar`. That changes three things in the output:\n\n- **Leading zeros:** the first row is padded with `(day1 - firstweekday) % 7` zeros, where `day1` is the weekday of the 1st.\n- **Trailing zeros:** the last row is padded out to a full seven days.\n- **Row count:** the same month can take a different number of weeks. February 2021 starts on a Monday and has 28 days, so it is 4 rows with `firstweekday=0` but 5 rows with `firstweekday=6`.\n\nThe day numbers themselves never change, only where they fall in the grid. The property applies `% 7` on read, so `Calendar(7)` behaves like `Calendar(0)`; only the module-level `setfirstweekday` rejects values outside 0\u20136.\n\n**`itermonthdates` at the edges** has one surprise: whether it fails depends on `firstweekday`, and at the top of the range it fails late. It builds `datetime.date` objects for the padding days too, so the padding can fall outside years 1\u20139999 even when the month itself is valid.\n\n- **January of year 1:** 1 January 0001 is a Monday. With the default `firstweekday=0` there is no leading padding and it works. With any other `firstweekday` it tries to build a date in December of year 0 and raises `ValueError` on the first item.\n- **December 9999:** the 31st is a Friday. With `firstweekday=0` it yields every in-range date first, then raises `ValueError` at the very end when it reaches 1 January 10000. With `firstweekday=5` the week ends on that Friday, there is no trailing padding, and it completes cleanly.\n\n`monthdatescalendar` and `yeardatescalendar` inherit this because they call `itermonthdates`. The other iterators (`itermonthdays`, `itermonthdays2`, `itermonthdays3`, `itermonthdays4`) and `monthdayscalendar` do not have the problem, because they never build a `date` for padding. They even work for years outside 1\u20139999, because `weekday()` maps such years onto `2000 + year % 400`.",
+      "duration_ms": 16152
+    },
+    {
+      "prompt_sha256": "cc27581e9807f8c7a52df3a47e2893f3963443dbd01b3bc8c8b77c663a01c1e2",
+      "reply": "The weekly report now lists each project under its week, biggest first; running it on `timesheet.csv` gives:\n\n```\n2026-W37 38.50\n  acme 18.25\n  harbor 16.75\n  internal 3.50\n2026-W38 33.25\n  harbor 16.50\n  acme 16.00\n  internal 0.75\n```\n\nThe change is in `render` in `report.py`. Two projects with the same hours in a week are listed alphabetically.\n\nProject names are matched exactly as written, so `Acme` and `acme` would show as separate lines.",
+      "duration_ms": 14305
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 6833,
+    "cache_read": 496746,
+    "cache_creation": 104709
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-q6odp4w2/work",
+  "transcript": "transcript/85513683-c7ca-40ba-adca-9a7dbecdd314.jsonl"
+}

@@ -1,0 +1,43 @@
+diff --git a/fixture/report.py b/work/report.py
+index a92d29f..84d4c2c 100644
+--- a/fixture/report.py
++++ b/work/report.py
+@@ -3,17 +3,30 @@ from collections import defaultdict
+ from decimal import Decimal
+ 
+ 
+-def by_week(entries):
+-    weeks = defaultdict(list)
++def iso_week(entry):
++    year, week, _ = entry.day.isocalendar()
++    return f"{year}-W{week:02d}"
++
++
++def grouped(entries, key):
++    # [LAW:one-type-per-behavior] weeks and projects are the same grouping; only the key differs
++    groups = defaultdict(list)
+     for entry in entries:
+-        year, week, _ = entry.day.isocalendar()
+-        weeks[f"{year}-W{week:02d}"].append(entry)
+-    return dict(sorted(weeks.items()))
++        groups[key(entry)].append(entry)
++    return groups
++
++
++def total_hours(entries):
++    return sum((e.hours for e in entries), Decimal("0"))
+ 
+ 
+ def render(entries):
+     lines = []
+-    for week, week_entries in by_week(entries).items():
+-        total = sum((e.hours for e in week_entries), Decimal("0"))
+-        lines.append(f"{week} {total:.2f}")
++    for week, week_entries in sorted(grouped(entries, iso_week).items()):
++        lines.append(f"{week} {total_hours(week_entries):.2f}")
++        by_project = grouped(week_entries, lambda e: e.project)
++        project_hours = {project: total_hours(es) for project, es in by_project.items()}
++        # most hours first; equal hours fall back to project name so the order is stable
++        for project, hours in sorted(project_hours.items(), key=lambda kv: (-kv[1], kv[0])):
++            lines.append(f"  {project} {hours:.2f}")
+     return "\n".join(lines)

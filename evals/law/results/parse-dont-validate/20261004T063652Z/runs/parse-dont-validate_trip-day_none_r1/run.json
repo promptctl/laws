@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r1_e997298f",
+  "session_id": "2ab9d6b3-8bd3-4280-a4a1-b681b19ffc00",
+  "started_at": "2026-10-04T06:49:44.496452+00:00",
+  "duration_ms": 29872,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed in `app.py`: `/trips` now checks `day` before building the summary and answers a bad one with a 400 and a JSON error, with no traceback. I called the handler directly with the two values from your access log plus a few others, and valid days still return 200 as before.\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `day '2026-09-31' is not a real date: day is out of range for month` |\n| `day=14/09/2026` | 400 `day '14/09/2026' is not a date in YYYY-MM-DD form` |\n| `day=` or no `day` at all | 400 `day is required, as YYYY-MM-DD` |\n\n- **Missing `day`:** a missing or empty `day` was also a 500 before, so I gave it a 400 too.\n- **Other ISO forms:** anything Python's `date.fromisoformat` accepts still gets through, which on 3.12 includes compact forms like `20260914`. I left that alone so nothing that worked before starts failing; say if you want it strictly `YYYY-MM-DD`.\n\nThe date picker itself is still sending these values; that's on the dashboard side and not touched here.",
+      "duration_ms": 24027
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2115,
+    "cache_read": 120694,
+    "cache_creation": 10677
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-cys8kkjp/work",
+  "transcript": "transcript/2ab9d6b3-8bd3-4280-a4a1-b681b19ffc00.jsonl"
+}

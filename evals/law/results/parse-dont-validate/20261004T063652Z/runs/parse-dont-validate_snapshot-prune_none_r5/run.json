@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_none_r5_e997298f",
+  "session_id": "e020b835-f73b-45e8-859d-4d6be197fc3e",
+  "started_at": "2026-10-04T06:42:07.395346+00:00",
+  "duration_ms": 65027,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it deletes anything; if anything is wrong it lists every problem, deletes nothing and exits with status 1. I tested it on a scratch copy of the project, so your real `snapshots/` directory was not touched.\n\nWith your current `policy.json` it now prints:\n\n```\nprune.py: invalid policy policy.json, nothing was deleted:\n  - rules[2] (prefix 'logs-'): unknown key 'kepe' (expected: 'keep', 'prefix')\n  - rules[2] (prefix 'logs-'): missing 'keep'\n```\n\nI left the `kepe` typo in `policy.json` unfixed, because fixing it means the next run deletes the two oldest logs snapshots. Change it to `keep` when you're ready for that.\n\nBeyond a misspelt or missing key, it also refuses to run on:\n\n- **Unknown keys anywhere**: a top-level typo like `dryrun` would otherwise be ignored and the run would delete for real.\n- **Bad `keep` values**: negative numbers, strings, fractions or booleans.\n- **Bad prefixes**: empty (which would match every `.tar` file), or containing wildcard or path characters.\n- **Overlapping prefixes**: for example `db-` and `db-old-`, where the same file would fall under two rules.\n- **A bad `snapshot_dir`**: missing, or not an existing directory.\n- **A broken file**: unreadable, invalid JSON, or the same key given twice in one object.\n\nTwo behaviours you might not assume:\n\n- `keep: 0` is still accepted and deletes every snapshot in that family.\n- A failure during deletion itself (say, a permission error on one file) can still leave a partial cleanup; this change only covers mistakes in the policy.\n\nThe checks live in `retention.py` (`validate`, which `apply` also calls), and `prune.py` does the reporting.",
+      "duration_ms": 58639
+    }
+  ],
+  "tokens": {
+    "input": 10,
+    "output": 6126,
+    "cache_read": 158301,
+    "cache_creation": 15967
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-4amb0g2o/work",
+  "transcript": "transcript/e020b835-f73b-45e8-859d-4d6be197fc3e.jsonl"
+}

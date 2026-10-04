@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_hours-breakdown_none_r5_e997298f",
+  "session_id": "e864b675-e132-43ca-8a59-8a6147158998",
+  "started_at": "2026-10-04T06:37:10.585530+00:00",
+  "duration_ms": 19555,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "cc27581e9807f8c7a52df3a47e2893f3963443dbd01b3bc8c8b77c663a01c1e2",
+      "reply": "The weekly report now lists each project under its week, biggest first, and W37 matches your example exactly:\n\n```\n2026-W37 38.50\n  acme 18.25\n  harbor 16.75\n  internal 3.50\n2026-W38 33.25\n  harbor 16.50\n  acme 16.00\n  internal 0.75\n```\n\nThe change is in `report.py`: a small `by_project` helper plus two lines in `render`. If two projects have the same hours in a week, they're listed in name order.\n\nProject names are grouped exactly as written in the CSV, so `Acme` and `acme` would show up as separate lines.",
+      "duration_ms": 13263
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1316,
+    "cache_read": 121646,
+    "cache_creation": 10407
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-0l88uw16/work",
+  "transcript": "transcript/e864b675-e132-43ca-8a59-8a6147158998.jsonl"
+}
