@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "law-evals/case/3",
+  "title": "case.json: what one law-eval case measures, and whether the edit loop may look at it",
+  "description": "Frozen as of promptctl-law-evals-qdn.3yt. A change to this schema is its own ticket.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "split"],
+  "properties": {
+    "kind": {"enum": ["fork", "over-firing"],
+             "description": "fork: the request puts the agent at the law's decision, and held means it went the law's way. over-firing: the law does not apply, and held means the agent added no ceremony the request did not need"},
+    "split": {"enum": ["tuning", "holdout"],
+              "description": "holdout: kept out of the skill-edit loop and run only to check that an edit generalizes; never read while editing the skill"}
+  }
+}

@@ -40,6 +40,17 @@ class OracleReadsEveryReference(unittest.TestCase):
     def test_cases_exist(self):
         self.assertGreaterEqual(len(CASES), 2)
 
+    def test_every_law_has_the_controls(self):
+        """From promptctl-law-evals-qdn.3yt on, every case set has an over-firing case and a holdout."""
+        for law in sorted({case.parent for case in CASES}):
+            metas = [json.loads((case / "case.json").read_text()) for case in law.iterdir() if case.is_dir()]
+            for meta in metas:
+                jsonschema.validate(meta, run.CASE_SCHEMA)
+            with self.subTest(law=law.name):
+                self.assertIn("over-firing", {m["kind"] for m in metas})
+                self.assertIn("holdout", {m["split"] for m in metas})
+                self.assertIn("tuning", {m["split"] for m in metas})
+
     def test_untouched_fixture_is_off_fork(self):
         for case in CASES:
             with self.subTest(case=case.name):
@@ -98,14 +109,20 @@ class Readings(unittest.TestCase):
         self.assertEqual(sensitivity.reading(counts(5, 0), counts(1, 0, failed=4))[0], "unmeasurable")
 
 
+DILUTION = run.Context(("an earlier turn",))
+
+
 def record(arm="none", verdict="violated", repeat=1, guidance=None, case_sha256="2" * 64):
+    context = DILUTION.record if arm.endswith(run.DILUTED) else None
     return {
-        "schema_version": 2,
-        "run_id": f"no-silent-failure/bank-export/{run.Arm(arm, None, None).slug}/r{repeat}",
+        "schema_version": 3,
+        "run_id": f"no-silent-failure/bank-export/{run.Arm(arm, None, None, None).slug}/r{repeat}",
         "law": "no-silent-failure",
         "case": "no-silent-failure/bank-export",
+        "case_kind": "fork",
+        "split": "tuning",
         "case_sha256": case_sha256,
-        "arm": {"name": arm, "guidance": guidance},
+        "arm": {"name": arm, "guidance": guidance, "context": context},
         "repeat": repeat,
         "model": "claude-opus-5-5",
         "oracle": {"verdict": verdict, "detail": ""},
@@ -121,7 +138,7 @@ class Schema(unittest.TestCase):
         for r in records:
             jsonschema.validate(r, sensitivity.RUN_SCHEMA)
         failures = [{"run_id": "no-silent-failure/bank-export/skill-head/r3", "case": "no-silent-failure/bank-export",
-                     "arm": "skill:HEAD", "error": "HarnessError: api"}]
+                     "case_kind": "fork", "split": "tuning", "arm": "skill:HEAD", "error": "HarnessError: api"}]
         [summary] = sensitivity.summarize(records, failures)  # summarize validates against the summary schema
         self.assertEqual(summary["arms"]["none"]["violated"], 2)
         self.assertEqual(summary["arms"]["skill:HEAD"]["failed"], 1)
@@ -129,9 +146,23 @@ class Schema(unittest.TestCase):
 
     def test_a_case_whose_runs_failed_entirely_is_still_summarized(self):
         failures = [{"run_id": "no-silent-failure/bank-export/none/r1", "case": "no-silent-failure/bank-export",
-                     "arm": "none", "error": "HarnessError: api"}]
+                     "case_kind": "fork", "split": "tuning", "arm": "none", "error": "HarnessError: api"}]
         [summary] = sensitivity.summarize([], failures)
         self.assertEqual(summary["arms"]["none"]["failed"], 1)
+
+    def test_a_diluted_arm_is_read_against_the_diluted_control(self):
+        guidance = {"path": run.SKILL_PATH, "ref": "HEAD", "commit": "0" * 40, "sha256": "1" * 64}
+        records = [record("none", "held", 1), record("skill:HEAD", "held", 1, guidance),
+                   record("none+diluted", "violated", 1), record("skill:HEAD+diluted", "held", 1, guidance)]
+        [summary] = sensitivity.summarize(records, [])
+        controls = {c["arm"]: c["control"] for c in summary["comparisons"]}
+        self.assertEqual(controls, {"skill:HEAD": "none", "skill:HEAD+diluted": "none+diluted"})
+        self.assertEqual(list(summary["arms"])[:2], ["none", "none+diluted"])
+
+    def test_a_diluted_arm_without_its_control_gets_no_reading(self):
+        guidance = {"path": run.SKILL_PATH, "ref": "HEAD", "commit": "0" * 40, "sha256": "1" * 64}
+        [summary] = sensitivity.summarize([record("none", "held", 1), record("skill:HEAD+diluted", "held", 1, guidance)], [])
+        self.assertEqual(summary["comparisons"], [])
 
     def test_refuses_records_from_two_case_digests(self):
         records = [record(repeat=1), record(repeat=2, case_sha256="3" * 64)]
@@ -163,9 +194,26 @@ class LoadCases(unittest.TestCase):
             (case / "fixture").mkdir(parents=True)
             (case / "request.md").write_text("x\n")
             (case / "oracle.py").write_text("")
+            (case / "case.json").write_text('{"kind": "fork", "split": "tuning"}')
             with mock.patch.object(run, "HERE", Path(tmp)), self.assertRaises(SystemExit) as raised:
                 run.load_cases("no-silent-failure", Path(tmp) / "snapshot")
         self.assertIn("Bank_Export", str(raised.exception))
+
+    def test_split_selects_cases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            holdouts = run.load_cases("no-silent-failure", Path(tmp), "holdout")
+        self.assertTrue(holdouts)
+        self.assertEqual({c.split for c in holdouts}, {"holdout"})
+
+    def test_refuses_a_case_json_the_schema_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp) / "cases" / "no-silent-failure" / "bank-export"
+            (case / "fixture").mkdir(parents=True)
+            for part, text in (("request.md", "x\n"), ("oracle.py", ""), ("case.json", '{"kind": "fork"}')):
+                (case / part).write_text(text)
+            with mock.patch.object(run, "HERE", Path(tmp)), self.assertRaises(SystemExit) as raised:
+                run.load_cases("no-silent-failure", Path(tmp) / "snapshot")
+        self.assertIn("case.json", str(raised.exception))
 
     def test_runs_read_a_snapshot_that_digests_as_the_checkout(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -223,13 +271,29 @@ class CaseDigest(unittest.TestCase):
 
 class Arms(unittest.TestCase):
     def test_skill_arm_reads_the_skill_at_its_ref(self):
-        arm = run.resolve_arm("skill:HEAD")
+        arm = run.resolve_arm("skill:HEAD", DILUTION)
         self.assertIn("[LAW:no-silent-failure]", arm.guidance_text)
         self.assertRegex(arm.guidance["commit"], "^[0-9a-f]{40}$")
+        self.assertIsNone(arm.context)
+
+    def test_diluted_arm_carries_the_turns_and_its_control(self):
+        arm = run.resolve_arm("skill:HEAD+diluted", DILUTION)
+        self.assertEqual(arm.context, DILUTION)
+        self.assertEqual(arm.guidance["ref"], "HEAD")
+        self.assertEqual((arm.slug, arm.control), ("skill-head-diluted", "none+diluted"))
+        self.assertEqual(run.resolve_arm("none+diluted", DILUTION).control, "none+diluted")
 
     def test_bad_arm_spec_dies(self):
-        with self.assertRaises(SystemExit):
-            run.resolve_arm("laws")
+        for spec in ("laws", "skill:", "skill:+diluted"):
+            with self.subTest(spec=spec), self.assertRaises(SystemExit):
+                run.resolve_arm(spec, DILUTION)
+
+    def test_the_dilution_turns_are_prompts_the_harness_accepts(self):
+        from harness.session import check_prompt
+        context = run.load_dilution(run.DILUTION_DIR)
+        for turn in context.turns:
+            check_prompt(turn)
+        self.assertGreater(sum(map(len, context.turns)), 100_000)
 
 
 if __name__ == "__main__":
