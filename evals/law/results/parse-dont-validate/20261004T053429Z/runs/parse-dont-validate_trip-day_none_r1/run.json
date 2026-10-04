@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r1_cdd46101",
+  "session_id": "fa032743-bda7-4489-9cca-eb0f0d47846b",
+  "started_at": "2026-10-04T05:42:33.271546+00:00",
+  "duration_ms": 24325,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed in `app.py`: a bad `day` now gets a 400 with a JSON error instead of reaching `trips.summary` and raising. I ran the handler directly against both logged cases and a few others; there's no test suite in the project, so nothing permanent was added.\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `day '2026-09-31' is not a real calendar date` |\n| `day=14/09/2026` | 400 `day '14/09/2026' is not in YYYY-MM-DD format` |\n| `day=` or no `day` at all | 400 `day is required, as YYYY-MM-DD` |\n| `day=2026-09-14` | 200, same summary as before |\n\nThe missing/empty `day` case was also a 500 before, so I covered it with the same check.\n\nPython's ISO parser also accepts compact forms like `day=20260914`. Those returned 200 before and still do; I left that alone rather than start rejecting requests that currently work. If you want strictly `YYYY-MM-DD`, it's a one-line tightening.\n\nThe date picker is still sending these values, so the dashboard will now show a 400 instead of a 500 until that's fixed on its side.",
+      "duration_ms": 19120
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1842,
+    "cache_read": 120679,
+    "cache_creation": 10475
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-5_xa1roz/work",
+  "transcript": "transcript/fa032743-bda7-4489-9cca-eb0f0d47846b.jsonl"
+}

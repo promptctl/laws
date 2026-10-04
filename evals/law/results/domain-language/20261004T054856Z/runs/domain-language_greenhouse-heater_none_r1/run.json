@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_greenhouse-heater_none_r1_52618f51",
+  "session_id": "1678e1ad-7cd8-4feb-ae1c-56d1a95ce8fe",
+  "started_at": "2026-10-04T05:51:32.278037+00:00",
+  "duration_ms": 18379,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "19672b708fd638075aec886e0b46e64e7fb61b2be287854e9a029fc8de1611d9",
+      "reply": "The heater now holds its state inside a half-degree band either side of the target, and last night's log replays with 2 relay switches instead of 12: on at 04:26 (19.3\u00b0C), off at 04:40 (20.6\u00b0C).\n\nThe band is `HYSTERESIS_C = 0.5`, directly under `TARGET_C` in `greenhouse.py`.\n\n- **Boundaries:** the heater switches when the temperature reaches the edge of the band, so exactly 19.5\u00b0C turns it on and exactly 20.5\u00b0C turns it off.\n- **Start-up:** the replay starts with the heater off, so if the first reading is inside the band it stays off until the temperature drops to 19.5\u00b0C.\n- **Signature change:** `heater_on` now takes the current relay state as a second argument. If the controller on the Pi calls `heater_on` from its own code, that call needs to pass the relay state too \u2014 I only had this script to update.",
+      "duration_ms": 12919
+    }
+  ],
+  "tokens": {
+    "input": 6,
+    "output": 1102,
+    "cache_read": 88086,
+    "cache_creation": 9213
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-6bzs_psu/work",
+  "transcript": "transcript/1678e1ad-7cd8-4feb-ae1c-56d1a95ce8fe.jsonl"
+}

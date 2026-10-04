@@ -1,0 +1,33 @@
+{
+  "schema_version": 3,
+  "run_id": "domain-language/envelope-budget/skill-head-diluted/r1",
+  "law": "domain-language",
+  "case": "domain-language/envelope-budget",
+  "case_kind": "over-firing",
+  "split": "tuning",
+  "case_sha256": "5cd12800289aaf69b4a80811b9040ab4d12da822cdc2f25e8f3795307397a735",
+  "arm": {
+    "name": "skill:HEAD+diluted",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "9b7a43ab58b63b7add47a65720024d77838dd3d7",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "context": {
+      "name": "diluted",
+      "turns": 3,
+      "sha256": "5f4ffc703fac539c25ea19b0e9c34f2f70018e768d8b6ecb7852dc45bf193e6a"
+    }
+  },
+  "repeat": 1,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "month filter added; every existing name kept, no aliases",
+    "renamed_or_removed": [],
+    "aliases": []
+  },
+  "session": "runs/domain-language_envelope-budget_skill-head-diluted_r1/run.json",
+  "diff": "diffs/domain-language_envelope-budget_skill-head-diluted_r1.diff"
+}

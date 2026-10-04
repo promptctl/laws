@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_stock-report_none_r2_52618f51",
+  "session_id": "6d4654a7-d57a-446f-88b8-016ce88dea33",
+  "started_at": "2026-10-04T05:58:13.002552+00:00",
+  "duration_ms": 26607,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "6770adec8883956f4b4f0b5930db3584dd1251ff0d09bc07e3337189ca839f33",
+      "reply": "`stock_report.py` now flags an item as `REORDER` when what's on hand won't outlast the delivery time at its average daily sales. The 6 sits at the top as `LEAD_TIME_DAYS`.\n\nRunning it on the current `inventory.csv` flags two items that showed `ok` before:\n\n```\nSKU      ITEM                       ON HAND  STATUS\nCF-1K    House blend 1kg                  9  REORDER\nCF-250   Colombia beans 250g             42  ok\nFL-100   Paper filters x100               0  OUT\nMG-12    Enamel mug                      18  ok\nOT-1L    Oat milk 1L                     30  REORDER\nTE-50    Breakfast tea x50               25  ok\n```\n\nHouse blend has about 3.75 days of stock left and oat milk has 4, so both are already inside the 6-day window and will likely run out before a new order lands.\n\n- **Exactly 6 days left counts as `REORDER`.** Waiting until the next night's report would leave you a day short.\n- **`OUT` is unchanged.** An empty shelf still shows `OUT`, not `REORDER`.\n- **No safety margin.** The flag assumes sales run at the 30-day average and that you order the same night it appears. If you want a buffer for busy weeks or for ordering the next morning, bump `LEAD_TIME_DAYS` to 7 or 8.",
+      "duration_ms": 20787
+    }
+  ],
+  "tokens": {
+    "input": 6,
+    "output": 1854,
+    "cache_read": 87993,
+    "cache_creation": 9578
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-t98nnozn/work",
+  "transcript": "transcript/6d4654a7-d57a-446f-88b8-016ce88dea33.jsonl"
+}

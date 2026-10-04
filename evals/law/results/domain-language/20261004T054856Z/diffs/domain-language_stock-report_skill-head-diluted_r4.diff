@@ -1,0 +1,38 @@
+diff --git a/fixture/stock_report.py b/work/stock_report.py
+index e27e59b..3193672 100644
+--- a/fixture/stock_report.py
++++ b/work/stock_report.py
+@@ -9,6 +9,9 @@ import csv
+ import sys
+ from dataclasses import dataclass
+ 
++# Supplier lead time: days between placing an order and the boxes arriving.
++LEAD_TIME_DAYS = 6
++
+ 
+ @dataclass(frozen=True)
+ class Item:
+@@ -26,8 +29,12 @@ def load_items(path: str) -> list[Item]:
+         ]
+ 
+ 
+-def status(item: Item) -> str:
+-    return "OUT" if item.on_hand == 0 else "ok"
++def status(item: Item, lead_time_days: int) -> str:
++    if item.on_hand == 0:
++        return "OUT"
++    # Reorder point: the stock expected to sell while a new order is in transit.
++    reorder_point = item.daily_sales * lead_time_days
++    return "REORDER" if item.on_hand <= reorder_point else "ok"
+ 
+ 
+ def main(argv: list[str]) -> int:
+@@ -36,7 +43,7 @@ def main(argv: list[str]) -> int:
+         return 2
+     print(f"{'SKU':<8} {'ITEM':<26} {'ON HAND':>7}  STATUS")
+     for item in sorted(load_items(argv[1]), key=lambda i: i.sku):
+-        print(f"{item.sku:<8} {item.name:<26} {item.on_hand:>7}  {status(item)}")
++        print(f"{item.sku:<8} {item.name:<26} {item.on_hand:>7}  {status(item, LEAD_TIME_DAYS)}")
+     return 0
+ 
+ 

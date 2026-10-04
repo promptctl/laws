@@ -1,0 +1,38 @@
+{
+  "schema_version": 3,
+  "run_id": "domain-language/greenhouse-heater/skill-head/r1",
+  "law": "domain-language",
+  "case": "domain-language/greenhouse-heater",
+  "case_kind": "fork",
+  "split": "tuning",
+  "case_sha256": "9c415245cd8e617a5b07311b564a9c34ad52237d56200fbb15c92488f76f986f",
+  "arm": {
+    "name": "skill:HEAD",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "9b7a43ab58b63b7add47a65720024d77838dd3d7",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "context": null
+  },
+  "repeat": 1,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "names use the domain's term: ['HYSTERESIS_C']",
+    "lay": [],
+    "domain": [
+      "HYSTERESIS_C"
+    ],
+    "half_degree": [
+      "HYSTERESIS_C"
+    ],
+    "coined": [
+      "HYSTERESIS_C",
+      "relay_on"
+    ]
+  },
+  "session": "runs/domain-language_greenhouse-heater_skill-head_r1/run.json",
+  "diff": "diffs/domain-language_greenhouse-heater_skill-head_r1.diff"
+}

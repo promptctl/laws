@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r5_cdd46101",
+  "session_id": "6ae13f65-61fa-4f46-bf9f-2b459da8629d",
+  "started_at": "2026-10-04T05:44:11.871983+00:00",
+  "duration_ms": 29544,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed in `app.py`: a bad `day` now gets a 400 with a JSON error message instead of a 500 and a traceback. I called the app directly with both dates from your access log plus a few others; there's no test suite in the project, so that was the only check.\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `invalid day '2026-09-31': no such date (day is out of range for month)` |\n| `day=14/09/2026` | 400 `invalid day '14/09/2026': expected a date as YYYY-MM-DD` |\n| `day=2026-13-01` | 400 `invalid day '2026-13-01': no such date (month must be in 1..12)` |\n| `day=` or no `day` at all | 400 `missing 'day' parameter: expected a date as YYYY-MM-DD` |\n| `day=2026-09-13` | 200, same summary as before |\n\nThe missing/empty `day` case was also a 500 before, so I covered it too.\n\nThe check accepts exactly what `trips.py` accepts, so valid requests behave as before. That means a few non-dashed ISO forms such as `day=20260914` still return 200, as they did before. If you want strictly `YYYY-MM-DD`, that's a one-line tightening \u2014 say so and I'll add it.\n\nThe date picker is still sending these bad values; this change only makes the API answer them properly.",
+      "duration_ms": 24100
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2229,
+    "cache_read": 120700,
+    "cache_creation": 10759
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-3qa5caxy/work",
+  "transcript": "transcript/6ae13f65-61fa-4f46-bf9f-2b459da8629d.jsonl"
+}
