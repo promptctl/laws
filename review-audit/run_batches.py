@@ -47,11 +47,14 @@ def envelope(batch_id: str, prompt: Path, packets: list[Path], out: Path) -> str
     )
 
 
-def run_one(batch: dict, prompt: Path, bundles: Path, verdicts: Path, model: str) -> tuple[str, str]:
-    """Judge one batch. Returns (batch id, "" if it produced a parseable file else why not)."""
+def run_one(batch: dict, judged: set[str], prompt: Path, bundles: Path, verdicts: Path, model: str) -> tuple[str, str]:
+    """Judge one batch. Returns (batch id, "" if it produced a parseable file else why not).
+
+    Only the batch's unjudged PRs go to the agent. A re-bundle can put a PR some other
+    file already judged into a batch with new ones; sending it again judges it twice."""
     bid = batch["id"]
     out = verdicts / f"{bid}.jsonl"
-    packets = [bundles / batch["repo"] / f"{n}.md" for n in batch["prs"]]
+    packets = [bundles / batch["repo"] / f"{n}.md" for n in batch["prs"] if f"{batch['repo']}#{n}" not in judged]
     missing = [str(p) for p in packets if not p.exists()]
     if missing:  # [LAW:no-silent-failure] a packet gone means bundle.py has not been re-run
         return bid, f"packets missing (run bundle.py): {missing[:3]}"
@@ -153,7 +156,7 @@ def main(argv: list[str]) -> int:
 
     failures = []
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        run = lambda b: run_one(b, prompt, args.bundles.resolve(), args.verdicts.resolve(), args.model)
+        run = lambda b: run_one(b, judged, prompt, args.bundles.resolve(), args.verdicts.resolve(), args.model)
         for bid, why in pool.map(run, wanted):
             print(f"{bid}: {why or 'ok'}", file=sys.stderr)
             if why:
