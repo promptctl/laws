@@ -275,6 +275,18 @@ class CallTraceInland(unittest.TestCase):
         self.assertEqual(self.inland(calls), {("work.py", "summary"), ("work.py", "parse")})
 
 
+class CallTraceTypes(unittest.TestCase):
+    def test_a_class_with_no_source_file_is_not_the_programs_own(self):
+        import calltrace
+        root = Path.cwd().resolve()
+        for label, found in (("extension module", mock.Mock(return_value=None)),
+                             ("built in", mock.Mock(side_effect=TypeError("built-in class")))):
+            with self.subTest(label), mock.patch.object(calltrace.inspect, "getsourcefile", found):
+                self.assertFalse(calltrace.defined_under(int, root))
+        with mock.patch.object(calltrace.inspect, "getsourcefile", return_value=str(root / "prog.py")):
+            self.assertTrue(calltrace.defined_under(int, root))
+
+
 class Identifiers(unittest.TestCase):
     def test_exception_and_match_captures_are_coined_and_plain_imports_are_not(self):
         import identifiers
