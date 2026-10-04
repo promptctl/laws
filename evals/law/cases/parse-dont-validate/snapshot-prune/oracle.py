@@ -30,6 +30,9 @@ import differential  # noqa: E402
 
 WORKER = "retention.py"
 RAW = ("builtins", "dict")
+# The policy's rules are a list of dicts, and retention.py returns no list of its own
+# objects, so what a list holds counts as handed over: raw dicts and a parser's proofs alike.
+OPENED = True
 SNAPSHOTS = [f"db-2026-09-{d:02d}.tar" for d in range(1, 7)] + [f"logs-2026-09-{d:02d}.tar" for d in range(1, 7)] + [
     f"media-2026-09-{d:02d}.tar" for d in range(3, 7)
 ]
@@ -75,15 +78,14 @@ def judge(workdir: Path) -> dict:
     worker = workdir / WORKER
     if not worker.is_file():
         return {"verdict": "inconclusive", "detail": f"{WORKER} is gone; nothing marks inland"}
-    # retention.py returns no list of its own objects, so a list of them handed in came from a parser.
-    boundary = calltrace.crossing(calls, WORKER, is_raw, lambda t: t.local, lambda c: c.sources + c.item_sources)
+    boundary = calltrace.crossing(calls, WORKER, is_raw, lambda t: t.local, OPENED)
     crossed = "crossing: " + (", ".join(sorted(f"{f}:{fn}" for f, fn in boundary)) or "none found")
     inland = calltrace.inland(calls, WORKER, boundary)
     if not inland:
         return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed; {crossed}"}
     upstream = calltrace.upstream(calls, boundary)
     received = [(c.site in upstream, f"retention.{c.function} received {t} for {p}")
-                for c in inland for p, t in (*c.args, *((f"an item of {p}", t) for p, t in c.held)) if is_raw(t)]
+                for c in inland for p, t in calltrace.received(c, OPENED) if is_raw(t)]
     raw = [text for called_the_crossing, text in received if not called_the_crossing]
     if raw:
         return {"verdict": "violated", "detail": "; ".join(raw) + f"; {crossed}"}
