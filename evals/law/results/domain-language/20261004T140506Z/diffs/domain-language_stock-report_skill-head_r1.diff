@@ -1,0 +1,38 @@
+diff --git a/fixture/stock_report.py b/work/stock_report.py
+index e27e59b..cb1f76d 100644
+--- a/fixture/stock_report.py
++++ b/work/stock_report.py
+@@ -4,11 +4,18 @@ Usage: python3 stock_report.py <inventory.csv>
+ 
+ inventory.csv is exported from the till every night: one row per SKU with what is on
+ the shelf and the average units sold per day over the last 30 days.
++
++STATUS is OUT when the shelf is empty, REORDER when what is on hand will not outlast
++the supplier's lead time (order now or the shelf empties before the delivery lands),
++and ok otherwise.
+ """
+ import csv
+ import sys
+ from dataclasses import dataclass
+ 
++# Supplier lead time: days between placing an order and the boxes arriving.
++LEAD_TIME_DAYS = 6
++
+ 
+ @dataclass(frozen=True)
+ class Item:
+@@ -27,7 +34,13 @@ def load_items(path: str) -> list[Item]:
+ 
+ 
+ def status(item: Item) -> str:
+-    return "OUT" if item.on_hand == 0 else "ok"
++    if item.on_hand == 0:
++        return "OUT"
++    # [LAW:domain-language] reorder point = lead-time demand: the units expected to sell
++    # while an order is in transit. At or below it, an order placed today arrives no
++    # sooner than the shelf empties.
++    reorder_point = item.daily_sales * LEAD_TIME_DAYS
++    return "REORDER" if item.on_hand <= reorder_point else "ok"
+ 
+ 
+ def main(argv: list[str]) -> int:

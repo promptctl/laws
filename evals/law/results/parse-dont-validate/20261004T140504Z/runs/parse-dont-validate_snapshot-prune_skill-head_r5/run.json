@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r5_c6fd2586",
+  "session_id": "0727df3e-f33f-4579-b9c0-2257112f9354",
+  "started_at": "2026-10-04T14:12:21.134919+00:00",
+  "duration_ms": 91643,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-qh1o2rw_/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it touches any file. With a mistake in the policy it deletes nothing, prints every problem to stderr and exits with status 1.\n\nI tested this on a scratch copy of the directory, not on your real snapshots. Against the current `policy.json` it now gives:\n\n```\npolicy.json is not a usable policy; nothing was deleted:\n  rules[2]: missing \"keep\"\n  rules[2]: unknown key \"kepe\" (did you mean \"keep\"?)\n```\n\nWith the typo corrected, the dry run and the real run both deleted exactly the expected files across all three families.\n\n**I did not fix `policy.json`**: it still says `kepe`, so the next run will stop with the message above until you correct it.\n\nBesides misspelled or missing keys, it also stops on:\n- **Unknown keys anywhere**: this catches a misspelled `dry_run`, which would otherwise turn a dry run into a real one.\n- **Bad `keep` values**: anything that is not a whole number of 0 or more.\n- **Bad prefixes**: an empty prefix, or two rules whose prefixes overlap (e.g. `db-` and `db-2026`).\n- **Invalid JSON.**\n\nThree behaviours changed that you didn't ask for:\n- **Literal prefixes**: a `*` or `?` in a prefix is no longer a wildcard.\n- **Missing snapshot directory**: a wrong `snapshot_dir` now fails with a Python traceback before deleting anything, where it used to silently do nothing.\n- **Extra output**: each rule prints a summary line such as `logs-: 6 snapshots, keeping 4` before its deletions. If anything parses the script's output, it will see these new lines.\n\nThe checking lives in a new `policy.py`; `retention.py` now reads the directory for all rules before the first deletion.",
+      "duration_ms": 84486
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 7648,
+    "cache_read": 211989,
+    "cache_creation": 45762
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-qh1o2rw_/work",
+  "transcript": "transcript/0727df3e-f33f-4579-b9c0-2257112f9354.jsonl"
+}

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_none_r5_c6fd2586",
+  "session_id": "481a2af2-9c74-4d02-9965-0d6aab92257e",
+  "started_at": "2026-10-04T14:10:57.418922+00:00",
+  "duration_ms": 57821,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it deletes anything; if anything is wrong it lists every problem, deletes nothing and exits with status 1.\n\nI tested on a scratch copy of the project, so your real `snapshots/` was not touched. With your current `policy.json` it now prints this and leaves all 16 files alone:\n\n```\nprune: policy.json is invalid, nothing was deleted:\n  - rules[2] (prefix 'logs-'): unknown key 'kepe'\n  - rules[2] (prefix 'logs-'): missing 'keep'\n```\n\nI did not fix the `kepe` typo in `policy.json`, so the next real run will refuse until someone changes it to `keep`. With the typo corrected, the scratch copy pruned db, media and logs as expected.\n\nBeyond a missing or misspelled key, it also rejects:\n- **Unknown top-level keys**: a mistyped `dry_run` (e.g. `dryrun`) would otherwise delete for real.\n- **Bad `keep` values**: anything that is not a whole number of 0 or more. `keep: 0` is allowed and deletes every snapshot in that family.\n- **Bad prefixes**: empty, or containing wildcards or path separators.\n- **Overlapping prefixes**: e.g. `db` and `db-`, where the same file would match two rules.\n- **A `snapshot_dir` that does not exist**: previously this silently did nothing.\n- **Unreadable or malformed JSON**: now a one-line message instead of a traceback.\n\nThe check lives in `retention.apply()` in `retention.py`, so anything else that calls it gets the same protection; `prune.py` just reports the result.\n\nOne gap remains: if a delete itself fails partway (permissions, say), you can still end up with a partial prune.",
+      "duration_ms": 50472
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 4865,
+    "cache_read": 127953,
+    "cache_creation": 14640
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-konwmrr4/work",
+  "transcript": "transcript/481a2af2-9c74-4d02-9965-0d6aab92257e.jsonl"
+}
