@@ -268,6 +268,14 @@ class CaseDigest(unittest.TestCase):
             (copy / "oracle.py").write_text((copy / "oracle.py").read_text() + "\n")
             self.assertNotEqual(run.case_digest(HERE, copy), base)
 
+    def test_digest_covers_the_helpers_the_oracle_imports_and_no_others(self):
+        imports = lambda law: {h for c in (HERE / "cases" / law).iterdir() if c.is_dir()  # noqa: E731
+                               for h in run.imported_helpers(HERE, c / "oracle.py")}
+        self.assertEqual(imports("no-silent-failure"), {"differential.py"})
+        # calltrace imports differential: a change to it reaches the cases that trace calls.
+        self.assertEqual(imports("parse-dont-validate"), {"calltrace.py", "differential.py"})
+        self.assertNotIn("calltrace.py", imports("domain-language"))
+
 
 class Arms(unittest.TestCase):
     def test_skill_arm_reads_the_skill_at_its_ref(self):

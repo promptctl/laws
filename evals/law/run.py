@@ -29,6 +29,7 @@ transcript, which stays out of git: it carries the login's account identity),
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -58,7 +59,7 @@ SKILL_PATH = "plugins/laws/skills/code/SKILL.md"
 DILUTION_DIR = HERE / "dilution"
 DILUTED = "+diluted"
 CASE_SCHEMA = json.loads((HERE / "schema" / "case.schema.json").read_text())
-# The oracles' shared code, digested into every case it judges.
+# The oracles' shared code, each digested into the cases whose oracle imports it.
 HELPERS = ("differential.py", "calltrace.py", "identifiers.py")
 DEFAULT_ARMS = ("none", "skill:HEAD", f"none{DILUTED}", f"skill:HEAD{DILUTED}")
 ORACLE_TIMEOUT_SECS = 600
@@ -139,7 +140,7 @@ class Case:
     kind: str  # case.json: fork | over-firing
     split: str  # case.json: tuning | holdout
     root: Path  # the invocation's snapshot of the case, never the live checkout
-    sha256: str  # of everything that decides a verdict: case.json, fixture, request, oracle, HELPERS
+    sha256: str  # of everything that decides a verdict: case.json, fixture, request, oracle, the helpers it imports
 
     @property
     def id(self) -> str:
@@ -182,11 +183,31 @@ def load_cases(law: str, snapshot: Path, split: str = "all") -> list[Case]:
     return cases
 
 
+def imported_helpers(base: Path, source: Path) -> set[str]:
+    """The HELPERS `source` imports, directly or through another helper."""
+    stems = {Path(h).stem: h for h in HELPERS}
+    found: set[str] = set()
+    pending = [source]
+    while pending:
+        tree = ast.parse(pending.pop().read_text())
+        for node in ast.walk(tree):
+            modules = [a.name for a in node.names] if isinstance(node, ast.Import) else \
+                [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
+            for helper in (stems[m] for m in modules if m in stems):
+                if helper not in found:
+                    found.add(helper)
+                    pending.append(base / helper)
+    return found
+
+
 def case_digest(base: Path, root: Path) -> str:
     """Ties a verdict to the exact case and oracle code that produced it. `base` is laid
-    out like this directory, so a snapshot digests the same as the checkout it copies."""
+    out like this directory, so a snapshot digests the same as the checkout it copies. A
+    helper the oracle does not import cannot change its verdict and is left out, so an
+    edit to one law's helper leaves every other law's records comparable."""
     files = sorted(p for p in (root / "fixture").rglob("*") if p.is_file() and not set(RESIDUE) & set(p.parts))
-    files += [root / "case.json", root / "request.md", root / "oracle.py", *(base / h for h in HELPERS)]
+    helpers = sorted(imported_helpers(base, root / "oracle.py"))
+    files += [root / "case.json", root / "request.md", root / "oracle.py", *(base / h for h in helpers)]
     digest = hashlib.sha256()
     for path in files:
         name = path.relative_to(base).as_posix()
