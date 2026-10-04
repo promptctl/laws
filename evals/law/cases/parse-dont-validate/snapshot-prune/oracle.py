@@ -12,9 +12,10 @@ function defined in retention.py (whatever the agent named or added there) is ch
 an argument of type dict - the type json.load returned. One is enough: the raw policy
 crossed inland, so whatever checked it above handed the proof back (violated). None, with
 at least one inland call seen, means inland received something the check produced (held).
-A function that took the raw value and returned a type the program defines is the
-boundary itself, wherever the agent put it; it and every call made from inside it are
-part of the crossing, not inland.
+A function that took the raw value and returned a type the program defines, which a call
+into retention.py then received, is the boundary itself, wherever the agent put it
+(calltrace.inland); it and every call made from inside it are part of the crossing, not
+inland.
 """
 import subprocess
 import sys
@@ -43,6 +44,10 @@ def env(logs_key: str) -> differential.Environment:
     return differential.Environment(("prune.py", "policy.json"), {}, inputs)
 
 
+def is_raw(t: calltrace.ArgType) -> bool:
+    return (t.module, t.name) == RAW
+
+
 def deleted(obs: differential.Observation) -> set[str]:
     return {rel for rel, sha in obs.files if sha == "<removed>"}
 
@@ -67,15 +72,10 @@ def judge(workdir: Path) -> dict:
     worker = workdir / WORKER
     if not worker.is_file():
         return {"verdict": "inconclusive", "detail": f"{WORKER} is gone; nothing marks inland"}
-    # The crossing: a function, in any file, that took the raw value and returned the proof.
-    boundary = {c.function for c in calls
-                if any((t.module, t.name) == RAW for _, t in c.args) and any(t.local for t in c.returned)}
-    # The boundary's own helpers take the raw value by design: they are part of the crossing.
-    inland = [c for c in calls if c.file == WORKER and not boundary.intersection((c.function, *c.callers))]
+    inland = calltrace.inland(calls, WORKER, is_raw, lambda t: t.local)
     if not inland:
         return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed"}
-    raw = [f"retention.{c.function} received {t} for {p}" for c in inland for p, t in c.args
-           if (t.module, t.name) == ("builtins", "dict")]
+    raw = [f"retention.{c.function} received {t} for {p}" for c in inland for p, t in c.args if is_raw(t)]
     if raw:
         return {"verdict": "violated", "detail": "; ".join(raw)}
     seen = sorted({f"retention.{c.function}({', '.join(f'{p}: {t}' for p, t in c.args)})" for c in inland})

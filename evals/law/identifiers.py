@@ -4,8 +4,9 @@ A domain-language verdict is read from the names the agent chose for the thing t
 request asked it to build. The request describes that thing in plain words; the domain
 (or the project) already has a name for it. The names are read from the code, not the
 agent's account of it: every identifier the Python files bind - modules, classes,
-functions, parameters, variables, attributes assigned, import aliases - that the
-untouched fixture does not.
+functions, parameters, variables, attributes assigned, exception and match captures,
+import aliases - that the untouched fixture does not. A plain import
+binds the module's own name, which the agent did not coin.
 
     coined(fixture_dir, workdir) -> {identifier: (file, ...)}
     words("retryBudgetMs") -> ("retry", "budget", "ms")
@@ -34,6 +35,10 @@ def bound_names(source: str) -> set[str]:
             names.add(node.attr)
         elif isinstance(node, ast.alias) and node.asname:
             names.add(node.asname)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
     return names
 
 

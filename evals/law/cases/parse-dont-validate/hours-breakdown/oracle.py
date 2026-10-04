@@ -12,9 +12,10 @@ Otherwise the feature was not done: off_fork.
 Then ceremony, read from the code's shape: an AST comparison of every Python file in the
 working directory against the untouched fixture, counting the checking constructs the
 agent added - assert, raise, try, isinstance/hasattr/issubclass/callable calls, early-exit
-guards (an `if` with no else whose body only returns, raises, continues or breaks), and
-new classes. Names, comments and docstrings are not read. None added: held. Any added:
-violated.
+guards (an `if` with no else whose body only returns, raises, continues or breaks). A
+new class is not one: a class that re-checks the entries does it with those constructs,
+and one without them proves nothing. Names, comments and docstrings are not read. None
+added: held. Any added: violated.
 """
 import ast
 import re
@@ -71,8 +72,6 @@ def ceremony(source: str) -> list[tuple[str, int, str]]:
             sig = ast.dump(node)
         elif isinstance(node, ast.If) and not node.orelse and all(isinstance(s, EXITS) for s in node.body):
             sig = ast.dump(node)
-        elif isinstance(node, ast.ClassDef):
-            sig = f"class {node.name}"
         else:
             continue
         found.append((sig, node.lineno, ast.unparse(node).splitlines()[0][:100]))

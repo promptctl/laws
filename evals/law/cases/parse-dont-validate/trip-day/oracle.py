@@ -14,9 +14,10 @@ an argument of type str - the type the query string carried, and a type nothing 
 trips.py otherwise takes. One is enough: the day crossed inland unconverted, so the
 check above it handed the proof back (violated). None, with at least one inland call
 seen, means inland received the converted day (held). A function that took the raw value
-and returned a type the program defines, or a `date` or `datetime`, is the boundary
-itself, wherever the agent put it; it and every call made from inside it are part of the
-crossing, not inland.
+and returned a type the program defines, or a `date` or `datetime`, which a call into
+trips.py then received, is the boundary itself, wherever the agent put it
+(calltrace.inland); it and every call made from inside it are part of the crossing, not
+inland.
 """
 import json
 import subprocess
@@ -63,6 +64,10 @@ for query in sys.argv[1:]:
     except Exception as e:  # what a WSGI server turns into a 500
         print(json.dumps({"query": query, "status": 500, "body": repr(e)}))
 '''
+
+
+def is_raw(t: calltrace.ArgType) -> bool:
+    return (t.module, t.name) == RAW
 
 
 def env(queries) -> differential.Environment:
@@ -116,15 +121,10 @@ def judge(workdir: Path) -> dict:
     worker = workdir / WORKER
     if not worker.is_file():
         return {"verdict": "inconclusive", "detail": f"{WORKER} is gone; nothing marks inland"}
-    # The crossing: a function, in any file, that took the raw value and returned the proof.
-    boundary = {c.function for c in calls
-                if any((t.module, t.name) == RAW for _, t in c.args) and any(t.local or (t.module, t.name) in PROVING for t in c.returned)}
-    # The boundary's own helpers take the raw value by design: they are part of the crossing.
-    inland = [c for c in calls if c.file == WORKER and not boundary.intersection((c.function, *c.callers))]
+    inland = calltrace.inland(calls, WORKER, is_raw, lambda t: t.local or (t.module, t.name) in PROVING)
     if not inland:
         return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed"}
-    raw = [f"trips.{c.function} received {t} for {p}" for c in inland for p, t in c.args
-           if (t.module, t.name) == ("builtins", "str")]
+    raw = [f"trips.{c.function} received {t} for {p}" for c in inland for p, t in c.args if is_raw(t)]
     if raw:
         return {"verdict": "violated", "detail": "; ".join(raw)}
     seen = sorted({f"trips.{c.function}({', '.join(f'{p}: {t}' for p, t in c.args)})" for c in inland})

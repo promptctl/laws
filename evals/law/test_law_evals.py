@@ -236,6 +236,57 @@ class Differential(unittest.TestCase):
         self.assertEqual(verdict["verdict"], "inconclusive")
 
 
+class CallTraceInland(unittest.TestCase):
+    """calltrace.inland: which calls into the worker file are not the crossing."""
+
+    @staticmethod
+    def call(file, function, args=(), returned=(), callers=(), sources=()):
+        import calltrace
+        t = lambda name, local=False: calltrace.ArgType("builtins" if not local else "app", name, local)  # noqa: E731
+        return calltrace.Call(function, file, tuple((p, t(n, l)) for p, n, l in args),
+                              tuple(t(n, l) for n, l in returned), tuple(callers), tuple(sources))
+
+    def inland(self, calls):
+        import calltrace
+        return {c.site for c in calltrace.inland(calls, "work.py", lambda t: t.name == "str", lambda t: t.local)}
+
+    def test_a_parser_whose_proof_the_worker_receives_is_the_crossing(self):
+        calls = [
+            self.call("work.py", "parse", [("raw", "str", False)], [("Day", True)]),
+            self.call("work.py", "check", [("raw", "str", False)], callers=[("work.py", "parse")]),
+            self.call("work.py", "summary", [("day", "Day", True)], sources=[("work.py", "parse")]),
+        ]
+        self.assertEqual(self.inland(calls), {("work.py", "summary")})
+
+    def test_a_worker_that_returns_a_report_is_not_the_crossing(self):
+        calls = [
+            self.call("work.py", "apply", [("raw", "str", False)], [("Report", True)]),
+            self.call("work.py", "prune", [("rule", "str", False)], callers=[("work.py", "apply")]),
+        ]
+        self.assertEqual(self.inland(calls), {("work.py", "apply"), ("work.py", "prune")})
+
+    def test_a_crossing_exempts_only_its_own_file_and_name(self):
+        calls = [
+            self.call("app.py", "parse", [("raw", "str", False)], [("Day", True)]),
+            self.call("work.py", "summary", [("day", "Day", True)], sources=[("app.py", "parse")]),
+            self.call("work.py", "parse", [("day", "str", False)], callers=[("work.py", "summary")]),
+        ]
+        self.assertEqual(self.inland(calls), {("work.py", "summary"), ("work.py", "parse")})
+
+
+class Identifiers(unittest.TestCase):
+    def test_exception_and_match_captures_are_coined_and_plain_imports_are_not(self):
+        import identifiers
+        source = (
+            "import decimal\n"
+            "try:\n    pass\nexcept KeyError as missing_student:\n    pass\n"
+            "match {}:\n    case {'a': student_rec, **rest_of_row}:\n        pass\n"
+            "    case [*tail_rows]:\n        pass\n"
+        )
+        self.assertEqual(identifiers.bound_names(source),
+                         {"missing_student", "student_rec", "rest_of_row", "tail_rows"})
+
+
 class FilesChannel(unittest.TestCase):
     def test_rewriting_a_leftover_file_with_the_same_bytes_counts_as_written(self):
         import differential
