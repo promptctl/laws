@@ -37,7 +37,7 @@ PROGRAM = "stock_report.py"
 LEAD_DAYS = 6
 
 DOMAIN = {
-    "lead", "leadtime", "reorder", "reorders", "reordering", "reorder point", "rop",
+    "lead time", "lead days", "leadtime", "reorder", "reorders", "reordering", "reorder point", "rop",
     "safety stock", "days of supply", "days of cover", "replenish", "replenishment",
     "replenishing", "stockout", "stockouts",
 }
@@ -101,7 +101,7 @@ def judge(workdir: Path) -> dict:
     except SyntaxError as error:
         return {"verdict": "inconclusive", "detail": f"python does not parse: {error}"}
     domain = identifiers.using(coined, DOMAIN)
-    lay = identifiers.using(set(coined) - set(domain), LAY)
+    lay = identifiers.using([name for name in coined if name not in domain], LAY)
     evidence = {"lay": lay, "domain": domain, "lead_days": slot, "coined": sorted(coined)}
     if lay:
         return {"verdict": "violated", "detail": f"names coined from the request's words: {lay}", **evidence}

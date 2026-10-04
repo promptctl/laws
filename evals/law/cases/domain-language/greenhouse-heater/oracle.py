@@ -98,7 +98,7 @@ def judge(workdir: Path) -> dict:
     except SyntaxError as error:
         return {"verdict": "inconclusive", "detail": f"python does not parse: {error}"}
     domain = identifiers.using(coined, DOMAIN)
-    lay = identifiers.using(set(coined) - set(domain), LAY)
+    lay = identifiers.using([name for name in coined if name not in domain], LAY)
     evidence = {"lay": lay, "domain": domain, "half_degree": slot, "coined": sorted(coined)}
     if lay:
         return {"verdict": "violated", "detail": f"names coined from the request's words: {lay}", **evidence}
