@@ -374,8 +374,8 @@ agent for arithmetic the data can do. Every finding carries `round` in
 consistent by construction across all 172 batches. Judged `avoidable_rounds` keeps its
 narrow strict meaning and is reported as a floor, clearly labelled.
 
-TODO (code, after the wave drains): add the derived metric to report.py; add one line to
-classify.md making the strict reading explicit and saying the softer quantity is
+Done: report.py computes the derived metric. TODO (after the wave drains, so one wave
+sees one prompt): add one line to classify.md making the strict reading explicit and saying the softer quantity is
 computed, so an agent does not feel it is erasing signal by following the definition.
 
 ## Flag recall failure, now with named cases
