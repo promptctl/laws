@@ -318,7 +318,9 @@ if grep -qF 'and `id` and note the cost.' "$rtmut/skill-router.sh"; then
 else
   bad "routing-text mutation did not apply - the next assertion would pass vacuously"
 fi
-rt_mut_out=$(printf '%s' "$(start_payload RT2 startup)" | "$rtmut/skill-router.sh" session-start 2>/dev/null)
+# engage, not session-start: it carries the same routing text, and session-start would refuse for
+# want of the S projection, which this copy has no plugin tree to find.
+rt_mut_out=$(printf '{}' | env -u LAWS_PER_TURN_S "$rtmut/skill-router.sh" engage 2>/dev/null)
 case "$rt_mut_out" in
   *'$HOME'*'`id`'*) ok "  ... and shell-special characters in it are emitted verbatim";;
   *) bad "  ... and shell-special characters in it are emitted verbatim (expanded or mangled: $rt_mut_out)";;
@@ -334,63 +336,139 @@ else
   bad "session-start names a readable S projection (parsed '$s_path' from: $rt_out)"
 fi
 
-# 17. The per-turn S arm. Off by default: engage carries the exhortation, not the laws.
+# 17. The per-turn S arm. Off by default: engage carries the exhortation, and the engage-s
+#     entries emit nothing.
+s_file="$HERE/../../skills/code/references/rung-s.md"
 law_line='**Divide the program along the natural joints'  # a line of the S projection, absent from the routing and engagement text
-grep -qF "$law_line" "$s_path" || bad "test fixture: '$law_line' is not in the S projection - pick another line"
+grep -qF "$law_line" "$s_file" || bad "test fixture: '$law_line' is not in the S projection - pick another line"
+s_parts=$(sed -n 's/^S_PARTS=//p' "$ROUTER")
 off_out=$(printf '{}' | env -u LAWS_PER_TURN_S "$ROUTER" engage 2>/dev/null)
 case "$off_out" in
   *'consider the laws and devices of your craft'*) ok "engage with the flag unset carries the engagement text";;
   *) bad "engage with the flag unset carries the engagement text (got: $off_out)";;
 esac
-case "$off_out" in
-  *"$law_line"*) bad "engage with the flag unset injects the S projection";;
-  *) ok "  ... and not the S projection";;
-esac
+off_s=""
+k=1
+while [ "$k" -le "$s_parts" ]; do
+  off_s="$off_s$(printf '{}' | env -u LAWS_PER_TURN_S "$ROUTER" engage-s "$k" 2>&1)"
+  k=$((k+1))
+done
+[ -z "$off_s" ] && ok "  ... and every engage-s entry emits nothing" || bad "  ... and every engage-s entry emits nothing (got: ${off_s:0:300})"
+
+# 17a. hooks.json runs engage-s once for each part number the router accepts, 1..S_PARTS.
+hooks_json="$HERE/../hooks.json"
+want_entries=$(k=1; while [ "$k" -le "$s_parts" ]; do printf 'engage-s %s\n' "$k"; k=$((k+1)); done)
+have_entries=$(grep -o 'engage-s [0-9][0-9]*' "$hooks_json")
+[ -n "$s_parts" ] && [ "$have_entries" = "$want_entries" ] \
+  && ok "hooks.json runs engage-s 1..$s_parts" \
+  || bad "hooks.json runs engage-s 1..S_PARTS (S_PARTS='$s_parts', entries: $have_entries)"
+
+# 17b. On: engage carries the routing text alone, and the parts carry the S projection, each
+#      under Claude Code's 10,000-character cap on a hook's context. Escaped bytes bound the
+#      characters from above, so the bound is checked on the raw JSON line. Every part's label
+#      names the same total, the parts past it emit nothing, and every heading of the
+#      projection lands in exactly one part.
 on_out=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage 2>/dev/null)
 case "$on_out" in
-  *'identify the medium of your primary deliverable'*"$law_line"*) ok "LAWS_PER_TURN_S=1 injects the routing text, then the S projection";;
-  *) bad "LAWS_PER_TURN_S=1 injects the routing text, then the S projection (got: ${on_out:0:300})";;
+  *'consider the laws and devices of your craft'*|*"$law_line"*) bad "LAWS_PER_TURN_S=1: engage carries the routing text alone (got: ${on_out:0:300})";;
+  *'identify the medium of your primary deliverable'*) ok "LAWS_PER_TURN_S=1: engage carries the routing text alone";;
+  *) bad "LAWS_PER_TURN_S=1: engage carries the routing text alone (got: ${on_out:0:300})";;
 esac
-case "$on_out" in
-  *'consider the laws and devices of your craft'*) bad "  ... the S projection replaces the engagement text, but both were emitted";;
-  *) ok "  ... in place of the engagement text";;
+all_parts=""
+labels=""
+over=""
+SECONDS=0
+k=1
+while [ "$k" -le "$s_parts" ]; do
+  part_out=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage-s "$k" 2>&1)
+  part_bytes=$(printf '%s' "$part_out" | LC_ALL=C wc -c | tr -d ' ')
+  [ "$part_bytes" -le 10000 ] || over="$over part $k is $part_bytes bytes;"
+  label=$(printf '%s' "$part_out" | grep -o 'rung S, part [0-9]* of [0-9]*')
+  [ -n "$label" ] && labels="$labels$label
+"
+  all_parts="$all_parts$part_out"
+  k=$((k+1))
+done
+elapsed=$SECONDS
+[ -z "$over" ] && ok "  ... every part is under 10,000 bytes" || bad "  ... every part is under 10,000 bytes:$over"
+n_parts=$(printf '%s' "$labels" | grep -c .)
+want_labels=$(k=1; while [ "$k" -le "$n_parts" ]; do printf 'rung S, part %s of %s\n' "$k" "$n_parts"; k=$((k+1)); done)
+[ "$n_parts" -ge 1 ] && [ "$labels" = "$want_labels
+" ] && ok "  ... $n_parts parts, labeled 1..$n_parts of $n_parts, and nothing past them" \
+  || bad "  ... parts labeled 1..n of n, nothing past them (labels: $labels)"
+in_file=$(grep -c '^## \[' "$s_file")
+in_parts=$(printf '%s' "$all_parts" | grep -o '## \[[A-Z]*:[a-z-]*\]' | sort | uniq | wc -l | tr -d ' ')
+in_parts_all=$(printf '%s' "$all_parts" | grep -o '## \[[A-Z]*:[a-z-]*\]' | wc -l | tr -d ' ')
+[ "$in_file" -gt 0 ] && [ "$in_parts" = "$in_file" ] && [ "$in_parts_all" = "$in_file" ] \
+  && ok "  ... every one of the $in_file law and framing headings in exactly one part" \
+  || bad "  ... every heading in exactly one part (file $in_file, distinct in parts $in_parts, total $in_parts_all)"
+case "$all_parts" in
+  *"$law_line"*) ok "  ... carrying the law text";;
+  *) bad "  ... carrying the law text";;
 esac
-# The S projection is ~27k of markdown: every raw control character must have been escaped, or
-# the payload is not JSON. The only one allowed is the newline printf ends the line with.
-if [ "$(printf '%s' "$on_out" | LC_ALL=C tr -d -c '\001-\037' | wc -c | tr -d ' ')" = 0 ]; then
+# macOS /bin/bash is 3.2, whose ${s//...} took 25 seconds per part on this file.
+[ "$elapsed" -le 3 ] && ok "  ... all parts in ${elapsed}s" || bad "  ... all parts in under 3s (took ${elapsed}s)"
+if [ "$(printf '%s' "$all_parts" | LC_ALL=C tr -d -c '\001-\037' | wc -c | tr -d ' ')" = 0 ]; then
   ok "  ... with no raw control character in the JSON"
 else
   bad "  ... with no raw control character in the JSON"
 fi
 
-# 17a. Any other value refuses the prompt, loudly, rather than running an arm nobody chose.
-bad_err=$(printf '{}' | LAWS_PER_TURN_S=yes "$ROUTER" engage 2>&1 >/dev/null); bad_rc=$?
-if [ "$bad_rc" -eq 2 ] && case "$bad_err" in *"must be 0 or 1, got 'yes'"*) true;; *) false;; esac; then
-  ok "LAWS_PER_TURN_S=yes exits 2 naming the bad value"
-else
-  bad "LAWS_PER_TURN_S=yes exits 2 naming the bad value (rc=$bad_rc, stderr: $bad_err)"
-fi
+# 17c. Any other flag value refuses the prompt, loudly, rather than running an arm nobody chose.
+for hook in engage "engage-s 1"; do
+  bad_err=$(printf '{}' | LAWS_PER_TURN_S=yes "$ROUTER" $hook 2>&1 >/dev/null); bad_rc=$?
+  if [ "$bad_rc" -eq 2 ] && case "$bad_err" in *"must be 0 or 1, got 'yes'"*) true;; *) false;; esac; then
+    ok "LAWS_PER_TURN_S=yes: $hook exits 2 naming the bad value"
+  else
+    bad "LAWS_PER_TURN_S=yes: $hook exits 2 naming the bad value (rc=$bad_rc, stderr: $bad_err)"
+  fi
+done
+bad_err=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage-s 0 2>&1 >/dev/null); bad_rc=$?
+[ "$bad_rc" -eq 2 ] && ok "engage-s 0 exits 2" || bad "engage-s 0 exits 2 (rc=$bad_rc, stderr: $bad_err)"
+bad_err=$(printf '{}' | LAWS_PER_TURN_S=1 "$ROUTER" engage-s $((s_parts+1)) 2>&1 >/dev/null); bad_rc=$?
+[ "$bad_rc" -eq 2 ] && ok "engage-s past S_PARTS exits 2" || bad "engage-s past S_PARTS exits 2 (rc=$bad_rc, stderr: $bad_err)"
 
-# 17b. The arm on with the S projection missing refuses the prompt too: a session that silently
-#      ran the arm with nothing injected would be read as the arm's result.
+# 17d. A missing or empty S projection refuses, at session start and in the arm: a session that
+#      ran the arm with nothing injected would be read as the arm's result. Each case runs a copy
+#      of the router beside its own skills/code/references/rung-s.md.
 nos=$(mktemp -d)
-mkdir -p "$nos/hooks/scripts"
+mkdir -p "$nos/hooks/scripts" "$nos/skills/code/references"
 cp "$ROUTER" "$HERE/incompatible-crafts.txt" "$nos/hooks/scripts/"
-nos_err=$(printf '{}' | LAWS_PER_TURN_S=1 "$nos/hooks/scripts/skill-router.sh" engage 2>&1 >/dev/null); nos_rc=$?
-if [ "$nos_rc" -eq 2 ] && case "$nos_err" in *"S projection is unreadable"*) true;; *) false;; esac; then
-  ok "LAWS_PER_TURN_S=1 with no S projection exits 2"
-else
-  bad "LAWS_PER_TURN_S=1 with no S projection exits 2 (rc=$nos_rc, stderr: $nos_err)"
-fi
+nos_router="$nos/hooks/scripts/skill-router.sh"
+nos_s="$nos/skills/code/references/rung-s.md"
+expect_refusal() { # <label> <needle> <hook args...>
+  local label=$1 needle=$2 err rc; shift 2
+  err=$(printf '{}' | LAWS_PER_TURN_S=1 "$nos_router" "$@" 2>&1 >/dev/null); rc=$?
+  if [ "$rc" -eq 2 ] && case "$err" in *"$needle"*) true;; *) false;; esac; then
+    ok "$label"
+  else
+    bad "$label (rc=$rc, stderr: $err)"
+  fi
+}
+expect_refusal "no S projection: engage-s 1 exits 2" "missing or empty" engage-s 1
+expect_refusal "no S projection: session-start exits 2" "missing or empty" session-start
+: > "$nos_s"
+expect_refusal "an empty S projection: engage-s 1 exits 2" "missing or empty" engage-s 1
 
-# 17c. The shipped S projection has no tab or carriage return, so 17 cannot see whether those are
-#      escaped. A generated file can gain one; this one has both.
-mkdir -p "$nos/skills/code/references"
-printf 'a\tb\r\nc\n' > "$nos/skills/code/references/rung-s.md"
-tab_out=$(printf '{}' | LAWS_PER_TURN_S=1 "$nos/hooks/scripts/skill-router.sh" engage 2>/dev/null)
-case "$tab_out" in
-  *'a\tb\r\nc'*) ok "a tab and a carriage return in the S projection are JSON-escaped";;
-  *) bad "a tab and a carriage return in the S projection are JSON-escaped (got: $tab_out)";;
+# 17e. A section over S_PART_BYTES fits no part, and more sections than S_PARTS parts can hold
+#      would drop the tail: both refuse.
+part_bytes=$(sed -n 's/^S_PART_BYTES=//p' "$ROUTER")
+filler() { LC_ALL=C awk -v n="$1" 'BEGIN { while (n > 0) { print "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; n -= 72 } }'; }
+{ echo '## one'; filler $((part_bytes + 100)); } > "$nos_s"
+expect_refusal "a section over S_PART_BYTES exits 2" "no part can hold it" engage-s 1
+: > "$nos_s"
+k=0
+while [ "$k" -le "$s_parts" ]; do { echo "## section $k"; filler $((part_bytes * 2 / 3)); } >> "$nos_s"; k=$((k+1)); done
+expect_refusal "more parts than S_PARTS exits 2" "add entries and raise S_PARTS" engage-s 1
+
+# 17f. The shipped S projection has no control character but the newline, so 17b cannot see
+#      whether the rest are escaped. A generated file can gain one; this one has a tab, a CR, a
+#      form feed and a \001, beside a quote and a backslash.
+printf 'a\tb\r\nc\fd\001e"f\\g\n' > "$nos_s"
+ctl_out=$(printf '{}' | LAWS_PER_TURN_S=1 "$nos_router" engage-s 1 2>/dev/null)
+case "$ctl_out" in
+  *'a\tb\r\nc\u000cd\u0001e\"f\\g"'*) ok "every control character, quote and backslash in the S projection is JSON-escaped";;
+  *) bad "every control character, quote and backslash in the S projection is JSON-escaped (got: $ctl_out)";;
 esac
 rm -rf "$nos"
 
