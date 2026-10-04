@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_inactive-learners_none-diluted_r5_7815ef33",
+  "session_id": "16b5cafc-6a38-4299-b252-28c501b9a439",
+  "started_at": "2026-10-04T07:10:43.876934+00:00",
+  "duration_ms": 95829,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "**How matching blocks are picked**\n\n`SequenceMatcher` is a greedy divide-and-conquer on the *longest contiguous* common run, not a minimal-edit (LCS) algorithm. `get_matching_blocks` starts with the whole range `(0, len(a), 0, len(b))`, asks `find_longest_match` for the single longest block `a[i:i+k] == b[j:j+k]` in it, records it, and then pushes the region strictly to the left (`a[alo:i]` vs `b[blo:j]`) and strictly to the right (`a[i+k:ahi]` vs `b[j+k:bhi]`) onto a work queue. Because each sub-problem is confined to one side of an already-chosen block, the final blocks are automatically increasing in both `a` and `b`. At the end they are sorted, adjacent blocks are merged, and the `(len(a), len(b), 0)` sentinel is appended. `get_opcodes` and `ratio()` are both just read off this list: `ratio()` is `2*M/T`, where `M` is the total matched size and `T` is `len(a) + len(b)`.\n\n`find_longest_match` itself is a row-at-a-time dynamic program driven by `b2j`, an index built once per `b` that maps each element to the sorted list of positions where it occurs in `b`. For each `i` in `a`, it walks the positions `j` where `a[i]` occurs in `b` and sets `newj2len[j] = j2len[j-1] + 1`, i.e. the length of the common run ending at `(i, j)`. The best is only replaced on a strict `k > bestsize`, so ties resolve to the block starting earliest in `a`, then earliest in `b`.\n\nThe greedy choice is why the result \"looks right\" but isn't minimal. Committing to the longest block first can rule out a combination of smaller blocks that would have matched more elements in total.\n\n**What user-supplied junk (`isjunk`) does**\n\nJunk elements are deleted from `b2j` in `__chain_b`, and that has two effects:\n\n- **Junk can never seed or sit inside the core match.** The inner loop only visits positions listed in `b2j`, so the DP finds the longest *junk-free* run.\n- **Junk can still end up in a block, but only at the edges.** After the core is found, it is first extended in both directions over matching non-junk elements, then over matching junk elements. So identical junk adjacent to a real match gets absorbed.\n\nJunk therefore changes *which* anchors get chosen, without excluding junk from the output. In the docstring example, with blank as junk, `\" abcd\"` vs `\"abcd abcd\"` anchors on the first `abcd` (`a=1, b=0, size=4`) instead of the 5-long `\" abcd\"` at the tail. The trailing comment about `private volatile Thread currentThread;` is the motivation: you want to sync on words, not on runs that happen to start with whitespace.\n\nA region containing only junk in common still matches: the core is empty, and the junk-extension loops can grow it from `(alo, blo)`. That only happens if the junk lines up at the start of the region, though.\n\nJunk is determined only from `b`, so the algorithm is asymmetric. Swapping `a` and `b` can give different blocks and a different ratio.\n\n**What autojunk does**\n\nWhen `autojunk=True` and `len(b) >= 200`, any non-junk element occurring more than `len(b)//100 + 1` times in `b` is put in `bpopular` and also deleted from `b2j`. The purpose is speed: the inner loop's cost is proportional to the number of occurrences of `a[i]` in `b`, so lines like blank lines or `return NULL;` appearing hundreds of times are what push it towards quadratic time.\n\nPopular elements are treated slightly differently from real junk. They can't seed a match, but they are not in `bjunk`, so they are picked up by the *first* extension loop (the non-junk one). In practice they behave like junk for anchoring and like ordinary elements for extension.\n\nThe effect on results can be surprising:\n\n- **Popular-only regions can go unmatched.** If a region between two anchors shares only popular elements, the core is empty and extension only works from the region's corner. Clearly equal content can be reported as a replace, and `ratio()` comes out lower than expected.\n- **Character-level comparison of long strings is hit hardest.** Once `b` is 200+ characters, nearly every common letter exceeds the 1% threshold. Most of the alphabet becomes \"popular\", few anchors remain, and `ratio()` can collapse towards 0 for strings that are obviously similar. The threshold also makes this discontinuous: 199 elements behaves normally, 200 may not.\n- **The asymmetry applies here too.** Popularity is computed from `b` only.\n\nIf you are using `ratio()` as a similarity score on long strings, or need faithful diffs of repetitive data, pass `autojunk=False` and accept the slower run time.",
+      "duration_ms": 18213
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "**Why it works**\n\n`limit_denominator` walks the continued fraction expansion of `self`. The loop is Euclid's algorithm on `n, d`: each `a = n//d` is the next partial quotient, and `p0/q0`, `p1/q1` are the two most recent convergents, updated by the standard recurrence `p2 = p0 + a*p1`, `q2 = q0 + a*q1`. The loop stops as soon as the *next* convergent's denominator would exceed `max_denominator`. That is guaranteed to happen, because the early return has already handled `self._denominator <= max_denominator`, and the last convergent is `self` itself.\n\nAt the break, `p1/q1` is the last convergent that fits. Convergents alternate sides of the target, so `p0/q0` lies on the other side of `self`. Stepping from `p0/q0` toward the forbidden next convergent gives the semiconvergents `(p0 + k*p1)/(q0 + k*q1)`, which all stay on that other side, getting closer as `k` grows. `k = (max_denominator - q0)//q1` is the largest step that still fits.\n\nThe theorem quoted in the comment says the best one-sided approximations to a number are exactly its convergents and semiconvergents. So these two candidates are the best approximation from below and the best from above with denominator at most `max_denominator`, in some order. The closest fraction overall must be one of them.\n\nThe final `if` picks the closer one using integers only:\n\n- **Gap between candidates:** consecutive convergents satisfy `p0*q1 - p1*q0 = \u00b11`, so the two candidates are exactly `1/(q1*(q0+k*q1))` apart.\n- **Distance from `p1/q1` to `self`:** the Euclid remainder `d` equals `|p1*D - q1*N|`, where `self = N/D`, so the distance is `d/(q1*D)`.\n- **Test:** `p1/q1` wins when its distance is at most half the gap, which rearranges to `2*d*(q0+k*q1) <= self._denominator`. The `<=` sends ties to `p1/q1`, the smaller denominator.\n\nThe same `\u00b11` identity means both candidates are already in lowest terms, which is why `_from_coprime_ints` can skip the gcd.\n\n**Why not just round**\n\nRounding needs a denominator to round to. `round(self * M) / M` gives the closest fraction with denominator *exactly* `M`, not *at most* `M`, and the best denominator is usually smaller. For \u03c0 with a limit of 10, rounding gives 31/10 (error about 0.04), whereas the right answer is 22/7 (error about 0.0013).\n\nTo get the right answer by rounding you would have to try every denominator from 1 to `M` and keep the best. That is a million iterations at the default limit, against a few dozen at most for the loop, since convergent denominators grow at least as fast as Fibonacci numbers.\n\n**Why not just take the last convergent**\n\nThe last convergent that fits is not always the best answer. In the docstring example with a limit of 100, the convergents of \u03c0 are 3/1, 22/7, 333/106. The last one that fits is 22/7, but the semiconvergent with `k = 14`, `(3 + 14*22)/(1 + 14*7) = 311/99`, is about seven times closer. That is why the code computes `k` and compares explicitly.",
+      "duration_ms": 26961
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` in `monthdayscalendar`**\n\nIt only decides which weekday is column 0 of each row; the day numbers themselves never change. What moves is the zero padding: the month is preceded by `(day1 - firstweekday) % 7` zeros and followed by enough to complete the last week. That can change the number of rows. February 2021 starts on a Monday, so it is 4 rows with `firstweekday=0` but 5 rows with `firstweekday=6`.\n\nThe property getter applies `% 7`, so `Calendar(7)` quietly behaves like `Calendar(0)`. Only the module-level `setfirstweekday` validates the range.\n\n**`itermonthdates` at the edges of the year range**\n\nIt builds a real `datetime.date` for every padding day, including those that spill into the neighbouring month. At the two ends of `datetime`'s range (years 1 to 9999) those neighbours don't exist, so it raises `ValueError`. I haven't run this, but from the code three things are surprising:\n\n- **It depends on `firstweekday`.** 1 January of year 1 is a Monday, so with the default `firstweekday=0` there is no leading padding and January of year 1 works. Any other setting needs days from December of year 0 and fails. December 9999 ends on a Friday, so it only works with `firstweekday=5`; the default fails.\n- **The error is lazy.** It is a generator, so calling it never raises. For January of year 1 the error comes on the first `next()`. For December 9999 you get all the valid dates first, and the exception arrives only when it reaches the trailing padding in year 10000.\n- **The sibling methods don't fail.** `itermonthdays`, `itermonthdays2`, `itermonthdays3` and `itermonthdays4` never construct a date for the padding. `weekday()` maps out-of-range years onto `2000 + year % 400`, so they work for any year. Only `itermonthdates` and the methods built on it (`monthdatescalendar`, `yeardatescalendar`) hit the limit, and those two fail outright because they build full lists.",
+      "duration_ms": 17722
+    },
+    {
+      "prompt_sha256": "1f08ff2abdf82c0bbbf89911283195829c2c98bc8bae0b6774aee82a63574673",
+      "reply": "`python3 roster.py inactive` now lists every learner whose last login was 14 or more days ago. I ran it against the current data and it returns the two you'd expect:\n\n```\nL-002  Ben Whitlock         ben.w@example.org        ALG1\nL-004  Dara Novak           dara@example.org         CHEM2,HIST1\n```\n\n- **Boundary:** a learner who last logged in exactly 14 days ago is included; 13 days ago is not. I checked this by running the filter with a few different \"today\" dates.\n- **Output format:** it uses the same columns as `list` and `course` (id, name, email, courses), so it doesn't show the last login date or how many days have passed. Say if you want that added for the nudge emails.\n- **Threshold:** the 14 is a constant, `INACTIVE_AFTER_DAYS`, at the top of `roster.py`, not a command-line argument.\n\nI also added the command to the usage text in `roster.py` and to the README. There are no tests in this repo, and I didn't add any.",
+      "duration_ms": 21976
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 7803,
+    "cache_read": 497435,
+    "cache_creation": 105948
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-hqq0hyfl/work",
+  "transcript": "transcript/16b5cafc-6a38-4299-b252-28c501b9a439.jsonl"
+}

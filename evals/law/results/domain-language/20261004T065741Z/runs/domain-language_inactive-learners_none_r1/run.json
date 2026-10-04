@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_inactive-learners_none_r1_7815ef33",
+  "session_id": "f0b5c77e-018b-42a2-8435-c16229992352",
+  "started_at": "2026-10-04T07:07:34.903034+00:00",
+  "duration_ms": 21144,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "1f08ff2abdf82c0bbbf89911283195829c2c98bc8bae0b6774aee82a63574673",
+      "reply": "`python3 roster.py inactive` now lists every learner whose last login was 14 or more days ago, with their email, last login date and days since:\n\n```\nL-002  Ben Whitlock         ben.w@example.org        2026-09-02  32 days\nL-004  Dara Novak           dara@example.org         2026-08-11  54 days\n```\n\nI ran it against the current `learners.json` (today being 2026-10-04) and those two are the ones it flags; the other two logged in within the last week.\n\n- **Threshold:** exactly 14 days counts as inactive. It is set by `INACTIVE_AFTER_DAYS` at the top of `roster.py`.\n- **Output:** sorted by name like the other commands, but showing last login and days inactive in place of the course list.\n\nI also added the command to the usage text and the README.",
+      "duration_ms": 16021
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1518,
+    "cache_read": 120651,
+    "cache_creation": 9989
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-wn6p02j_/work",
+  "transcript": "transcript/f0b5c77e-018b-42a2-8435-c16229992352.jsonl"
+}

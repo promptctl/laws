@@ -1,0 +1,34 @@
+{
+  "schema_version": 3,
+  "run_id": "domain-language/inactive-learners/skill-head/r2",
+  "law": "domain-language",
+  "case": "domain-language/inactive-learners",
+  "case_kind": "fork",
+  "split": "tuning",
+  "case_sha256": "ae3e2fbd531f8f1b42fffb30fa17b74f7b76d7c45152b2c973fce6c71b55a5fa",
+  "arm": {
+    "name": "skill:HEAD",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "34ec61fa8921dff6f8534652b25099e14a61bed7",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "context": null
+  },
+  "repeat": 2,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "no new name for learners other than the project's",
+    "lay": [],
+    "project": [],
+    "coined": [
+      "INACTIVE_AFTER",
+      "inactive",
+      "today"
+    ]
+  },
+  "session": "runs/domain-language_inactive-learners_skill-head_r2/run.json",
+  "diff": "diffs/domain-language_inactive-learners_skill-head_r2.diff"
+}

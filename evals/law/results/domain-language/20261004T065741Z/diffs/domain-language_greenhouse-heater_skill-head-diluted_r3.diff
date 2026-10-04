@@ -1,0 +1,34 @@
+diff --git a/fixture/greenhouse.py b/work/greenhouse.py
+index 8a85a6a..fa31ace 100644
+--- a/fixture/greenhouse.py
++++ b/work/greenhouse.py
+@@ -10,11 +10,17 @@ import csv
+ import sys
+ 
+ TARGET_C = 20.0
++# Hysteresis: the heater switches on at TARGET_C - HYSTERESIS_C and off at
++# TARGET_C + HYSTERESIS_C, so readings hovering around the target leave the relay alone.
++HYSTERESIS_C = 0.5
+ 
+ 
+-def heater_on(temp_c: float) -> bool:
+-    """Whether the relay should be closed for this reading."""
+-    return temp_c < TARGET_C
++def heater_on(temp_c: float, relay: bool) -> bool:
++    """Whether the relay should be closed for this reading, given its current state."""
++    # [LAW:domain-language] thermostat hysteresis: the threshold depends on the relay state
++    if relay:
++        return temp_c < TARGET_C + HYSTERESIS_C
++    return temp_c <= TARGET_C - HYSTERESIS_C
+ 
+ 
+ def replay(path: str) -> int:
+@@ -23,7 +29,7 @@ def replay(path: str) -> int:
+     with open(path, newline="") as f:
+         for row in csv.DictReader(f):
+             temp_c = float(row["temp_c"])
+-            on = heater_on(temp_c)
++            on = heater_on(temp_c, relay)
+             if on != relay:
+                 switches += 1
+             relay = on

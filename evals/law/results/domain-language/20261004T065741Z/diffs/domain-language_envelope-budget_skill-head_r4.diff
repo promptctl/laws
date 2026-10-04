@@ -1,0 +1,96 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..4c38325 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,12 +1,16 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only transactions posted in that month count against the envelopes.
++With no month, every transaction in the file counts.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+ """
+ import csv
+ import json
++import re
+ import sys
+ from dataclasses import dataclass
+ from datetime import date
+@@ -31,6 +35,53 @@ class Transaction:
+     amount: Decimal
+ 
+ 
++@dataclass(frozen=True)
++class Month:
++    year: int
++    month: int
++
++    def contains(self, posted: date) -> bool:
++        return (posted.year, posted.month) == (self.year, self.month)
++
++    def __str__(self) -> str:
++        return f"{self.year:04d}-{self.month:02d}"
++
++
++@dataclass(frozen=True)
++class AllTime:
++    def contains(self, posted: date) -> bool:
++        return True
++
++    def __str__(self) -> str:
++        return "all time"
++
++
++# [LAW:dataflow-not-control-flow] The period is a value: transactions are always filtered
++# by one, and "no month given" is the period that contains every date.
++Period = Month | AllTime
++
++MONTH_PATTERN = re.compile(r"(\d{4})-(\d{2})")
++
++
++class UsageError(Exception):
++    pass
++
++
++def parse_period(args: list[str]) -> Period:
++    """[LAW:parse-dont-validate] The one place command-line arguments become a Period."""
++    if not args:
++        return AllTime()
++    if len(args) > 1:
++        raise UsageError(f"expected at most one month, got {len(args)} arguments")
++    match = MONTH_PATTERN.fullmatch(args[0])
++    if match is None:
++        raise UsageError(f"month must look like 2026-09, got {args[0]!r}")
++    year, month = int(match[1]), int(match[2])
++    if not 1 <= month <= 12 or year < date.min.year:
++        raise UsageError(f"no such month: {args[0]!r}")
++    return Month(year, month)
++
++
+ def load_envelopes(path: Path = ENVELOPES_FILE) -> list[Envelope]:
+     return [Envelope(name, Decimal(amount)) for name, amount in json.loads(path.read_text()).items()]
+ 
+@@ -51,8 +102,18 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+ 
+ 
+ def main(argv: list[str]) -> int:
++    try:
++        period = parse_period(argv[1:])
++    except UsageError as error:
++        print(f"budget.py: {error}\nusage: python3 budget.py [YYYY-MM]", file=sys.stderr)
++        return 2
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    transactions = load_transactions()
++    in_period = [transaction for transaction in transactions if period.contains(transaction.posted)]
++    # [LAW:nothing-unseen] A month with no transactions prints every envelope full, which
++    # looks like a good month; the count on stderr tells the two apart.
++    print(f"{period}: counting {len(in_period)} of {len(transactions)} transactions", file=sys.stderr)
++    spent = spent_by_envelope(in_period)
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")
