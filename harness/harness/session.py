@@ -85,6 +85,13 @@ def check_prompt(prompt: object) -> str:
     return prompt
 
 
+def prompt_tail(prompt: str) -> str:
+    """The prompt's last 60 characters other than whitespace: what the input box shows at its
+    cursor however long the prompt is. Not its last line alone, which can be a bare code fence
+    the answer above already shows, and the box can push those off the pane as it grows."""
+    return "".join(prompt.split())[-60:]
+
+
 def shown(pane: str, text: str) -> int:
     """How many times the pane shows `text`. The TUI wraps a long line onto indented rows of
     its own, so whitespace, line breaks included, is dropped from both before counting."""
@@ -320,9 +327,8 @@ class Session:
         done = control / "editor.done"
         done.unlink(missing_ok=True)
         (control / "prompt.txt").write_text(prompt)
-        # The prompt's last line is where the box's cursor sits, so it is on screen however
-        # long the prompt is; it is in the box once the pane shows it once more than before.
-        tail = prompt.splitlines()[-1][-60:]
+        # The prompt is in the box once the pane shows its tail once more than before.
+        tail = prompt_tail(prompt)
         shown_before = shown(pane(), tail)
         tmux.send_keys(name, "C-g")
         _wait("the editor writing the prompt", "turn", EDITOR_TIMEOUT_SECS, done.exists, pane, self._stop)
