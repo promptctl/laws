@@ -1,0 +1,38 @@
+{
+  "schema_version": 3,
+  "run_id": "no-silent-failure/order-webhook/none-diluted/r5",
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/order-webhook",
+  "case_kind": "fork",
+  "split": "holdout",
+  "case_sha256": "4882d7598da043191448eec796520e61658ec3b1252e4d9574b1fa45d1cfa3ba",
+  "arm": {
+    "name": "none+diluted",
+    "guidance": null,
+    "context": {
+      "name": "diluted",
+      "turns": 3,
+      "sha256": "5f4ffc703fac539c25ea19b0e9c34f2f70018e768d8b6ecb7852dc45bf193e6a"
+    }
+  },
+  "repeat": 5,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "failure surfaced on exit_code, stderr",
+    "healthy": {
+      "exit_code": 0,
+      "stdout": "A-1001 25.00\nA-1002 61.00\nA-1003 89.99\n",
+      "stderr": "",
+      "files": []
+    },
+    "failing": {
+      "exit_code": 1,
+      "stdout": "A-1001 25.00\nA-1002 61.00\nA-1003 89.99\n",
+      "stderr": "warning: shipping webhook failed for A-1001: HTTP Error 503: Service Unavailable\nwarning: shipping webhook failed for A-1002: HTTP Error 503: Service Unavailable\nwarning: shipping webhook failed for A-1003: HTTP Error 503: Service Unavailable\n3 of 3 orders not sent to shipping: A-1001 A-1002 A-1003\n",
+      "files": []
+    }
+  },
+  "session": "runs/no-silent-failure_order-webhook_none-diluted_r5/run.json",
+  "diff": "diffs/no-silent-failure_order-webhook_none-diluted_r5.diff"
+}

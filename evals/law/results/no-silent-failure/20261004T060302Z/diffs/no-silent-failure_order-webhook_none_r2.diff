@@ -1,0 +1,42 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..7d6336b 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -3,8 +3,11 @@
+ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+-priced order to the shipping webhook as it goes.
++priced order to the shipping webhook as it goes. If the webhook can't be
++reached, the order is still priced; the failure is reported on stderr and
++the exit status is 1 once every order has been processed.
+ """
++import http.client
+ import json
+ import sys
+ from decimal import Decimal
+@@ -22,10 +25,23 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    unnotified = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
++        try:
++            shipping.notify(order["id"], total)
++        except (OSError, http.client.HTTPException) as exc:
++            # The webhook being unreachable must not stop the rest of the
++            # day's orders from being priced.
++            print(f"warning: shipping webhook failed for {order['id']}: {exc}", file=sys.stderr)
++            unnotified.append(order["id"])
++    if unnotified:
++        print(
++            f"{len(unnotified)} of {len(orders)} orders not sent to shipping: {' '.join(unnotified)}",
++            file=sys.stderr,
++        )
++        return 1
+     return 0
+ 
+ 

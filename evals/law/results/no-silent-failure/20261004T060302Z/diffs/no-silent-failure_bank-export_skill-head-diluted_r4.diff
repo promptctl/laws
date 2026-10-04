@@ -1,0 +1,65 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..7a5b8d0 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,34 +5,54 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++The bank sometimes writes `N/A` in the amount column. Those rows carry no
++amount, so they are left out of the totals and listed on stderr.
+ """
+ import sys
+ from decimal import Decimal
+ from pathlib import Path
+ 
+ 
++# The bank's marker for a row it exported without an amount.
++MISSING_AMOUNT = "N/A"
++
++
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    """Yield (line_number, date, account, amount); amount is None for N/A."""
++    for number, line in enumerate(path.read_text().splitlines(), 1):
+         if not line.strip():
+             continue
+         date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        # [LAW:no-silent-failure] only the bank's known marker is tolerated;
++        # any other non-decimal amount still raises.
++        missing = amount.strip() == MISSING_AMOUNT
++        yield number, date, account, None if missing else Decimal(amount)
+ 
+ 
+ def totals(exports_dir):
++    """Return (per-account sums, descriptions of the rows with no amount)."""
+     sums = {}
++    missing = []
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
+-    return sums
++        for number, date, account, amount in read_rows(path):
++            if amount is None:
++                missing.append(f"{path}:{number} ({date} {account})")
++            else:
++                sums[account] = sums.get(account, Decimal("0")) + amount
++    return sums, missing
+ 
+ 
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    sums, missing = totals(argv[1])
++    for account, total in sorted(sums.items()):
+         print(f"{account} {total:.2f}")
++    for row in missing:
++        print(f"ledger.py: not in totals, amount is {MISSING_AMOUNT}: {row}",
++              file=sys.stderr)
+     return 0
+ 
+ 

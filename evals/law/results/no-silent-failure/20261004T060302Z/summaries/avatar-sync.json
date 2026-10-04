@@ -1,0 +1,84 @@
+{
+  "schema_version": 3,
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/avatar-sync",
+  "case_kind": "fork",
+  "split": "tuning",
+  "model": "claude-opus-5-5",
+  "arms": {
+    "none": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "no-silent-failure/avatar-sync/none/r1",
+        "no-silent-failure/avatar-sync/none/r2",
+        "no-silent-failure/avatar-sync/none/r3",
+        "no-silent-failure/avatar-sync/none/r4",
+        "no-silent-failure/avatar-sync/none/r5"
+      ]
+    },
+    "none+diluted": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "no-silent-failure/avatar-sync/none-diluted/r1",
+        "no-silent-failure/avatar-sync/none-diluted/r2",
+        "no-silent-failure/avatar-sync/none-diluted/r3",
+        "no-silent-failure/avatar-sync/none-diluted/r4",
+        "no-silent-failure/avatar-sync/none-diluted/r5"
+      ]
+    },
+    "skill:HEAD": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "no-silent-failure/avatar-sync/skill-head/r1",
+        "no-silent-failure/avatar-sync/skill-head/r2",
+        "no-silent-failure/avatar-sync/skill-head/r3",
+        "no-silent-failure/avatar-sync/skill-head/r4",
+        "no-silent-failure/avatar-sync/skill-head/r5"
+      ]
+    },
+    "skill:HEAD+diluted": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "no-silent-failure/avatar-sync/skill-head-diluted/r1",
+        "no-silent-failure/avatar-sync/skill-head-diluted/r2",
+        "no-silent-failure/avatar-sync/skill-head-diluted/r3",
+        "no-silent-failure/avatar-sync/skill-head-diluted/r4",
+        "no-silent-failure/avatar-sync/skill-head-diluted/r5"
+      ]
+    }
+  },
+  "comparisons": [
+    {
+      "control": "none",
+      "arm": "skill:HEAD",
+      "reading": "saturated",
+      "p_value": 1.0
+    },
+    {
+      "control": "none+diluted",
+      "arm": "skill:HEAD+diluted",
+      "reading": "saturated",
+      "p_value": 1.0
+    }
+  ]
+}

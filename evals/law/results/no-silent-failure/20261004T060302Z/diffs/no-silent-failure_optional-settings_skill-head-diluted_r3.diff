@@ -1,0 +1,14 @@
+diff --git a/fixture/notes.py b/work/notes.py
+index 3fb8e22..c535c53 100644
+--- a/fixture/notes.py
++++ b/work/notes.py
+@@ -11,7 +11,8 @@ SETTINGS = Path(".notesrc")
+ 
+ 
+ def load_settings() -> dict:
+-    return json.loads(SETTINGS.read_text())
++    # [LAW:no-silent-failure] only a missing file means "all defaults"; a malformed .notesrc still raises
++    return json.loads(SETTINGS.read_text()) if SETTINGS.exists() else {}
+ 
+ 
+ def read_notes() -> list[tuple[int, str]]:

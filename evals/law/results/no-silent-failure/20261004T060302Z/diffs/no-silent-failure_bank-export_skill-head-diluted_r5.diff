@@ -1,0 +1,66 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..9e8160b 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,34 +5,55 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++The bank sometimes writes `N/A` as the amount. Those rows are left out
++of the totals and each one is reported on stderr.
+ """
+ import sys
+ from decimal import Decimal
+ from pathlib import Path
+ 
+ 
++# The bank's marker for a row whose amount it did not export.
++NO_AMOUNT = "N/A"
++
++
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    """Yield (source, date, account, amount); amount is None for NO_AMOUNT rows."""
++    for number, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+         date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        # [LAW:parse-dont-validate] only the bank's known marker becomes a typed
++        # absence; any other unparseable amount still fails loudly in Decimal().
++        parsed = None if amount.strip() == NO_AMOUNT else Decimal(amount)
++        yield f"{path}:{number}", date, account, parsed
+ 
+ 
+ def totals(exports_dir):
++    """Return (sums by account, rows left out because they had no amount)."""
+     sums = {}
++    unsummed = []
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
+-    return sums
++        for source, date, account, amount in read_rows(path):
++            if amount is None:
++                unsummed.append((source, date, account))
++            else:
++                sums[account] = sums.get(account, Decimal("0")) + amount
++    return sums, unsummed
+ 
+ 
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    sums, unsummed = totals(argv[1])
++    for account, total in sorted(sums.items()):
+         print(f"{account} {total:.2f}")
++    # [LAW:no-silent-failure] the totals omit these rows, so say which ones.
++    for source, date, account in unsummed:
++        print(f"warning: {source}: {date} {account} has amount {NO_AMOUNT}; "
++              "not included in totals", file=sys.stderr)
+     return 0
+ 
+ 

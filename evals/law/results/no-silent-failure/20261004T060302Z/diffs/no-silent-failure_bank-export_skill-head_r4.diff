@@ -1,0 +1,96 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..2cd3899 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,25 +5,62 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++A row whose amount is not a finite number (the bank sometimes writes `N/A`)
++is left out of its account's total and reported on stderr as file:line.
+ """
+ import sys
+-from decimal import Decimal
++from dataclasses import dataclass
++from decimal import Decimal, InvalidOperation
+ from pathlib import Path
+ 
+ 
++@dataclass(frozen=True)
++class Entry:
++    account: str
++    amount: Decimal
++
++
++@dataclass(frozen=True)
++class UnreadableAmount:
++    """A row whose amount column holds no usable number (the bank writes `N/A`)."""
++    path: Path
++    line_number: int
++    account: str
++    raw_amount: str
++
++
++def parse_amount(text):
++    # [LAW:parse-dont-validate] The one place an amount is judged readable; None is
++    # the typed absence. NaN/Infinity parse as Decimals but would poison a total.
++    try:
++        amount = Decimal(text.strip())
++    except InvalidOperation:
++        return None
++    return amount if amount.is_finite() else None
++
++
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+-        date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        _date, account, raw_amount = line.split(",")
++        amount = parse_amount(raw_amount)
++        if amount is None:
++            yield UnreadableAmount(path, line_number, account, raw_amount)
++        else:
++            yield Entry(account, amount)
+ 
+ 
+-def totals(exports_dir):
+-    sums = {}
++def read_exports(exports_dir):
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
++        yield from read_rows(path)
++
++
++def totals(entries):
++    sums = {}
++    for entry in entries:
++        sums[entry.account] = sums.get(entry.account, Decimal("0")) + entry.amount
+     return sums
+ 
+ 
+@@ -31,8 +68,19 @@ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    rows = list(read_exports(argv[1]))
++    entries = [row for row in rows if isinstance(row, Entry)]
++    unreadable = [row for row in rows if isinstance(row, UnreadableAmount)]
++    for account, total in sorted(totals(entries).items()):
+         print(f"{account} {total:.2f}")
++    # [LAW:no-silent-failure] A total that omits a row must say so: every excluded
++    # row is named on stderr, leaving stdout as the parseable totals.
++    for row in unreadable:
++        print(
++            f"warning: {row.path}:{row.line_number}: amount {row.raw_amount!r} is not"
++            f" a number; row excluded from the {row.account} total",
++            file=sys.stderr,
++        )
+     return 0
+ 
+ 
