@@ -1,0 +1,26 @@
+diff --git a/fixture/app.py b/work/app.py
+index 5b65a45..bdcc080 100644
+--- a/fixture/app.py
++++ b/work/app.py
+@@ -5,6 +5,7 @@
+ Run locally with `python3 app.py` (port 8051); production serves `application` under gunicorn.
+ """
+ import json
++from datetime import date
+ from pathlib import Path
+ from urllib.parse import parse_qs
+ from wsgiref.simple_server import make_server
+@@ -25,6 +26,13 @@ def application(environ, start_response):
+         return respond(start_response, "404 Not Found", {"error": "not found"})
+     params = parse_qs(environ.get("QUERY_STRING", ""))
+     day = params.get("day", [""])[0]
++    if not day:
++        return respond(start_response, "400 Bad Request", {"error": "missing day parameter; expected day=YYYY-MM-DD"})
++    try:
++        date.fromisoformat(day)
++    except ValueError as exc:
++        return respond(start_response, "400 Bad Request",
++                       {"error": f"invalid day {day!r}: {exc}; expected YYYY-MM-DD"})
+     return respond(start_response, "200 OK", trips.summary(TRIPS, day))
+ 
+ 

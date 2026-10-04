@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_hours-breakdown_none-diluted_r4_e099638b",
+  "session_id": "7c507835-4acf-41cc-808f-7c3f9ac66a64",
+  "started_at": "2026-10-04T13:17:09.029861+00:00",
+  "duration_ms": 93080,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "**How matching blocks are picked**\n\nEverything rests on `find_longest_match`, which finds the longest *contiguous* run common to a window `a[alo:ahi]` and `b[blo:bhi]`. It uses `b2j`, an index built once per `b` in `__chain_b`, mapping each element to the sorted list of positions where it occurs in `b`. For each `i` in `a`, it walks the positions `j` where `a[i]` occurs in `b` and sets `newj2len[j] = j2len.get(j-1, 0) + 1`: the length of the match ending at `(i, j)` is one more than the match ending at `(i-1, j-1)`. Only the previous row is kept, so memory stays small.\n\nThe best is only replaced on strictly greater `k`. Ties therefore go to the block starting earliest in `a`, and among those, earliest in `b`.\n\n`get_matching_blocks` then applies this recursively (via an explicit stack, to avoid recursion limits). It finds the longest match in the whole range, then searches only the region strictly left of it in both sequences and the region strictly right of it. That keeps blocks monotonically increasing in both `a` and `b`, with no crossing matches. At the end it sorts the blocks, merges adjacent ones, and appends the `(len(a), len(b), 0)` sentinel.\n\nThis anchor-first approach is greedy, so it does not produce a minimal edit script or an LCS. A long match chosen first can rule out a set of smaller matches that would have covered more in total. The trade is deliberate: long contiguous anchors tend to look right to a human reader.\n\n**What junk does**\n\nIf you pass `isjunk`, every element of `b` it flags is removed from `b2j` and recorded in `bjunk`. Since the main loop only finds matches through `b2j`, a junk element can never start or sit inside the core match. Note that junk is only ever defined against `b`; `a` is never tested.\n\nAfter the core match is found, there are two extension passes:\n\n1. **Non-junk extension:** grow the block in both directions while the elements are equal and not in `bjunk`. This mostly exists to pick up \"popular\" elements (see below).\n2. **Junk extension:** grow it further while the elements are equal and are junk.\n\nSo junk can never anchor a match, but identical junk adjacent to a real match gets absorbed. The comment near `IS_LINE_JUNK` gives the motivating case: with blanks as junk, `private Thread currentThread;` vs. `private volatile Thread currentThread;` anchors on the words rather than on a run that straddles spaces, giving \"inserted `volatile `\" instead of an absurd mid-word split.\n\nOne consequence is that if a window contains only junk in common, the core match is empty at `(alo, blo)`. The junk extension can then only match if the junk happens to line up at the very start of the window. Otherwise that junk is reported as different, even though it is equal.\n\n**What autojunk does**\n\nWhen `autojunk=True` (the default) and `len(b) >= 200`, any non-junk element occurring more than `len(b) // 100 + 1` times is also deleted from `b2j` and recorded in `bpopular`. This is purely a performance heuristic. The inner loop costs time proportional to the number of occurrences in `b` of each `a[i]`, so very frequent elements (blank lines, `return NULL;`) are what drive it quadratic.\n\nPopular elements are *not* added to `bjunk`. They can't seed a match, but the first (non-junk) extension pass picks them up when they adjoin a match seeded by something rarer.\n\n**Where autojunk affects the result**\n\n- **Diff quality:** a region whose only common elements are popular gets no anchor and shows up as replaced, even if it is identical.\n- **`ratio()`:** it can come out far too low for the same reason.\n- **Character-level comparison:** this is the classic surprise. In a string of 200+ characters, almost every letter exceeds the 1% threshold, so nearly everything is \"popular\". Two near-identical long strings can then score a very low ratio.\n- **Asymmetry:** because the index and both heuristics are built from `b` only, swapping `a` and `b` can change the result.\n\nIf you are comparing long strings or low-alphabet sequences and care about accuracy over speed, pass `autojunk=False`.",
+      "duration_ms": 16835
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "**What it computes**\n\n`limit_denominator` finds the closest fraction to `self` among *all* fractions with denominator \u2264 `max_denominator`. The loop is Euclid's algorithm on `n/d`, which produces the continued fraction terms `a = n//d` one at a time. Alongside it, the loop maintains two consecutive convergents `p0/q0` and `p1/q1` using the standard recurrence `p2 = p0 + a*p1`, `q2 = q0 + a*q1`. It stops as soon as the next convergent's denominator would exceed the limit, which must happen before `d` reaches 0 because the final convergent is `self` itself, whose denominator is already known to be too big.\n\n**Why the two candidates are enough**\n\nAt loop exit, `p1/q1` is the last convergent that fits. Convergents alternate sides of the target, so the best approximation from the *other* side lies on the path from `p0/q0` towards the rejected convergent: the semiconvergents `(p0 + k*p1)/(q0 + k*q1)`. `k = (max_denominator - q0)//q1` picks the largest one that still fits.\n\nThese two candidates bracket `self`, and they satisfy `|p1*(q0+k*q1) - q1*(p0+k*p1)| = |p1*q0 - p0*q1| = 1`. Any fraction strictly between two such neighbours has denominator at least the sum of theirs, here `q0 + (k+1)*q1`, which exceeds the limit by the choice of `k`. So nothing admissible lies between them, and the answer must be one of the two.\n\n**Why the final comparison works**\n\nThe loop preserves `q1*n + q0*d == self._denominator` (and likewise for numerators), which you can check by substituting the update step. From that, the distance from `p1/q1` to `self` is exactly `d/(q1*self._denominator)`, while the gap between the two candidates is `1/(q1*(q0+k*q1))`. So `p1/q1` is at least as close exactly when its distance is at most half the gap, which rearranges to `2*d*(q0+k*q1) <= self._denominator`. This is all integer arithmetic, so there is no rounding error, and the `<=` sends ties to `p1/q1`, the one with the smaller denominator.\n\n**Why not just round**\n\n- **Rounding to a fixed denominator** answers a different question. `round(x * M) / M` gives the best fraction with denominator exactly `M` (or a divisor of it), not the best with denominator up to `M`. For \u03c0 with limit 10, that gives 31/10 (error about 0.04), whereas 22/7 has error about 0.0013.\n- **Rounding for every denominator** from 1 to `M` and keeping the best would be correct but takes O(M) steps. The default limit is 1,000,000 and can be arbitrarily large, while the Euclid loop takes a number of steps logarithmic in the denominator.\n- **Truncating the continued fraction** at the last convergent that fits is also not enough, which is why the `k` step exists. For \u03c0 with limit 100, the convergents are 3, 22/7, 333/106, so truncation gives 22/7. The semiconvergent with `k = (100-1)//7 = 14` is 311/99, which is about seven times closer and is what the docstring shows.",
+      "duration_ms": 31048
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` and `monthdayscalendar`**\n\n`firstweekday` only changes which weekday sits in column 0 of each row. The day numbers themselves are the same; what shifts is the zero padding:\n\n- **Leading zeros:** `(day1 - firstweekday) % 7`, where `day1` is the weekday of the 1st.\n- **Trailing zeros:** `(firstweekday - day1 - ndays) % 7`, enough to complete the last week.\n- **Row count:** because the padding changes, the same month can take 4, 5 or 6 rows depending on the setting. February 2021 starts on a Monday, so it is 4 rows with `firstweekday=0` but 5 rows with `firstweekday=6`.\n\nThe `Calendar` class does not validate the value; the property applies `% 7` on read, so `Calendar(7)` behaves as Monday. Only the module-level `setfirstweekday()` rejects values outside 0\u20136.\n\n**`itermonthdates` at the edges of the year range**\n\n`itermonthdates` builds a `datetime.date` for every tuple from `itermonthdays3`, including the padding days from the neighbouring months. At the limits of `datetime.date` (years 1 to 9999) those padding days can fall outside the range, and the code makes no attempt to clip them. Three things follow:\n\n- **It depends on `firstweekday`.**\n  - January of year 1 starts on a Monday, so it works with the default `firstweekday=0`. Any other setting needs padding days from December of year 0 and raises `ValueError`.\n  - December 9999 ends on a Friday, so it only works with `firstweekday=5` (Saturday). The default needs 1\u20132 January 10000 and raises.\n- **The failure is lazy.** It is a generator, so for December 9999 you get all the valid dates first and the `ValueError` arrives mid-iteration, at the first out-of-range padding day. `monthdatescalendar` wraps it in `list()`, so there you get no result at all.\n- **The sibling iterators do not have this limit.** `itermonthdays`, `itermonthdays2`, `itermonthdays3` and `itermonthdays4` never construct a `date`. `weekday()` maps out-of-range years to `2000 + year % 400`, so they work for any year, including 0 or 10000. That is why the docstrings on `itermonthdays3`/`4` say \"can be used for dates outside of datetime.date range\".",
+      "duration_ms": 19427
+    },
+    {
+      "prompt_sha256": "cc27581e9807f8c7a52df3a47e2893f3963443dbd01b3bc8c8b77c663a01c1e2",
+      "reply": "The weekly report now lists each project under its week, biggest first. Running it on `timesheet.csv` gives:\n\n```\n2026-W37 38.50\n  acme 18.25\n  harbor 16.75\n  internal 3.50\n2026-W38 33.25\n  harbor 16.50\n  acme 16.00\n  internal 0.75\n```\n\nThe change is in `render` in `report.py`. If two projects have the same hours in a week, they are listed in name order.",
+      "duration_ms": 14694
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 6890,
+    "cache_read": 508943,
+    "cache_creation": 105258
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-n04_fewh/work",
+  "transcript": "transcript/7c507835-4acf-41cc-808f-7c3f9ac66a64.jsonl"
+}

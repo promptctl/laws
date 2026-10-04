@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_greenhouse-heater_skill-head_r3_9600fe69",
+  "session_id": "e1bc4feb-d730-4f48-b09e-616ebd9c1b23",
+  "started_at": "2026-10-04T13:19:46.854135+00:00",
+  "duration_ms": 26503,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-a2iwkr51/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "19672b708fd638075aec886e0b46e64e7fb61b2be287854e9a029fc8de1611d9",
+      "reply": "The heater now holds its state inside a half-degree band either side of the target. Replaying last night's log gives 2 switches instead of 12: on at 04:26 (19.3\u00b0C), off at 04:40 (20.6\u00b0C).\n\nThe change is in `greenhouse.py`:\n\n- **The setting:** `HYSTERESIS_C = 0.5` sits directly under `TARGET_C`.\n- **The decision:** `heater_on(temp_c, relay)` now takes the relay's current state. When on, it stays on until the temperature reaches 20.5\u00b0C; when off, it stays off until it drops to 19.5\u00b0C.\n- **Exact boundaries:** a reading of exactly 20.5 turns it off and exactly 19.5 turns it on.\n\nTwo things to be aware of:\n\n- **The Pi controller:** this folder only contains the replay script. If the controller on the Pi has its own copy of the decision rather than importing `heater_on` from this file, it needs the same change, and its call needs to pass the current relay state.\n- **Startup:** the relay starts off, so if the first reading is inside the band (say 19.8\u00b0C) the heater stays off until it drops to 19.5\u00b0C.",
+      "duration_ms": 21145
+    }
+  ],
+  "tokens": {
+    "input": 6,
+    "output": 1853,
+    "cache_read": 149382,
+    "cache_creation": 38527
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-a2iwkr51/work",
+  "transcript": "transcript/e1bc4feb-d730-4f48-b09e-616ebd9c1b23.jsonl"
+}

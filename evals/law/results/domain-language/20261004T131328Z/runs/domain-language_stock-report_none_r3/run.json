@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_stock-report_none_r3_9600fe69",
+  "session_id": "a5ac354b-a083-46f5-92be-f0da36fbcb2f",
+  "started_at": "2026-10-04T13:29:47.135417+00:00",
+  "duration_ms": 21370,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "6770adec8883956f4b4f0b5930db3584dd1251ff0d09bc07e3337189ca839f33",
+      "reply": "`stock_report.py` now flags an item as `REORDER` when what's on hand won't cover 6 days of sales at its average daily rate. The 6 is `LEAD_TIME_DAYS` near the top of the file, so that's the one number to change if you switch suppliers.\n\nRunning it on the current `inventory.csv`, two items that used to show `ok` are now flagged:\n\n```\nSKU      ITEM                       ON HAND  STATUS\nCF-1K    House blend 1kg                  9  REORDER\nCF-250   Colombia beans 250g             42  ok\nFL-100   Paper filters x100               0  OUT\nMG-12    Enamel mug                      18  ok\nOT-1L    Oat milk 1L                     30  REORDER\nTE-50    Breakfast tea x50               25  ok\n```\n\nHouse blend has about 3.75 days of stock left and oat milk about 4, so both would run out before a new order lands.\n\n- **Exact cover counts as ok:** an item with exactly 6 days of stock is not flagged, since it only just lasts until delivery. If you'd rather have a cushion, bump the number up to 7 or 8.\n- **Empty shelves still say `OUT`:** I kept that separate from `REORDER` so you can tell \"already gone\" from \"about to go\".\n- **Stock already on order isn't counted:** the CSV has no column for it, so an item keeps showing `REORDER` each night until the delivery actually lands on the shelf.",
+      "duration_ms": 15720
+    }
+  ],
+  "tokens": {
+    "input": 6,
+    "output": 1535,
+    "cache_read": 93063,
+    "cache_creation": 9700
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-uuhxmwxl/work",
+  "transcript": "transcript/a5ac354b-a083-46f5-92be-f0da36fbcb2f.jsonl"
+}

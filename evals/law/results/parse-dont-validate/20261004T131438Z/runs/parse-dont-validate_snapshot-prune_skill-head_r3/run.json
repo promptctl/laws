@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r3_e099638b",
+  "session_id": "9eefd9df-1e77-43a8-bd87-66581d36615a",
+  "started_at": "2026-10-04T13:23:09.137383+00:00",
+  "duration_ms": 74141,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-gd8bqnik/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy file before it touches any snapshot, and if anything is wrong it lists every problem, deletes nothing and exits with status 1.\n\nAgainst your current `policy.json` it now does this, with all 16 snapshots left in place:\n\n```\npolicy.json is not a usable policy; nothing was deleted:\n  rules[2]: unknown key \"kepe\" (did you mean \"keep\"?)\n  rules[2]: missing \"keep\"\n```\n\nI did not fix the `kepe` typo in `policy.json`, so the next scheduled run will stop with that message until you correct it.\n\nI tested the rest on a scratch copy of the directory: a corrected policy still prunes exactly as before (dry run and real run), and each kind of mistake below stops the run with nothing deleted.\n\nWhat counts as a mistake:\n- **Keys:** a missing key, or an unknown key at the top level or in a rule. A mistyped `dry-run` is caught too, which would otherwise have been ignored and deleted for real.\n- **Values:** `keep` must be a whole number of 0 or more, `prefix` and `snapshot_dir` non-empty strings, and `dry_run` true or false.\n- **Empty prefix:** refused, because it would match every `.tar` file in the directory.\n- **File and directory:** a policy file that is unreadable or not valid JSON, or a `snapshot_dir` that doesn't exist.\n- **Overlapping prefixes:** refused, e.g. `db-` alongside `db-archive-`, since the same files would fall under both rules. This is the one check that could reject a policy you wrote on purpose; say so if you rely on that and I'll drop it.\n\nThe checking lives in a new `policy.py`; `retention.py` now works out the full list of files to delete across all rules before deleting the first one.\n\nA failure during deletion itself (say, a permission error on one file) can still leave a partial cleanup; I didn't change that.",
+      "duration_ms": 68761
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 6763,
+    "cache_read": 211967,
+    "cache_creation": 45114
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-gd8bqnik/work",
+  "transcript": "transcript/9eefd9df-1e77-43a8-bd87-66581d36615a.jsonl"
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 3,
+  "run_id": "parse-dont-validate/snapshot-prune/skill-head/r3",
+  "law": "parse-dont-validate",
+  "case": "parse-dont-validate/snapshot-prune",
+  "case_kind": "fork",
+  "split": "tuning",
+  "case_sha256": "c64681a0906aebe1c74f737f4834e61b537e35be98d30f7a588a138aab798b42",
+  "arm": {
+    "name": "skill:HEAD",
+    "guidance": {
+      "path": "plugins/laws/skills/code/SKILL.md",
+      "ref": "HEAD",
+      "commit": "4acab7f2e36fd69d96cb8622e5d91c08e86592be",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "context": null
+  },
+  "repeat": 3,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "crossing: policy.py:parse; no dict reached retention.py: retention.apply(policy: policy.Policy (program)); retention.snapshots(root: pathlib.PosixPath, prefix: builtins.str)"
+  },
+  "session": "runs/parse-dont-validate_snapshot-prune_skill-head_r3/run.json",
+  "diff": "diffs/parse-dont-validate_snapshot-prune_skill-head_r3.diff"
+}

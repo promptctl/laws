@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r5_e099638b",
+  "session_id": "62f73537-e45f-41cc-b24f-997ded5d9ecd",
+  "started_at": "2026-10-04T13:24:17.022909+00:00",
+  "duration_ms": 72013,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-cvufacw1/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy file before it touches anything, and if anything is wrong it lists every mistake and exits with status 1 without deleting.\n\nRunning it against your current `policy.json` (typo still in place) gives this, and all 16 snapshots are left alone:\n\n```\npolicy.json: invalid policy, nothing was deleted:\n  - rules[2] (prefix 'logs-'): unknown key 'kepe' (allowed: keep, prefix)\n  - rules[2] (prefix 'logs-'): missing required key 'keep'\n```\n\nI did not fix the `kepe` typo in `policy.json`; once you correct it, the next run will prune logs down to the newest 4. I tested a corrected policy, a dry run and several broken policies on a scratch copy of the snapshots, not on your real directory.\n\nThe checking lives in a new `policy.py`. Besides misspelled or missing keys, it rejects:\n\n- **Wrong values:** `keep` that isn't a whole number 0 or above, an empty `prefix`, or a `dry_run` that isn't true/false.\n- **Bad directory:** a `snapshot_dir` that doesn't exist.\n- **Unreadable file:** a missing policy file or invalid JSON, which now gets the same clean message instead of a traceback.\n- **Overlapping prefixes:** two rules where one prefix starts with the other (e.g. `db-` and `db-full-`), since the shorter rule would also delete the longer one's files. If you rely on overlapping rules on purpose, tell me and I'll take that check out.\n\nTwo small behaviour changes beyond what you asked:\n\n- **Per-rule summary:** each rule now prints a line such as `logs-: found 6, kept 4, deleted 2`, so a prefix that matches nothing shows up as `found 0`.\n- **Literal prefixes:** characters like `*` or `[` in a prefix now match literally instead of acting as wildcards.",
+      "duration_ms": 66778
+    }
+  ],
+  "tokens": {
+    "input": 10,
+    "output": 6545,
+    "cache_read": 280765,
+    "cache_creation": 44926
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-cvufacw1/work",
+  "transcript": "transcript/62f73537-e45f-41cc-b24f-997ded5d9ecd.jsonl"
+}

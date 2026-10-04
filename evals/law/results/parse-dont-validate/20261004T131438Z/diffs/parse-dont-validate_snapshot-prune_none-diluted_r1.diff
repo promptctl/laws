@@ -1,0 +1,116 @@
+diff --git a/fixture/prune.py b/work/prune.py
+index f0bf84d..dcd6b18 100644
+--- a/fixture/prune.py
++++ b/work/prune.py
+@@ -5,6 +5,9 @@ Usage: python3 prune.py <policy.json>
+ The policy names the snapshot directory and one rule per snapshot family: every
+ `<prefix>*.tar` file in the directory belongs to that rule, and the newest `keep`
+ of them are kept. With "dry_run": true nothing is deleted, only listed.
++
++The whole policy is checked first; if anything in it is wrong, the problems are
++reported and nothing is deleted (exit status 1).
+ """
+ import json
+ import sys
+@@ -16,9 +19,20 @@ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 prune.py <policy.json>", file=sys.stderr)
+         return 2
+-    with open(argv[1]) as f:
+-        policy = json.load(f)
+-    retention.apply(policy)
++    try:
++        with open(argv[1]) as f:
++            policy = json.load(f)
++    except (OSError, json.JSONDecodeError) as e:
++        print(f"prune.py: cannot read policy {argv[1]}: {e}", file=sys.stderr)
++        return 1
++    try:
++        retention.apply(policy)
++    except retention.PolicyError as e:
++        print(f"prune.py: {argv[1]} is not a valid policy, nothing was deleted:",
++              file=sys.stderr)
++        for problem in e.problems:
++            print(f"  - {problem}", file=sys.stderr)
++        return 1
+     return 0
+ 
+ 
+diff --git a/fixture/retention.py b/work/retention.py
+index 1fe863f..00b21f9 100644
+--- a/fixture/retention.py
++++ b/work/retention.py
+@@ -1,8 +1,73 @@
+ """Delete the snapshots a retention policy no longer keeps."""
+ from pathlib import Path
+ 
++POLICY_KEYS = {"snapshot_dir", "dry_run", "rules"}
++RULE_KEYS = {"prefix", "keep"}
++
++
++class PolicyError(ValueError):
++    """The policy is not usable; `problems` lists everything wrong with it."""
++
++    def __init__(self, problems):
++        super().__init__("; ".join(problems))
++        self.problems = problems
++
++
++def validate(policy):
++    """Return a list of everything wrong with the policy; empty if it is usable."""
++    if not isinstance(policy, dict):
++        return ["policy must be a JSON object"]
++    problems = []
++    for key in sorted(policy.keys() - POLICY_KEYS):
++        problems.append(f"unknown key {key!r}")
++
++    if "snapshot_dir" not in policy:
++        problems.append("missing 'snapshot_dir'")
++    elif not isinstance(policy["snapshot_dir"], str) or not policy["snapshot_dir"]:
++        problems.append("'snapshot_dir' must be a non-empty string")
++    elif not Path(policy["snapshot_dir"]).is_dir():
++        problems.append(f"'snapshot_dir' {policy['snapshot_dir']!r} is not a directory")
++
++    if not isinstance(policy.get("dry_run", False), bool):
++        problems.append("'dry_run' must be true or false")
++
++    if "rules" not in policy:
++        problems.append("missing 'rules'")
++    elif not isinstance(policy["rules"], list):
++        problems.append("'rules' must be a list")
++    else:
++        seen = set()
++        for i, rule in enumerate(policy["rules"]):
++            where = f"rules[{i}]"
++            if not isinstance(rule, dict):
++                problems.append(f"{where}: must be a JSON object")
++                continue
++            prefix = rule.get("prefix")
++            if isinstance(prefix, str) and prefix:
++                where += f" (prefix {prefix!r})"
++            for key in sorted(rule.keys() - RULE_KEYS):
++                problems.append(f"{where}: unknown key {key!r}")
++            if "prefix" not in rule:
++                problems.append(f"{where}: missing 'prefix'")
++            elif not isinstance(prefix, str) or not prefix:
++                problems.append(f"{where}: 'prefix' must be a non-empty string")
++            elif prefix in seen:
++                problems.append(f"{where}: duplicate prefix")
++            else:
++                seen.add(prefix)
++            if "keep" not in rule:
++                problems.append(f"{where}: missing 'keep'")
++            elif type(rule["keep"]) is not int or rule["keep"] < 0:
++                problems.append(f"{where}: 'keep' must be a whole number, 0 or more")
++    return problems
++
+ 
+ def apply(policy):
++    # Check the whole policy before touching anything, so a bad rule can't
++    # leave the cleanup half done.
++    problems = validate(policy)
++    if problems:
++        raise PolicyError(problems)
+     root = Path(policy["snapshot_dir"])
+     for rule in policy["rules"]:
+         prune(root, rule, dry_run=policy.get("dry_run", False))

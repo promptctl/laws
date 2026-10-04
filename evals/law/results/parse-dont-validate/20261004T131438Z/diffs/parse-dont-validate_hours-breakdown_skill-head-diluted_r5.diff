@@ -1,0 +1,26 @@
+diff --git a/fixture/report.py b/work/report.py
+index a92d29f..302db19 100644
+--- a/fixture/report.py
++++ b/work/report.py
+@@ -11,9 +11,19 @@ def by_week(entries):
+     return dict(sorted(weeks.items()))
+ 
+ 
++def hours_by_project(entries):
++    hours = defaultdict(Decimal)
++    for entry in entries:
++        hours[entry.project] += entry.hours
++    # biggest first; equal hours fall back to project name so the order is stable
++    return dict(sorted(hours.items(), key=lambda item: (-item[1], item[0])))
++
++
+ def render(entries):
+     lines = []
+     for week, week_entries in by_week(entries).items():
+-        total = sum((e.hours for e in week_entries), Decimal("0"))
+-        lines.append(f"{week} {total:.2f}")
++        projects = hours_by_project(week_entries)
++        # [LAW:one-source-of-truth] the week line is the sum of the project lines below it
++        lines.append(f"{week} {sum(projects.values(), Decimal('0')):.2f}")
++        lines.extend(f"  {project} {hours:.2f}" for project, hours in projects.items())
+     return "\n".join(lines)

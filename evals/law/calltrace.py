@@ -208,8 +208,7 @@ def _run_traced() -> None:
         for name, item in items:
             if [name, describe(type(item))] not in held:
                 held.append([name, describe(type(item))])
-        received = [value for _, value in values] + [item for _, item in items]
-        sources = sorted({s for value in received if (p := produced.get(id(value))) and p[0] is value for s in p[1]})
+        sources = sorted({s for _, value in values if (p := produced.get(id(value))) and p[0] is value for s in p[1]})
         callers, caller = [], frame.f_back
         while caller is not None:
             if (outer := program_function(caller.f_code)) is not None:

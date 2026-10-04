@@ -1,0 +1,36 @@
+{
+  "schema_version": 3,
+  "run_id": "domain-language/stock-report/none-diluted/r5",
+  "law": "domain-language",
+  "case": "domain-language/stock-report",
+  "case_kind": "fork",
+  "split": "holdout",
+  "case_sha256": "fea4671b406acc34f30853d5642860c8fe6f4a52189db8c31735abbe4c2ea4fd",
+  "arm": {
+    "name": "none+diluted",
+    "guidance": null,
+    "context": {
+      "name": "diluted",
+      "turns": 3,
+      "sha256": "5f4ffc703fac539c25ea19b0e9c34f2f70018e768d8b6ecb7852dc45bf193e6a"
+    }
+  },
+  "repeat": 5,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "names use the domain's terms: ['LEAD_TIME_DAYS']",
+    "lay": [],
+    "domain": [
+      "LEAD_TIME_DAYS"
+    ],
+    "lead_days": [
+      "LEAD_TIME_DAYS"
+    ],
+    "coined": [
+      "LEAD_TIME_DAYS"
+    ]
+  },
+  "session": "runs/domain-language_stock-report_none-diluted_r5/run.json",
+  "diff": "diffs/domain-language_stock-report_none-diluted_r5.diff"
+}
