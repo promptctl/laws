@@ -25,6 +25,7 @@ inputs written over the agent's) under a profiler, so the run's channels are obs
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
@@ -121,9 +122,19 @@ def trace(program_dir: Path, environment: differential.Environment) -> tuple[dif
     return observation, calls
 
 
+def defined_under(cls: type, root: Path) -> bool:
+    """Whether the class's source file is under `root`. A class written in C has none:
+    getsourcefile raises for one built into the interpreter and returns None for one in an
+    extension module, and which of the two a stdlib class is depends on the Python build."""
+    try:
+        source = inspect.getsourcefile(cls)
+    except (TypeError, OSError):
+        return False
+    return source is not None and Path(source).resolve().is_relative_to(root)
+
+
 def _run_traced() -> None:
     """In the program's process: run argv[1] as __main__ under a profiler, then write the trace."""
-    import inspect
     import runpy
 
     root = Path.cwd().resolve()
@@ -137,12 +148,7 @@ def _run_traced() -> None:
 
     def describe(cls: type) -> dict:
         if cls not in type_cache:
-            try:
-                source = Path(inspect.getsourcefile(cls) or "").resolve()
-                local = source.is_relative_to(root)
-            except (TypeError, OSError):
-                local = False
-            type_cache[cls] = {"module": cls.__module__, "name": cls.__qualname__, "local": local}
+            type_cache[cls] = {"module": cls.__module__, "name": cls.__qualname__, "local": defined_under(cls, root)}
         return type_cache[cls]
 
     def program_file(code) -> str | None:
