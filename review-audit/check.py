@@ -27,12 +27,36 @@ ENUMS = {
 }
 
 
+# Every field report.py or render.py reads by key. should_have is ENUMS' and
+# lacks_should_have's: it may be absent when the response was right.
+REQUIRED = {
+    "finding": ("premise", "response", "response_correct", "caused_by", "cause_kind",
+                "law_cited_by_agent", "law_citation_apt", "evidence", "guidance_note"),
+    "pr": ("rounds", "avoidable_rounds", "chains", "narrative", "guidance_observations"),
+}
+
+
+def kind(row: dict) -> str | None:
+    """Which record a row is, by the rule report.join reads it with."""
+    return "finding" if "finding" in row else "pr" if "pr" in row else None
+
+
 def check_rows(rows: list[dict], expected_by_pr: dict[str, set[str]]) -> list[str]:
     """Problems with one verdict file's rows; empty when it is whole. Pure."""
     problems: list[str] = []
-    prs = [r["pr"] for r in rows if "pr" in r]
-    findings = Counter(r["finding"] for r in rows if "finding" in r)
-    for pr in prs:
+    for r in rows:
+        k = kind(r)
+        if k is None:
+            problems.append(f"row is neither a finding nor a PR verdict: {json.dumps(r)[:120]}")
+            continue
+        missing_fields = [f for f in REQUIRED[k] if f not in r]
+        if missing_fields:
+            problems.append(f"{r[k]}: missing {', '.join(missing_fields)}")
+    prs = Counter(r["pr"] for r in rows if kind(r) == "pr")
+    findings = Counter(r["finding"] for r in rows if kind(r) == "finding")
+    for pr, n in prs.items():
+        if n > 1:
+            problems.append(f"{pr}: PR record {n} times")
         if pr not in expected_by_pr:
             problems.append(f"unknown PR {pr}")
             continue
@@ -46,7 +70,7 @@ def check_rows(rows: list[dict], expected_by_pr: dict[str, set[str]]) -> list[st
         if fid not in covered:
             problems.append(f"{fid} judged but its PR has no PR record here")
     for r in rows:
-        if "finding" not in r:
+        if kind(r) != "finding":
             continue
         for field, legal in ENUMS.items():
             if r.get(field) not in legal:
@@ -85,7 +109,8 @@ def main(argv: list[str]) -> int:
     owners: dict[str, set[str]] = defaultdict(set)
     for path, rows in by_file.items():
         for r in rows:
-            owners[r.get("finding") or r["pr"]].add(path.name)
+            if kind(r):
+                owners[r[kind(r)]].add(path.name)
     for key, names in sorted(owners.items()):
         if len(names) > 1:
             failed += 1
