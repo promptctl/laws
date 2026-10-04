@@ -1,0 +1,49 @@
+diff --git a/fixture/app.py b/work/app.py
+index 5b65a45..3429dcc 100644
+--- a/fixture/app.py
++++ b/work/app.py
+@@ -5,12 +5,16 @@
+ Run locally with `python3 app.py` (port 8051); production serves `application` under gunicorn.
+ """
+ import json
++import re
++from datetime import date
+ from pathlib import Path
+ from urllib.parse import parse_qs
+ from wsgiref.simple_server import make_server
+ 
+ import trips
+ 
++DAY_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}")
++
+ TRIPS = trips.load_trips(Path(__file__).with_name("trips.csv"))
+ 
+ 
+@@ -20,11 +24,27 @@ def respond(start_response, status, payload):
+     return [body]
+ 
+ 
++def day_problem(day):
++    """Say what's wrong with a `day` parameter, or return None if it's a usable date."""
++    if not day:
++        return "day is required, as YYYY-MM-DD"
++    try:
++        date.fromisoformat(day)
++    except ValueError:
++        if DAY_SHAPE.fullmatch(day):
++            return f"day {day!r} is not a real calendar date"
++        return f"day {day!r} is not in YYYY-MM-DD format"
++    return None
++
++
+ def application(environ, start_response):
+     if environ.get("PATH_INFO") != "/trips":
+         return respond(start_response, "404 Not Found", {"error": "not found"})
+     params = parse_qs(environ.get("QUERY_STRING", ""))
+     day = params.get("day", [""])[0]
++    problem = day_problem(day)
++    if problem:
++        return respond(start_response, "400 Bad Request", {"error": problem})
+     return respond(start_response, "200 OK", trips.summary(TRIPS, day))
+ 
+ 

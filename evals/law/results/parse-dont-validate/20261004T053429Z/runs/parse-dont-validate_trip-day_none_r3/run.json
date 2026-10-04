@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r3_cdd46101",
+  "session_id": "eb81b265-5d1f-48a3-969b-cd65a7355b21",
+  "started_at": "2026-10-04T05:43:28.217894+00:00",
+  "duration_ms": 28441,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed in `app.py`: a bad `day` now gets a 400 with a JSON error saying what's wrong, and no traceback reaches the error log. I checked it by calling the WSGI app directly with good and bad values; there's no test suite in the project, so nothing else was run.\n\nThe two cases from your access log now return:\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `{\"error\": \"day '2026-09-31' is not a real date: day is out of range for month\"}` |\n| `day=14/09/2026` | 400 `{\"error\": \"day must be in YYYY-MM-DD format, got '14/09/2026'\"}` |\n\nValid days behave as before, including days with no trips (200 with zero counts).\n\nTwo behaviours you might not assume:\n\n- **Missing or empty `day`** (`/trips` or `/trips?day=`) also crashed with the same ValueError, so it now returns 400 `\"day is required, as YYYY-MM-DD\"`.\n- **Only `YYYY-MM-DD` is accepted.** Other ISO forms that Python would parse, such as `20260914`, previously returned 200 and now get the format 400.\n\nThe check is in a new `day_problem()` helper that runs before `trips.summary()`, so any other ValueError still surfaces as a 500 rather than being masked as a bad request.\n\nThe date picker is still sending these values; that is a separate fix on the dashboard side.",
+      "duration_ms": 22533
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2137,
+    "cache_read": 120746,
+    "cache_creation": 10738
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-t8wx7sae/work",
+  "transcript": "transcript/eb81b265-5d1f-48a3-969b-cd65a7355b21.jsonl"
+}

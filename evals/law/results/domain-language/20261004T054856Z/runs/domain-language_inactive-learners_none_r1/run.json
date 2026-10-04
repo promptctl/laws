@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_inactive-learners_none_r1_52618f51",
+  "session_id": "84186cdd-ba43-444e-9539-41bd300ab9a9",
+  "started_at": "2026-10-04T05:54:55.956413+00:00",
+  "duration_ms": 21500,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "1f08ff2abdf82c0bbbf89911283195829c2c98bc8bae0b6774aee82a63574673",
+      "reply": "`python3 roster.py inactive` now lists every learner whose last login was 14 or more days ago, with their email, last login date and days since. Run against the current data, it gives:\n\n```\nL-002  Ben Whitlock         ben.w@example.org        2026-09-02  31 days\nL-004  Dara Novak           dara@example.org         2026-08-11  53 days\n```\n\n- **Cutoff:** a learner who last logged in exactly 14 days ago is included. The threshold is the `INACTIVE_AFTER_DAYS` constant at the top of `roster.py`.\n- **Dates:** \"today\" is the date on the machine running the command.\n- **Docs:** I added the command to the usage text and to `README.md`.\n\nThere are no tests in the project, so I only checked it by running the commands.",
+      "duration_ms": 15683
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1441,
+    "cache_read": 120672,
+    "cache_creation": 9870
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-5u5p3ee9/work",
+  "transcript": "transcript/84186cdd-ba43-444e-9539-41bd300ab9a9.jsonl"
+}

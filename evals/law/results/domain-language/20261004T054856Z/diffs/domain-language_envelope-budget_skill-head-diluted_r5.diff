@@ -1,0 +1,60 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..e41b0dd 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,6 +1,8 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only that month's transactions count; with none, every transaction does.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+@@ -8,8 +10,9 @@ export, one row per transaction with the envelope it was filed under.
+ import csv
+ import json
+ import sys
++from collections.abc import Callable
+ from dataclasses import dataclass
+-from datetime import date
++from datetime import date, datetime
+ from decimal import Decimal
+ from pathlib import Path
+ 
+@@ -43,6 +46,19 @@ def load_transactions(path: Path = TRANSACTIONS_FILE) -> list[Transaction]:
+         ]
+ 
+ 
++def parse_period(args: list[str]) -> Callable[[date], bool]:
++    """Turn the command-line arguments into the test for whether a posting date is in the period."""
++    # [LAW:dataflow-not-control-flow] the period is a value: the transactions are always filtered by it.
++    match args:
++        case []:
++            return lambda posted: True
++        case [text]:
++            month = datetime.strptime(text, "%Y-%m")
++            return lambda posted: (posted.year, posted.month) == (month.year, month.month)
++        case _:
++            raise ValueError(f"expected at most one month, got {len(args)} arguments")
++
++
+ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+     spent: dict[str, Decimal] = {}
+     for transaction in transactions:
+@@ -51,8 +67,13 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+ 
+ 
+ def main(argv: list[str]) -> int:
++    try:
++        in_period = parse_period(argv[1:])
++    except ValueError as error:
++        print(f"budget.py: {error}\nusage: python3 budget.py [YYYY-MM]", file=sys.stderr)
++        return 2
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    spent = spent_by_envelope([t for t in load_transactions() if in_period(t.posted)])
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")

@@ -1,0 +1,68 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..89177a1 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,6 +1,8 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only that month's transactions count; without one, every transaction does.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+@@ -31,6 +33,38 @@ class Transaction:
+     amount: Decimal
+ 
+ 
++@dataclass(frozen=True)
++class Period:
++    """Half-open range of posting dates: first <= posted < end."""
++
++    first: date
++    end: date
++
++    def __contains__(self, posted: date) -> bool:
++        return self.first <= posted < self.end
++
++
++# [LAW:dataflow-not-control-flow] "no month" is just the widest period, so filtering always runs.
++ALL_TIME = Period(date.min, date.max)
++
++
++def parse_month(text: str) -> Period:
++    """The calendar month written as YYYY-MM; raises ValueError for anything else."""
++    year, _, month = text.partition("-")
++    if (len(year), len(month)) != (4, 2):
++        raise ValueError(f"expected a month as YYYY-MM, got {text!r}")
++    first = date(int(year), int(month), 1)
++    end = date(first.year + first.month // 12, first.month % 12 + 1, 1)
++    return Period(first, end)
++
++
++def parse_period(args: list[str]) -> Period:
++    """The period the command-line arguments ask for: one month, or all time when there are none."""
++    if len(args) > 1:
++        raise ValueError(f"expected at most one month, got {len(args)}")
++    return parse_month(args[0]) if args else ALL_TIME
++
++
+ def load_envelopes(path: Path = ENVELOPES_FILE) -> list[Envelope]:
+     return [Envelope(name, Decimal(amount)) for name, amount in json.loads(path.read_text()).items()]
+ 
+@@ -51,8 +85,13 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+ 
+ 
+ def main(argv: list[str]) -> int:
++    try:
++        period = parse_period(argv[1:])
++    except ValueError as error:
++        print(f"usage: {argv[0]} [YYYY-MM]\n{error}", file=sys.stderr)
++        return 2
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    spent = spent_by_envelope([t for t in load_transactions() if t.posted in period])
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")

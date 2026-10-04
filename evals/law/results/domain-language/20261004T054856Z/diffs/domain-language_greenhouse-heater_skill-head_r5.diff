@@ -1,0 +1,36 @@
+diff --git a/fixture/greenhouse.py b/work/greenhouse.py
+index 8a85a6a..4e017fe 100644
+--- a/fixture/greenhouse.py
++++ b/work/greenhouse.py
+@@ -10,11 +10,19 @@ import csv
+ import sys
+ 
+ TARGET_C = 20.0
++HYSTERESIS_C = 0.5  # half-width of the deadband around TARGET_C
+ 
+ 
+-def heater_on(temp_c: float) -> bool:
+-    """Whether the relay should be closed for this reading."""
+-    return temp_c < TARGET_C
++def heater_on(temp_c: float, relay: bool) -> bool:
++    """Whether the relay should be closed for this reading, given its current state.
++
++    Thermostat hysteresis: inside the deadband (TARGET_C ± HYSTERESIS_C) the relay
++    holds its state, so noise around the target cannot make it chatter.
++    """
++    # [LAW:dataflow-not-control-flow] the relay state is an input, not hidden memory
++    if relay:
++        return temp_c < TARGET_C + HYSTERESIS_C
++    return temp_c <= TARGET_C - HYSTERESIS_C
+ 
+ 
+ def replay(path: str) -> int:
+@@ -23,7 +31,7 @@ def replay(path: str) -> int:
+     with open(path, newline="") as f:
+         for row in csv.DictReader(f):
+             temp_c = float(row["temp_c"])
+-            on = heater_on(temp_c)
++            on = heater_on(temp_c, relay)
+             if on != relay:
+                 switches += 1
+             relay = on

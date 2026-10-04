@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r4_cdd46101",
+  "session_id": "e5dbf5ac-8fc8-467e-b46e-80d64652b3c3",
+  "started_at": "2026-10-04T05:38:35.810427+00:00",
+  "duration_ms": 212399,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-ts9qj379/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it deletes anything, and if there is a mistake it lists every problem and exits with code 1 without touching a file.\n\nAgainst your current `policy.json` it now does this, and all 16 files in `snapshots/` are still there afterwards:\n\n```\nprune.py: policy.json has problems; nothing was deleted:\n  - rule 3 (prefix 'logs-'): unknown key 'kepe' (did you mean 'keep'?)\n  - rule 3 (prefix 'logs-'): missing 'keep'\n```\n\nI did not fix the `kepe` typo in `policy.json` itself, since it's your retention setting \u2014 change it to `keep` and the run will go through. I ran a corrected policy on a scratch copy of the snapshots and it pruned to 3 db, 2 media and 4 logs as expected.\n\nThe checking lives in a new `policy.py`; `retention.py` now takes the checked policy rather than the raw JSON.\n\nBeyond the missing `keep`, these are also rejected up front:\n\n- **Unknown keys**, at the top level too. A mistyped `dry_run` used to be ignored silently, which meant a real deletion when you intended a dry run.\n- **Bad `keep` values**: negative numbers, strings, or `true`/`false`. A negative `keep` would previously have deleted the newest snapshots rather than the oldest.\n- **A `snapshot_dir` that isn't a directory.** Before, this matched nothing and looked like a clean run.\n- **An unreadable or malformed policy file**, which now gives a one-line message rather than a traceback.\n- **Overlapping prefixes**, such as two `db-` rules, or `db-` alongside `db-prod-`. This one is a judgement call on my part: a snapshot would fall under both rules, and the smaller `keep` would win. Say so if you rely on overlapping rules and I'll drop that check.\n\n`keep: 0` is still allowed and deletes every snapshot in that family.\n\nOne thing this does not cover: if a deletion itself fails partway (a permissions error, say), you can still end up with a partial cleanup.",
+      "duration_ms": 206616
+    }
+  ],
+  "tokens": {
+    "input": 16,
+    "output": 8285,
+    "cache_read": 489015,
+    "cache_creation": 49343
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-ts9qj379/work",
+  "transcript": "transcript/e5dbf5ac-8fc8-467e-b46e-80d64652b3c3.jsonl"
+}
