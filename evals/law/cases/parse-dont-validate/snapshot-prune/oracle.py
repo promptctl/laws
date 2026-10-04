@@ -75,7 +75,8 @@ def judge(workdir: Path) -> dict:
     worker = workdir / WORKER
     if not worker.is_file():
         return {"verdict": "inconclusive", "detail": f"{WORKER} is gone; nothing marks inland"}
-    boundary = calltrace.crossing(calls, WORKER, is_raw, lambda t: t.local)
+    # retention.py returns no list of its own objects, so a list of them handed in came from a parser.
+    boundary = calltrace.crossing(calls, WORKER, is_raw, lambda t: t.local, lambda c: c.sources + c.item_sources)
     crossed = "crossing: " + (", ".join(sorted(f"{f}:{fn}" for f, fn in boundary)) or "none found")
     inland = calltrace.inland(calls, WORKER, boundary)
     if not inland:

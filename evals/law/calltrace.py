@@ -7,8 +7,8 @@ each argument. A function inland of the boundary that still receives the raw typ
 `dict` json.load returned, the `str` a query string carried) was handed unchecked data,
 whatever was checked above it. One that receives a type the program defines, or a
 stdlib type that cannot hold the raw value (a `datetime`, not the `str`), was handed the
-proof. A list, tuple or set argument is opened one level, so a list of raw dicts is seen
-as one. What each function returned is recorded too (a constructor returns the object it
+proof. A list, tuple or set argument is opened, so a list of raw dicts is seen as one, and
+so is `*args`. What each function returned is recorded too (a constructor returns the object it
 built; a container returns what it holds and an object of the program's own class what
 its attributes hold, a few levels down), and which function produced each argument a call
 received, so the boundary itself
@@ -60,6 +60,7 @@ class Call:
     file: str  # relative to the program dir
     args: tuple[tuple[str, ArgType], ...]  # (parameter, type of the value it received)
     held: tuple[tuple[str, ArgType], ...]  # (parameter, type of an item the list, tuple or set it received holds)
+    item_sources: tuple[Site, ...]  # the program's functions that returned one of those items
     returned: tuple[ArgType, ...]  # every type this function returned, over the whole run; a constructor's own class
     callers: tuple[Site, ...]  # the program's own functions on the stack above this call, innermost first
     sources: tuple[Site, ...]  # the program's functions that returned an argument this call received
@@ -73,14 +74,20 @@ class Call:
 
 
 def crossing(calls: list[Call], worker: str, is_raw: Callable[[ArgType], bool],
-             is_proof: Callable[[ArgType], bool]) -> set[Site]:
+             is_proof: Callable[[ArgType], bool],
+             handed: Callable[[Call], tuple[Site, ...]] = lambda call: call.sources) -> set[Site]:
     """The functions, in any file, that took a raw value, returned a proof, and whose proof
     a call into `worker` - one not made from inside them - then received. A worker that
     takes the raw value and returns a report of what it did is not one while nothing
     inland is handed its report; one whose report is handed back inland reads as the
-    crossing, which is why a verdict names the crossing it found."""
+    crossing, which is why a verdict names the crossing it found.
+
+    `handed` says where a call's proofs come from: its arguments alone, or the items of a
+    list it received as well (`call.sources + call.item_sources`). The second is for a
+    fixture whose worker returns no list of its own objects; where one does, that worker
+    would read as the crossing."""
     candidates = {c.site for c in calls if any(is_raw(t) for _, t in c.args) and any(is_proof(t) for t in c.returned)}
-    return {s for c in calls if c.file == worker for s in c.sources
+    return {s for c in calls if c.file == worker for s in handed(c)
             if s in candidates and s != c.site and s not in c.callers}
 
 
@@ -114,7 +121,7 @@ def trace(program_dir: Path, environment: differential.Environment) -> tuple[dif
         returned = {(r["file"], r["function"]): tuple(ArgType(**t) for t in r["types"]) for r in trace_data["returns"]}
         calls = [
             Call(c["function"], c["file"], tuple((p, ArgType(**t)) for p, t in c["args"]),
-                 tuple((p, ArgType(**t)) for p, t in c["held"]),
+                 tuple((p, ArgType(**t)) for p, t in c["held"]), tuple(map(tuple, c["item_sources"])),
                  returned.get((c["file"], c["function"]), ()), tuple(map(tuple, c["callers"])),
                  tuple(map(tuple, c["sources"])))
             for c in trace_data["calls"]
@@ -169,6 +176,25 @@ def _run_traced() -> None:
             return None
         return program_file(code)
 
+    # An iterator is not among them: reading one would take its items from the program.
+    OPENED = (list, tuple, set, frozenset, type({}.values()))
+
+    def attributes(value) -> list:
+        """What the object's attributes hold, read without running the program's own
+        `__getattr__` or properties: its `__dict__` and its classes' `__slots__`."""
+        def read(name):
+            try:
+                return [object.__getattribute__(value, name)]
+            except AttributeError:
+                return []
+        found = [v for d in read("__dict__") if isinstance(d, dict) for v in d.values()]
+        for cls in type(value).__mro__:
+            slots = cls.__dict__.get("__slots__", ())
+            for name in (slots,) if isinstance(slots, str) else slots:
+                if name not in ("__dict__", "__weakref__"):
+                    found.extend(read(name))
+        return found
+
     def parts(value, depth: int = PROOF_DEPTH):
         """The value and what it holds: a container's items, and the attributes of an object
         whose class the program defines."""
@@ -180,11 +206,18 @@ def _run_traced() -> None:
         elif isinstance(value, (list, tuple, set, frozenset)):
             inner = value
         elif describe(type(value))["local"]:
-            inner = getattr(value, "__dict__", {}).values()
+            inner = attributes(value)
         else:
             return
         for item in inner:
             yield from parts(item, depth - 1)
+
+    def items(value, depth: int = PROOF_DEPTH):
+        """What a list, tuple, set or dict's values view holds, through the ones inside it."""
+        if depth and isinstance(value, OPENED):
+            for item in value:
+                yield item
+                yield from items(item, depth - 1)
 
     def profile(frame, event, arg):
         if event not in ("call", "return"):
@@ -205,23 +238,28 @@ def _run_traced() -> None:
                 if type(made).__module__ != "builtins":
                     produced.setdefault(id(made), (made, set()))[1].add(site)
             return
-        count = code.co_argcount + code.co_kwonlyargcount
+        # Positional and keyword-only parameters, then `*args`, whose tuple holds the rest.
+        count = code.co_argcount + code.co_kwonlyargcount + bool(code.co_flags & inspect.CO_VARARGS)
         params = [n for n in code.co_varnames[:count] if n not in ("self", "cls")]
         values = [(name, frame.f_locals[name]) for name in params if name in frame.f_locals]
         args = [[name, describe(type(value))] for name, value in values]
-        items = [(name, item) for name, value in values if isinstance(value, (list, tuple, set, frozenset)) for item in value]
+        inside = [(name, item) for name, value in values for item in items(value)]
         held = []
-        for name, item in items:
+        for name, item in inside:
             if [name, describe(type(item))] not in held:
                 held.append([name, describe(type(item))])
-        sources = sorted({s for _, value in values if (p := produced.get(id(value))) and p[0] is value for s in p[1]})
+
+        def producers(received) -> list:
+            return sorted({s for value in received if (p := produced.get(id(value))) and p[0] is value for s in p[1]})
+
+        sources, item_sources = producers(v for _, v in values), producers(item for _, item in inside)
         callers, caller = [], frame.f_back
         while caller is not None:
             if (outer := program_function(caller.f_code)) is not None:
                 callers.append((outer, caller.f_code.co_qualname))
             caller = caller.f_back
         entry = {"function": code.co_qualname, "file": rel, "args": args, "held": held, "callers": callers,
-                 "sources": sources}
+                 "sources": sources, "item_sources": item_sources}
         # One record per distinct call shape keeps a loop over 10k rows from writing 10k records.
         key = json.dumps(entry, sort_keys=True)
         if key not in seen:
