@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_hours-breakdown_skill-head_r1_9bc48e9f",
+  "session_id": "a457aeae-e465-444c-a21c-1714a4b46cef",
+  "started_at": "2026-10-04T07:27:29.280275+00:00",
+  "duration_ms": 21573,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-wj_w_3ua/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "cc27581e9807f8c7a52df3a47e2893f3963443dbd01b3bc8c8b77c663a01c1e2",
+      "reply": "The weekly report now lists each project under its week, biggest first. Running it on `timesheet.csv` gives:\n\n```\n2026-W37 38.50\n  acme 18.25\n  harbor 16.75\n  internal 3.50\n2026-W38 33.25\n  harbor 16.50\n  acme 16.00\n  internal 0.75\n```\n\nThe change is in `report.py`: a new `hours_by_project` helper, and `render` now derives each week's total from its project lines. Week totals are unchanged from before.\n\nTwo behaviours you didn't specify:\n- **Ties:** projects with equal hours in a week are listed alphabetically.\n- **Project names:** they are matched exactly as written, so `Acme` and `acme` would show as separate lines.",
+      "duration_ms": 15599
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1267,
+    "cache_read": 204940,
+    "cache_creation": 38323
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-wj_w_3ua/work",
+  "transcript": "transcript/a457aeae-e465-444c-a21c-1714a4b46cef.jsonl"
+}

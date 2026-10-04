@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_skill-head_r2_9bc48e9f",
+  "session_id": "9af977f2-9c7c-4dd6-bff7-b559e8071d3b",
+  "started_at": "2026-10-04T07:42:35.293734+00:00",
+  "duration_ms": 35909,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-sp2ashuq/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "A bad `day` on `/trips` now gets a 400 with a JSON error saying what's wrong, and no traceback. I ran the handler directly against your two logged cases plus a missing day and a good one:\n\n| Request | Response |\n|---|---|\n| `day=2026-09-13` | 200, same summary as before |\n| `day=2026-09-31` | 400 `day must be a real calendar date as YYYY-MM-DD, got '2026-09-31': day is out of range for month` |\n| `day=14/09/2026` | 400 `day must be a real calendar date as YYYY-MM-DD, got '14/09/2026': Invalid isoformat string: '14/09/2026'` |\n| `day=` or no `day` at all | 400 `day is required, as YYYY-MM-DD` |\n\nThe missing-day case was also a 500 before, so I covered it too.\n\nThe change is in two places: `app.py` now parses `day` into a date once (`parse_day`), and the functions in `trips.py` take that date instead of re-parsing the string.\n\nOne behaviour to know about: Python's ISO parser also accepts compact and week forms such as `20260914` or `2026-W38-1`. Those still return 200, and the `day` field in the response is now always echoed back as `YYYY-MM-DD` rather than as typed. If you want strictly `YYYY-MM-DD` and nothing else, that's a one-line tightening in `parse_day`.\n\nThere are no tests in the project and I didn't add any.",
+      "duration_ms": 29570
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2835,
+    "cache_read": 204746,
+    "cache_creation": 39836
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-sp2ashuq/work",
+  "transcript": "transcript/9af977f2-9c7c-4dd6-bff7-b559e8071d3b.jsonl"
+}

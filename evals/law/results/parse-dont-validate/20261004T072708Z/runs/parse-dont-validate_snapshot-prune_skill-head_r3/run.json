@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r3_9bc48e9f",
+  "session_id": "a4f44b09-45c8-4036-8ba2-42b61181e1c1",
+  "started_at": "2026-10-04T07:33:29.600068+00:00",
+  "duration_ms": 89220,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-m8_5q1_5/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it deletes anything; if there is a mistake it lists every problem on stderr, exits 1 and touches nothing. Running it against your current `policy.json` (typo still in place) gives:\n\n```\nprune: invalid policy policy.json, nothing deleted:\n  rules[2]: unknown key \"kepe\" (did you mean \"keep\"?)\n  rules[2]: missing \"keep\"\n```\n\nAll 16 files in `snapshots/` were still there afterwards, and the 7 new tests in `test_prune.py` pass.\n\nI did not fix the `kepe` typo in `policy.json` itself. Once you change it to `keep`, the next run will delete the two oldest logs snapshots.\n\nWhat now counts as a mistake:\n- **Keys:** an unknown key or a missing required one, in the policy or in any rule.\n- **Types and values:** a wrong type (e.g. `\"keep\": \"3\"`), a negative `keep`, an empty `prefix` (it would match every snapshot), or a `prefix` containing a path separator.\n- **Overlapping prefixes:** two rules where one prefix starts with the other, such as `db-` and `db-full-`, because the same files would belong to both. This is stricter than before, so say if you rely on that layout.\n- **File and directory:** a policy file that is unreadable or not valid JSON, or a `snapshot_dir` that doesn't exist. Previously a mistyped directory silently did nothing.\n\nTwo other behaviour changes:\n- The list of files to delete is worked out for all rules before the first deletion.\n- Each rule prints a summary line (`db-: 6 snapshots, keeping 3, deleting 3`), so a rule that matched nothing is visible.\n\nThe checking lives in a new `policy.py`; `retention.py` now takes the parsed policy rather than the raw JSON.",
+      "duration_ms": 82108
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 8282,
+    "cache_read": 205025,
+    "cache_creation": 45030
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-m8_5q1_5/work",
+  "transcript": "transcript/a4f44b09-45c8-4036-8ba2-42b61181e1c1.jsonl"
+}
