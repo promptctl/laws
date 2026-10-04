@@ -67,7 +67,7 @@ Every law's case set has at least one over-firing case and one hold-out case.
 A scenario must not be one the law's text uses as an example. Otherwise editing the text
 teaches it to its own test.
 
-Oracles share three helpers. Each is part of the digest of every case it could judge:
+Oracles share three helpers. Each is part of the digest of every case whose oracle imports it:
 
 - `differential.py` (no-silent-failure): did a failure leave a trace?
 - `calltrace.py` (parse-dont-validate): what type did each of the program's own

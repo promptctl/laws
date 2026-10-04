@@ -55,7 +55,7 @@
     "case_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
-      "description": "digest of the case's case.json, fixture, request.md and oracle.py and of the shared oracle helpers: the code that produced the verdict"
+      "description": "digest of the case's case.json, fixture, request.md and oracle.py and of the shared oracle helpers it imports: the code that produced the verdict"
     },
     "arm": {
       "$ref": "#/$defs/arm"
