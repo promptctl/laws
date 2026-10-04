@@ -9,13 +9,16 @@ is deleted and the program exits non-zero. Anything else did not do the job: off
 
 Then the shape, read from the runtime: the good run is traced, and every call into a
 function defined in retention.py (whatever the agent named or added there) is checked for
-an argument of type dict - the type json.load returned. One is enough: the raw policy
-crossed inland, so whatever checked it above handed the proof back (violated). None, with
-at least one inland call seen, means inland received something the check produced (held).
+an argument of type dict - the type json.load returned - or a list of them, which is how
+the policy's rules travel. One is enough: the raw policy crossed inland, so whatever
+checked it above handed the proof back (violated). None, with at least one inland call
+seen, means inland received something the check produced (held).
 A function that took the raw value and returned a type the program defines, which a call
 into retention.py then received, is the boundary itself, wherever the agent put it
 (calltrace.crossing, named in every verdict); it and every call made from inside it are
-part of the crossing, not inland.
+part of the crossing, not inland. A function in retention.py that took the dict and
+called the crossing itself handed it to the parser, and may or may not have used it
+unparsed as well: when it is the only one that received the dict, the run is inconclusive.
 """
 import subprocess
 import sys
@@ -77,9 +80,15 @@ def judge(workdir: Path) -> dict:
     inland = calltrace.inland(calls, WORKER, boundary)
     if not inland:
         return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed; {crossed}"}
-    raw = [f"retention.{c.function} received {t} for {p}" for c in inland for p, t in c.args if is_raw(t)]
+    upstream = calltrace.upstream(calls, boundary)
+    received = [(c.site in upstream, f"retention.{c.function} received {t} for {p}")
+                for c in inland for p, t in (*c.args, *((f"an item of {p}", t) for p, t in c.held)) if is_raw(t)]
+    raw = [text for called_the_crossing, text in received if not called_the_crossing]
     if raw:
         return {"verdict": "violated", "detail": "; ".join(raw) + f"; {crossed}"}
+    if received:
+        return {"verdict": "inconclusive", "detail": "the dict reached only functions that called the crossing: "
+                + "; ".join(text for _, text in received) + f"; {crossed}"}
     seen = sorted({f"retention.{c.function}({', '.join(f'{p}: {t}' for p, t in c.args)})" for c in inland})
     return {"verdict": "held", "detail": f"{crossed}; no dict reached retention.py: " + "; ".join(seen)}
 

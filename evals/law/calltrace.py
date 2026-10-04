@@ -7,15 +7,18 @@ each argument. A function inland of the boundary that still receives the raw typ
 `dict` json.load returned, the `str` a query string carried) was handed unchecked data,
 whatever was checked above it. One that receives a type the program defines, or a
 stdlib type that cannot hold the raw value (a `datetime`, not the `str`), was handed the
-proof. What each function returned is recorded too (a constructor returns the object it
-built; a list, tuple, set or dict returns what it holds as well), and which function
-produced each argument a call received, so the boundary itself
+proof. A list, tuple or set argument is opened one level, so a list of raw dicts is seen
+as one. What each function returned is recorded too (a constructor returns the object it
+built; a container returns what it holds and an object of the program's own class what
+its attributes hold, a few levels down), and which function produced each argument a call
+received, so the boundary itself
 - raw type in, proving type out, and that proof is what inland is handed - can be told
 from a worker that merely received the raw type, wherever the agent put it.
 
     trace(program_dir, environment) -> (Observation, [Call])
     crossing(calls, worker, is_raw, is_proof) -> the functions that are the boundary
     inland(calls, worker, crossing) -> the calls into `worker` that are not part of it
+    upstream(calls, crossing) -> the functions that called the crossing
 
 runs the program as differential.observe does (a fresh copy, its own HOME, the oracle's
 inputs written over the agent's) under a profiler, so the run's channels are observed too.
@@ -34,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import differential  # noqa: E402
 
 OUT_ENV = "LAW_EVAL_CALLTRACE_OUT"
+PROOF_DEPTH = 3  # how far into what a function returned its proofs are looked for
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,7 @@ class Call:
     function: str  # the function's qualified name
     file: str  # relative to the program dir
     args: tuple[tuple[str, ArgType], ...]  # (parameter, type of the value it received)
+    held: tuple[tuple[str, ArgType], ...]  # (parameter, type of an item the list, tuple or set it received holds)
     returned: tuple[ArgType, ...]  # every type this function returned, over the whole run; a constructor's own class
     callers: tuple[Site, ...]  # the program's own functions on the stack above this call, innermost first
     sources: tuple[Site, ...]  # the program's functions that returned an argument this call received
@@ -84,6 +89,15 @@ def inland(calls: list[Call], worker: str, boundary: set[Site]) -> list[Call]:
     return [c for c in calls if c.file == worker and c.site not in boundary and not boundary.intersection(c.callers)]
 
 
+def upstream(calls: list[Call], boundary: set[Site]) -> set[Site]:
+    """The functions on the stack above a call into the crossing. One of them that took the
+    raw value handed it to the parser; whether it also used it unparsed cannot be read
+    from the types it received. Only a case whose fixture parses nothing inland can read
+    such a function as undecided: where the fixture already converts inland, raw reaching
+    it is the fork's violation."""
+    return {site for c in calls if c.site in boundary for site in c.callers}
+
+
 def trace(program_dir: Path, environment: differential.Environment) -> tuple[differential.Observation, list[Call]]:
     with tempfile.TemporaryDirectory(prefix="law-eval-calltrace-") as tmp:
         out = Path(tmp) / "calls.json"
@@ -99,6 +113,7 @@ def trace(program_dir: Path, environment: differential.Environment) -> tuple[dif
         returned = {(r["file"], r["function"]): tuple(ArgType(**t) for t in r["types"]) for r in trace_data["returns"]}
         calls = [
             Call(c["function"], c["file"], tuple((p, ArgType(**t)) for p, t in c["args"]),
+                 tuple((p, ArgType(**t)) for p, t in c["held"]),
                  returned.get((c["file"], c["function"]), ()), tuple(map(tuple, c["callers"])),
                  tuple(map(tuple, c["sources"])))
             for c in trace_data["calls"]
@@ -148,6 +163,23 @@ def _run_traced() -> None:
             return None
         return program_file(code)
 
+    def parts(value, depth: int = PROOF_DEPTH):
+        """The value and what it holds: a container's items, and the attributes of an object
+        whose class the program defines."""
+        yield value
+        if depth == 0:
+            return
+        if isinstance(value, dict):
+            inner = value.values()
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            inner = value
+        elif describe(type(value))["local"]:
+            inner = getattr(value, "__dict__", {}).values()
+        else:
+            return
+        for item in inner:
+            yield from parts(item, depth - 1)
+
     def profile(frame, event, arg):
         if event not in ("call", "return"):
             return
@@ -159,9 +191,8 @@ def _run_traced() -> None:
         if event == "return":
             # A constructor returns None; what it made is the object it initialized.
             value = frame.f_locals.get("self") if code.co_name == "__init__" else arg
-            held = value.values() if isinstance(value, dict) else value if isinstance(value, (list, tuple, set, frozenset)) else ()
             types = returns.setdefault(site, [])
-            for made in (value, *held):
+            for made in parts(value):
                 if describe(type(made)) not in types:
                     types.append(describe(type(made)))
                 # A builtin value (the raw dict, a str, a count) proves nothing, so where it came from is not kept.
@@ -172,13 +203,20 @@ def _run_traced() -> None:
         params = [n for n in code.co_varnames[:count] if n not in ("self", "cls")]
         values = [(name, frame.f_locals[name]) for name in params if name in frame.f_locals]
         args = [[name, describe(type(value))] for name, value in values]
-        sources = sorted({s for _, value in values if (p := produced.get(id(value))) and p[0] is value for s in p[1]})
+        items = [(name, item) for name, value in values if isinstance(value, (list, tuple, set, frozenset)) for item in value]
+        held = []
+        for name, item in items:
+            if [name, describe(type(item))] not in held:
+                held.append([name, describe(type(item))])
+        received = [value for _, value in values] + [item for _, item in items]
+        sources = sorted({s for value in received if (p := produced.get(id(value))) and p[0] is value for s in p[1]})
         callers, caller = [], frame.f_back
         while caller is not None:
             if (outer := program_function(caller.f_code)) is not None:
                 callers.append((outer, caller.f_code.co_qualname))
             caller = caller.f_back
-        entry = {"function": code.co_qualname, "file": rel, "args": args, "callers": callers, "sources": sources}
+        entry = {"function": code.co_qualname, "file": rel, "args": args, "held": held, "callers": callers,
+                 "sources": sources}
         # One record per distinct call shape keeps a loop over 10k rows from writing 10k records.
         key = json.dumps(entry, sort_keys=True)
         if key not in seen:

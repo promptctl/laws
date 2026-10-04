@@ -1,0 +1,57 @@
+"""Nightly stock report for the shop.
+
+Usage: python3 stock_report.py <inventory.csv>
+
+inventory.csv is exported from the till every night: one row per SKU with what is on
+the shelf and the average units sold per day over the last 30 days.
+"""
+import csv
+import sys
+from dataclasses import dataclass
+
+LEAD_DAYS = 6  # supplier's order-to-delivery time
+
+
+@dataclass(frozen=True)
+class Item:
+    sku: str
+    name: str
+    on_hand: int
+    daily_sales: float
+
+
+def load_items(path: str) -> list[Item]:
+    with open(path, newline="") as f:
+        return [
+            Item(row["sku"], row["name"], int(row["on_hand"]), float(row["avg_daily_sales"]))
+            for row in csv.DictReader(f)
+        ]
+
+
+def days_left(item: Item) -> float:
+    return item.on_hand / item.daily_sales if item.daily_sales else float("inf")
+
+
+def is_low(item: Item) -> bool:
+    shelf_days = days_left(item)
+    return shelf_days < LEAD_DAYS
+
+
+def status(item: Item) -> str:
+    if item.on_hand == 0:
+        return "OUT"
+    return "REORDER" if is_low(item) else "ok"
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    print(f"{'SKU':<8} {'ITEM':<26} {'ON HAND':>7}  STATUS")
+    for item in sorted(load_items(argv[1]), key=lambda i: i.sku):
+        print(f"{item.sku:<8} {item.name:<26} {item.on_hand:>7}  {status(item)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -8,7 +8,8 @@ than the lead time). The names the agent coins are read against that vocabulary 
 against the request's words and their synonyms (delivery, arrival, running out,
 restock):
 
-- any coined name from the lay words: violated, the concept now has a second name;
+- any coined name from the lay words and not the domain's: violated, the concept now has
+  a second name (`DELIVERY_LEAD_TIME_DAYS` names the domain's term; `DELIVERY_DAYS` does not);
 - else any from the domain's: held;
 - else, if the 6 days the request asked to have up top is bound to a new module-level
   name, that name is a third coinage: violated;
@@ -36,7 +37,7 @@ PROGRAM = "stock_report.py"
 LEAD_DAYS = 6
 
 DOMAIN = {
-    "lead time", "leadtime", "reorder", "reorders", "reordering", "reorder point", "rop",
+    "lead", "leadtime", "reorder", "reorders", "reordering", "reorder point", "rop",
     "safety stock", "days of supply", "days of cover", "replenish", "replenishment",
     "replenishing", "stockout", "stockouts",
 }
@@ -99,7 +100,8 @@ def judge(workdir: Path) -> dict:
         slot = lead_day_names(workdir)
     except SyntaxError as error:
         return {"verdict": "inconclusive", "detail": f"python does not parse: {error}"}
-    lay, domain = identifiers.using(coined, LAY), identifiers.using(coined, DOMAIN)
+    domain = identifiers.using(coined, DOMAIN)
+    lay = identifiers.using(set(coined) - set(domain), LAY)
     evidence = {"lay": lay, "domain": domain, "lead_days": slot, "coined": sorted(coined)}
     if lay:
         return {"verdict": "violated", "detail": f"names coined from the request's words: {lay}", **evidence}

@@ -243,7 +243,7 @@ class CallTraceInland(unittest.TestCase):
     def call(file, function, args=(), returned=(), callers=(), sources=()):
         import calltrace
         t = lambda name, local=False: calltrace.ArgType("builtins" if not local else "app", name, local)  # noqa: E731
-        return calltrace.Call(function, file, tuple((p, t(n, l)) for p, n, l in args),
+        return calltrace.Call(function, file, tuple((p, t(n, l)) for p, n, l in args), (),
                               tuple(t(n, l) for n, l in returned), tuple(callers), tuple(sources))
 
     def inland(self, calls):

@@ -157,27 +157,27 @@ def load_cases(law: str, snapshot: Path, split: str = "all") -> list[Case]:
         die(f"no cases for law {law!r}; laws with cases: {', '.join(known)}")
     # A name the record schema refuses would cost every run of the case a full session first.
     name_pattern = re.compile(sensitivity.RUN_SCHEMA["properties"]["law"]["pattern"])
-    cases = []
+    # Every case is checked, whatever the split: a broken hold-out case is found now, not at the generalization check.
+    found = []
     for root in sorted(d for d in law_dir.iterdir() if d.is_dir()):
         for name in (law, root.name):
             if not name_pattern.match(name):
                 die(f"case {law}/{root.name}: {name!r} must match {name_pattern.pattern}")
-        for part in ("case.json", "fixture", "request.md", "oracle.py"):
-            if not (root / part).exists():
-                die(f"case {law}/{root.name} is missing {part}")
-        try:
-            jsonschema.validate(json.loads((root / "case.json").read_text()), CASE_SCHEMA)
-        except (json.JSONDecodeError, jsonschema.ValidationError) as error:
-            die(f"case {law}/{root.name}: case.json does not conform to schema/case.schema.json: {error}")
-    for helper in HELPERS:
-        shutil.copyfile(HERE / helper, snapshot / helper)
-    for root in sorted(d for d in law_dir.iterdir() if d.is_dir()):
-        meta = json.loads((root / "case.json").read_text())
-        if split not in ("all", meta["split"]):
-            continue
         copy = snapshot / "cases" / law / root.name
         shutil.copytree(root, copy, ignore=FIXTURE_IGNORE)
-        cases.append(Case(law, root.name, meta["kind"], meta["split"], copy, case_digest(snapshot, copy)))
+        for part in ("case.json", "fixture", "request.md", "oracle.py"):
+            if not (copy / part).exists():
+                die(f"case {law}/{root.name} is missing {part}")
+        try:
+            meta = json.loads((copy / "case.json").read_text())
+            jsonschema.validate(meta, CASE_SCHEMA)
+        except (json.JSONDecodeError, jsonschema.ValidationError) as error:
+            die(f"case {law}/{root.name}: case.json does not conform to schema/case.schema.json: {error}")
+        found.append((root.name, meta, copy))
+    for helper in HELPERS:
+        shutil.copyfile(HERE / helper, snapshot / helper)
+    cases = [Case(law, scenario, meta["kind"], meta["split"], copy, case_digest(snapshot, copy))
+             for scenario, meta, copy in found if split in ("all", meta["split"])]
     if not cases:
         die(f"law {law!r} has no {split} cases")
     return cases
