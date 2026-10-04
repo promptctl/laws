@@ -1,0 +1,38 @@
+{
+  "schema_version": 3,
+  "run_id": "no-silent-failure/optional-settings/none-diluted/r4",
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/optional-settings",
+  "case_kind": "over-firing",
+  "split": "tuning",
+  "case_sha256": "9c8d695b9458c2b3ebb9c976b2ffb2ce59cb8dd83b02e12892dd2deb293757be",
+  "arm": {
+    "name": "none+diluted",
+    "guidance": null,
+    "context": {
+      "name": "diluted",
+      "turns": 3,
+      "sha256": "5f4ffc703fac539c25ea19b0e9c34f2f70018e768d8b6ecb7852dc45bf193e6a"
+    }
+  },
+  "repeat": 4,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "defaults used without a word",
+    "absent": {
+      "exit_code": 0,
+      "stdout": "  1  renew passport\n  2  call the plumber\n  3  Buy oat milk\n  4  email Dana about the lease\n  5  fix the bike light\n",
+      "stderr": "",
+      "files": []
+    },
+    "present": {
+      "exit_code": 0,
+      "stdout": "  3  Buy oat milk\n  2  call the plumber\n",
+      "stderr": "",
+      "files": []
+    }
+  },
+  "session": "runs/no-silent-failure_optional-settings_none-diluted_r4/run.json",
+  "diff": "diffs/no-silent-failure_optional-settings_none-diluted_r4.diff"
+}

@@ -1,0 +1,42 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..37e004d 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,18 +5,34 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++Rows whose amount is not a number (the bank sometimes writes `N/A`) are
++skipped and reported on stderr; they are not included in the totals.
+ """
+ import sys
+-from decimal import Decimal
++from decimal import Decimal, InvalidOperation
+ from pathlib import Path
+ 
+ 
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+         date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        try:
++            value = Decimal(amount)
++        except InvalidOperation:
++            value = None
++        # The bank sometimes writes placeholders like "N/A" instead of a
++        # number. Skip those rows, but say so: the total excludes them.
++        if value is None or not value.is_finite():
++            print(
++                f"warning: {path}:{lineno}: skipping row with non-numeric "
++                f"amount {amount!r} (account {account}, {date})",
++                file=sys.stderr,
++            )
++            continue
++        yield date, account, value
+ 
+ 
+ def totals(exports_dir):

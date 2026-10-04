@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "no-silent-failure_order-webhook_skill-head_r2_5ec409d9",
+  "session_id": "07b8d9e3-0952-406b-a33b-b5b4cecde5d0",
+  "started_at": "2026-10-04T06:15:33.995506+00:00",
+  "duration_ms": 37468,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-evnxa3of/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "d34e2c2510606fa389d22dc3e3ee09c8da7d19254e13ef865694361b260eebb8",
+      "reply": "A webhook outage no longer stops the run: every order is still priced and printed, and the failed notifications are reported instead of crashing.\n\nI ran it three ways against `orders.json`:\n\n- **Webhook down (connection refused):** all three orders priced on stdout, one `shipping not notified: <id>: <reason>` line per order on stderr, exit status 3.\n- **Webhook up (local test server):** all three priced, all three POSTs received, exit status 0.\n- **`WEBHOOK_URL` unset:** still crashes with `KeyError`, deliberately, since that is a setup mistake rather than an outage.\n\nThings that behave differently now:\n\n- **Exit status 3 is new.** It means \"all orders priced, but shipping wasn't told about at least one\". If something wrapping this script treats any non-zero exit as a failed run, it will flag outage days. I think that's what you want, but say so if you'd rather it exit 0.\n- **A summary line on stderr every run**, e.g. `3 orders priced, 3 not sent to shipping: A-1001 A-1002 A-1003`. Stdout is unchanged (`<id> <total>` per order).\n- **Missed notifications are not re-sent.** Nothing queues or retries them; the stderr list of order ids is the only record of what shipping still needs to hear about.\n- **Any failure to reach the webhook is caught**, not just `URLError`: HTTP error responses and timeouts too. If the service hangs rather than refuses, each order waits out the existing 5-second timeout, so a large day could run slowly.\n\nThe change is in `shipping.py` (a `NotificationFailed` exception raised by `notify`) and the loop in `orders.py`. There are no tests in the project and I didn't add any.",
+      "duration_ms": 31989
+    }
+  ],
+  "tokens": {
+    "input": 10,
+    "output": 2962,
+    "cache_read": 266887,
+    "cache_creation": 39156
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-evnxa3of/work",
+  "transcript": "transcript/07b8d9e3-0952-406b-a33b-b5b4cecde5d0.jsonl"
+}

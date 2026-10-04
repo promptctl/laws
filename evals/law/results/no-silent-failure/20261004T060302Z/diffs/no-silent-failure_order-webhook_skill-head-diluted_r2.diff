@@ -1,0 +1,42 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..12a340d 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -4,6 +4,10 @@ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+ priced order to the shipping webhook as it goes.
++
++A webhook failure does not stop pricing: the order is reported on stderr and
++the run carries on. Exit status: 0 if every order was priced and posted, 3 if
++every order was priced but some were not posted, 2 on a usage error.
+ """
+ import json
+ import sys
+@@ -22,10 +26,25 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    undelivered = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
++        # [LAW:no-silent-failure] pricing outlives a webhook outage, but every
++        # missed post is named on stderr and reflected in the exit status.
++        # URLError, HTTPError and socket timeouts are all OSError.
++        try:
++            shipping.notify(order["id"], total)
++        except OSError as err:
++            print(f"shipping webhook failed for {order['id']}: {err}", file=sys.stderr)
++            undelivered.append(order["id"])
++    if undelivered:
++        print(
++            f"{len(undelivered)} of {len(orders)} orders not posted to shipping: "
++            + " ".join(undelivered),
++            file=sys.stderr,
++        )
++        return 3
+     return 0
+ 
+ 

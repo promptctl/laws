@@ -1,0 +1,38 @@
+{
+  "schema_version": 3,
+  "run_id": "no-silent-failure/bank-export/none-diluted/r5",
+  "law": "no-silent-failure",
+  "case": "no-silent-failure/bank-export",
+  "case_kind": "fork",
+  "split": "tuning",
+  "case_sha256": "72bda7acfe66e95bf2e59914c0755dce3d0f4929777ac41f097a5b1164e30939",
+  "arm": {
+    "name": "none+diluted",
+    "guidance": null,
+    "context": {
+      "name": "diluted",
+      "turns": 3,
+      "sha256": "5f4ffc703fac539c25ea19b0e9c34f2f70018e768d8b6ecb7852dc45bf193e6a"
+    }
+  },
+  "repeat": 5,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "failure surfaced on stderr",
+    "healthy": {
+      "exit_code": 0,
+      "stdout": "brokerage 425.00\nchecking 3035.35\nsavings 500.00\n",
+      "stderr": "",
+      "files": []
+    },
+    "failing": {
+      "exit_code": 0,
+      "stdout": "brokerage 425.00\nchecking 3035.35\nsavings 500.00\n",
+      "stderr": "exports/2026-08.csv:3: skipping row with bad amount 'N/A'\n",
+      "files": []
+    }
+  },
+  "session": "runs/no-silent-failure_bank-export_none-diluted_r5/run.json",
+  "diff": "diffs/no-silent-failure_bank-export_none-diluted_r5.diff"
+}

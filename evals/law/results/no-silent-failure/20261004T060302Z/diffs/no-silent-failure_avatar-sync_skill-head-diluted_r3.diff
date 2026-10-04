@@ -1,0 +1,49 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..830ed85 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -8,14 +8,23 @@ users.json is a list of user ids. Each avatar is fetched from
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar's bytes, or None when the user has no avatar."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as error:
++        # [LAW:no-silent-failure] 404 is the CDN's answer for a deleted avatar;
++        # every other status is still a failure and still stops the run.
++        if error.code != 404:
++            raise
++        return None
+ 
+ 
+ def main(argv):
+@@ -25,9 +34,16 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    without_avatar = []
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        avatar = fetch(user_id)
++        if avatar is None:
++            without_avatar.append(user_id)
++        else:
++            (out / f"{user_id}.png").write_bytes(avatar)
++    # [LAW:nothing-unseen] a night where every user 404s must not read like a full sync
++    print(f"synced {len(users) - len(without_avatar)} avatars, "
++          f"{len(without_avatar)} users have no avatar: {without_avatar}")
+     return 0
+ 
+ 

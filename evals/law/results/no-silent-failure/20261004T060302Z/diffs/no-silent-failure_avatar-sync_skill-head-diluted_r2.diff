@@ -1,0 +1,60 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..9cff0d5 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -3,19 +3,30 @@
+ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+-<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. A user who has
++deleted their avatar has none on the CDN (404); their mirrored copy is removed
++too. Runs nightly from cron.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar's bytes, or None when the user has no avatar."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as error:
++        # [LAW:no-silent-failure] 404 is the CDN's answer for "no avatar"; every
++        # other status is still a failure and still stops the run.
++        if error.code != 404:
++            raise
++        return None
+ 
+ 
+ def main(argv):
+@@ -25,9 +36,19 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    absent = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        path = out / f"{user_id}.png"
++        avatar = fetch(user_id)
++        if avatar is None:
++            # [LAW:one-source-of-truth] the CDN is authoritative: no avatar there
++            # means no avatar in the mirror.
++            path.unlink(missing_ok=True)
++            absent += 1
++        else:
++            path.write_bytes(avatar)
++    # [LAW:nothing-unseen] "no avatar" is counted, not folded into "synced".
++    print(f"synced {len(users) - absent} avatars, {absent} users have no avatar")
+     return 0
+ 
+ 

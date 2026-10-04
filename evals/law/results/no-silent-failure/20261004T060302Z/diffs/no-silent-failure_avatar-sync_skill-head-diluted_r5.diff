@@ -1,0 +1,46 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..193fedb 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -8,14 +8,22 @@ users.json is a list of user ids. Each avatar is fetched from
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar bytes, or None when the user has no avatar (the CDN answers 404)."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as err:
++        # [LAW:no-silent-failure] only 404 means "no avatar"; any other HTTP error still propagates
++        if err.code != 404:
++            raise
++        return None
+ 
+ 
+ def main(argv):
+@@ -25,9 +33,14 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    synced = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        avatar = fetch(user_id)
++        if avatar is None:
++            continue
++        (out / f"{user_id}.png").write_bytes(avatar)
++        synced += 1
++    print(f"synced {synced} avatars, {len(users) - synced} users have no avatar")
+     return 0
+ 
+ 

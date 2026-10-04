@@ -1,0 +1,78 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..7194295 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,34 +5,67 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++The bank sometimes writes `N/A` in the amount column. Those rows are left
++out of the totals and listed on stderr, so stdout stays parseable and the
++omission is never silent. Any other unparseable amount is still an error.
+ """
+ import sys
+ from decimal import Decimal
+ from pathlib import Path
++from typing import NamedTuple, Optional
++
++# The bank's marker for a row it exported without an amount.
++MISSING_AMOUNT = "N/A"
++
++
++class Row(NamedTuple):
++    source: str  # "file:line", for reporting
++    date: str
++    account: str
++    # [LAW:types-are-the-program] None is the bank's N/A: an absent amount,
++    # kept distinct from Decimal("0") so it cannot be summed by accident.
++    amount: Optional[Decimal]
+ 
+ 
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+         date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        # [LAW:parse-dont-validate] only the bank's known marker becomes an
++        # absent amount; anything else unparseable still raises in Decimal().
++        parsed = None if amount.strip() == MISSING_AMOUNT else Decimal(amount)
++        yield Row(f"{path}:{lineno}", date, account, parsed)
+ 
+ 
+ def totals(exports_dir):
++    """Return (per-account sums, rows left out because they had no amount)."""
+     sums = {}
++    missing = []
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
+-    return sums
++        for row in read_rows(path):
++            if row.amount is None:
++                missing.append(row)
++            else:
++                sums[row.account] = sums.get(row.account, Decimal("0")) + row.amount
++    return sums, missing
+ 
+ 
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    sums, missing = totals(argv[1])
++    for account, total in sorted(sums.items()):
+         print(f"{account} {total:.2f}")
++    # [LAW:no-silent-failure] totals that leave rows out must say so.
++    for row in missing:
++        print(
++            f"warning: {row.source}: {row.account} {row.date} has amount "
++            f"{MISSING_AMOUNT}; not included in totals",
++            file=sys.stderr,
++        )
+     return 0
+ 
+ 
