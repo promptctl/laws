@@ -206,18 +206,23 @@ EOF
 
 # --- emitters -------------------------------------------------------------------------
 # Escaping a value for inclusion in a JSON string. Every emitter goes through here, so the
-# rule has one home instead of a copy per call site that can drift - the divergence [LAW:one-source-of-truth] exists to prevent. Backslash first,
-# or it would re-escape the escapes the other substitutions introduce. Every control character
-# is escaped, since the S projection is a generated file anyone's paste can reach. awk, not
-# ${s//...}: bash 3.2 (macOS /bin/bash) substitutes in quadratic time, 25 seconds on the S
-# projection. A trailing newline in the value is dropped.
+# rule has one home instead of a copy per call site that can drift - the divergence [LAW:one-source-of-truth] exists to prevent. Every control
+# character is escaped, since the S projection is a generated file anyone's paste can reach.
+# awk, not ${s//...}: bash 3.2 (macOS /bin/bash) substitutes in quadratic time, 25 seconds on
+# the S projection. A map from character to escape, applied by concatenation, not gsub: what a
+# backslash means in gsub's replacement differs between awks (BSD awk doubles with "\\\\",
+# gawk, mawk and POSIX mode do not), and string literals and concatenation mean the same in all
+# of them. A trailing newline in the value is dropped.
 json_escape() {
   printf '%s' "$1" | LC_ALL=C awk '
-    BEGIN { for (c = 1; c < 32; c++) if (c != 9 && c != 10 && c != 13) ctl[sprintf("%c", c)] = sprintf("\\u%04x", c) }
+    BEGIN {
+      for (c = 1; c < 32; c++) esc[sprintf("%c", c)] = sprintf("\\u%04x", c)
+      esc["\\"] = "\\\\"; esc["\""] = "\\\""; esc["\t"] = "\\t"; esc["\r"] = "\\r"
+    }
     {
-      gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); gsub(/\r/, "\\r")
-      for (k in ctl) gsub(k, ctl[k])
-      printf "%s%s", (NR > 1 ? "\\n" : ""), $0
+      out = ""
+      for (i = 1; i <= length($0); i++) { ch = substr($0, i, 1); out = out ((ch in esc) ? esc[ch] : ch) }
+      printf "%s%s", (NR > 1 ? "\\n" : ""), out
     }'
 }
 

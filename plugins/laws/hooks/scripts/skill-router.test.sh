@@ -463,13 +463,21 @@ expect_refusal "more parts than S_PARTS exits 2" "add entries and raise S_PARTS"
 
 # 17f. The shipped S projection has no control character but the newline, so 17b cannot see
 #      whether the rest are escaped. A generated file can gain one; this one has a tab, a CR, a
-#      form feed and a \001, beside a quote and a backslash.
+#      form feed and a \001, beside a quote and a backslash. POSIXLY_CORRECT puts macOS awk on
+#      the POSIX rule for a backslash in a gsub replacement, the rule gawk and mawk always use,
+#      so the escaper is checked under both rules on any machine.
 printf 'a\tb\r\nc\fd\001e"f\\g\n' > "$nos_s"
-ctl_out=$(printf '{}' | LAWS_PER_TURN_S=1 "$nos_router" engage-s 1 2>/dev/null)
-case "$ctl_out" in
-  *'a\tb\r\nc\u000cd\u0001e\"f\\g"'*) ok "every control character, quote and backslash in the S projection is JSON-escaped";;
-  *) bad "every control character, quote and backslash in the S projection is JSON-escaped (got: $ctl_out)";;
-esac
+for posix in 0 1; do
+  if [ "$posix" = 1 ]; then
+    ctl_out=$(printf '{}' | POSIXLY_CORRECT=1 LAWS_PER_TURN_S=1 "$nos_router" engage-s 1 2>/dev/null)
+  else
+    ctl_out=$(printf '{}' | env -u POSIXLY_CORRECT LAWS_PER_TURN_S=1 "$nos_router" engage-s 1 2>/dev/null)
+  fi
+  case "$ctl_out" in
+    *'a\tb\r\nc\u000cd\u0001e\"f\\g"'*) ok "every control character, quote and backslash in the S projection is JSON-escaped (POSIXLY_CORRECT=$posix)";;
+    *) bad "every control character, quote and backslash in the S projection is JSON-escaped (POSIXLY_CORRECT=$posix, got: $ctl_out)";;
+  esac
+done
 rm -rf "$nos"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
