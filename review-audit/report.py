@@ -67,15 +67,18 @@ def finding_ids(findings: list[dict]) -> dict[str, dict]:
     return ids
 
 
+def lacks_should_have(row: dict) -> bool:
+    """A correct response is its own should_have; any other must say what should have
+    happened. [LAW:one-source-of-truth] check.py refuses and report.py fills by this rule."""
+    return not row.get("should_have") and row.get("response_correct") != "yes"
+
+
 def should_have(row: dict, path: Path) -> dict:
-    """A correct response is its own should_have; an incorrect one must say what
-    should have happened. [LAW:parse-dont-validate] the field is filled or refused here,
-    never guessed downstream."""
-    if row.get("should_have"):
-        return row
-    if row.get("response_correct") == "yes":
-        return row | {"should_have": row["response"]}
-    raise SystemExit(f"{path}: {row['finding']} has response_correct={row.get('response_correct')!r} but no should_have")
+    """[LAW:parse-dont-validate] the field is filled or refused here, never guessed
+    downstream."""
+    if lacks_should_have(row):
+        raise SystemExit(f"{path}: {row['finding']} has response_correct={row.get('response_correct')!r} but no should_have")
+    return row if row.get("should_have") else row | {"should_have": row["response"]}
 
 
 def table(title: str, counter: Counter, total: int | None = None) -> str:
@@ -129,6 +132,8 @@ def join(derived: Path, verdicts: Path) -> Joined:
                     raise SystemExit(f"{path}: verdict for unknown finding {row['finding']}")
                 finding_verdicts[row["finding"]] = should_have(row, path) | {"batch": path.stem}
             elif "pr" in row:
+                if row["pr"] in pr_verdicts:
+                    raise SystemExit(f"{path}: duplicate verdict for {row['pr']}, already in {pr_verdicts[row['pr']]['batch']}")
                 if row["pr"] not in prs:
                     raise SystemExit(f"{path}: verdict for unknown PR {row['pr']}")
                 pr_verdicts[row["pr"]] = row | {"batch": path.stem}
@@ -150,8 +155,8 @@ def main(argv: list[str]) -> int:
     reviewed_prs = set(pr_verdicts)
     expected = {fid for fid, f in findings.items() if f"{f['repo']}#{f['number']}" in reviewed_prs}
     missing = sorted(expected - set(finding_verdicts))
-    if missing:
-        print(f"WARNING: {len(missing)} findings of reviewed PRs have no verdict, e.g. {missing[:5]}", file=sys.stderr)
+    if missing:  # [LAW:no-silent-failure] the docstring's contract: an error, not a footnote
+        raise SystemExit(f"{len(missing)} findings of reviewed PRs have no verdict, e.g. {missing[:5]}")
 
     joined = j.rows
     if args.out:
@@ -183,12 +188,13 @@ def main(argv: list[str]) -> int:
     rounds = Counter(v["rounds"] for v in pr_verdicts.values())
     out.append(table("rounds per PR", rounds))
     avoidable = sum(v["avoidable_rounds"] for v in pr_verdicts.values())
-    total_rounds = sum(v["rounds"] for v in pr_verdicts.values())
-    out.append(f"### avoidable rounds (judged, a floor)\n\n{avoidable} of {total_rounds} rounds ({100 * avoidable / max(1, total_rounds):.0f}%) across {len(pr_verdicts)} PRs; {sum(1 for v in pr_verdicts.values() if v['avoidable_rounds'])} PRs had at least one. Agents read the definition differently, so this is not comparable across batches; the derived count below is.\n")
+    judged_rounds = sum(v["rounds"] for v in pr_verdicts.values())
+    out.append(f"### avoidable rounds (judged, a floor)\n\n{avoidable} of {judged_rounds} judged rounds ({100 * avoidable / max(1, judged_rounds):.0f}%) across {len(pr_verdicts)} PRs; {sum(1 for v in pr_verdicts.values() if v['avoidable_rounds'])} PRs had at least one. Agents read the definition differently, so this is not comparable across batches; the derived count below is.\n")
     # Computed, not judged: every finding carries its round and caused_by is judged per
     # finding, so this reads the same way for every batch whatever the agent's arithmetic.
     fix_rounds = {(r["repo"], r["number"], r["round"]) for r in caused}
-    out.append(f"### rounds containing a fix-caused finding (derived)\n\n{len(fix_rounds)} of {total_rounds} rounds ({100 * len(fix_rounds) / max(1, total_rounds):.0f}%); {len({(repo, n) for repo, n, _ in fix_rounds})} PRs had at least one\n")
+    total_rounds = sum(prs[k]["n_rounds"] for k in pr_verdicts)
+    out.append(f"### rounds containing a fix-caused finding (derived)\n\n{len(fix_rounds)} of {total_rounds} derived rounds ({100 * len(fix_rounds) / max(1, total_rounds):.0f}%); {len({(repo, n) for repo, n, _ in fix_rounds})} PRs had at least one\n")
     out.append(table("chain lengths", Counter(len(c) for v in pr_verdicts.values() for c in v.get("chains", []))))
     out.append(table("per repo: findings caused by fixes / findings", Counter(r["repo"] for r in caused)))
     print("\n".join(out))

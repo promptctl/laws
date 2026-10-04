@@ -152,7 +152,10 @@ Field meanings:
   splits."* Empty string when there is nothing to learn.
 - **rounds** — the number of review rounds in the packet's rounds table.
 - **avoidable_rounds** — rounds after the first that would not have happened if the
-  earlier fixes had been complete and correct.
+  earlier fixes had been complete and correct. Read it strictly: a round that also carried
+  a defect from the original code would still have happened, so it does not count. The
+  looser count, rounds containing any fix-caused finding, is computed from your
+  `caused_by` verdicts, so the strict reading loses no signal.
 - **chains** — sequences of finding ids where each was caused by the fix for the previous.
 - **guidance_observations** — about this PR's *process*, distinct from any per-finding
   `guidance_note`.

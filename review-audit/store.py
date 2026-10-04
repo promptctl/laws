@@ -24,7 +24,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Literal
@@ -182,49 +181,5 @@ class Bank:
 # reviewed record; GitHub's rendering of a diff is the evidence and stays untouched.
 # ---------------------------------------------------------------------------
 
-# [LAW:no-shared-mutable-globals] the user's gitconfig is ambient input that would
-# otherwise reach into every rendered file - one `diff.algorithm = histogram` in
-# ~/.gitconfig and every answer quietly changes. Reads are isolated and every option
-# that shapes output is pinned here, in one place. The network path in github.py
-# deliberately does NOT isolate: the credential helper lives in that same config.
-GIT_ENV = {
-    **os.environ,
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_SYSTEM": "/dev/null",
-    "GIT_CONFIG_NOSYSTEM": "1",
-    "GIT_TERMINAL_PROMPT": "0",
-}
-
-
 def git_dir(root: Path, repo: str) -> Path:
     return root / "git" / f"{repo}.git"
-
-
-def git(root: Path, repo: str, *args: str) -> str:
-    """One read of a banked repository. [LAW:no-silent-failure] a git failure raises rather
-    than returning empty output that reads exactly like a commit which changed nothing."""
-    proc = subprocess.run(["git", "--git-dir", str(git_dir(root, repo)), *args],
-                          text=True, capture_output=True, env=GIT_ENV)
-    if proc.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)[:60]} in {repo} failed ({proc.returncode}):\n{proc.stderr[:400]}")
-    return proc.stdout
-
-
-def has_commits(root: Path, repo: str, oids: list[str]) -> set[str]:
-    """Which of these oids the banked repository holds. One call for the batch, because
-    asking per oid costs a process each."""
-    if not oids or not git_dir(root, repo).exists():
-        return set()
-    proc = subprocess.run(
-        ["git", "--git-dir", str(git_dir(root, repo)), "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-        input="\n".join(oids), text=True, capture_output=True, env=GIT_ENV)
-    return {line.split()[0] for line in proc.stdout.splitlines() if line.strip().endswith(" commit")}
-
-
-def file_at(root: Path, repo: str, oid: str, path: str) -> str:
-    """One file's whole content as of one commit - the context the reviewer had and the
-    review record does not carry. Empty when the path did not exist at that commit."""
-    try:
-        return git(root, repo, "show", f"{oid}:{path}")
-    except RuntimeError:
-        return ""

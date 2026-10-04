@@ -228,6 +228,9 @@ def pull_request(org: str, repo: str, number: int) -> dict:
     return pr
 
 
+COMMIT_FILE_PAGES = 30  # 100 files a page; GitHub serves no more than 3000
+
+
 def hunk_ranges(patch: str) -> list[list[int]]:
     """New-side (start, length) of every hunk in a unified diff. Pure."""
     return [[int(s), int(n) if n else 1] for s, n in HUNK.findall(patch)]
@@ -239,14 +242,19 @@ def commit(org: str, repo: str, oid: str) -> dict:
     REST, because GraphQL serves no patches. A file GitHub returns without a patch
     (binary, rename-only, too large) gets an empty patch and no ranges - a real fact
     about that file, not a failure.
+
+    GitHub pages a commit's files and serves at most 3000; a commit at that cap is
+    refused rather than banked short, because the bank never refetches a commit.
     """
-    proc = subprocess.run(["gh", "api", f"repos/{org}/{repo}/commits/{oid}"], text=True, capture_output=True)
-    if proc.returncode != 0:  # [LAW:no-silent-failure]
-        raise RuntimeError(f"gh api commits/{oid} in {org}/{repo} failed ({proc.returncode}):\n{proc.stderr}")
-    data = json.loads(proc.stdout)
-    if "files" not in data:
-        raise RuntimeError(f"{org}/{repo}@{oid}: response has no files: {json.dumps(data)[:300]}")
-    return {f["filename"]: {"ranges": hunk_ranges(f.get("patch", "")), "patch": f.get("patch", "")} for f in data["files"]}
+    files: list[dict] = []
+    for page in range(1, COMMIT_FILE_PAGES + 1):
+        data = rest(f"repos/{org}/{repo}/commits/{oid}?per_page=100&page={page}")
+        if "files" not in data:
+            raise RuntimeError(f"{org}/{repo}@{oid}: response has no files: {json.dumps(data)[:300]}")
+        files += data["files"]
+        if len(data["files"]) < 100:
+            return {f["filename"]: {"ranges": hunk_ranges(f.get("patch", "")), "patch": f.get("patch", "")} for f in files}
+    raise RuntimeError(f"{org}/{repo}@{oid}: {len(files)} files, GitHub's cap; the diff would be banked truncated")
 
 
 # --- the review runs, and what the reviewer actually did ----------------------
@@ -298,12 +306,21 @@ def transcript_artifacts(org: str, repo: str) -> dict[int, dict]:
 
     One listing for the repo rather than one call per run: 2737 runs across the org would
     otherwise be 2737 calls to learn what a few can say.
+
+    Every attempt of a re-run run uploads its own artifact under the same run id; the
+    newest is the run's transcript. An artifact naming no run cannot be anyone's, and
+    is a contradiction in GitHub's answer. [LAW:no-silent-failure]
     """
-    return {
-        a["workflow_run"]["id"]: a
-        for a in rest_pages(f"/repos/{org}/{repo}/actions/artifacts", "artifacts")
-        if a["name"] == "review-session-transcript"
-    }
+    newest: dict[int, dict] = {}
+    for a in rest_pages(f"/repos/{org}/{repo}/actions/artifacts", "artifacts"):
+        if a["name"] != "review-session-transcript":
+            continue
+        if not a.get("workflow_run"):
+            raise RuntimeError(f"{org}/{repo}: transcript artifact {a['id']} names no workflow run")
+        run_id = a["workflow_run"]["id"]
+        if run_id not in newest or (a["created_at"], a["id"]) > (newest[run_id]["created_at"], newest[run_id]["id"]):
+            newest[run_id] = a
+    return newest
 
 
 
