@@ -72,7 +72,9 @@ Oracles share three helpers. Each is part of the digest of every case whose orac
 - `differential.py` (no-silent-failure): did a failure leave a trace?
 - `calltrace.py` (parse-dont-validate): what type did each of the program's own
   functions receive? The program runs under a profiler on good input. A function inland
-  of the boundary that still receives the raw `dict` or `str` was handed unchecked data.
+  of the boundary that still receives the raw `dict` or `str`, or a list of them, was
+  handed unchecked data. A function that received it and called the parser itself
+  cannot be read either way, and the run is `inconclusive`.
 - `identifiers.py` (domain-language): which names did the agent coin, and from which
   vocabulary? Each case holds the domain's or the project's term for the thing the
   request describes, and the plain words the request uses instead.
