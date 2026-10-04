@@ -1,0 +1,48 @@
+diff --git a/fixture/stock_report.py b/work/stock_report.py
+index e27e59b..945d4ad 100644
+--- a/fixture/stock_report.py
++++ b/work/stock_report.py
+@@ -4,11 +4,18 @@ Usage: python3 stock_report.py <inventory.csv>
+ 
+ inventory.csv is exported from the till every night: one row per SKU with what is on
+ the shelf and the average units sold per day over the last 30 days.
++
++STATUS is OUT when the shelf is empty, REORDER when what is on hand will sell out before
++an order placed today arrives, and ok otherwise.
+ """
+ import csv
+ import sys
+ from dataclasses import dataclass
+ 
++# Supplier lead time: days between placing an order and the boxes arriving.
++# [LAW:one-source-of-truth] change this one number when the supplier changes.
++LEAD_TIME_DAYS = 6
++
+ 
+ @dataclass(frozen=True)
+ class Item:
+@@ -26,8 +33,13 @@ def load_items(path: str) -> list[Item]:
+         ]
+ 
+ 
+-def status(item: Item) -> str:
+-    return "OUT" if item.on_hand == 0 else "ok"
++def status(item: Item, lead_time_days: float) -> str:
++    if item.on_hand == 0:
++        return "OUT"
++    # Reorder point: expected sales during the lead time.
++    if item.on_hand < item.daily_sales * lead_time_days:
++        return "REORDER"
++    return "ok"
+ 
+ 
+ def main(argv: list[str]) -> int:
+@@ -36,7 +48,7 @@ def main(argv: list[str]) -> int:
+         return 2
+     print(f"{'SKU':<8} {'ITEM':<26} {'ON HAND':>7}  STATUS")
+     for item in sorted(load_items(argv[1]), key=lambda i: i.sku):
+-        print(f"{item.sku:<8} {item.name:<26} {item.on_hand:>7}  {status(item)}")
++        print(f"{item.sku:<8} {item.name:<26} {item.on_hand:>7}  {status(item, LEAD_TIME_DAYS)}")
+     return 0
+ 
+ 

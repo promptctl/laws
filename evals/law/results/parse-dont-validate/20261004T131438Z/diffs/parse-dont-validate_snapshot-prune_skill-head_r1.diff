@@ -1,0 +1,172 @@
+diff --git a/fixture/prune.py b/work/prune.py
+index f0bf84d..172ee5b 100644
+--- a/fixture/prune.py
++++ b/work/prune.py
+@@ -5,6 +5,10 @@ Usage: python3 prune.py <policy.json>
+ The policy names the snapshot directory and one rule per snapshot family: every
+ `<prefix>*.tar` file in the directory belongs to that rule, and the newest `keep`
+ of them are kept. With "dry_run": true nothing is deleted, only listed.
++
++The whole policy is checked before anything is deleted: a mistake in it (unknown
++or missing key, wrong value type, overlapping prefixes, missing directory) is
++reported on stderr and the run exits 1 with every snapshot untouched.
+ """
+ import json
+ import sys
+@@ -16,9 +20,19 @@ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 prune.py <policy.json>", file=sys.stderr)
+         return 2
+-    with open(argv[1]) as f:
+-        policy = json.load(f)
+-    retention.apply(policy)
++    try:
++        with open(argv[1]) as f:
++            raw = json.load(f)
++    except (OSError, json.JSONDecodeError) as e:
++        print(f"prune.py: cannot read {argv[1]}: {e}\nNothing was deleted.", file=sys.stderr)
++        return 1
++    try:
++        retention.apply(retention.parse_policy(raw))
++    except retention.PolicyError as e:
++        print(f"prune.py: {argv[1]} is not a usable policy. Nothing was deleted.", file=sys.stderr)
++        for problem in e.problems:
++            print(f"  - {problem}", file=sys.stderr)
++        return 1
+     return 0
+ 
+ 
+diff --git a/fixture/retention.py b/work/retention.py
+index 1fe863f..0712b29 100644
+--- a/fixture/retention.py
++++ b/work/retention.py
+@@ -1,22 +1,119 @@
+ """Delete the snapshots a retention policy no longer keeps."""
++import difflib
++from dataclasses import dataclass
+ from pathlib import Path
+ 
+ 
+-def apply(policy):
+-    root = Path(policy["snapshot_dir"])
+-    for rule in policy["rules"]:
+-        prune(root, rule, dry_run=policy.get("dry_run", False))
++class PolicyError(Exception):
++    """The policy is unusable; `problems` lists every mistake found in it."""
+ 
++    def __init__(self, problems):
++        super().__init__("; ".join(problems))
++        self.problems = problems
++
++
++@dataclass(frozen=True)
++class Rule:
++    prefix: str
++    keep: int
++
++
++@dataclass(frozen=True)
++class Policy:
++    snapshot_dir: Path
++    dry_run: bool
++    rules: tuple
++
++
++def _is_name(value):
++    return isinstance(value, str) and value != ""
++
++
++def _is_count(value):
++    # bool is an int subclass: `"keep": true` must not mean keep 1.
++    return type(value) is int and value >= 0
++
++
++# key -> (accepts, what a legal value is)
++_POLICY_REQUIRED = {
++    "snapshot_dir": (_is_name, "a non-empty string"),
++    "rules": (lambda v: isinstance(v, list), "a list of rules"),
++}
++_POLICY_OPTIONAL = {"dry_run": (lambda v: isinstance(v, bool), "true or false")}
++# An empty prefix would glob every family's snapshots; a negative keep would
++# slice from the wrong end and delete the newest ones.
++_RULE_REQUIRED = {
++    "prefix": (_is_name, "a non-empty string"),
++    "keep": (_is_count, "a whole number, 0 or more"),
++}
+ 
+-def snapshots(root, prefix):
+-    """Newest first: names end in an ISO date, so name order is age order."""
+-    return sorted(root.glob(f"{prefix}*.tar"), reverse=True)
+ 
++def _problems(where, obj, required, optional=None):
++    """Every way `obj` fails to be an object with exactly these keys."""
++    if not isinstance(obj, dict):
++        return [f"{where}: must be an object, got {obj!r}"]
++    fields = {**required, **(optional or {})}
++    found = []
++    for key, value in obj.items():
++        if key not in fields:
++            close = difflib.get_close_matches(key, fields, n=1)
++            hint = f" (did you mean {close[0]!r}?)" if close else ""
++            found.append(f"{where}: unknown key {key!r}{hint}")
++        else:
++            accepts, expected = fields[key]
++            if not accepts(value):
++                found.append(f"{where}: {key!r} must be {expected}, got {value!r}")
++    found += [f"{where}: missing required key {key!r}" for key in required if key not in obj]
++    return found
++
++
++def parse_policy(raw):
++    """Turn decoded policy JSON into a Policy, or raise PolicyError.
++
++    # [LAW:parse-dont-validate] The only place a policy is checked: everything
++    past here takes a Policy and can no longer meet a malformed one mid-deletion.
++    """
++    found = _problems("policy", raw, _POLICY_REQUIRED, _POLICY_OPTIONAL)
++    raw_rules = raw.get("rules") if isinstance(raw, dict) else None
++    if isinstance(raw_rules, list):
++        for i, rule in enumerate(raw_rules):
++            found += _problems(f"rules[{i}]", rule, _RULE_REQUIRED)
++    if found:
++        raise PolicyError(found)
+ 
+-def prune(root, rule, dry_run):
+-    for path in snapshots(root, rule["prefix"])[rule["keep"]:]:
+-        if dry_run:
++    rules = tuple(Rule(r["prefix"], r["keep"]) for r in raw_rules)
++    # Families are matched by prefix, so overlapping prefixes would put one
++    # snapshot under two rules and the smaller `keep` would win.
++    overlaps = [
++        f"rules[{i}] and rules[{j}]: prefix {a.prefix!r} also matches the "
++        f"{b.prefix!r} snapshots, so they would be pruned twice"
++        for i, a in enumerate(rules)
++        for j, b in enumerate(rules)
++        if i != j and b.prefix.startswith(a.prefix) and (a.prefix != b.prefix or i < j)
++    ]
++    if overlaps:
++        raise PolicyError(overlaps)
++    return Policy(Path(raw["snapshot_dir"]), raw.get("dry_run", False), rules)
++
++
++def apply(policy):
++    root = policy.snapshot_dir
++    if not root.is_dir():
++        raise PolicyError([f"policy: snapshot_dir {str(root)!r} is not a directory"])
++    # Work out the whole deletion list before the first unlink.
++    doomed = [path for rule in policy.rules for path in expired(root, rule)]
++    for path in doomed:
++        if policy.dry_run:
+             print(f"would delete {path}")
+         else:
+             path.unlink()
+             print(f"deleted {path}")
++
++
++def snapshots(root, prefix):
++    """Newest first: names end in an ISO date, so name order is age order."""
++    return sorted(root.glob(f"{prefix}*.tar"), reverse=True)
++
++
++def expired(root, rule):
++    return snapshots(root, rule.prefix)[rule.keep:]

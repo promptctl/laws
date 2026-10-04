@@ -1,0 +1,80 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..47d3855 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,6 +1,9 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only transactions posted in that month count; with none, every
++transaction in the file counts.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+@@ -8,8 +11,9 @@ export, one row per transaction with the envelope it was filed under.
+ import csv
+ import json
+ import sys
++from collections.abc import Callable
+ from dataclasses import dataclass
+-from datetime import date
++from datetime import date, datetime
+ from decimal import Decimal
+ from pathlib import Path
+ 
+@@ -31,6 +35,24 @@ class Transaction:
+     amount: Decimal
+ 
+ 
++@dataclass(frozen=True)
++class Month:
++    year: int
++    month: int
++
++    @classmethod
++    def parse(cls, text: str) -> "Month":
++        """Parse YYYY-MM; raises ValueError for anything else."""
++        try:
++            parsed = datetime.strptime(text, "%Y-%m")
++        except ValueError:
++            raise ValueError(f"not a month in YYYY-MM form: {text!r}") from None
++        return cls(parsed.year, parsed.month)
++
++    def contains(self, posted: date) -> bool:
++        return (posted.year, posted.month) == (self.year, self.month)
++
++
+ def load_envelopes(path: Path = ENVELOPES_FILE) -> list[Envelope]:
+     return [Envelope(name, Decimal(amount)) for name, amount in json.loads(path.read_text()).items()]
+ 
+@@ -50,9 +72,27 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+     return spent
+ 
+ 
++def parse_period(args: list[str]) -> Callable[[date], bool]:
++    """The budget period named on the command line, as a test on a posting date."""
++    # [LAW:dataflow-not-control-flow] "no month" is the period containing every date,
++    # so main filters unconditionally and only the predicate varies.
++    match args:
++        case []:
++            return lambda posted: True
++        case [text]:
++            return Month.parse(text).contains
++        case _:
++            raise ValueError(f"expected at most one month, got {len(args)} arguments")
++
++
+ def main(argv: list[str]) -> int:
++    try:
++        in_period = parse_period(argv[1:])
++    except ValueError as error:
++        print(f"budget.py: {error}\nusage: python3 budget.py [YYYY-MM]", file=sys.stderr)
++        return 2
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    spent = spent_by_envelope([t for t in load_transactions() if in_period(t.posted)])
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")

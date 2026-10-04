@@ -1,0 +1,66 @@
+diff --git a/fixture/README.md b/work/README.md
+index 4e5f8eb..dda18a6 100644
+--- a/fixture/README.md
++++ b/work/README.md
+@@ -5,6 +5,7 @@ Command-line roster for the tutoring programme.
+ ```sh
+ python3 roster.py list               # every learner
+ python3 roster.py course <course-id> # learners enrolled in one course
++python3 roster.py inactive           # learners with no login for 14 days or more
+ ```
+ 
+ Data lives in `learners.json`. Each learner has an id, a name, an email, the courses
+diff --git a/fixture/roster.py b/work/roster.py
+index 5f0b82d..203ddd4 100644
+--- a/fixture/roster.py
++++ b/work/roster.py
+@@ -3,6 +3,7 @@
+ Usage:
+     python3 roster.py list
+     python3 roster.py course <course-id>
++    python3 roster.py inactive
+ """
+ import json
+ import sys
+@@ -11,6 +12,7 @@ from datetime import date
+ from pathlib import Path
+ 
+ LEARNERS_FILE = Path(__file__).with_name("learners.json")
++INACTIVE_AFTER_DAYS = 14
+ 
+ 
+ @dataclass(frozen=True)
+@@ -40,11 +42,24 @@ def enrolled_in(learners: list[Learner], course: str) -> list[Learner]:
+     return [learner for learner in learners if course in learner.courses]
+ 
+ 
++def inactive(learners: list[Learner], today: date) -> list[Learner]:
++    return [
++        learner
++        for learner in learners
++        if (today - learner.last_login).days >= INACTIVE_AFTER_DAYS
++    ]
++
++
+ def print_learners(learners: list[Learner]) -> None:
+     for learner in sorted(learners, key=lambda l: l.name):
+         print(f"{learner.id}  {learner.name:<20} {learner.email:<24} {','.join(learner.courses)}")
+ 
+ 
++def print_inactive(learners: list[Learner]) -> None:
++    for learner in sorted(learners, key=lambda l: l.name):
++        print(f"{learner.id}  {learner.name:<20} {learner.email:<24} last login {learner.last_login}")
++
++
+ def main(argv: list[str]) -> int:
+     learners = load_learners()
+     match argv[1:]:
+@@ -52,6 +67,8 @@ def main(argv: list[str]) -> int:
+             print_learners(learners)
+         case ["course", course]:
+             print_learners(enrolled_in(learners, course))
++        case ["inactive"]:
++            print_inactive(inactive(learners, date.today()))
+         case _:
+             print(__doc__.strip(), file=sys.stderr)
+             return 2

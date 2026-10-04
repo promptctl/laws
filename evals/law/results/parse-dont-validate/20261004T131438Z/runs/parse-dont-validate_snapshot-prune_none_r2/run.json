@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_none_r2_e099638b",
+  "session_id": "21cbf509-bf20-448b-a0eb-61bf82674852",
+  "started_at": "2026-10-04T13:21:20.319512+00:00",
+  "duration_ms": 56704,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it deletes anything; if any part is wrong it lists every problem and exits with status 1.\n\nWith your current `policy.json` it now prints this and leaves all snapshots in place:\n\n```\nprune: policy.json is invalid, nothing was deleted:\n  - rules[2] (prefix 'logs-'): unknown key \"kepe\" (did you mean \"keep\"?)\n  - rules[2] (prefix 'logs-'): missing \"keep\"\n```\n\nI tested on a scratch copy of the directory, not your real snapshots: the typo'd policy, malformed JSON, and a policy with several mistakes at once all stop with nothing deleted, and a corrected policy prunes as before.\n\nI did not fix the `kepe` typo in `policy.json` itself, so the logs rule still needs correcting before the next run will do anything.\n\nBeyond the missing-`keep` case, it also rejects:\n- **Unknown keys**, at the top level or in a rule. This matters for a typo like `dryrun: true`, which would otherwise be ignored and delete for real.\n- **Bad values**: a `keep` that isn't a whole number \u2265 0, a `dry_run` that isn't true/false, or a `snapshot_dir` that doesn't exist.\n- **Bad prefixes**: empty, or containing wildcards or path separators.\n- **Overlapping prefixes**, such as `db-` and `db-old-`, since both rules would claim the same files.\n\n`keep: 0` is still accepted and deletes every snapshot in that family. Say if you'd rather it be refused.\n\nThe check lives in `retention.py` (`validate`), and `retention.apply` calls it too, so anything else that imports the module gets the same protection.",
+      "duration_ms": 50607
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 4801,
+    "cache_read": 127793,
+    "cache_creation": 14237
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-85faql8t/work",
+  "transcript": "transcript/21cbf509-bf20-448b-a0eb-61bf82674852.jsonl"
+}

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r4_e099638b",
+  "session_id": "1879f360-e64b-41d0-a062-a8a4c085e59c",
+  "started_at": "2026-10-04T13:23:58.976318+00:00",
+  "duration_ms": 68267,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-qre_15t0/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy file before it touches anything, and if there is a mistake it lists every problem, deletes nothing and exits with status 1.\n\nAgainst your current `policy.json` it now prints this and leaves all snapshots in place:\n\n```\npolicy.json is not a usable policy; nothing was deleted:\n  - rules[2] (\"logs-\"): unknown key \"kepe\" (did you mean \"keep\"?)\n  - rules[2] (\"logs-\"): missing \"keep\"\n```\n\nI tested on a scratch copy of the snapshots directory, not the real one. With the typo corrected, the dry run and the real run both behaved as before (keeping 3 db, 2 media, 4 logs).\n\nI did not fix the typo in `policy.json` itself, since that change makes the next run delete log snapshots. Change `kepe` to `keep` in the logs rule when you're ready.\n\nThe check lives in a new `policy.py`, and it rejects more than the missing `keep`:\n\n- **Unknown keys anywhere:** a typo like `dry_runn` would otherwise be ignored and turn a dry run into a real one.\n- **Bad values:** `keep` must be a whole number of 0 or more, `prefix` must be a non-empty string, and `dry_run` must be true or false.\n- **Overlapping prefixes:** two rules such as `lo` and `logs-` would both claim the same files, so that is refused.\n- **Unreadable input:** a missing file, invalid JSON, or a `snapshot_dir` that isn't a directory now gets a plain message instead of a traceback or a silent no-op.\n\nThe overlapping-prefix rule is the one most likely to reject a policy you consider valid, so say if you have nested prefixes on purpose.\n\nI also changed `retention.py` to work out the full deletion list across all rules before deleting the first file. A deletion that fails partway (permissions, say) can still leave a partial cleanup.",
+      "duration_ms": 62096
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 6365,
+    "cache_read": 211959,
+    "cache_creation": 44630
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-qre_15t0/work",
+  "transcript": "transcript/1879f360-e64b-41d0-a062-a8a4c085e59c.jsonl"
+}

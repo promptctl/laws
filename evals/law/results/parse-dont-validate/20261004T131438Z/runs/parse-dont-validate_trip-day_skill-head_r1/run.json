@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_skill-head_r1_e099638b",
+  "session_id": "c58c5cc1-a09c-4af9-aa63-e717fb5a2091",
+  "started_at": "2026-10-04T13:34:35.467944+00:00",
+  "duration_ms": 41524,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-vlz1z9vd/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed: a bad `day` now gets a 400 with a JSON error saying what's wrong, and no traceback reaches the error log. I checked by calling the WSGI app directly with your two logged values and a few others; there is no test suite in the repo and I didn't add one.\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `day '2026-09-31' is not a real calendar date: day is out of range for month` |\n| `day=14/09/2026` | 400 `day must be in YYYY-MM-DD form, got '14/09/2026'` |\n| `day=2026-13-01` | 400 `day '2026-13-01' is not a real calendar date: month must be in 1..12` |\n| `day=` or no `day` at all | 400 `day is required, as YYYY-MM-DD (e.g. /trips?day=2026-09-14)` |\n| `day=2026-09-14` | 200, same summary as before |\n\nThe change is in two places:\n\n- **`app.py`**: a new `parse_day` checks the query string once and turns it into a `date`; `application` answers 400 if that fails.\n- **`trips.py`**: `trips_on`, `busiest_stations` and `summary` now take a `date` instead of a string.\n\nTwo behaviours you might not expect:\n\n- **Missing `day`**: an empty or absent `day` used to 500 as well; it now gets the 400 above.\n- **Strict format**: only `YYYY-MM-DD` is accepted. Forms like `20260914`, which the old code let through, are now rejected with a 400.\n\nThe dashboard's date picker is still sending these bad values; this only makes the API answer them properly.",
+      "duration_ms": 35837
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 3383,
+    "cache_read": 211787,
+    "cache_creation": 41016
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-vlz1z9vd/work",
+  "transcript": "transcript/c58c5cc1-a09c-4af9-aa63-e717fb5a2091.jsonl"
+}
