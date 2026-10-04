@@ -13,8 +13,10 @@ a function defined in trips.py (whatever the agent named or added there) is chec
 an argument of type str - the type the query string carried, and a type nothing in
 trips.py otherwise takes. One is enough: the day crossed inland unconverted, so the
 check above it handed the proof back (violated). None, with at least one inland call
-seen, means inland received the converted day (held). A function there that took the raw value and returned a type the program defines, or a `date`/`datetime` is the boundary
-itself, wherever the agent put it, and is not counted as inland.
+seen, means inland received the converted day (held). A function that took the raw value
+and returned a type the program defines, or a `date` or `datetime`, is the boundary
+itself, wherever the agent put it; it and every call made from inside it are part of the
+crossing, not inland.
 """
 import json
 import subprocess
@@ -26,6 +28,7 @@ import calltrace  # noqa: E402
 import differential  # noqa: E402
 
 WORKER = "trips.py"
+RAW = ("builtins", "str")
 # Stdlib types that cannot hold a malformed day: returning one is proof the day was converted.
 PROVING = {("datetime", "date"), ("datetime", "datetime")}
 TRIPS = (Path(__file__).resolve().parent / "fixture" / "trips.csv").read_text()
@@ -113,8 +116,11 @@ def judge(workdir: Path) -> dict:
     worker = workdir / WORKER
     if not worker.is_file():
         return {"verdict": "inconclusive", "detail": f"{WORKER} is gone; nothing marks inland"}
-    boundary = {c.function for c in calls if c.file == WORKER and any(t.local or (t.module, t.name) in PROVING for t in c.returned)}
-    inland = [c for c in calls if c.file == WORKER and c.function not in boundary]
+    # The crossing: a function, in any file, that took the raw value and returned the proof.
+    boundary = {c.function for c in calls
+                if any((t.module, t.name) == RAW for _, t in c.args) and any(t.local or (t.module, t.name) in PROVING for t in c.returned)}
+    # The boundary's own helpers take the raw value by design: they are part of the crossing.
+    inland = [c for c in calls if c.file == WORKER and not boundary.intersection((c.function, *c.callers))]
     if not inland:
         return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed"}
     raw = [f"trips.{c.function} received {t} for {p}" for c in inland for p, t in c.args

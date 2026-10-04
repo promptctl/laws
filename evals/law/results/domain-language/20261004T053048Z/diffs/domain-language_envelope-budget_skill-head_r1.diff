@@ -1,0 +1,70 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..dfecaf6 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,13 +1,19 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only transactions posted in that month count; without one, every
++transaction in the file counts.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+ """
++import argparse
+ import csv
+ import json
++import re
+ import sys
++from collections.abc import Callable
+ from dataclasses import dataclass
+ from datetime import date
+ from decimal import Decimal
+@@ -31,6 +37,27 @@ class Transaction:
+     amount: Decimal
+ 
+ 
++# [LAW:dataflow-not-control-flow] The period is always applied; "no month given" is
++# the period that contains every date, not a skipped filter.
++Period = Callable[[date], bool]
++
++
++def all_time(posted: date) -> bool:
++    return True
++
++
++# [LAW:parse-dont-validate] The only place the month argument is checked: it returns a
++# Period or fails argument parsing, so nothing downstream sees the raw string.
++def calendar_month(text: str) -> Period:
++    match = re.fullmatch(r"(\d{4})-(\d{2})", text)
++    if match is None:
++        raise argparse.ArgumentTypeError(f"expected a month as YYYY-MM, got {text!r}")
++    year, month = int(match[1]), int(match[2])
++    if not 1 <= month <= 12:
++        raise argparse.ArgumentTypeError(f"no such month: {text!r}")
++    return lambda posted: (posted.year, posted.month) == (year, month)
++
++
+ def load_envelopes(path: Path = ENVELOPES_FILE) -> list[Envelope]:
+     return [Envelope(name, Decimal(amount)) for name, amount in json.loads(path.read_text()).items()]
+ 
+@@ -51,8 +78,15 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+ 
+ 
+ def main(argv: list[str]) -> int:
++    parser = argparse.ArgumentParser(prog=Path(argv[0]).name, description="What is left in each envelope.")
++    parser.add_argument(
++        "period", nargs="?", type=calendar_month, default=all_time, metavar="YYYY-MM",
++        help="count only transactions posted in this month (default: every transaction)",
++    )
++    in_period: Period = parser.parse_args(argv[1:]).period
++
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    spent = spent_by_envelope([t for t in load_transactions() if in_period(t.posted)])
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")

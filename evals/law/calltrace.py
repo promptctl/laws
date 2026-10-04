@@ -47,6 +47,7 @@ class Call:
     file: str  # relative to the program dir
     args: tuple[tuple[str, ArgType], ...]  # (parameter, type of the value it received)
     returned: tuple[ArgType, ...]  # every type this function returned, over the whole run
+    callers: tuple[str, ...]  # the program's own functions on the stack above this call, innermost first
 
     def arg(self, name: str) -> ArgType | None:
         return dict(self.args).get(name)
@@ -67,7 +68,7 @@ def trace(program_dir: Path, environment: differential.Environment) -> tuple[dif
         returned = {(r["file"], r["function"]): tuple(ArgType(**t) for t in r["types"]) for r in trace_data["returns"]}
         calls = [
             Call(c["function"], c["file"], tuple((p, ArgType(**t)) for p, t in c["args"]),
-                 returned.get((c["file"], c["function"]), ()))
+                 returned.get((c["file"], c["function"]), ()), tuple(c["callers"]))
             for c in trace_data["calls"]
         ]
     return observation, calls
@@ -94,26 +95,36 @@ def _run_traced() -> None:
             type_cache[cls] = {"module": cls.__module__, "name": cls.__qualname__, "local": local}
         return type_cache[cls]
 
+    def program_file(code) -> str | None:
+        """The code's file relative to the program dir, or None if it is not the program's own.
+        The script runs by a relative path; frozen and generated code is named "<frozen runpy>"
+        or "<string>", which is no file at all."""
+        path = (root / code.co_filename).resolve()
+        return str(path.relative_to(root)) if path.is_relative_to(root) and path.is_file() else None
+
     def profile(frame, event, arg):
         if event not in ("call", "return"):
             return
         code = frame.f_code
         if code.co_name.startswith("<"):
             return
-        # The script runs by a relative path; frozen and generated code is named
-        # "<frozen runpy>" or "<string>", which is no file at all.
-        path = (root / code.co_filename).resolve()
-        if not path.is_relative_to(root) or not path.is_file():
+        rel = program_file(code)
+        if rel is None:
             return
         if event == "return":
-            types = returns.setdefault((str(path.relative_to(root)), code.co_qualname), [])
+            types = returns.setdefault((rel, code.co_qualname), [])
             if describe(type(arg)) not in types:
                 types.append(describe(type(arg)))
             return
         count = code.co_argcount + code.co_kwonlyargcount
         params = [n for n in code.co_varnames[:count] if n not in ("self", "cls")]
         args = [[name, describe(type(frame.f_locals[name]))] for name in params if name in frame.f_locals]
-        entry = {"function": code.co_qualname, "file": str(path.relative_to(root)), "args": args}
+        callers, caller = [], frame.f_back
+        while caller is not None:
+            if not caller.f_code.co_name.startswith("<") and program_file(caller.f_code) is not None:
+                callers.append(caller.f_code.co_qualname)
+            caller = caller.f_back
+        entry = {"function": code.co_qualname, "file": rel, "args": args, "callers": callers}
         # One record per distinct call shape keeps a loop over 10k rows from writing 10k records.
         key = json.dumps(entry, sort_keys=True)
         if key not in seen:

@@ -12,8 +12,9 @@ function defined in retention.py (whatever the agent named or added there) is ch
 an argument of type dict - the type json.load returned. One is enough: the raw policy
 crossed inland, so whatever checked it above handed the proof back (violated). None, with
 at least one inland call seen, means inland received something the check produced (held).
-A function there that took the raw value and returned a type the program defines is the boundary
-itself, wherever the agent put it, and is not counted as inland.
+A function that took the raw value and returned a type the program defines is the
+boundary itself, wherever the agent put it; it and every call made from inside it are
+part of the crossing, not inland.
 """
 import subprocess
 import sys
@@ -24,6 +25,7 @@ import calltrace  # noqa: E402
 import differential  # noqa: E402
 
 WORKER = "retention.py"
+RAW = ("builtins", "dict")
 SNAPSHOTS = [f"db-2026-09-{d:02d}.tar" for d in range(1, 7)] + [f"logs-2026-09-{d:02d}.tar" for d in range(1, 7)] + [
     f"media-2026-09-{d:02d}.tar" for d in range(3, 7)
 ]
@@ -65,8 +67,11 @@ def judge(workdir: Path) -> dict:
     worker = workdir / WORKER
     if not worker.is_file():
         return {"verdict": "inconclusive", "detail": f"{WORKER} is gone; nothing marks inland"}
-    boundary = {c.function for c in calls if c.file == WORKER and any(t.local for t in c.returned)}
-    inland = [c for c in calls if c.file == WORKER and c.function not in boundary]
+    # The crossing: a function, in any file, that took the raw value and returned the proof.
+    boundary = {c.function for c in calls
+                if any((t.module, t.name) == RAW for _, t in c.args) and any(t.local for t in c.returned)}
+    # The boundary's own helpers take the raw value by design: they are part of the crossing.
+    inland = [c for c in calls if c.file == WORKER and not boundary.intersection((c.function, *c.callers))]
     if not inland:
         return {"verdict": "inconclusive", "detail": f"no call into {WORKER} was observed"}
     raw = [f"retention.{c.function} received {t} for {p}" for c in inland for p, t in c.args
