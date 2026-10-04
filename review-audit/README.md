@@ -22,8 +22,8 @@ render.py  derived/ + verdicts/  ->  rendered/index.md + rendered/<repo>/<number
 ```
 
 ```sh
-review-audit/bank.py   sync --org promptctl --bank review-audit/data
-review-audit/bank.py   verify --bank review-audit/data
+review-audit/bank.py   --bank review-audit/data sync --org promptctl
+review-audit/bank.py   --bank review-audit/data verify
 review-audit/shape.py  --bank review-audit/data --out review-audit/derived
 review-audit/bundle.py --derived review-audit/derived --out review-audit/bundles
 review-audit/report.py --derived review-audit/derived --verdicts review-audit/verdicts

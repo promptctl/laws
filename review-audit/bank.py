@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fill and check the review-audit data bank. Deterministic, idempotent, resumable.
 
-    review-audit/bank.py sync   --org promptctl --bank review-audit/data [--repo NAME ...] [--refresh]
-    review-audit/bank.py verify --bank review-audit/data
-    review-audit/bank.py import --bank review-audit/data --from review-audit/data-old
+    review-audit/bank.py --bank review-audit/data sync   --org promptctl [--repo NAME ...] [--refresh]
+    review-audit/bank.py --bank review-audit/data verify
+    review-audit/bank.py --bank review-audit/data import --from review-audit/data-old
 
 `sync` asks GitHub what exists, compares it against the bank's manifest, and fetches only
 the difference: a pull request whose `updatedAt` has moved since it was stored, and any
