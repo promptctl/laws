@@ -1,49 +1,183 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "law-evals/run-record/2",
+  "$id": "law-evals/run-record/3",
   "title": "One agent run of one law-eval case under one arm",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "law", "case", "case_sha256", "arm", "repeat", "model", "oracle", "session",
-               "diff"],
+  "required": [
+    "schema_version",
+    "run_id",
+    "law",
+    "case",
+    "case_kind",
+    "split",
+    "case_sha256",
+    "arm",
+    "repeat",
+    "model",
+    "oracle",
+    "session",
+    "diff"
+  ],
   "properties": {
-    "schema_version": {"const": 2},
-    "run_id": {"type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+/[a-z0-9-]+/r[0-9]+$",
-               "description": "<law>/<scenario>/<arm slug>/r<repeat>; unique within one results directory"},
-    "law": {"type": "string", "pattern": "^[a-z0-9-]+$", "description": "the [LAW:<token>] the case targets"},
-    "case": {"type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+$", "description": "<law>/<scenario>, the case directory under evals/law/cases"},
-    "case_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "digest of the case's fixture, request.md, oracle.py and differential.py: the code that produced the verdict"},
-    "arm": {"$ref": "#/$defs/arm"},
-    "repeat": {"type": "integer", "minimum": 1},
-    "model": {"type": "string", "pattern": "^claude-", "description": "the model the session was asked for; the harness refuses a run any other model served"},
+    "schema_version": {
+      "const": 3
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+/[a-z0-9-]+/[a-z0-9-]+/r[0-9]+$",
+      "description": "<law>/<scenario>/<arm slug>/r<repeat>; unique within one results directory"
+    },
+    "law": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "the [LAW:<token>] the case targets"
+    },
+    "case": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+/[a-z0-9-]+$",
+      "description": "<law>/<scenario>, the case directory under evals/law/cases"
+    },
+    "case_kind": {
+      "enum": [
+        "fork",
+        "over-firing"
+      ],
+      "description": "the case's case.json kind"
+    },
+    "split": {
+      "enum": [
+        "tuning",
+        "holdout"
+      ],
+      "description": "the case's case.json split"
+    },
+    "case_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "digest of the case's case.json, fixture, request.md and oracle.py and of the shared oracle helpers it imports: the code that produced the verdict"
+    },
+    "arm": {
+      "$ref": "#/$defs/arm"
+    },
+    "repeat": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "model": {
+      "type": "string",
+      "pattern": "^claude-",
+      "description": "the model the session was asked for; the harness refuses a run any other model served"
+    },
     "oracle": {
-      "type": "object", "required": ["verdict", "detail"],
+      "type": "object",
+      "required": [
+        "verdict",
+        "detail"
+      ],
       "properties": {
-        "verdict": {"enum": ["held", "violated", "off_fork", "inconclusive"]},
-        "detail": {"type": "string"}
+        "verdict": {
+          "enum": [
+            "held",
+            "violated",
+            "off_fork",
+            "inconclusive"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
       }
     },
-    "session": {"type": "string", "description": "path, relative to the results directory, of the harness's run record for the session (harness/schema/run-record.schema.json): login, model served, Claude Code version, what loaded, turns, tokens and the transcript"},
-    "diff": {"type": "string", "description": "path, relative to the results directory, of the agent's changes to the fixture"}
+    "session": {
+      "type": "string",
+      "description": "path, relative to the results directory, of the harness's run record for the session (harness/schema/run-record.schema.json): login, model served, Claude Code version, what loaded, turns, tokens and the transcript"
+    },
+    "diff": {
+      "type": "string",
+      "description": "path, relative to the results directory, of the agent's changes to the fixture"
+    }
   },
   "$defs": {
     "arm": {
-      "type": "object", "additionalProperties": false, "required": ["name", "guidance"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "guidance",
+        "context"
+      ],
       "properties": {
-        "name": {"type": "string", "pattern": "^(none|skill:.+)$"},
+        "name": {
+          "type": "string",
+          "pattern": "^(none|skill:.+?)(\\+diluted)?$",
+          "description": "<guidance>[+diluted]: none or skill:<git-ref>, optionally run after the fixed dilution turns"
+        },
         "guidance": {
           "oneOf": [
-            {"type": "null"},
-            {"type": "object", "additionalProperties": false, "required": ["path", "ref", "commit", "sha256"],
-             "properties": {
-               "path": {"type": "string"},
-               "ref": {"type": "string"},
-               "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-               "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-             }}
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "ref",
+                "commit",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "commit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          ]
+        },
+        "context": {
+          "description": "null: the request is the session's first turn. Otherwise the fixed turns sent ahead of it",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "turns",
+                "sha256"
+              ],
+              "properties": {
+                "name": {
+                  "const": "diluted"
+                },
+                "turns": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
           ]
         }
       }
     }
-  }
+  },
+  "description": "Frozen as of promptctl-law-evals-qdn.3yt. A change to this schema is its own ticket."
 }

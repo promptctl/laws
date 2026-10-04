@@ -8,8 +8,9 @@ done (see `design-docs/no-single-session-evals.md`).
 ## Run
 
 ```sh
-evals/law/run.py no-silent-failure            # arms none + skill:HEAD, 5 repeats each
+evals/law/run.py no-silent-failure            # the four default arms, 5 repeats each
 evals/law/run.py no-silent-failure --arm none --arm skill:my-branch --repeats 3
+evals/law/run.py no-silent-failure --split tuning   # leave the hold-out cases unread
 evals/law/sensitivity.py <results-dir>        # re-read a results dir's records
 ```
 
@@ -24,6 +25,16 @@ Runs go through `harness/` (see `harness/README.md`), so they need what it needs
 - `skill:<git-ref>`: `plugins/laws/skills/code/SKILL.md` as of that ref, appended to the
   system prompt with `--append-system-prompt-file`. The record keeps the resolved commit
   and the text's sha256.
+- either one suffixed `+diluted`: the session first gets the fixed turns in `dilution/`
+  (three stdlib modules pasted with a question about each), then the
+  request. Measured on one run each, the context at the request grows from 31k tokens to
+  92k, so the skill (28k) falls from about half of it to under a quarter, nearer its share
+  in real use. The
+  record keeps the turns' sha256.
+
+The default arms are `none`, `skill:HEAD`, `none+diluted` and `skill:HEAD+diluted`. An arm
+is read against the `none` arm in its own context, so a diluted arm needs `none+diluted`
+in the same invocation, and `run.py` refuses one without it.
 
 Every run is one `harness/` session in a fresh copy of the fixture: the interactive TUI on
 the subscription login, sent `request.md` as its one turn. The harness admits nothing but
@@ -34,6 +45,13 @@ model than the one requested.
 
 `cases/<law>/<scenario>/` holds:
 
+- `case.json` (`schema/case.schema.json`): its `kind` and `split`.
+  - `fork`: the request puts the agent at the law's decision.
+  - `over-firing`: the law does not apply. Held means the agent added no ceremony the
+    request did not need, so a `regressed` reading is guidance that fires where it should not.
+  - `tuning` or `holdout`: a hold-out case is kept out of the skill-edit loop. Edit
+    against `--split tuning` and run the hold-out cases only to check that an edit
+    generalizes. A loop that reads them teaches the text to them too.
 - `fixture/`: the agent's working directory at the start.
 - `request.md`: the one message the agent receives.
 - `oracle.py <workdir>`: prints `{"verdict", "detail", ...}` for the agent's finished
@@ -44,8 +62,22 @@ model than the one requested.
   answer. `test_law_evals.py` requires the oracle to read each one as the verdict its
   name starts with, and to read the untouched fixture as `off_fork`.
 
+Every law's case set has at least one over-firing case and one hold-out case.
+
 A scenario must not be one the law's text uses as an example. Otherwise editing the text
 teaches it to its own test.
+
+Oracles share three helpers. Each is part of the digest of every case whose oracle imports it:
+
+- `differential.py` (no-silent-failure): did a failure leave a trace?
+- `calltrace.py` (parse-dont-validate): what type did each of the program's own
+  functions receive? The program runs under a profiler on good input. A function inland
+  of the boundary that still receives the raw `dict` or `str`, or a list of them, was
+  handed unchecked data. A function that received it and called the parser itself
+  cannot be read either way, and the run is `inconclusive`.
+- `identifiers.py` (domain-language): which names did the agent coin, and from which
+  vocabulary? Each case holds the domain's or the project's term for the thing the
+  request describes, and the plain words the request uses instead.
 
 The no-silent-failure cases use `differential.py`. It runs the agent's program once with
 its dependency healthy and once with the dependency failing. If the two runs match on
@@ -60,9 +92,9 @@ the verdict is `inconclusive`.
   session's transcript. The transcript is never committed: Claude Code writes the login's
   account email into it.
 - `records/<run>.json`: one per run, conforming to `schema/run-record.schema.json`. It
-  holds the case and a digest of the case and oracle code that judged it, the law, arm,
-  skill ref and model, the oracle verdict, and paths to the harness record and the agent's
-  diff.
+  holds the case, its kind and split, a digest of the case and oracle code that judged
+  it, the law, arm, skill ref, context and model, the oracle verdict, and paths to the
+  harness record and the agent's diff.
 - `summaries/<scenario>.json`: the case's sensitivity record, conforming to
   `schema/case-summary.schema.json`. It is derived from `records/` and `failed-runs.json`
   every time, never edited, and refuses records of one case judged by two versions of its
@@ -71,8 +103,11 @@ the verdict is `inconclusive`.
   harness failed, an oracle crash). A summary counts them as runs that did not reach the
   decision.
 
-A summary reads each arm against `none`, counting only the runs that reached the
-decision:
+The three schemas are frozen as of promptctl-law-evals-qdn.3yt. A change to any of them
+is its own ticket.
+
+A summary reads each arm against the `none` arm in its context, counting only the runs
+that reached the decision:
 
 | reading | when |
 |---|---|

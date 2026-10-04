@@ -1,0 +1,84 @@
+{
+  "schema_version": 3,
+  "law": "parse-dont-validate",
+  "case": "parse-dont-validate/trip-day",
+  "case_kind": "fork",
+  "split": "holdout",
+  "model": "claude-opus-5-5",
+  "arms": {
+    "none": {
+      "runs": 5,
+      "held": 0,
+      "violated": 5,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "parse-dont-validate/trip-day/none/r1",
+        "parse-dont-validate/trip-day/none/r2",
+        "parse-dont-validate/trip-day/none/r3",
+        "parse-dont-validate/trip-day/none/r4",
+        "parse-dont-validate/trip-day/none/r5"
+      ]
+    },
+    "none+diluted": {
+      "runs": 5,
+      "held": 0,
+      "violated": 5,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "parse-dont-validate/trip-day/none-diluted/r1",
+        "parse-dont-validate/trip-day/none-diluted/r2",
+        "parse-dont-validate/trip-day/none-diluted/r3",
+        "parse-dont-validate/trip-day/none-diluted/r4",
+        "parse-dont-validate/trip-day/none-diluted/r5"
+      ]
+    },
+    "skill:HEAD": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "parse-dont-validate/trip-day/skill-head/r1",
+        "parse-dont-validate/trip-day/skill-head/r2",
+        "parse-dont-validate/trip-day/skill-head/r3",
+        "parse-dont-validate/trip-day/skill-head/r4",
+        "parse-dont-validate/trip-day/skill-head/r5"
+      ]
+    },
+    "skill:HEAD+diluted": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "parse-dont-validate/trip-day/skill-head-diluted/r1",
+        "parse-dont-validate/trip-day/skill-head-diluted/r2",
+        "parse-dont-validate/trip-day/skill-head-diluted/r3",
+        "parse-dont-validate/trip-day/skill-head-diluted/r4",
+        "parse-dont-validate/trip-day/skill-head-diluted/r5"
+      ]
+    }
+  },
+  "comparisons": [
+    {
+      "control": "none",
+      "arm": "skill:HEAD",
+      "reading": "separate",
+      "p_value": 0.007936507936507936
+    },
+    {
+      "control": "none+diluted",
+      "arm": "skill:HEAD+diluted",
+      "reading": "separate",
+      "p_value": 0.007936507936507936
+    }
+  ]
+}

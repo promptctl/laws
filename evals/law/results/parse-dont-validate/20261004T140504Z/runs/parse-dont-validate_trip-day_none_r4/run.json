@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r4_c6fd2586",
+  "session_id": "0f20757b-2647-41e4-924c-2cc188cb6e8f",
+  "started_at": "2026-10-04T14:19:47.975713+00:00",
+  "duration_ms": 30755,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "A bad `day` now gets a 400 with a JSON error saying what's wrong, and no traceback is logged. I checked this by calling the app directly with the two values from your access log plus a few others; valid days still return 200 as before.\n\nThe fix is in `app.py`: the `day` parameter is validated before it reaches `trips.summary`. The responses look like this:\n\n| Request | Status | `error` message |\n|---|---|---|\n| `day=2026-09-31` | 400 | `invalid day '2026-09-31': day is out of range for month` |\n| `day=14/09/2026` | 400 | `invalid day '14/09/2026': expected YYYY-MM-DD, like 2026-09-14` |\n| `day=` or no `day` at all | 400 | `missing 'day' parameter, expected a date like 2026-09-14` |\n\nTwo behaviours you might not assume:\n\n- **Missing `day`:** an empty or absent `day` also used to 500, so it now gets a 400 too.\n- **Strict format:** only `YYYY-MM-DD` is accepted. Compact forms like `20260914`, which used to return 200 on this Python version, now get a 400.\n\nThe date picker itself is still sending these bad values; that code isn't in this directory, so the dashboard side remains to be fixed.",
+      "duration_ms": 24815
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2308,
+    "cache_read": 127651,
+    "cache_creation": 11302
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-5yk5z7tj/work",
+  "transcript": "transcript/0f20757b-2647-41e4-924c-2cc188cb6e8f.jsonl"
+}

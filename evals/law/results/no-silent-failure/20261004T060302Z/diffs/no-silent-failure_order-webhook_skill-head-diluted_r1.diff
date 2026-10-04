@@ -1,0 +1,71 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..10a13d7 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -3,7 +3,11 @@
+ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+-priced order to the shipping webhook as it goes.
++priced order to the shipping webhook as it goes. An order the webhook does
++not accept is still priced; it is reported on stderr.
++
++Exit status: 0 every order priced and notified, 1 every order priced but
++some not notified to shipping, 2 usage error.
+ """
+ import json
+ import sys
+@@ -22,11 +26,23 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    undelivered = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++        try:
++            shipping.notify(order["id"], total)
++        except shipping.NotifyError as err:
++            # [LAW:no-silent-failure] pricing continues, but shipping never heard
++            # about this order: say so, and carry it into the exit status.
++            print(f"shipping not notified for {order['id']}: {err}", file=sys.stderr)
++            undelivered.append(order["id"])
++    # [LAW:nothing-unseen] one summary per run, so "all notified" reads as a zero.
++    print(
++        f"priced {len(orders)} orders, {len(undelivered)} not notified to shipping",
++        file=sys.stderr,
++    )
++    return 1 if undelivered else 0
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fixture/shipping.py b/work/shipping.py
+index bfa6d7e..6129cbf 100644
+--- a/fixture/shipping.py
++++ b/work/shipping.py
+@@ -4,6 +4,10 @@ import os
+ import urllib.request
+ 
+ 
++class NotifyError(Exception):
++    """The shipping webhook could not be reached or rejected the notification."""
++
++
+ def notify(order_id, total):
+     body = json.dumps({"order_id": order_id, "total": str(total)}).encode()
+     request = urllib.request.Request(
+@@ -12,5 +16,10 @@ def notify(order_id, total):
+         headers={"Content-Type": "application/json"},
+         method="POST",
+     )
+-    with urllib.request.urlopen(request, timeout=5) as response:
+-        response.read()
++    # URLError, HTTPError, timeouts and connection resets are all OSError.
++    # A missing or malformed WEBHOOK_URL is a configuration error and stays fatal.
++    try:
++        with urllib.request.urlopen(request, timeout=5) as response:
++            response.read()
++    except OSError as err:
++        raise NotifyError(str(err)) from err

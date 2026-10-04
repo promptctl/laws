@@ -5,17 +5,21 @@
 # ///
 """Run one law's eval cases under a set of arms and print its sensitivity record.
 
-    evals/law/run.py <law> [--arm none --arm skill:HEAD] [--repeats 5]
-                           [--model claude-opus-5-5] [--jobs 4] [--out DIR]
+    evals/law/run.py <law> [--arm none --arm skill:HEAD ...] [--repeats 5]
+                           [--split all|tuning|holdout] [--model claude-opus-5-5]
+                           [--jobs 4] [--out DIR]
 
-Every case directory under cases/<law>/ holds `fixture/` (the agent's starting working
-directory), `request.md` (the one message it is sent) and `oracle.py` (reads the
-agent's finished working directory and prints {verdict, detail}).
+Every case directory under cases/<law>/ holds `case.json` (schema/case.schema.json),
+`fixture/` (the agent's starting working directory), `request.md` (the message it is
+sent) and `oracle.py` (reads the agent's finished working directory and prints
+{verdict, detail}).
 
 An arm is `none` (Claude Code's own system prompt and nothing else) or `skill:<git-ref>`
 (plugins/laws/skills/code/SKILL.md as it was at that ref, appended to the system
-prompt). Each run is one session on harness/ (repo root) in a fresh copy of the fixture:
-the interactive TUI on the subscription login, admitting nothing but the arm's guidance.
+prompt), either one optionally suffixed `+diluted`: the request then follows the fixed
+turns in dilution/, so the guidance is a small share of the context, as in real use.
+Each run is one session on harness/ (repo root) in a fresh copy of the fixture: the
+interactive TUI on the subscription login, admitting nothing but the arm's guidance.
 
 Writes <out>/runs/<run>/ (the harness's run dir: run.json or failure.json, and the
 transcript, which stays out of git: it carries the login's account identity),
@@ -25,6 +29,7 @@ transcript, which stays out of git: it carries the login's account identity),
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -51,6 +56,13 @@ from harness import run as harness_run  # noqa: E402
 from harness.session import Spec  # noqa: E402
 
 SKILL_PATH = "plugins/laws/skills/code/SKILL.md"
+DILUTION_DIR = HERE / "dilution"
+DILUTED = sensitivity.DILUTED
+CASE_SCHEMA = json.loads((HERE / "schema" / "case.schema.json").read_text())
+# The oracles' shared code, each digested into the cases whose oracle imports it.
+HELPERS = ("differential.py", "calltrace.py", "identifiers.py")
+CONTROL = sensitivity.CONTROL
+DEFAULT_ARMS = (CONTROL, "skill:HEAD", f"{CONTROL}{DILUTED}", f"skill:HEAD{DILUTED}")
 ORACLE_TIMEOUT_SECS = 600
 # Local build residue never reaches the agent (it differs per checkout and names the case's
 # path) and never reaches a committed diff.
@@ -71,45 +83,72 @@ def git(*args: str) -> str:
 
 
 @dataclass(frozen=True)
+class Context:
+    """The fixed turns a diluted arm sends ahead of the request."""
+    turns: tuple[str, ...]
+
+    @property
+    def record(self) -> dict:
+        digest = hashlib.sha256("\0".join(self.turns).encode()).hexdigest()
+        return {"name": "diluted", "turns": len(self.turns), "sha256": digest}
+
+
+def load_dilution(directory: Path) -> Context:
+    paths = sorted(directory.glob("*.md"))
+    if not paths:
+        die(f"no dilution turns under {directory}")
+    return Context(tuple(p.read_text() for p in paths))
+
+
+@dataclass(frozen=True)
 class Arm:
     name: str
     guidance_text: str | None
     guidance: dict | None  # the record's arm.guidance
+    context: Context | None
 
     @property
     def slug(self) -> str:
         return re.sub(r"[^a-z0-9]+", "-", self.name.lower()).strip("-")
 
+    @property
+    def control(self) -> str:
+        return sensitivity.control_of(self.name)
 
-def resolve_arm(spec: str) -> Arm:
-    if spec == "none":
-        return Arm("none", None, None)
-    if not spec.startswith("skill:") or spec == "skill:":
-        die(f"an arm is `none` or `skill:<git-ref>`, not {spec!r}")
-    ref = spec.removeprefix("skill:")
+
+def resolve_arm(spec: str, dilution: Context) -> Arm:
+    base = spec.removesuffix(DILUTED)
+    context = dilution if base != spec else None
+    if base == CONTROL:
+        return Arm(spec, None, None, context)
+    if not base.startswith("skill:") or base == "skill:":
+        die(f"an arm is `none` or `skill:<git-ref>`, optionally suffixed {DILUTED}, not {spec!r}")
+    ref = base.removeprefix("skill:")
     try:
         commit = git("rev-parse", "--verify", f"{ref}^{{commit}}").strip()
         text = git("show", f"{commit}:{SKILL_PATH}")
     except subprocess.CalledProcessError as error:
         die(f"arm {spec}: cannot read {SKILL_PATH} at {ref}: {error.stderr.strip()}")
     digest = hashlib.sha256(text.encode()).hexdigest()
-    return Arm(spec, text, {"path": SKILL_PATH, "ref": ref, "commit": commit, "sha256": digest})
+    return Arm(spec, text, {"path": SKILL_PATH, "ref": ref, "commit": commit, "sha256": digest}, context)
 
 
 @dataclass(frozen=True)
 class Case:
     law: str
     scenario: str
+    kind: str  # case.json: fork | over-firing
+    split: str  # case.json: tuning | holdout
     root: Path  # the invocation's snapshot of the case, never the live checkout
-    sha256: str  # of everything that decides a verdict: fixture, request, oracle, differential.py
+    sha256: str  # of everything that decides a verdict: case.json, fixture, request, oracle, the helpers it imports
 
     @property
     def id(self) -> str:
         return f"{self.law}/{self.scenario}"
 
 
-def load_cases(law: str, snapshot: Path) -> list[Case]:
-    """The law's cases, copied with differential.py into `snapshot` (laid out like this
+def load_cases(law: str, snapshot: Path, split: str = "all") -> list[Case]:
+    """The law's cases in `split`, copied with HELPERS into `snapshot` (laid out like this
     directory) and digested there: every run of the invocation copies its fixture from, and
     is judged by, the code its record's digest names, whatever the checkout does meanwhile."""
     law_dir = HERE / "cases" / law
@@ -118,27 +157,57 @@ def load_cases(law: str, snapshot: Path) -> list[Case]:
         die(f"no cases for law {law!r}; laws with cases: {', '.join(known)}")
     # A name the record schema refuses would cost every run of the case a full session first.
     name_pattern = re.compile(sensitivity.RUN_SCHEMA["properties"]["law"]["pattern"])
-    cases = []
+    # Every case is checked, whatever the split: a broken hold-out case is found now, not at the generalization check.
+    found = []
     for root in sorted(d for d in law_dir.iterdir() if d.is_dir()):
         for name in (law, root.name):
             if not name_pattern.match(name):
                 die(f"case {law}/{root.name}: {name!r} must match {name_pattern.pattern}")
-        for part in ("fixture", "request.md", "oracle.py"):
-            if not (root / part).exists():
-                die(f"case {law}/{root.name} is missing {part}")
-    shutil.copyfile(HERE / "differential.py", snapshot / "differential.py")
-    for root in sorted(d for d in law_dir.iterdir() if d.is_dir()):
         copy = snapshot / "cases" / law / root.name
         shutil.copytree(root, copy, ignore=FIXTURE_IGNORE)
-        cases.append(Case(law, root.name, copy, case_digest(snapshot, copy)))
+        for part in ("case.json", "fixture", "request.md", "oracle.py"):
+            if not (copy / part).exists():
+                die(f"case {law}/{root.name} is missing {part}")
+        try:
+            meta = json.loads((copy / "case.json").read_text())
+            jsonschema.validate(meta, CASE_SCHEMA)
+        except (json.JSONDecodeError, jsonschema.ValidationError) as error:
+            die(f"case {law}/{root.name}: case.json does not conform to schema/case.schema.json: {error}")
+        found.append((root.name, meta, copy))
+    for helper in HELPERS:
+        shutil.copyfile(HERE / helper, snapshot / helper)
+    cases = [Case(law, scenario, meta["kind"], meta["split"], copy, case_digest(snapshot, copy))
+             for scenario, meta, copy in found if split in ("all", meta["split"])]
+    if not cases:
+        die(f"law {law!r} has no {split} cases")
     return cases
+
+
+def imported_helpers(base: Path, source: Path) -> set[str]:
+    """The HELPERS `source` imports, directly or through another helper."""
+    stems = {Path(h).stem: h for h in HELPERS}
+    found: set[str] = set()
+    pending = [source]
+    while pending:
+        tree = ast.parse(pending.pop().read_text())
+        for node in ast.walk(tree):
+            modules = [a.name for a in node.names] if isinstance(node, ast.Import) else \
+                [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
+            for helper in (stems[m] for m in modules if m in stems):
+                if helper not in found:
+                    found.add(helper)
+                    pending.append(base / helper)
+    return found
 
 
 def case_digest(base: Path, root: Path) -> str:
     """Ties a verdict to the exact case and oracle code that produced it. `base` is laid
-    out like this directory, so a snapshot digests the same as the checkout it copies."""
+    out like this directory, so a snapshot digests the same as the checkout it copies. A
+    helper the oracle does not import cannot change its verdict and is left out, so an
+    edit to one law's helper leaves every other law's records comparable."""
     files = sorted(p for p in (root / "fixture").rglob("*") if p.is_file() and not set(RESIDUE) & set(p.parts))
-    files += [root / "request.md", root / "oracle.py", base / "differential.py"]
+    helpers = sorted(imported_helpers(base, root / "oracle.py"))
+    files += [root / "case.json", root / "request.md", root / "oracle.py", *(base / h for h in helpers)]
     digest = hashlib.sha256()
     for path in files:
         name = path.relative_to(base).as_posix()
@@ -169,8 +238,9 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path, stop: thre
         # The file's closing newline is not part of the message; the harness refuses a
         # prompt with surrounding whitespace rather than trimming it.
         request = (case.root / "request.md").read_text().removesuffix("\n")
+        prompts = [*(arm.context.turns if arm.context else ()), request]
         spec = Spec(work_dir=workdir, model=model, append_system_prompt=guidance_file)
-        session = harness_run.run(spec, [request], out / "runs" / stem, harness_id, stop)
+        session = harness_run.run(spec, prompts, out / "runs" / stem, harness_id, stop)
 
         diff = out / "diffs" / f"{stem}.diff"
         for residue in [p for name in RESIDUE for p in workdir.rglob(name)]:
@@ -193,12 +263,14 @@ def run_one(case: Case, arm: Arm, repeat: int, model: str, out: Path, stop: thre
         verdict = json.loads(oracle.stdout)
 
     record = {
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": run_id,
         "law": case.law,
         "case": case.id,
+        "case_kind": case.kind,
+        "split": case.split,
         "case_sha256": case.sha256,
-        "arm": {"name": arm.name, "guidance": arm.guidance},
+        "arm": {"name": arm.name, "guidance": arm.guidance, "context": arm.context and arm.context.record},
         "repeat": repeat,
         "model": model,
         "oracle": verdict,
@@ -240,7 +312,8 @@ def run_all(jobs: list[tuple[Case, Arm, int]], model: str, out: Path, workers: i
         pool.shutdown(wait=False, cancel_futures=True)
     pool.shutdown(wait=True)
     failures = [
-        {"run_id": run_id, "case": case.id, "arm": arm.name, "error": f"{type(error).__name__}: {error}"}
+        {"run_id": run_id, "case": case.id, "case_kind": case.kind, "split": case.split, "arm": arm.name,
+         "error": f"{type(error).__name__}: {error}"}
         for case, arm, run_id, future in futures
         if not future.cancelled() and (error := future.exception()) is not None
     ]
@@ -250,8 +323,11 @@ def run_all(jobs: list[tuple[Case, Arm, int]], model: str, out: Path, workers: i
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("law", help="a directory name under evals/law/cases, e.g. no-silent-failure")
-    parser.add_argument("--arm", action="append", dest="arms", help="none | skill:<git-ref> (repeatable; default: none, skill:HEAD)")
+    parser.add_argument("--arm", action="append", dest="arms",
+                        help=f"none | skill:<git-ref>, optionally suffixed {DILUTED} (repeatable; default: {', '.join(DEFAULT_ARMS)})")
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--split", choices=("all", "tuning", "holdout"), default="all",
+                        help="which cases to run; an edit loop runs tuning and leaves holdout for the check that it generalizes")
     parser.add_argument("--model", default="claude-opus-5-5")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--out", type=Path, help="results directory (default: evals/law/results/<law>/<UTC time>)")
@@ -261,14 +337,19 @@ def main() -> None:
         die("--repeats must be at least 1")
     if args.jobs < 1:
         die("--jobs must be at least 1")
-    arm_specs = args.arms or ["none", "skill:HEAD"]
+    arm_specs = args.arms or list(DEFAULT_ARMS)
     if len(set(arm_specs)) != len(arm_specs):
         die(f"an arm is named twice: {arm_specs}")
-    arms = [resolve_arm(spec) for spec in arm_specs]
+    dilution = load_dilution(DILUTION_DIR)
+    arms = [resolve_arm(spec, dilution) for spec in arm_specs]
     if len({a.slug for a in arms}) != len(arms):
         die(f"two arms share a slug: {[a.slug for a in arms]}")
+    # A reading needs its control in the same context; without it the arm's runs read as nothing.
+    missing = sorted({a.control for a in arms} - {a.name for a in arms})
+    if missing:
+        die(f"arms {arm_specs} need their no-guidance control{'s' if len(missing) > 1 else ''} {missing} as well")
     with tempfile.TemporaryDirectory(prefix="law-eval-cases-") as snapshot:
-        cases = load_cases(args.law, Path(snapshot))
+        cases = load_cases(args.law, Path(snapshot), args.split)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out = (args.out or HERE / "results" / args.law / stamp).resolve()
         if out.exists() and any(out.iterdir()):

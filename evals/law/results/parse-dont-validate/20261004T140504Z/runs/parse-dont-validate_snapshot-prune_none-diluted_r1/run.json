@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_none-diluted_r1_c6fd2586",
+  "session_id": "2d880ac4-f3b6-4ae2-93f3-5830f70446c6",
+  "started_at": "2026-10-04T14:12:36.942532+00:00",
+  "duration_ms": 138957,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "**How blocks are picked.** `get_matching_blocks` is a greedy divide-and-conquer, not an LCS or minimal-edit algorithm. It asks `find_longest_match` for the single longest contiguous run shared by `a[alo:ahi]` and `b[blo:bhi]`, records it, then repeats on the piece to the left of that run in both sequences and the piece to the right in both. Because it only ever pairs left-with-left and right-with-right, the blocks come out in increasing order in both `a` and `b`. Once the longest block is chosen it is never reconsidered, even if two shorter blocks would have covered more in total. At the end the blocks are sorted, adjacent ones are merged, and a `(len(a), len(b), 0)` sentinel is appended.\n\n**How the longest run is found.** `find_longest_match` walks `a` one element at a time and uses `b2j` (element \u2192 list of positions in `b`) to find every `j` where `a[i] == b[j]`. `j2len[j]` holds the length of the match ending at `a[i-1]`/`b[j]`, so the match ending at `a[i]`/`b[j]` has length `j2len[j-1] + 1`. The best is only replaced on a strictly longer match, so ties go to the block starting earliest in `a`, then earliest in `b`. The cost is proportional to the number of `(i, j)` pairs that `b2j` yields, which is why what gets left out of `b2j` matters so much.\n\n**What junk does.** `isjunk` is applied only to the elements of `b`, in `__chain_b`. Junk elements are deleted from `b2j` and remembered in `bjunk`. This has two effects:\n\n- **Junk cannot seed or sit inside the core match.** The main loop never sees a junk element, so the \"longest\" block is the longest junk-free one.\n- **Junk can still be absorbed at the edges.** After the core is found, the last two `while` loops extend it outward over junk elements that happen to be equal on both sides.\n\nSo the alignment is anchored on \"interesting\" content, and junk only tags along. That is the `private volatile Thread` example: with blanks as junk it matches `currentThread`, `private` and `Thread` as words rather than syncing on `\"e Thread currentThread\"`. The side effect is that a region whose only common elements are junk yields no match, unless the junk lines up exactly at the start of the region. Identical junk can therefore be reported as replaced, and `ratio()` comes out lower than a pure count of equal elements.\n\n**What autojunk does.** If `autojunk` is true and `len(b) >= 200`, any non-junk element occurring more than `len(b) // 100 + 1` times in `b` is also removed from `b2j` and recorded in `bpopular`. These \"popular\" elements are not put in `bjunk`, so they are treated slightly more kindly than real junk. They still cannot seed a match, but the first pair of extension loops (the `not isbjunk` ones) grows the core match over them before junk extension happens. In practice a block must contain at least one rare element to be found at all, then spreads over neighbouring popular ones.\n\nThe gain is speed: elements like blank lines or `return NULL;` would otherwise generate huge numbers of `(i, j)` pairs. The costs are:\n\n- **Missed matches.** Regions that share only popular elements are not matched.\n- **Collapse on small alphabets.** For long strings of characters, DNA, or tokens, nearly every element is popular and `b2j` can end up almost empty. You then get little more than the common prefix of each region, and `ratio()` can be surprisingly low for sequences that are obviously similar.\n- **Asymmetry.** Only `b` is analysed, so swapping `a` and `b` can change both the blocks and the ratio.\n- **A cliff at 200.** Behaviour can change abruptly when `b` goes from 199 to 200 elements.\n\nPassing `autojunk=False` restores exact longest-match behaviour at the cost of potentially quadratic time. `unified_diff`, `context_diff` and `Differ` all construct their `SequenceMatcher` with the default `autojunk=True`, so they inherit this heuristic on inputs of 200 or more lines (and `Differ` on lines of 200 or more characters).",
+      "duration_ms": 29641
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "**What the loop computes.** The loop is the Euclidean algorithm on `n/d`, and each quotient `a = n//d` is the next term of the continued fraction of `self`. Alongside it, the loop builds the convergents with the standard recurrence: `p1/q1` is the latest convergent and `p0/q0` the one before. It stops as soon as the next convergent's denominator `q0 + a*q1` would exceed `max_denominator` (call it M). It always stops before `d` reaches 0, because the final convergent is `self` itself and the early return has already handled the case where its denominator fits.\n\n**The two candidates.** After the loop, `k = (M - q0)//q1` is the largest step count for which `q0 + k*q1` still fits under M. That gives two fractions:\n\n- `p1/q1`, the last convergent that fits;\n- `(p0 + k*p1)/(q0 + k*q1)`, a \"semiconvergent\": the furthest you can step from `p0/q0` towards the next convergent without exceeding M.\n\nThese lie on opposite sides of `self`. They are the best lower and best upper approximations with denominator \u2264 M that the comment describes.\n\n**Why one of them must be the answer.** The cross-product `p1*(q0 + k*q1) - q1*(p0 + k*p1)` equals `p1*q0 - p0*q1`, which is always \u00b11 for consecutive convergents. Two fractions with that property are Farey neighbours: any fraction strictly between them has denominator at least the sum of theirs, `q0 + (k+1)*q1`, which is greater than M by the choice of `k`. So no fraction with an allowed denominator lies between the two candidates, and `self` does lie between them. The closest allowed fraction is therefore one of the two. The \u00b11 also means both are already in lowest terms, which is why `_from_coprime_ints` is safe.\n\n**The final comparison.** The gap between the candidates is `1/(q1*(q0 + k*q1))`. The loop maintains the invariant `|p1*D - q1*N| = d`, where `N/D` is `self`, so the distance from `p1/q1` to `self` is `d/(q1*D)`. `p1/q1` wins if that distance is at most half the gap, which rearranges to `2*d*(q0 + k*q1) <= D`. That is all integer arithmetic, with no subtraction of fractions.\n\n**Why not just round.** Rounding `self*M` to an integer and dividing by M only considers the denominator M (and its divisors), not every denominator up to M. The docstring example shows the difference:\n\n| Method (M = 10) | Result | Error vs \u03c0 |\n|---|---|---|\n| `round(x*10)/10` | 31/10 | about 0.04 |\n| `limit_denominator(10)` | 22/7 | about 0.0013 |\n\nYou could fix rounding by trying every denominator from 1 to M and keeping the best, but that is M steps, with a default M of 1,000,000. The continued-fraction loop takes a number of steps logarithmic in the denominator, like `gcd`.\n\n**Why not just take the last convergent.** That is not always the best either. For M = 100, the convergents of \u03c0 that fit are 3/1 and 22/7 (the next is 333/106). The code computes `k = (100 - 1)//7 = 14` and gets the semiconvergent `(3 + 14*22)/(1 + 14*7) = 311/99`, which is closer to \u03c0 than 22/7. That is the docstring's second example, and it is why the final step compares two candidates.",
+      "duration_ms": 26698
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` and `monthdayscalendar`.** It only changes which weekday sits in column 0; the day numbers themselves are the same. The month is padded with `(day1 - firstweekday) % 7` leading zeros and enough trailing zeros to finish the last week. Shifting `firstweekday` therefore moves where the zeros fall and can change the number of rows (4 to 6).\n\nFor example, February 2021 starts on a Monday. With `firstweekday=0` it is four full rows with no zeros; with `firstweekday=6` (Sunday) it gets one leading zero and spills into a fifth row.\n\nThe property stores the raw value and reduces it mod 7 on read, so `Calendar(7)` silently behaves like Monday-first. Only the module-level `setfirstweekday()` validates 0\u20136.\n\n**`itermonthdates` at the edges.** Yes, there is a surprise. It converts every tuple from `itermonthdays3` into a `datetime.date`, including the padding days from the adjacent months. At the ends of the supported range those padding days fall outside what `datetime.date` can represent, and the constructor raises `ValueError`:\n\n- **January of year 1:** 1 January 0001 is a Monday. With the default `firstweekday=0` there is no padding and it works. With any other `firstweekday`, the first value would be in December of year 0, so it raises on the first `next()`.\n- **December 9999:** 31 December 9999 is a Friday. With Monday-first weeks the trailing Saturday and Sunday are in year 10000, so it raises. Because it is a generator, it yields every valid date first and fails only at the very end.\n- **Dependence on `firstweekday`:** whether you get the error depends on the setting. `Calendar(5)` (Saturday-first) handles December 9999 fine, because the week ends on that Friday.\n\n`monthdatescalendar` and `yeardatescalendar` inherit the same failure, since they call `list()` on this iterator.\n\n`itermonthdays`, `itermonthdays2`, `itermonthdays3` and `itermonthdays4` do not have the problem, because they never build a `date` for the padding. `weekday()` even maps out-of-range years onto `2000 + year % 400`, so those work for year 0 or 10000 and beyond. `itermonthdays3` will hand you tuples like `(0, 12, 31)` or `(10000, 1, 1)`.",
+      "duration_ms": 18908
+    },
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it touches any snapshot, and if anything is wrong it lists every problem, deletes nothing, and exits with status 1. I tested on a scratch copy of the directory, not the real `snapshots/`, and I have not run a real prune.\n\nWith the current `policy.json` it now prints this and leaves all 16 files in place:\n\n```\npolicy.json: invalid policy, nothing deleted:\n  rule 3 ('logs-'): unknown key 'kepe'\n  rule 3 ('logs-'): missing 'keep'\n```\n\nThe check lives in `retention.apply()` (so anything else calling it is protected too), and `prune.py` prints the report. Beyond a missing `keep`, it also rejects:\n\n- **Unknown keys**, at the top level as well as in rules. A misspelt `dry_run` would otherwise be silently ignored and run as a real delete.\n- **Bad `keep` values**: negative numbers, strings, or `true`/`false`. A `keep` of -1 would previously have deleted everything but the oldest snapshot.\n- **Bad prefixes**: empty, or containing wildcards or path separators. An empty prefix would match every family.\n- **Overlapping prefixes**, such as `db-` and `db-old-`, where the same files would fall under two rules.\n- **A `snapshot_dir` that isn't a directory**, and a policy file that is missing or isn't valid JSON.\n\n`keep: 0` is still allowed and deletes every snapshot in that family, as before.\n\nI left the `kepe` typo in `policy.json` alone; it needs changing to `keep` before the next run will do anything. With that corrected in the scratch copy, the run deleted the expected seven files and kept 3 db, 2 media and 4 logs.\n\nA failure during deletion itself (for example a permissions error on one file) can still stop a run partway.",
+      "duration_ms": 52562
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 10757,
+    "cache_read": 545867,
+    "cache_creation": 74739
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-br8qfdnd/work",
+  "transcript": "transcript/2d880ac4-f3b6-4ae2-93f3-5830f70446c6.jsonl"
+}

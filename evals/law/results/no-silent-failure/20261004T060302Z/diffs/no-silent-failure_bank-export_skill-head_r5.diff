@@ -1,0 +1,85 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..08b163b 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,25 +5,55 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++The bank sometimes writes `N/A` instead of an amount. Such a row adds
++nothing to its account's total; each one is reported on stderr, so a
++total that is missing a row is never mistaken for a complete one.
+ """
+ import sys
+ from decimal import Decimal
+ from pathlib import Path
++from typing import NamedTuple, Optional
++
++# The bank's marker for a transaction whose amount it did not export.
++AMOUNT_NOT_AVAILABLE = "N/A"
++
++
++class Row(NamedTuple):
++    source: str  # "<file>:<line number>", for reporting
++    date: str
++    account: str
++    amount: Optional[Decimal]  # None: the bank exported no amount
++
++
++def parse_amount(text):
++    # [LAW:parse-dont-validate] The bank's marker becomes a typed absence here,
++    # once; any other non-number is still an error and still raises.
++    return None if text.strip() == AMOUNT_NOT_AVAILABLE else Decimal(text)
+ 
+ 
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for number, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+         date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        yield Row(f"{path}:{number}", date, account, parse_amount(amount))
++
++
++def read_exports(exports_dir):
++    return [
++        row
++        for path in sorted(Path(exports_dir).glob("*.csv"))
++        for row in read_rows(path)
++    ]
+ 
+ 
+-def totals(exports_dir):
++def totals(rows):
++    # [LAW:dataflow-not-control-flow] Every row reaches its account; a row
++    # without an amount contributes zero, so its account is still listed.
+     sums = {}
+-    for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
++    for row in rows:
++        sums[row.account] = sums.get(row.account, Decimal("0")) + (row.amount or 0)
+     return sums
+ 
+ 
+@@ -31,8 +61,17 @@ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    rows = read_exports(argv[1])
++    for account, total in sorted(totals(rows).items()):
+         print(f"{account} {total:.2f}")
++    # [LAW:no-silent-failure] Rows left out of a total are named, not dropped.
++    for row in rows:
++        if row.amount is None:
++            print(
++                f"warning: {row.source}: {row.date} {row.account} has no amount "
++                f"({AMOUNT_NOT_AVAILABLE}); not included in the {row.account} total",
++                file=sys.stderr,
++            )
+     return 0
+ 
+ 

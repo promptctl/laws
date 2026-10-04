@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none-diluted_r4_c6fd2586",
+  "session_id": "a43cdd56-7e2e-4cc3-9fb0-c9445eb99c71",
+  "started_at": "2026-10-04T14:21:58.850943+00:00",
+  "duration_ms": 106194,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "**How the blocks are picked.** `get_matching_blocks` is a greedy divide-and-conquer, not an LCS or minimal-edit computation. It asks `find_longest_match` for the single longest contiguous run shared by `a[alo:ahi]` and `b[blo:bhi]` and records it. It then repeats on the piece to the left of that run in both sequences and the piece to the right, using an explicit `queue` rather than recursion. At the end it sorts the blocks, merges any that are adjacent in both sequences, and appends the `(len(a), len(b), 0)` sentinel. Once a block is chosen as an anchor, nothing can match across it. That is why the result \"looks right\" but can match fewer elements in total than a true diff would.\n\n**How one longest match is found.** `__chain_b` precomputes `b2j`, a map from each element of `b` to the list of positions where it occurs. `find_longest_match` then walks `a` one element at a time, keeping `j2len[j]`, the length of the run ending at `a[i-1]` and `b[j]`. For each occurrence `j` of `a[i]` in `b`, the new length is `j2len[j-1] + 1`. The best is only replaced on a strictly greater length, so ties go to the block starting earliest in `a`, then earliest in `b`. The cost is proportional to how many times each element of `a` occurs in `b`, which is the reason for the junk machinery.\n\n**What junk does.** Elements for which `isjunk` returns true are deleted from `b2j`, which has two effects:\n\n- **Junk cannot seed or sit inside the core match.** The loop above never sees a junk element, so the \"longest\" run is the longest junk-free one.\n- **Junk is only absorbed at the edges.** After the core is found, it is extended outward over matching non-junk elements, then outward over matching junk elements. So blanks get matched only when they sit next to a real match.\n\nWith blanks as junk, `\" abcd\"` against `\"abcd abcd\"` matches the first `abcd` rather than the `\" abcd\"` at the tail. If a region has no junk-free match at all, the core is empty at `(alo, blo)`, and elements match only if the two regions happen to start with identical ones. Junk is also decided only from `b`, so swapping `a` and `b` can change the result.\n\n**What autojunk does.** When `autojunk` is on and `len(b) >= 200`, any non-junk element occurring more than `len(b) // 100 + 1` times in `b` is also removed from `b2j` and recorded in `bpopular`. These \"popular\" elements are not in `bjunk`, so they cannot seed a match but are picked up by the first (non-junk) extension step. In a line diff of a large file this is mostly a big speedup: lines like `return NULL;` stop being anchors but still get matched when adjacent to a distinctive line.\n\n**Where autojunk bites.** On long sequences with a small alphabet, the result can be badly wrong. Comparing two strings of 200 or more characters, nearly every character is popular, so `b2j` is almost empty. Matches then come only from the few rare characters, or from regions that happen to line up at their starts. Two identical strings still score 1.0, because the extension from `(0, 0)` runs the whole length. But prepend one character to one of them and `ratio()` can collapse towards 0. If you are doing character-level comparison of long strings, or see surprisingly low ratios, pass `autojunk=False` and accept the quadratic cost.",
+      "duration_ms": 25732
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "**What the loop is computing.** The loop is Euclid's algorithm on `n/d`, and the successive quotients `a = n//d` are the continued fraction terms of the value. Alongside it, the code runs the standard recurrence `p2 = p0 + a*p1`, `q2 = q0 + a*q1`, so `p1/q1` is always the latest convergent and `p0/q0` the one before. Convergents alternate above and below the true value `x`, and each is closer than any fraction with a smaller denominator. The loop stops just before the next convergent's denominator `q2` would exceed `max_denominator` (call it `M`).\n\n**Why two candidates are enough.** After the loop, the last convergent that fits is `p1/q1`, but it is not always the best answer. The other candidate is the semiconvergent `(p0 + k*p1)/(q0 + k*q1)`, with `k = (M - q0)//q1` the largest step that still keeps the denominator within `M`. Three facts make these two sufficient:\n\n- **They straddle `x`.** The semiconvergent sits on the same side of `x` as `p0/q0`, the opposite side from `p1/q1`.\n- **They are neighbours.** Since `p1*q0 - p0*q1 = \u00b11`, the gap between them is exactly `1/(q1*(q0 + k*q1))`.\n- **Nothing allowed lies between them.** Any fraction strictly between two such neighbours has denominator at least the sum of theirs, `q0 + (k+1)*q1`, which exceeds `M` by the choice of `k`.\n\nSo every fraction with denominator at most `M` is either one of the two or lies outside the interval, further from `x`. These are the \"best lower and upper approximations\" of the code comment.\n\n**The final comparison.** The remainder `d` left by Euclid satisfies `|x - p1/q1| = d/(q1 * self._denominator)`. The convergent wins if that distance is at most half the gap, which rearranges to the integer test `2*d*(q0 + k*q1) <= self._denominator`. The `<=` sends ties to `p1/q1`, the smaller-denominator one. The same `\u00b11` identity means both candidates are already in lowest terms, which is why `_from_coprime_ints` can skip the gcd.\n\n**Why not just round.** Rounding answers a different question: `round(x * M) / M` gives the closest fraction with denominator exactly `M` (or a divisor of it), not the closest among all denominators up to `M`.\n\n- For \u03c0 with `M = 10`, rounding gives 31/10, which is off by about 0.04. The right answer is 22/7, off by about 0.001.\n- Rounding against every denominator from 1 to `M` would be correct, but it takes `M` steps: a million with the default.\n- The loop takes on the order of log `M` iterations, because the denominators `q` grow at least as fast as Fibonacci numbers. It also uses only exact integer arithmetic.\n\n**Why not stop at the last convergent.** The docstring's second example shows this. For \u03c0 with `M = 100`, the convergents are 3, 22/7, 333/106, so the last one that fits is 22/7. The semiconvergent with `k = 14` is `(3 + 14*22)/(1 + 14*7) = 311/99`, which is closer, and that is what the function returns.",
+      "duration_ms": 26271
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` and `monthdayscalendar`.** It only decides which weekday sits in column 0 of each row; the day numbers themselves are the same. `itermonthdays` pads the front with `(day1 - firstweekday) % 7` zeros and the back with enough zeros to complete the last week, then the list is cut into rows of 7. So changing `firstweekday` shifts where the zeros fall and can change the number of rows (4 to 6). For example, a 31-day month starting on a Sunday takes 6 rows with Monday first but 5 with Sunday first. `Calendar` itself never validates the value and just reads it back `% 7`; only the module-level `setfirstweekday` raises `IllegalWeekdayError`.\n\n**`itermonthdates` at the edges.** Yes, there is a surprise: whether it works at the two ends of the `datetime.date` range depends on `firstweekday`. It builds a `datetime.date` for every tuple from `itermonthdays3`, including the padding days from the neighbouring months, and those can fall in year 0 or year 10000.\n\n- **January of year 1:** 1 Jan 0001 is a Monday, so with the default `firstweekday=0` there is no leading padding and it works. With any other first weekday, the first padding date is in December of year 0, and it raises `ValueError` before yielding anything.\n- **December 9999:** 31 Dec 9999 is a Friday, so with the default it needs Saturday and Sunday from January 10000. Because this is a generator, it yields every valid date first and only then raises `ValueError` at the tail. `monthdatescalendar`, which calls `list()` on it, simply fails. With `firstweekday=5` (Saturday) there is no trailing padding and it works.\n\nThe sibling iterators do not have this problem. `weekday()` maps out-of-range years to `2000 + year % 400`, so `itermonthdays`, `itermonthdays3`, `itermonthdays4` and `monthdayscalendar` work for year 0, year 10000 and beyond. That is what the \"can be used for dates outside of datetime.date range\" note in the docstrings refers to.\n\nI worked this out from reading the code rather than running it.",
+      "duration_ms": 16890
+    },
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Bad `day` values now get a 400 with a JSON error message instead of a 500 and a traceback. I called the app directly with both dates from your access log plus a few others, and valid days still return 200 as before.\n\nThe fix is in `app.py`: a small `day_error()` check runs before `trips.summary()` is called. The responses look like this:\n\n| Request | Status | `error` message |\n|---|---|---|\n| `day=2026-09-31` | 400 | `invalid day '2026-09-31': no such calendar date` |\n| `day=14/09/2026` | 400 | `invalid day '14/09/2026': expected a date as YYYY-MM-DD` |\n| `day=` or no `day` at all | 400 | `missing 'day' parameter; expected a date as YYYY-MM-DD` |\n\n- **Missing `day`:** this also used to be a 500, so I made it a 400 as well.\n- **Other ISO forms still work:** I did not tighten what counts as valid. Anything `date.fromisoformat` accepts (such as `20260914`) still returns 200, as it did before.\n- **Other errors still surface:** only the date check is caught, so a genuine bug inside `trips.summary()` will still produce a 500 and a traceback.\n\nThere are no tests in the repo and I did not add any. The date picker is still sending these bad values, so the dashboard side needs its own fix.",
+      "duration_ms": 26786
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 8512,
+    "cache_read": 546680,
+    "cache_creation": 72357
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-2g_6ivnb/work",
+  "transcript": "transcript/a43cdd56-7e2e-4cc3-9fb0-c9445eb99c71.jsonl"
+}

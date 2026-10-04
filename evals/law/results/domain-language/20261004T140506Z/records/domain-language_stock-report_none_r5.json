@@ -1,0 +1,32 @@
+{
+  "schema_version": 3,
+  "run_id": "domain-language/stock-report/none/r5",
+  "law": "domain-language",
+  "case": "domain-language/stock-report",
+  "case_kind": "fork",
+  "split": "holdout",
+  "case_sha256": "2e5a720c3e615a841b094bba1d1e31b52949e08a5c25a9918a4f8aeb6e731648",
+  "arm": {
+    "name": "none",
+    "guidance": null,
+    "context": null
+  },
+  "repeat": 5,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "held",
+    "detail": "names use the domain's terms: ['LEAD_TIME_DAYS']",
+    "lay": [],
+    "domain": [
+      "LEAD_TIME_DAYS"
+    ],
+    "lead_days": [
+      "LEAD_TIME_DAYS"
+    ],
+    "coined": [
+      "LEAD_TIME_DAYS"
+    ]
+  },
+  "session": "runs/domain-language_stock-report_none_r5/run.json",
+  "diff": "diffs/domain-language_stock-report_none_r5.diff"
+}

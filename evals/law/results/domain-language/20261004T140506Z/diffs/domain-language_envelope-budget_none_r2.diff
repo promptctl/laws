@@ -1,0 +1,55 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..05ab8cf 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,6 +1,9 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only that month's transactions are counted; without one, every
++transaction in the file is.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+@@ -9,7 +12,7 @@ import csv
+ import json
+ import sys
+ from dataclasses import dataclass
+-from datetime import date
++from datetime import date, datetime
+ from decimal import Decimal
+ from pathlib import Path
+ 
+@@ -50,9 +53,29 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+     return spent
+ 
+ 
++def parse_month(text: str) -> tuple[int, int]:
++    parsed = datetime.strptime(text, "%Y-%m")
++    return parsed.year, parsed.month
++
++
++def in_month(transactions: list[Transaction], month: tuple[int, int]) -> list[Transaction]:
++    return [t for t in transactions if (t.posted.year, t.posted.month) == month]
++
++
+ def main(argv: list[str]) -> int:
++    if len(argv) > 2:
++        print("usage: python3 budget.py [YYYY-MM]", file=sys.stderr)
++        return 2
++    transactions = load_transactions()
++    if len(argv) == 2:
++        try:
++            month = parse_month(argv[1])
++        except ValueError:
++            print(f"budget.py: invalid month {argv[1]!r}, expected YYYY-MM", file=sys.stderr)
++            return 2
++        transactions = in_month(transactions, month)
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    spent = spent_by_envelope(transactions)
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")

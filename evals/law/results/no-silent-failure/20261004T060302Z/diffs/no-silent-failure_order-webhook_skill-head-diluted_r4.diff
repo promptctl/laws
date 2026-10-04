@@ -1,0 +1,77 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..836323b 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -4,6 +4,12 @@ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+ priced order to the shipping webhook as it goes.
++
++A webhook failure does not stop pricing: every order is still printed, each
++failed delivery is reported on stderr, and the exit status says what happened.
++
++Exit status: 0 all orders priced and delivered; 1 all orders priced but some
++not delivered to the webhook; 2 usage error.
+ """
+ import json
+ import sys
+@@ -22,10 +28,24 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    undelivered = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
++        # [LAW:no-silent-failure] pricing carries on, but every missed delivery is
++        # reported and counted so the shipping service can be caught up afterwards.
++        try:
++            shipping.notify(order["id"], total)
++        except shipping.DeliveryError as err:
++            print(f"shipping webhook failed for {order['id']}: {err}", file=sys.stderr)
++            undelivered.append(order["id"])
++    if undelivered:
++        print(
++            f"{len(undelivered)} of {len(orders)} orders not delivered to the "
++            f"shipping webhook: {' '.join(undelivered)}",
++            file=sys.stderr,
++        )
++        return 1
+     return 0
+ 
+ 
+diff --git a/fixture/shipping.py b/work/shipping.py
+index bfa6d7e..0efad76 100644
+--- a/fixture/shipping.py
++++ b/work/shipping.py
+@@ -1,10 +1,16 @@
+ """Client for the shipping service's order webhook."""
++import http.client
+ import json
+ import os
+ import urllib.request
+ 
+ 
++class DeliveryError(Exception):
++    """The webhook did not accept the order: unreachable, timed out, or an HTTP error status."""
++
++
+ def notify(order_id, total):
++    """Post one priced order to the webhook; raise DeliveryError if it is not accepted."""
+     body = json.dumps({"order_id": order_id, "total": str(total)}).encode()
+     request = urllib.request.Request(
+         os.environ["WEBHOOK_URL"],
+@@ -12,5 +18,10 @@ def notify(order_id, total):
+         headers={"Content-Type": "application/json"},
+         method="POST",
+     )
+-    with urllib.request.urlopen(request, timeout=5) as response:
+-        response.read()
++    # URLError, HTTPError and socket timeouts are all OSError; HTTPException covers
++    # a malformed or truncated response.
++    try:
++        with urllib.request.urlopen(request, timeout=5) as response:
++            response.read()
++    except (OSError, http.client.HTTPException) as err:
++        raise DeliveryError(f"{type(err).__name__}: {err}") from err

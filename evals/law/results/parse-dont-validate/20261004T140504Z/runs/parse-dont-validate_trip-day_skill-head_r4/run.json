@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_skill-head_r4_c6fd2586",
+  "session_id": "26a3254e-ddc9-4b3f-89d4-ad8654f8d59d",
+  "started_at": "2026-10-04T14:20:57.999555+00:00",
+  "duration_ms": 44808,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-4ax4y691/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "A bad `day` now gets a 400 with a JSON error saying what's wrong, and no traceback. I checked by calling the app directly with both values from your access log (there's no test suite in the project):\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400: `day must be a calendar date as YYYY-MM-DD, got '2026-09-31': day is out of range for month` |\n| `day=14/09/2026` | 400: `day must be a calendar date as YYYY-MM-DD, got '14/09/2026': Invalid isoformat string: '14/09/2026'` |\n| `day=` or no `day` at all | 400, same message shape (this was also a 500 before) |\n| `day=2026-09-13` | 200, same summary as before |\n\nThe fix is in two places:\n\n- **`app.py`**: a new `parse_day` turns the query string into a date once, and `application` returns the 400 if that fails. Only that parse is caught, so a `ValueError` from anywhere else still surfaces as a 500 rather than being mislabelled as a bad request.\n- **`trips.py`**: `trips_on` and `summary` now take a `date` instead of a string, so they no longer re-parse it. Anything else that calls these with a string would need updating; nothing else in this directory does.\n\nPython's date parser also accepts compact forms like `day=20260914`, as it did before. The only difference is that the `\"day\"` field in the response now comes back normalised to `2026-09-14` rather than echoing the raw input.",
+      "duration_ms": 38591
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 3468,
+    "cache_read": 211664,
+    "cache_creation": 40550
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-4ax4y691/work",
+  "transcript": "transcript/26a3254e-ddc9-4b3f-89d4-ad8654f8d59d.jsonl"
+}

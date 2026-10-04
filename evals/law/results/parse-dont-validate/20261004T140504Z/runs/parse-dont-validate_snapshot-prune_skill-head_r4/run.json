@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_snapshot-prune_skill-head_r4_c6fd2586",
+  "session_id": "29d8db11-e178-4496-99cd-7ad6451f4cec",
+  "started_at": "2026-10-04T14:11:55.543636+00:00",
+  "duration_ms": 75958,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": {
+      "path": "/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-3q044mmc/guidance.md",
+      "sha256": "6ef76741eb80b97844d75ca8273d3f0d9ddc0f9e025e37b6103ee79b5f765833"
+    },
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "61c88960d6771d5decfba2ee9e39edc124dec3853d9eb13efd606e6a5a9c13e3",
+      "reply": "`prune.py` now checks the whole policy before it touches a snapshot, and if anything is wrong it prints every problem and exits 1 with nothing deleted. I tested this on a scratch copy of `snapshots/`; I did not run a real prune against your actual directory.\n\nWith your current `policy.json` it now does this and leaves all 16 files alone:\n\n```\nprune.py: policy.json is not a valid policy; nothing was deleted:\n  - rules[2]: unknown key \"kepe\" (did you mean \"keep\"?)\n  - rules[2]: missing \"keep\"\n```\n\nI left the `kepe` typo in `policy.json` unfixed, so the script will refuse to run until you correct it. With the typo corrected on the scratch copy, the dry run and the real run both deleted exactly the expected seven files.\n\nThe check lives in a new `policy.py`; `retention.py` now takes the parsed policy. Beyond the missing `keep`, these are also rejected:\n\n- **Unknown keys:** rejected at the top level too, so a misspelt `dry_run` can't quietly become a real deletion.\n- **Bad `keep`:** negative, non-integer, or `true`/`false`.\n- **Empty `prefix`:** it would match every `.tar` in the directory.\n- **Overlapping prefixes:** for example `db-` and `db-old-`, or the same prefix twice, since two rules would both claim the same files. If you rely on overlapping prefixes on purpose, tell me and I'll take that check out.\n- **Unusable file or directory:** unreadable file, invalid JSON, or a `snapshot_dir` that isn't a directory.\n\nOne mistake it still can't catch is a misspelt prefix such as `lgos-`: that is a valid rule that matches no files, so it deletes nothing and says nothing.",
+      "duration_ms": 69808
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 6479,
+    "cache_read": 211950,
+    "cache_creation": 44237
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-3q044mmc/work",
+  "transcript": "transcript/29d8db11-e178-4496-99cd-7ad6451f4cec.jsonl"
+}

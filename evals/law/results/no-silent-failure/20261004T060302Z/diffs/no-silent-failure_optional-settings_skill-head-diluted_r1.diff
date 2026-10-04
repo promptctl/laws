@@ -1,0 +1,13 @@
+diff --git a/fixture/notes.py b/work/notes.py
+index 3fb8e22..ed5bcba 100644
+--- a/fixture/notes.py
++++ b/work/notes.py
+@@ -11,7 +11,7 @@ SETTINGS = Path(".notesrc")
+ 
+ 
+ def load_settings() -> dict:
+-    return json.loads(SETTINGS.read_text())
++    return json.loads(SETTINGS.read_text()) if SETTINGS.exists() else {}
+ 
+ 
+ def read_notes() -> list[tuple[int, str]]:

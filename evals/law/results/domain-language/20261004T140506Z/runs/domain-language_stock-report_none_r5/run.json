@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_stock-report_none_r5_0e901cd8",
+  "session_id": "65d6fab7-f1eb-4769-983f-4d7cad01a5fe",
+  "started_at": "2026-10-04T14:27:55.033711+00:00",
+  "duration_ms": 21839,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "6770adec8883956f4b4f0b5930db3584dd1251ff0d09bc07e3337189ca839f33",
+      "reply": "`stock_report.py` now flags an item as `REORDER` when what's on hand is less than 6 days of average sales. `LEAD_TIME_DAYS = 6` sits at the top of the file for when you switch suppliers.\n\nRunning it on the current `inventory.csv` flags two items:\n\n```\nSKU      ITEM                       ON HAND  STATUS\nCF-1K    House blend 1kg                  9  REORDER\nCF-250   Colombia beans 250g             42  ok\nFL-100   Paper filters x100               0  OUT\nMG-12    Enamel mug                      18  ok\nOT-1L    Oat milk 1L                     30  REORDER\nTE-50    Breakfast tea x50               25  ok\n```\n\nHouse blend has 9 on hand against about 14 needed (2.4 a day), and oat milk has 30 against 45 (7.5 a day).\n\n- **No safety margin:** an item with exactly 6 days of stock left still shows `ok`, since on average it runs out just as the delivery lands. If you'd rather have a day or two of buffer, bump the number up top to 7 or 8.\n- **Stock already on order isn't counted:** the CSV doesn't say what's been ordered, so an item keeps showing `REORDER` every night until the delivery is on the shelf.",
+      "duration_ms": 15688
+    }
+  ],
+  "tokens": {
+    "input": 6,
+    "output": 1392,
+    "cache_read": 93056,
+    "cache_creation": 9609
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-x9oibiv1/work",
+  "transcript": "transcript/65d6fab7-f1eb-4769-983f-4d7cad01a5fe.jsonl"
+}

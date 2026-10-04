@@ -1,0 +1,47 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..9653431 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -8,14 +8,23 @@ users.json is a list of user ids. Each avatar is fetched from
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar's bytes, or None when the user has no avatar."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as error:
++        # The CDN answers 404 for a user who deleted their avatar: a normal state,
++        # not a failure. Every other status still propagates and fails the run.
++        if error.code != 404:
++            raise
++        return None
+ 
+ 
+ def main(argv):
+@@ -25,9 +34,13 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
+-    for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++    avatars = {user_id: fetch(user_id) for user_id in users}
++    present = {user_id: data for user_id, data in avatars.items() if data is not None}
++    for user_id, data in present.items():
++        (out / f"{user_id}.png").write_bytes(data)
++    # Counts go to stdout so a run where every user "has no avatar" (e.g. a wrong
++    # AVATAR_BASE_URL) is distinguishable from a normal night.
++    print(f"synced {len(present)} avatars, {len(avatars) - len(present)} users have no avatar")
+     return 0
+ 
+ 

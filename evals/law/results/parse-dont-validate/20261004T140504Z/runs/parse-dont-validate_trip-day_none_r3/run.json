@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r3_c6fd2586",
+  "session_id": "5fd79a95-3d38-4099-8fd0-15ece0a0c0e7",
+  "started_at": "2026-10-04T14:19:33.756764+00:00",
+  "duration_ms": 25624,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed in `app.py`: `/trips` now validates `day` before building the summary and returns a 400 with a JSON error instead of raising, so no more 500s or tracebacks for bad dates.\n\nI called the handler directly with the cases from your access log and a few others (not through a running server):\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `day '2026-09-31' is not a real date: day is out of range for month` |\n| `day=14/09/2026` | 400 `day must be formatted YYYY-MM-DD, got '14/09/2026'` |\n| `day=` or no `day` at all | 400 `day is required, as YYYY-MM-DD` |\n| `day=2026-09-13` | 200 with the summary, as before |\n\nTwo behaviours you might not assume:\n\n- **Missing `day`:** a missing or empty `day` used to 500 the same way, so it now gets a 400 too.\n- **Strict format:** only `YYYY-MM-DD` is accepted. A compact form like `20260914` is rejected with a 400.\n\nThe date picker is still sending these bad values; this change only makes the API answer them properly.",
+      "duration_ms": 19620
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1782,
+    "cache_read": 127304,
+    "cache_creation": 10849
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-r5fotqkk/work",
+  "transcript": "transcript/5fd79a95-3d38-4099-8fd0-15ece0a0c0e7.jsonl"
+}

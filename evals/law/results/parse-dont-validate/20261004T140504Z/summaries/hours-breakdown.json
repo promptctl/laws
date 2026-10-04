@@ -1,0 +1,84 @@
+{
+  "schema_version": 3,
+  "law": "parse-dont-validate",
+  "case": "parse-dont-validate/hours-breakdown",
+  "case_kind": "over-firing",
+  "split": "tuning",
+  "model": "claude-opus-5-5",
+  "arms": {
+    "none": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "parse-dont-validate/hours-breakdown/none/r1",
+        "parse-dont-validate/hours-breakdown/none/r2",
+        "parse-dont-validate/hours-breakdown/none/r3",
+        "parse-dont-validate/hours-breakdown/none/r4",
+        "parse-dont-validate/hours-breakdown/none/r5"
+      ]
+    },
+    "none+diluted": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "parse-dont-validate/hours-breakdown/none-diluted/r1",
+        "parse-dont-validate/hours-breakdown/none-diluted/r2",
+        "parse-dont-validate/hours-breakdown/none-diluted/r3",
+        "parse-dont-validate/hours-breakdown/none-diluted/r4",
+        "parse-dont-validate/hours-breakdown/none-diluted/r5"
+      ]
+    },
+    "skill:HEAD": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "parse-dont-validate/hours-breakdown/skill-head/r1",
+        "parse-dont-validate/hours-breakdown/skill-head/r2",
+        "parse-dont-validate/hours-breakdown/skill-head/r3",
+        "parse-dont-validate/hours-breakdown/skill-head/r4",
+        "parse-dont-validate/hours-breakdown/skill-head/r5"
+      ]
+    },
+    "skill:HEAD+diluted": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "parse-dont-validate/hours-breakdown/skill-head-diluted/r1",
+        "parse-dont-validate/hours-breakdown/skill-head-diluted/r2",
+        "parse-dont-validate/hours-breakdown/skill-head-diluted/r3",
+        "parse-dont-validate/hours-breakdown/skill-head-diluted/r4",
+        "parse-dont-validate/hours-breakdown/skill-head-diluted/r5"
+      ]
+    }
+  },
+  "comparisons": [
+    {
+      "control": "none",
+      "arm": "skill:HEAD",
+      "reading": "saturated",
+      "p_value": 1.0
+    },
+    {
+      "control": "none+diluted",
+      "arm": "skill:HEAD+diluted",
+      "reading": "saturated",
+      "p_value": 1.0
+    }
+  ]
+}
