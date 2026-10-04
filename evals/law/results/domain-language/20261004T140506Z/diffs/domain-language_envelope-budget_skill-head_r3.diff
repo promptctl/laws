@@ -1,0 +1,67 @@
+diff --git a/fixture/budget.py b/work/budget.py
+index 0801a66..aff5570 100644
+--- a/fixture/budget.py
++++ b/work/budget.py
+@@ -1,13 +1,18 @@
+ """Envelope budget: what is left in each envelope after this period's transactions.
+ 
+-Usage: python3 budget.py
++Usage: python3 budget.py [YYYY-MM]
++
++With a month, only that calendar month's transactions count against the allocations;
++with none, every transaction in the file does.
+ 
+ envelopes.json gives each envelope's monthly allocation; transactions.csv is the bank
+ export, one row per transaction with the envelope it was filed under.
+ """
++import argparse
+ import csv
+ import json
+ import sys
++from collections.abc import Callable
+ from dataclasses import dataclass
+ from datetime import date
+ from decimal import Decimal
+@@ -31,6 +36,31 @@ class Transaction:
+     amount: Decimal
+ 
+ 
++# The budget period: decides whether a posting date falls inside it.
++Period = Callable[[date], bool]
++
++
++def all_time(posted: date) -> bool:
++    return True
++
++
++def calendar_month(text: str) -> Period:
++    # [LAW:parse-dont-validate] the command-line text becomes a Period here or is rejected; nothing later re-checks it
++    try:
++        first_day = date.fromisoformat(f"{text}-01")
++    except ValueError:
++        raise argparse.ArgumentTypeError(f"expected a month as YYYY-MM, got {text!r}") from None
++    return lambda posted: (posted.year, posted.month) == (first_day.year, first_day.month)
++
++
++def parse_period(args: list[str]) -> Period:
++    parser = argparse.ArgumentParser(description="What is left in each envelope after the period's transactions.")
++    # [LAW:dataflow-not-control-flow] no month is the all-time period, so the filter below always runs
++    parser.add_argument("month", nargs="?", type=calendar_month, default=all_time, metavar="YYYY-MM",
++                        help="count only this calendar month's transactions (default: all of them)")
++    return parser.parse_args(args).month
++
++
+ def load_envelopes(path: Path = ENVELOPES_FILE) -> list[Envelope]:
+     return [Envelope(name, Decimal(amount)) for name, amount in json.loads(path.read_text()).items()]
+ 
+@@ -51,8 +81,9 @@ def spent_by_envelope(transactions: list[Transaction]) -> dict[str, Decimal]:
+ 
+ 
+ def main(argv: list[str]) -> int:
++    in_period = parse_period(argv[1:])
+     envelopes = load_envelopes()
+-    spent = spent_by_envelope(load_transactions())
++    spent = spent_by_envelope([t for t in load_transactions() if in_period(t.posted)])
+     for envelope in envelopes:
+         remaining = envelope.allocation - spent.get(envelope.name, Decimal("0"))
+         print(f"{envelope.name:<12} {remaining:>9.2f}")

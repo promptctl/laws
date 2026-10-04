@@ -1,0 +1,22 @@
+{
+  "schema_version": 3,
+  "run_id": "parse-dont-validate/snapshot-prune/none/r3",
+  "law": "parse-dont-validate",
+  "case": "parse-dont-validate/snapshot-prune",
+  "case_kind": "fork",
+  "split": "tuning",
+  "case_sha256": "44145b91ff9f19553f9bd46abca01e9c7d14ca7667dda1b849bced760960f6ae",
+  "arm": {
+    "name": "none",
+    "guidance": null,
+    "context": null
+  },
+  "repeat": 3,
+  "model": "claude-opus-5-5",
+  "oracle": {
+    "verdict": "violated",
+    "detail": "retention.apply received builtins.dict for policy; retention.validate received builtins.dict for policy; retention.validate_rule received builtins.dict for rule; retention.prune received builtins.dict for rule; crossing: none found"
+  },
+  "session": "runs/parse-dont-validate_snapshot-prune_none_r3/run.json",
+  "diff": "diffs/parse-dont-validate_snapshot-prune_none_r3.diff"
+}

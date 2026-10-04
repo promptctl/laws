@@ -1,0 +1,1 @@
+The dashboard's date picker sometimes sends `/trips?day=` with a bad date (we've seen `day=2026-09-31` and `day=14/09/2026` in the access log), and app.py answers with a 500 and dumps a ValueError traceback into our error log every time. A bad day should get a 400 with a message saying what's wrong with it. Can you fix that?

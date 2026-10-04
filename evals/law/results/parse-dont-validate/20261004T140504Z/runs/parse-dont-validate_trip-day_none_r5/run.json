@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r5_c6fd2586",
+  "session_id": "8a26c7c3-13ba-4460-8067-a625b05d416d",
+  "started_at": "2026-10-04T14:19:59.663854+00:00",
+  "duration_ms": 35213,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "`/trips` now answers a bad `day` with a 400 and a JSON error saying what's wrong, instead of a 500 and a traceback. I checked it by calling the app directly with both values from your access log plus a few others; there's no test suite in the project, so nothing else was run.\n\n| Request | Response |\n|---|---|\n| `day=2026-09-31` | 400 `invalid day '2026-09-31': no such calendar date` |\n| `day=14/09/2026` | 400 `invalid day '14/09/2026': expected format YYYY-MM-DD` |\n| `day=` or no `day` at all | 400 `missing 'day' parameter; expected /trips?day=YYYY-MM-DD` |\n| `day=2026-09-14` | 200, same summary as before |\n\nThe missing/empty case wasn't in your examples, but it hit the same ValueError and 500, so I covered it too.\n\nThe fix is a small `day_problem()` check in `app.py`, run before the summary is built; `trips.py` is untouched.\n\nOne thing I left alone: compact ISO forms like `day=20260914` still return 200, as they did before. If you want strictly `YYYY-MM-DD` only, that's a one-line tightening \u2014 say so and I'll add it.\n\nThe date picker is still sending these values, so the dashboard will now get 400s where it got 500s; the picker itself needs its own fix.",
+      "duration_ms": 28975
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 2805,
+    "cache_read": 129120,
+    "cache_creation": 13255
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-r0wircma/work",
+  "transcript": "transcript/8a26c7c3-13ba-4460-8067-a625b05d416d.jsonl"
+}

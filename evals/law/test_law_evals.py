@@ -40,6 +40,17 @@ class OracleReadsEveryReference(unittest.TestCase):
     def test_cases_exist(self):
         self.assertGreaterEqual(len(CASES), 2)
 
+    def test_every_law_has_the_controls(self):
+        """From promptctl-law-evals-qdn.3yt on, every case set has an over-firing case and a holdout."""
+        for law in sorted({case.parent for case in CASES}):
+            metas = [json.loads((case / "case.json").read_text()) for case in law.iterdir() if case.is_dir()]
+            for meta in metas:
+                jsonschema.validate(meta, run.CASE_SCHEMA)
+            with self.subTest(law=law.name):
+                self.assertIn("over-firing", {m["kind"] for m in metas})
+                self.assertIn("holdout", {m["split"] for m in metas})
+                self.assertIn("tuning", {m["split"] for m in metas})
+
     def test_untouched_fixture_is_off_fork(self):
         for case in CASES:
             with self.subTest(case=case.name):
@@ -98,14 +109,20 @@ class Readings(unittest.TestCase):
         self.assertEqual(sensitivity.reading(counts(5, 0), counts(1, 0, failed=4))[0], "unmeasurable")
 
 
+DILUTION = run.Context(("an earlier turn",))
+
+
 def record(arm="none", verdict="violated", repeat=1, guidance=None, case_sha256="2" * 64):
+    context = DILUTION.record if arm.endswith(run.DILUTED) else None
     return {
-        "schema_version": 2,
-        "run_id": f"no-silent-failure/bank-export/{run.Arm(arm, None, None).slug}/r{repeat}",
+        "schema_version": 3,
+        "run_id": f"no-silent-failure/bank-export/{run.Arm(arm, None, None, None).slug}/r{repeat}",
         "law": "no-silent-failure",
         "case": "no-silent-failure/bank-export",
+        "case_kind": "fork",
+        "split": "tuning",
         "case_sha256": case_sha256,
-        "arm": {"name": arm, "guidance": guidance},
+        "arm": {"name": arm, "guidance": guidance, "context": context},
         "repeat": repeat,
         "model": "claude-opus-5-5",
         "oracle": {"verdict": verdict, "detail": ""},
@@ -121,7 +138,7 @@ class Schema(unittest.TestCase):
         for r in records:
             jsonschema.validate(r, sensitivity.RUN_SCHEMA)
         failures = [{"run_id": "no-silent-failure/bank-export/skill-head/r3", "case": "no-silent-failure/bank-export",
-                     "arm": "skill:HEAD", "error": "HarnessError: api"}]
+                     "case_kind": "fork", "split": "tuning", "arm": "skill:HEAD", "error": "HarnessError: api"}]
         [summary] = sensitivity.summarize(records, failures)  # summarize validates against the summary schema
         self.assertEqual(summary["arms"]["none"]["violated"], 2)
         self.assertEqual(summary["arms"]["skill:HEAD"]["failed"], 1)
@@ -129,9 +146,23 @@ class Schema(unittest.TestCase):
 
     def test_a_case_whose_runs_failed_entirely_is_still_summarized(self):
         failures = [{"run_id": "no-silent-failure/bank-export/none/r1", "case": "no-silent-failure/bank-export",
-                     "arm": "none", "error": "HarnessError: api"}]
+                     "case_kind": "fork", "split": "tuning", "arm": "none", "error": "HarnessError: api"}]
         [summary] = sensitivity.summarize([], failures)
         self.assertEqual(summary["arms"]["none"]["failed"], 1)
+
+    def test_a_diluted_arm_is_read_against_the_diluted_control(self):
+        guidance = {"path": run.SKILL_PATH, "ref": "HEAD", "commit": "0" * 40, "sha256": "1" * 64}
+        records = [record("none", "held", 1), record("skill:HEAD", "held", 1, guidance),
+                   record("none+diluted", "violated", 1), record("skill:HEAD+diluted", "held", 1, guidance)]
+        [summary] = sensitivity.summarize(records, [])
+        controls = {c["arm"]: c["control"] for c in summary["comparisons"]}
+        self.assertEqual(controls, {"skill:HEAD": "none", "skill:HEAD+diluted": "none+diluted"})
+        self.assertEqual(list(summary["arms"])[:2], ["none", "none+diluted"])
+
+    def test_a_diluted_arm_without_its_control_gets_no_reading(self):
+        guidance = {"path": run.SKILL_PATH, "ref": "HEAD", "commit": "0" * 40, "sha256": "1" * 64}
+        [summary] = sensitivity.summarize([record("none", "held", 1), record("skill:HEAD+diluted", "held", 1, guidance)], [])
+        self.assertEqual(summary["comparisons"], [])
 
     def test_refuses_records_from_two_case_digests(self):
         records = [record(repeat=1), record(repeat=2, case_sha256="3" * 64)]
@@ -163,9 +194,26 @@ class LoadCases(unittest.TestCase):
             (case / "fixture").mkdir(parents=True)
             (case / "request.md").write_text("x\n")
             (case / "oracle.py").write_text("")
+            (case / "case.json").write_text('{"kind": "fork", "split": "tuning"}')
             with mock.patch.object(run, "HERE", Path(tmp)), self.assertRaises(SystemExit) as raised:
                 run.load_cases("no-silent-failure", Path(tmp) / "snapshot")
         self.assertIn("Bank_Export", str(raised.exception))
+
+    def test_split_selects_cases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            holdouts = run.load_cases("no-silent-failure", Path(tmp), "holdout")
+        self.assertTrue(holdouts)
+        self.assertEqual({c.split for c in holdouts}, {"holdout"})
+
+    def test_refuses_a_case_json_the_schema_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp) / "cases" / "no-silent-failure" / "bank-export"
+            (case / "fixture").mkdir(parents=True)
+            for part, text in (("request.md", "x\n"), ("oracle.py", ""), ("case.json", '{"kind": "fork"}')):
+                (case / part).write_text(text)
+            with mock.patch.object(run, "HERE", Path(tmp)), self.assertRaises(SystemExit) as raised:
+                run.load_cases("no-silent-failure", Path(tmp) / "snapshot")
+        self.assertIn("case.json", str(raised.exception))
 
     def test_runs_read_a_snapshot_that_digests_as_the_checkout(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -186,6 +234,70 @@ class Differential(unittest.TestCase):
             env = lambda: differential.Environment(("prog.py",), {}, {})  # noqa: E731
             verdict = differential.judge(Path(tmp), env, env, lambda healthy, failing: (False, "stdout is not EXPECTED"))
         self.assertEqual(verdict["verdict"], "inconclusive")
+
+
+class CallTraceInland(unittest.TestCase):
+    """calltrace.crossing and inland: which calls into the worker file are not the crossing."""
+
+    @staticmethod
+    def call(file, function, args=(), returned=(), callers=(), sources=()):
+        import calltrace
+        t = lambda name, local=False: calltrace.ArgType("builtins" if not local else "app", name, local)  # noqa: E731
+        return calltrace.Call(function, file, tuple((p, t(n, l)) for p, n, l in args), (), (),
+                              tuple(t(n, l) for n, l in returned), tuple(callers), tuple(sources))
+
+    def inland(self, calls):
+        import calltrace
+        boundary = calltrace.crossing(calls, "work.py", lambda t: t.name == "str", lambda t: t.local)
+        return {c.site for c in calltrace.inland(calls, "work.py", boundary)}
+
+    def test_a_parser_whose_proof_the_worker_receives_is_the_crossing(self):
+        calls = [
+            self.call("work.py", "parse", [("raw", "str", False)], [("Day", True)]),
+            self.call("work.py", "check", [("raw", "str", False)], callers=[("work.py", "parse")]),
+            self.call("work.py", "summary", [("day", "Day", True)], sources=[("work.py", "parse")]),
+        ]
+        self.assertEqual(self.inland(calls), {("work.py", "summary")})
+
+    def test_a_worker_that_returns_a_report_is_not_the_crossing(self):
+        calls = [
+            self.call("work.py", "apply", [("raw", "str", False)], [("Report", True)]),
+            self.call("work.py", "prune", [("rule", "str", False)], callers=[("work.py", "apply")]),
+        ]
+        self.assertEqual(self.inland(calls), {("work.py", "apply"), ("work.py", "prune")})
+
+    def test_a_crossing_exempts_only_its_own_file_and_name(self):
+        calls = [
+            self.call("app.py", "parse", [("raw", "str", False)], [("Day", True)]),
+            self.call("work.py", "summary", [("day", "Day", True)], sources=[("app.py", "parse")]),
+            self.call("work.py", "parse", [("day", "str", False)], callers=[("work.py", "summary")]),
+        ]
+        self.assertEqual(self.inland(calls), {("work.py", "summary"), ("work.py", "parse")})
+
+
+class CallTraceTypes(unittest.TestCase):
+    def test_a_class_with_no_source_file_is_not_the_programs_own(self):
+        import calltrace
+        root = Path.cwd().resolve()
+        for label, found in (("extension module", mock.Mock(return_value=None)),
+                             ("built in", mock.Mock(side_effect=TypeError("built-in class")))):
+            with self.subTest(label), mock.patch.object(calltrace.inspect, "getsourcefile", found):
+                self.assertFalse(calltrace.defined_under(int, root))
+        with mock.patch.object(calltrace.inspect, "getsourcefile", return_value=str(root / "prog.py")):
+            self.assertTrue(calltrace.defined_under(int, root))
+
+
+class Identifiers(unittest.TestCase):
+    def test_exception_and_match_captures_are_coined_and_plain_imports_are_not(self):
+        import identifiers
+        source = (
+            "import decimal\n"
+            "try:\n    pass\nexcept KeyError as missing_student:\n    pass\n"
+            "match {}:\n    case {'a': student_rec, **rest_of_row}:\n        pass\n"
+            "    case [*tail_rows]:\n        pass\n"
+        )
+        self.assertEqual(identifiers.bound_names(source),
+                         {"missing_student", "student_rec", "rest_of_row", "tail_rows"})
 
 
 class FilesChannel(unittest.TestCase):
@@ -220,16 +332,40 @@ class CaseDigest(unittest.TestCase):
             (copy / "oracle.py").write_text((copy / "oracle.py").read_text() + "\n")
             self.assertNotEqual(run.case_digest(HERE, copy), base)
 
+    def test_digest_covers_the_helpers_the_oracle_imports_and_no_others(self):
+        imports = lambda law: {h for c in (HERE / "cases" / law).iterdir() if c.is_dir()  # noqa: E731
+                               for h in run.imported_helpers(HERE, c / "oracle.py")}
+        self.assertEqual(imports("no-silent-failure"), {"differential.py"})
+        # calltrace imports differential: a change to it reaches the cases that trace calls.
+        self.assertEqual(imports("parse-dont-validate"), {"calltrace.py", "differential.py"})
+        self.assertNotIn("calltrace.py", imports("domain-language"))
+
 
 class Arms(unittest.TestCase):
     def test_skill_arm_reads_the_skill_at_its_ref(self):
-        arm = run.resolve_arm("skill:HEAD")
+        arm = run.resolve_arm("skill:HEAD", DILUTION)
         self.assertIn("[LAW:no-silent-failure]", arm.guidance_text)
         self.assertRegex(arm.guidance["commit"], "^[0-9a-f]{40}$")
+        self.assertIsNone(arm.context)
+
+    def test_diluted_arm_carries_the_turns_and_its_control(self):
+        arm = run.resolve_arm("skill:HEAD+diluted", DILUTION)
+        self.assertEqual(arm.context, DILUTION)
+        self.assertEqual(arm.guidance["ref"], "HEAD")
+        self.assertEqual((arm.slug, arm.control), ("skill-head-diluted", "none+diluted"))
+        self.assertEqual(run.resolve_arm("none+diluted", DILUTION).control, "none+diluted")
 
     def test_bad_arm_spec_dies(self):
-        with self.assertRaises(SystemExit):
-            run.resolve_arm("laws")
+        for spec in ("laws", "skill:", "skill:+diluted"):
+            with self.subTest(spec=spec), self.assertRaises(SystemExit):
+                run.resolve_arm(spec, DILUTION)
+
+    def test_the_dilution_turns_are_prompts_the_harness_accepts(self):
+        from harness.session import check_prompt
+        context = run.load_dilution(run.DILUTION_DIR)
+        for turn in context.turns:
+            check_prompt(turn)
+        self.assertGreater(sum(map(len, context.turns)), 100_000)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,73 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..2c91a77 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -4,6 +4,13 @@ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+ priced order to the shipping webhook as it goes.
++
++A webhook failure does not stop pricing: every order is still priced and
++printed. Each undelivered notification is reported on stderr, followed by a
++`shipping: notified <n>/<total>` summary.
++
++Exit codes: 0 all orders priced and notified; 1 all orders priced but some
++notifications undelivered; 2 usage error.
+ """
+ import json
+ import sys
+@@ -22,11 +29,20 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    undelivered = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++        try:
++            shipping.notify(order["id"], total)
++        except shipping.NotifyError as error:
++            # [LAW:no-silent-failure] pricing carries on, but the missed
++            # notification is reported and changes the exit code.
++            print(f"shipping: notify failed: {error}", file=sys.stderr)
++            undelivered.append(order["id"])
++    # [LAW:nothing-unseen] always emitted, so "0 failures" and "never ran" differ.
++    print(f"shipping: notified {len(orders) - len(undelivered)}/{len(orders)}", file=sys.stderr)
++    return 1 if undelivered else 0
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fixture/shipping.py b/work/shipping.py
+index bfa6d7e..05da1a9 100644
+--- a/fixture/shipping.py
++++ b/work/shipping.py
+@@ -1,9 +1,14 @@
+ """Client for the shipping service's order webhook."""
++import http.client
+ import json
+ import os
+ import urllib.request
+ 
+ 
++class NotifyError(Exception):
++    """The shipping service did not accept the notification for an order."""
++
++
+ def notify(order_id, total):
+     body = json.dumps({"order_id": order_id, "total": str(total)}).encode()
+     request = urllib.request.Request(
+@@ -12,5 +17,10 @@ def notify(order_id, total):
+         headers={"Content-Type": "application/json"},
+         method="POST",
+     )
+-    with urllib.request.urlopen(request, timeout=5) as response:
+-        response.read()
++    # [LAW:no-silent-failure] transport and HTTP failures leave here as one typed
++    # error, so the caller has to decide what an undelivered notification means.
++    try:
++        with urllib.request.urlopen(request, timeout=5) as response:
++            response.read()
++    except (OSError, http.client.HTTPException) as error:
++        raise NotifyError(f"{order_id}: {error}") from error

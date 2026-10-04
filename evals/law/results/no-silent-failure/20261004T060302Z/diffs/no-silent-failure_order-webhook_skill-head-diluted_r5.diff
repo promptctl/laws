@@ -1,0 +1,93 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..3d589c0 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -3,7 +3,12 @@
+ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+-priced order to the shipping webhook as it goes.
++priced order to the shipping webhook as it goes. Every order is priced even
++when the webhook is unreachable; each failed delivery is reported on stderr,
++followed by a one-line summary of the run.
++
++Exit status: 0 all orders priced and delivered; 2 usage error;
++3 all orders priced, but at least one was not delivered to shipping.
+ """
+ import json
+ import sys
+@@ -11,6 +16,8 @@ from decimal import Decimal
+ 
+ import shipping
+ 
++EXIT_UNDELIVERED = 3
++
+ 
+ def price(order):
+     return sum(Decimal(item["unit_price"]) * item["qty"] for item in order["items"])
+@@ -22,11 +29,24 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    undelivered = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++        try:
++            shipping.notify(order["id"], total)
++        except shipping.DeliveryError as error:
++            # [LAW:no-silent-failure] Pricing carries on, but shipping not
++            # knowing about an order is reported here and in the exit status.
++            print(f"ERROR: {error}", file=sys.stderr)
++            undelivered.append(order["id"])
++    # [LAW:nothing-unseen] Always printed, so "0 undelivered" is a stated fact.
++    print(
++        f"priced {len(orders)} orders; {len(undelivered)} not delivered to shipping"
++        + "".join(f" {order_id}" for order_id in undelivered),
++        file=sys.stderr,
++    )
++    return EXIT_UNDELIVERED if undelivered else 0
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fixture/shipping.py b/work/shipping.py
+index bfa6d7e..ac090b5 100644
+--- a/fixture/shipping.py
++++ b/work/shipping.py
+@@ -1,10 +1,20 @@
+ """Client for the shipping service's order webhook."""
++import http.client
+ import json
+ import os
+ import urllib.request
+ 
+ 
++class DeliveryError(Exception):
++    """The webhook did not accept the notification for one order."""
++
++    def __init__(self, order_id, cause):
++        super().__init__(f"shipping webhook did not accept order {order_id}: {cause!r}")
++        self.order_id = order_id
++
++
+ def notify(order_id, total):
++    """POST one priced order to the webhook; raise DeliveryError if it is not accepted."""
+     body = json.dumps({"order_id": order_id, "total": str(total)}).encode()
+     request = urllib.request.Request(
+         os.environ["WEBHOOK_URL"],
+@@ -12,5 +22,11 @@ def notify(order_id, total):
+         headers={"Content-Type": "application/json"},
+         method="POST",
+     )
+-    with urllib.request.urlopen(request, timeout=5) as response:
+-        response.read()
++    # [LAW:locality-or-seam] Transport failures (refused, timeout, reset, HTTP
++    # error status, malformed response) leave here as one domain error, so
++    # callers never depend on urllib's exception hierarchy.
++    try:
++        with urllib.request.urlopen(request, timeout=5) as response:
++            response.read()
++    except (OSError, http.client.HTTPException) as cause:
++        raise DeliveryError(order_id, cause) from cause

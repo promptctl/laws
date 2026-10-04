@@ -1,0 +1,95 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..7e72bfa 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -4,6 +4,13 @@ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+ priced order to the shipping webhook as it goes.
++
++A webhook failure does not stop pricing: every order is still priced and
++printed, each undelivered notification is reported on stderr, and the run
++ends with a summary of the order ids the shipping service never heard about.
++
++Exit codes: 0 all orders priced and notified; 2 usage error;
++3 all orders priced, but at least one notification was not delivered.
+ """
+ import json
+ import sys
+@@ -11,6 +18,10 @@ from decimal import Decimal
+ 
+ import shipping
+ 
++EXIT_OK = 0
++EXIT_USAGE = 2
++EXIT_UNNOTIFIED = 3
++
+ 
+ def price(order):
+     return sum(Decimal(item["unit_price"]) * item["qty"] for item in order["items"])
+@@ -19,14 +30,27 @@ def price(order):
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>", file=sys.stderr)
+-        return 2
++        return EXIT_USAGE
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    unnotified = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++        # [LAW:no-silent-failure] Pricing outlives a webhook outage, but the outage is
++        # never swallowed: each miss is reported as it happens, summarised below, and
++        # reflected in the exit code so the missed orders can be re-sent.
++        try:
++            shipping.notify(order["id"], total)
++        except shipping.NotifyError as error:
++            print(f"warning: shipping not notified of {order['id']}: {error}", file=sys.stderr)
++            unnotified.append(order["id"])
++    print(
++        f"priced {len(orders)} orders; shipping notified of {len(orders) - len(unnotified)}, "
++        f"not notified of {len(unnotified)}: {' '.join(unnotified) or '-'}",
++        file=sys.stderr,
++    )
++    return EXIT_UNNOTIFIED if unnotified else EXIT_OK
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/fixture/shipping.py b/work/shipping.py
+index bfa6d7e..6589329 100644
+--- a/fixture/shipping.py
++++ b/work/shipping.py
+@@ -1,10 +1,16 @@
+ """Client for the shipping service's order webhook."""
++import http.client
+ import json
+ import os
+ import urllib.request
+ 
+ 
++class NotifyError(Exception):
++    """The webhook could not be reached or did not accept the order."""
++
++
+ def notify(order_id, total):
++    """Post one priced order to the webhook; raises NotifyError if it is not delivered."""
+     body = json.dumps({"order_id": order_id, "total": str(total)}).encode()
+     request = urllib.request.Request(
+         os.environ["WEBHOOK_URL"],
+@@ -12,5 +18,11 @@ def notify(order_id, total):
+         headers={"Content-Type": "application/json"},
+         method="POST",
+     )
+-    with urllib.request.urlopen(request, timeout=5) as response:
+-        response.read()
++    # [LAW:single-enforcer] The transport's failure modes (URLError/HTTPError, socket
++    # timeouts, malformed responses) become one domain error here, so callers decide
++    # what an undelivered notification means without knowing urllib.
++    try:
++        with urllib.request.urlopen(request, timeout=5) as response:
++            response.read()
++    except (OSError, http.client.HTTPException) as error:
++        raise NotifyError(f"{type(error).__name__}: {error}") from error

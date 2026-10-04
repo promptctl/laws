@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_greenhouse-heater_none_r2_0e901cd8",
+  "session_id": "c95af9c6-4d6c-46dd-8141-2c7a581b2c86",
+  "started_at": "2026-10-04T14:13:02.735893+00:00",
+  "duration_ms": 19464,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "19672b708fd638075aec886e0b46e64e7fb61b2be287854e9a029fc8de1611d9",
+      "reply": "The heater now holds its state inside a half-degree band either side of the target, and last night's log replays with 2 relay switches instead of 12: on at 04:26 (19.3\u00b0C), off at 04:40 (20.6\u00b0C).\n\nThe change is in `greenhouse.py`: `HYSTERESIS_C = 0.5` sits directly under `TARGET_C`, and `heater_on` now takes the relay's current state as a second argument.\n\n- **Exact thresholds:** a reading of exactly 20.5 turns the heater off and exactly 19.5 turns it on.\n- **Startup:** the relay starts off, so if the controller boots with the temperature between 19.5 and 20.5 the heater stays off until it drops to 19.5.\n- **The Pi:** I only changed the file in this folder. If the Pi runs its own copy of the controller, it needs this change too, and anything else that calls `heater_on` must pass the relay state.",
+      "duration_ms": 13501
+    }
+  ],
+  "tokens": {
+    "input": 6,
+    "output": 1303,
+    "cache_read": 93388,
+    "cache_creation": 10056
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-hr2s_j8k/work",
+  "transcript": "transcript/c95af9c6-4d6c-46dd-8141-2c7a581b2c86.jsonl"
+}

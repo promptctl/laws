@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_trip-day_none_r2_c6fd2586",
+  "session_id": "60828220-1fc0-491a-a790-59395722f41a",
+  "started_at": "2026-10-04T14:19:17.102405+00:00",
+  "duration_ms": 30610,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "562e112c7c19c9a3dca097cc597df4b8759b4cb583bb572c15c96a5a9478de1c",
+      "reply": "Fixed in `app.py`: `/trips` now validates `day` before calling into `trips.summary`, so a bad day gets a 400 with a JSON error and no traceback. I checked this by calling the WSGI handler directly (no test suite in the project, and I didn't start the server).\n\n| Request | Response |\n|---|---|\n| `day=2026-09-13` | 200, summary as before |\n| `day=2026-09-31` | 400 `day '2026-09-31' is not a real date: day is out of range for month` |\n| `day=14/09/2026` | 400 `day must be formatted YYYY-MM-DD, got '14/09/2026'` |\n| `day=` or no `day` at all | 400 `day is required, as YYYY-MM-DD` |\n\nTwo behaviours you might not assume:\n\n- **Missing `day`:** an empty or absent `day` used to 500 the same way, so it now gets a 400 too.\n- **Strict format:** only `YYYY-MM-DD` is accepted. Python 3.12's `date.fromisoformat` would also take forms like `20260913`, which previously returned a 200; those now get a 400, matching the documented API.\n\nThe check lives in a new `day_problem()` helper at `app.py:25`; `trips.py` is untouched.\n\nThe date picker is still sending these values; this change only makes the API answer them properly.",
+      "duration_ms": 24384
+    }
+  ],
+  "tokens": {
+    "input": 10,
+    "output": 2347,
+    "cache_read": 164125,
+    "cache_creation": 11701
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-cepkwmgd/work",
+  "transcript": "transcript/60828220-1fc0-491a-a790-59395722f41a.jsonl"
+}

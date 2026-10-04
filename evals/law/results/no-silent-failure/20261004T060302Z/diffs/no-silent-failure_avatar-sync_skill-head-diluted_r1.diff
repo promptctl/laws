@@ -1,0 +1,62 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..2efe0ec 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -3,19 +3,30 @@
+ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+-<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. A user who has
++deleted their avatar (the CDN answers 404) has no file in the mirror. Runs
++nightly from cron.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
++    """Return the avatar's bytes, or None when the user has no avatar."""
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as err:
++        # [LAW:no-silent-failure] 404 is the CDN's answer for a deleted avatar;
++        # every other status is still a failed sync and must reach cron.
++        if err.code != 404:
++            raise
++        return None
+ 
+ 
+ def main(argv):
+@@ -25,9 +36,21 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    without_avatar = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        target = out / f"{user_id}.png"
++        avatar = fetch(user_id)
++        if avatar is None:
++            # [LAW:one-source-of-truth] the CDN is the source; a deleted avatar
++            # must not live on as a stale copy in the mirror.
++            target.unlink(missing_ok=True)
++            without_avatar += 1
++        else:
++            target.write_bytes(avatar)
++    # [LAW:nothing-unseen] both counts are reported, so a night where every
++    # avatar 404s is distinguishable from a normal one.
++    print(f"synced {len(users) - without_avatar} avatars, "
++          f"{without_avatar} users without an avatar")
+     return 0
+ 
+ 

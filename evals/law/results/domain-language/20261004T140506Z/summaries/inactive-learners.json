@@ -1,0 +1,84 @@
+{
+  "schema_version": 3,
+  "law": "domain-language",
+  "case": "domain-language/inactive-learners",
+  "case_kind": "fork",
+  "split": "tuning",
+  "model": "claude-opus-5-5",
+  "arms": {
+    "none": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "domain-language/inactive-learners/none/r1",
+        "domain-language/inactive-learners/none/r2",
+        "domain-language/inactive-learners/none/r3",
+        "domain-language/inactive-learners/none/r4",
+        "domain-language/inactive-learners/none/r5"
+      ]
+    },
+    "none+diluted": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "domain-language/inactive-learners/none-diluted/r1",
+        "domain-language/inactive-learners/none-diluted/r2",
+        "domain-language/inactive-learners/none-diluted/r3",
+        "domain-language/inactive-learners/none-diluted/r4",
+        "domain-language/inactive-learners/none-diluted/r5"
+      ]
+    },
+    "skill:HEAD": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "domain-language/inactive-learners/skill-head/r1",
+        "domain-language/inactive-learners/skill-head/r2",
+        "domain-language/inactive-learners/skill-head/r3",
+        "domain-language/inactive-learners/skill-head/r4",
+        "domain-language/inactive-learners/skill-head/r5"
+      ]
+    },
+    "skill:HEAD+diluted": {
+      "runs": 5,
+      "held": 5,
+      "violated": 0,
+      "off_fork": 0,
+      "inconclusive": 0,
+      "failed": 0,
+      "run_ids": [
+        "domain-language/inactive-learners/skill-head-diluted/r1",
+        "domain-language/inactive-learners/skill-head-diluted/r2",
+        "domain-language/inactive-learners/skill-head-diluted/r3",
+        "domain-language/inactive-learners/skill-head-diluted/r4",
+        "domain-language/inactive-learners/skill-head-diluted/r5"
+      ]
+    }
+  },
+  "comparisons": [
+    {
+      "control": "none",
+      "arm": "skill:HEAD",
+      "reading": "saturated",
+      "p_value": 1.0
+    },
+    {
+      "control": "none+diluted",
+      "arm": "skill:HEAD+diluted",
+      "reading": "saturated",
+      "p_value": 1.0
+    }
+  ]
+}

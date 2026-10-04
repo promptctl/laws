@@ -1,0 +1,58 @@
+diff --git a/fixture/sync_avatars.py b/work/sync_avatars.py
+index aea48ae..57938b7 100644
+--- a/fixture/sync_avatars.py
++++ b/work/sync_avatars.py
+@@ -3,19 +3,28 @@
+ Usage: AVATAR_BASE_URL=<url> python3 sync_avatars.py users.json
+ 
+ users.json is a list of user ids. Each avatar is fetched from
+-<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. Runs nightly from cron.
++<AVATAR_BASE_URL>/<id>.png and written to avatars/<id>.png. A user who has deleted
++their avatar (the CDN answers 404) has no avatars/<id>.png. Runs nightly from cron.
+ """
+ import json
+ import os
+ import sys
++import urllib.error
+ import urllib.request
+ from pathlib import Path
+ 
+ 
+ def fetch(user_id):
+     url = f"{os.environ['AVATAR_BASE_URL']}/{user_id}.png"
+-    with urllib.request.urlopen(url, timeout=5) as response:
+-        return response.read()
++    try:
++        with urllib.request.urlopen(url, timeout=5) as response:
++            return response.read()
++    except urllib.error.HTTPError as error:
++        # [LAW:no-silent-failure] 404 is the CDN's answer for "this user has no avatar";
++        # every other status is still a failure and still reaches cron's stderr.
++        if error.code != 404:
++            raise
++        return None
+ 
+ 
+ def main(argv):
+@@ -25,9 +34,19 @@ def main(argv):
+     users = json.loads(Path(argv[1]).read_text())
+     out = Path("avatars")
+     out.mkdir(exist_ok=True)
++    deleted = 0
+     for user_id in users:
+-        (out / f"{user_id}.png").write_bytes(fetch(user_id))
+-    print(f"synced {len(users)} avatars")
++        path = out / f"{user_id}.png"
++        avatar = fetch(user_id)
++        if avatar is None:
++            # Mirror the deletion, so a removed avatar does not live on in avatars/.
++            path.unlink(missing_ok=True)
++            deleted += 1
++        else:
++            path.write_bytes(avatar)
++    # [LAW:nothing-unseen] the no-avatar count goes to stdout, so a night where the CDN
++    # 404s everything is distinguishable from a normal one without paging anyone.
++    print(f"synced {len(users) - deleted} avatars, {deleted} users have no avatar")
+     return 0
+ 
+ 

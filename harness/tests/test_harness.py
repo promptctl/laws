@@ -444,6 +444,15 @@ class SessionLaunch(unittest.TestCase):
         self.assertEqual(session_module.shown(pane, tail), 1)
         self.assertEqual(session_module.shown("❯ \n──────\n", tail), 0)
 
+    def test_a_prompt_ending_in_a_code_fence_is_found_by_more_than_the_fence(self):
+        prompt = "What does this do?\n\n```python\nclass F:\n    def close(self):\n        return self.__class__(self._numerator, self._denominator)\n```"
+        tail = session_module.prompt_tail(prompt)
+        self.assertIn("self._denominator", tail)
+        answer_above = "  ```\n  print(x)\n  ```\n"
+        self.assertEqual(session_module.shown(answer_above, tail), 0)
+        box = "❯ What does [...Truncated text #2 +2 lines...]\n      def close(self):\n          return self.__class__(self._numerator, self._denominator)\n  ```\n"
+        self.assertEqual(session_module.shown(answer_above + box, tail), 1)
+
     def test_a_plugin_admitted_twice_is_a_spec_error(self):
         probe = plugins.DirPlugin(FIXTURES / "probe-plugin")
         session = self.session(plugins=(probe, probe))

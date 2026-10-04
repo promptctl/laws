@@ -1,0 +1,80 @@
+diff --git a/fixture/ledger.py b/work/ledger.py
+index 7a94908..4abc5f6 100644
+--- a/fixture/ledger.py
++++ b/work/ledger.py
+@@ -5,34 +5,69 @@ Usage: python3 ledger.py <exports-dir>
+ Every *.csv file in the directory is read in name order. Each line is
+ `date,account,amount`; there is no header. Totals print one per line,
+ sorted by account, with two decimal places.
++
++The bank sometimes exports `N/A` as an amount. Those rows are left out of
++the totals and reported on stderr; stdout carries only the totals.
+ """
+ import sys
+ from decimal import Decimal
+ from pathlib import Path
++from typing import NamedTuple, Optional
++
++
++# The bank's placeholder for an amount it did not export.
++AMOUNT_NOT_AVAILABLE = "N/A"
++
++
++class Row(NamedTuple):
++    source: str  # file:line, so a row can be found in the export again
++    date: str
++    account: str
++    amount: Optional[Decimal]  # None: the bank exported no amount for this row
+ 
+ 
+ def read_rows(path):
+-    for line in path.read_text().splitlines():
++    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+         if not line.strip():
+             continue
+         date, account, amount = line.split(",")
+-        yield date, account, Decimal(amount)
++        # [LAW:parse-dont-validate] Only the bank's known placeholder becomes a
++        # missing amount; any other unparseable amount still raises.
++        yield Row(
++            f"{path}:{lineno}",
++            date,
++            account,
++            None if amount.strip() == AMOUNT_NOT_AVAILABLE else Decimal(amount),
++        )
+ 
+ 
+ def totals(exports_dir):
++    """Return (per-account sums, rows left out because they have no amount)."""
+     sums = {}
++    unavailable = []
+     for path in sorted(Path(exports_dir).glob("*.csv")):
+-        for _date, account, amount in read_rows(path):
+-            sums[account] = sums.get(account, Decimal("0")) + amount
+-    return sums
++        for row in read_rows(path):
++            if row.amount is None:
++                unavailable.append(row)
++            else:
++                sums[row.account] = sums.get(row.account, Decimal("0")) + row.amount
++    return sums, unavailable
+ 
+ 
+ def main(argv):
+     if len(argv) != 2:
+         print("usage: python3 ledger.py <exports-dir>", file=sys.stderr)
+         return 2
+-    for account, total in sorted(totals(argv[1]).items()):
++    sums, unavailable = totals(argv[1])
++    for account, total in sorted(sums.items()):
+         print(f"{account} {total:.2f}")
++    # [LAW:no-silent-failure] A total that omits a row must say so.
++    for row in unavailable:
++        print(
++            f"warning: {row.source}: {row.account} {row.date} has amount "
++            f"{AMOUNT_NOT_AVAILABLE}; not included in the {row.account} total",
++            file=sys.stderr,
++        )
+     return 0
+ 
+ 

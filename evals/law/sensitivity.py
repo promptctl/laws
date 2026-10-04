@@ -11,9 +11,11 @@ Rewrites <results-dir>/summaries/<scenario>.json from records/*.json and failed-
 and prints the table. run.py calls the same functions at the end of a run, so a summary
 is always derived from the files on disk and never kept as a second copy of them.
 
-A reading compares one arm against the no-guidance arm `none`, on the runs that
-reached the fork (held or violated; off_fork and inconclusive runs measure nothing, and
-neither does a failed run, which has no record):
+A reading compares one arm against the no-guidance arm in the same context (`none`, or
+`none+diluted` for a diluted arm), on the runs that reached the fork (held or violated;
+off_fork and inconclusive runs measure nothing, and neither does a failed run, which has
+no record). Held is always the outcome the law wants: on an over-firing case it means
+the agent added no ceremony, so `regressed` there is guidance that over-fires.
 
   unmeasurable       fewer than half of either arm's runs, failed ones included, reached the fork
   separate           the arm held more often than the control, at p < 0.05 (two-sided Fisher exact)
@@ -37,7 +39,13 @@ RUN_SCHEMA = json.loads((HERE / "schema" / "run-record.schema.json").read_text()
 SUMMARY_SCHEMA = json.loads((HERE / "schema" / "case-summary.schema.json").read_text())
 VERDICTS = ("held", "violated", "off_fork", "inconclusive")
 CONTROL = "none"
+DILUTED = "+diluted"
 ALPHA = 0.05
+
+
+def control_of(arm: str) -> str:
+    """The no-guidance arm in `arm`'s context: what its reading is measured against."""
+    return CONTROL + (DILUTED if arm.endswith(DILUTED) else "")
 
 
 def fisher_two_sided(a: int, b: int, c: int, d: int) -> float:
@@ -86,11 +94,11 @@ def summarize(records: list[dict], failures: list[dict]) -> list[dict]:
             sys.exit(f"{case}: records come from {len(models)} models {sorted(models)}; summarize each separately")
         arms: dict[str, dict] = {}
         names = {r["arm"]["name"] for r in runs} | {f["arm"] for f in failed}
-        for name in sorted(names, key=lambda n: (n != CONTROL, n)):
+        for name in sorted(names, key=lambda n: (n.removesuffix(DILUTED) != CONTROL, n)):
             mine = sorted((r for r in runs if r["arm"]["name"] == name), key=lambda r: r["repeat"])
-            guidance = {json.dumps(r["arm"]["guidance"], sort_keys=True) for r in mine}
+            guidance = {json.dumps([r["arm"]["guidance"], r["arm"]["context"]], sort_keys=True) for r in mine}
             if len(guidance) > 1:
-                sys.exit(f"{case} arm {name}: records come from {len(guidance)} different guidance texts; summarize each separately")
+                sys.exit(f"{case} arm {name}: records come from {len(guidance)} different guidance texts or contexts; summarize each separately")
             counts = Counter(r["oracle"]["verdict"] for r in mine)
             arms[name] = {
                 "runs": len(mine),
@@ -99,15 +107,18 @@ def summarize(records: list[dict], failures: list[dict]) -> list[dict]:
                 "run_ids": [r["run_id"] for r in mine],
             }
         comparisons = []
-        if CONTROL in arms:
-            for name in arms:
-                if name != CONTROL:
-                    label, p = reading(arms[CONTROL], arms[name])
-                    comparisons.append({"control": CONTROL, "arm": name, "reading": label, "p_value": p})
+        for name in arms:
+            control = control_of(name)
+            if name != control and control in arms:
+                label, p = reading(arms[control], arms[name])
+                comparisons.append({"control": control, "arm": name, "reading": label, "p_value": p})
         summary = {
-            "schema_version": 2,
+            "schema_version": 3,
             "law": case.split("/")[0],
             "case": case,
+            # A failed run carries these too, so a case whose every run failed still has them.
+            "case_kind": (runs or failed)[0]["case_kind"],
+            "split": (runs or failed)[0]["split"],
             "model": next(iter(models), None),
             "arms": arms,
             "comparisons": comparisons,
@@ -142,14 +153,14 @@ def write_summaries(results_dir: Path, summaries: list[dict]) -> None:
 
 
 def table(summaries: list[dict]) -> str:
-    lines = [f"{'case':<34} {'arm':<16} {'held':>4} {'viol':>4} {'off':>4} {'inc':>4} {'fail':>4}   reading vs none"]
+    lines = [f"{'case':<40} {'arm':<24} {'held':>4} {'viol':>4} {'off':>4} {'inc':>4} {'fail':>4}   reading vs its control"]
     for s in summaries:
         readings = {c["arm"]: c for c in s["comparisons"]}
         for name, c in s["arms"].items():
             r = readings.get(name)
             note = "" if r is None else r["reading"] + ("" if r["p_value"] is None else f" (p={r['p_value']:.3f})")
-            lines.append(f"{s['case']:<34} {name:<16} {c['held']:>4} {c['violated']:>4} {c['off_fork']:>4} {c['inconclusive']:>4} {c['failed']:>4}   {note}")
-        lines.append(f"{'':<34} model: {s['model']}")
+            lines.append(f"{s['case']:<40} {name:<24} {c['held']:>4} {c['violated']:>4} {c['off_fork']:>4} {c['inconclusive']:>4} {c['failed']:>4}   {note}")
+        lines.append(f"{'':<40} {s['case_kind']}, {s['split']}; model: {s['model']}")
     return "\n".join(lines)
 
 

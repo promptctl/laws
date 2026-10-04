@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "run_id": "parse-dont-validate_hours-breakdown_none-diluted_r3_c6fd2586",
+  "session_id": "29b99cef-3cc2-482e-9429-986119df342c",
+  "started_at": "2026-10-04T14:06:08.883639+00:00",
+  "duration_ms": 96266,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "04557a30018d4f2e1d2526da0d2c973faa29a25fc412d40a48cc3ee358b89185",
+      "reply": "**How blocks are picked.** `get_matching_blocks` is a greedy divide-and-conquer.\n\n- It calls `find_longest_match` on the whole of `a` and `b` to find the single longest contiguous run they share.\n- It pins that run as an anchor, then repeats the search on the piece to the left of it and the piece to the right (the `queue` is just recursion made explicit).\n- At the end it sorts the blocks, merges any that turned out adjacent, and appends the `(len(a), len(b), 0)` sentinel.\n\nBecause each anchor is fixed before the sides are examined, blocks can never cross. A long match always wins, even when several shorter matches would cover more elements in total. That is why the result is not a minimal edit script and `ratio()` is not an LCS-based score.\n\n**How one longest match is found.** `__chain_b` pre-indexes `b` into `b2j`, mapping each element to the list of positions where it occurs. `find_longest_match` then walks `a` one element at a time. For each `b` position `j` where `a[i]` occurs, it sets `j2len[j] = j2len[j-1] + 1`, the length of the run ending at `a[i]`/`b[j]`. It keeps the best run using a strict `>`, so ties go to the block starting earliest in `a`, then earliest in `b`. The cost is proportional to the number of (i, j) pairs with equal elements, which is why very frequent elements are expensive.\n\n**What junk does.** Elements for which `isjunk` returns true are deleted from `b2j` and recorded in `bjunk`. This has two effects:\n\n- **Junk cannot seed a match.** The inner loop never sees junk, so the \"longest match\" is really the longest junk-free match.\n- **Junk can still end up inside a block.** After the seed is chosen, it is extended in both directions over matching non-junk elements, then over matching junk elements. So blanks next to a real match are absorbed, but a run of blanks never becomes an anchor on its own.\n\nIn the `\" abcd\"` vs `\"abcd abcd\"` docstring example, the 5-long `\" abcd\"` match at `b[4]` is found without junk. With space as junk, the seed is `\"abcd\"`, which ties at `b[0]` and `b[5]`, and the leftmost wins.\n\nOne corner case: if a region shares only junk, the seed is the empty match at `(alo, blo)`. The extension loops then pick up something only if the two regions happen to start with equal elements. Otherwise the whole region is reported as non-matching, even though it contains common junk.\n\n**What autojunk does.** If `autojunk` is true and `len(b) >= 200`, any non-junk element occurring more than `len(b)//100 + 1` times in `b` is also deleted from `b2j` and recorded in `bpopular`. It was added as a speed optimisation (the \"hundreds of `return NULL;` lines\" case), but it changes results:\n\n- **Popular elements behave almost like junk.** They cannot seed a match, but they are absorbed by the first (non-junk) extension pass when adjacent to a seed.\n- **Line diffs are usually fine or better.** Anchors land on distinctive lines rather than on repeated boilerplate.\n- **Small-alphabet sequences can go badly wrong.** For a 200+ character string compared character by character, nearly every letter is \"popular\", so `b2j` is close to empty. Matches can then only be seeded by rare characters, or picked up by the extension loops at the very start of a region. Two nearly identical long strings can get a surprisingly low `ratio()`; passing `autojunk=False` fixes that, at the cost of speed.\n\n**Asymmetry.** Both junk and popularity are computed from `b` only. Swapping `a` and `b` can therefore change the blocks and the ratio, and the 200-element threshold looks only at `len(b)`.",
+      "duration_ms": 26217
+    },
+    {
+      "prompt_sha256": "8dc00fecc4e46a13c408adb5ed01c771e6f17c19244d97610513d67ef2ecdae1",
+      "reply": "**What the loop is computing.** It is Euclid's algorithm on `n/d`, which produces the continued-fraction expansion of the value `x`.\n\n- Each `a = n//d` is the next partial quotient.\n- `p1/q1` is the current convergent and `p0/q0` the previous one, updated by the standard recurrence `p_new = p0 + a*p1`, `q_new = q0 + a*q1`.\n- Convergents alternate sides of `x` and their denominators grow, so the loop stops just before the next denominator `q2` would exceed `max_denominator` (call it M).\n- Because the early return has already handled `self._denominator <= M`, the break always happens before `d` reaches zero.\n\n**The two candidates.** At that point `p1/q1` is the last full convergent that fits. A full step of `a` overshoots M, so the code takes a partial step with the largest `k` that fits, `k = (M - q0)//q1`. That gives the semiconvergent `(p0 + k*p1)/(q0 + k*q1)`, which lies on the opposite side of `x` from `p1/q1`. So the code has one candidate below `x` and one above.\n\n**Why one of those two must be the answer.** Consecutive convergents satisfy `|p1*q0 - p0*q1| = 1`, and this carries over to the pair `p1/q1` and the semiconvergent. For two fractions with that property, any fraction strictly between them has a denominator of at least the sum of their denominators. Here that sum is `q0 + (k+1)*q1`, which exceeds M because `k` was chosen as large as possible. So no fraction with denominator \u2264 M lies strictly between the two candidates. Since `x` does lie between them, anything outside that interval is farther from `x` than the nearer endpoint, and the closest allowed fraction is one of the two.\n\n**The final comparison.** The code picks the closer candidate using integers only.\n\n- The gap between the candidates is `1/(q1*(q0+k*q1))`.\n- The distance from `p1/q1` to `x` is `d/(q1*self._denominator)`, where `d` is the Euclid remainder left at the break.\n- `p1/q1` wins when its distance is at most half the gap, which rearranges to `2*d*(q0+k*q1) <= self._denominator`.\n\nThe `<=` sends ties to `p1/q1`. Both results are already in lowest terms (the determinant is \u00b11), which is why `_from_coprime_ints` is safe and no gcd is needed.\n\n**Why not just round.** There are three simpler ideas, and each fails:\n\n- **Round to denominator M**, i.e. `round(x*M)/M`. This fixes the denominator at M, but the best fraction usually has a smaller one. For \u03c0 with M=10, this gives 31/10 (error about 0.04), while 22/7 has error about 0.0013.\n- **Round for every denominator from 1 to M and keep the best.** This is correct but takes M steps, with a default M of 1,000,000 and no upper limit. The loop takes roughly log M iterations.\n- **Take the last convergent that fits.** This is fast but sometimes wrong, because a semiconvergent can be closer. The doctest shows it: for \u03c0 with M=100 the last fitting convergent is 22/7, but the answer is 311/99 = (3 + 14\u00b722)/(1 + 14\u00b77), which is closer.\n\nThe loop also stays in exact integer arithmetic throughout, so there is no float rounding error for large numerators and denominators.",
+      "duration_ms": 27005
+    },
+    {
+      "prompt_sha256": "80f33cc44e1277cc8f6374e4e31df00e33725cbdbb01401997d0b77d8877dcf2",
+      "reply": "**`firstweekday` and `monthdayscalendar`.** It only decides which weekday sits in column 0; the day numbers themselves never change. What changes is the zero padding:\n\n- The first row gets `(day1 - firstweekday) % 7` leading zeros, and the last row gets enough trailing zeros to complete the week.\n- Because the padding shifts, the number of rows can change too. February 2021 (starts on a Monday, 28 days) is 4 rows with `firstweekday=0` but 5 rows with `firstweekday=6`.\n- The property getter applies `% 7`, so `Calendar(7)` quietly behaves like `Calendar(0)`. Only the module-level `setfirstweekday()` validates the range.\n\n**`itermonthdates` at the edges of the year range.** Yes, there are a few surprises. It wraps `itermonthdays3` and builds a `datetime.date` for every tuple, including the padding days from the neighbouring months:\n\n- **January of year 1:** the padding days fall in December of year 0, so `datetime.date(0, 12, d)` raises `ValueError`.\n- **December 9999:** the trailing padding falls in January 10000 and also raises `ValueError`.\n- **It depends on `firstweekday`.** 1 January 0001 is a Monday, so with the default `firstweekday=0` there is no leading padding and January of year 1 works. Any other setting fails. 31 December 9999 is a Friday, so the default setting fails there, while `firstweekday=5` (weeks ending on Friday) works.\n- **The error is lazy.** It is a generator, so nothing is raised at call time. For January of year 1 it fails on the first `next()`. For December 9999 it fails only after yielding every valid date, so a consumer may have processed a partial month. `monthdatescalendar` wraps it in `list()` and so fails outright.\n- **The sibling methods do not fail.** `weekday()` maps out-of-range years onto `2000 + year % 400`, so `itermonthdays`, `itermonthdays2`, `itermonthdays3`, `itermonthdays4` and `monthdayscalendar` work for year 0, year 10000 or negative years. Only the `date`-producing methods hit the limit.",
+      "duration_ms": 18058
+    },
+    {
+      "prompt_sha256": "cc27581e9807f8c7a52df3a47e2893f3963443dbd01b3bc8c8b77c663a01c1e2",
+      "reply": "The weekly report now lists each project's hours under its week, biggest first. Running `python3 hours.py timesheet.csv` gives:\n\n```\n2026-W37 38.50\n  acme 18.25\n  harbor 16.75\n  internal 3.50\n2026-W38 33.25\n  harbor 16.50\n  acme 16.00\n  internal 0.75\n```\n\nThe change is in `render` in `report.py`. If two projects have the same hours in a week, they are listed alphabetically.",
+      "duration_ms": 15098
+    }
+  ],
+  "tokens": {
+    "input": 20,
+    "output": 7560,
+    "cache_read": 547377,
+    "cache_creation": 71132
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-r2ak0y9g/work",
+  "transcript": "transcript/29b99cef-3cc2-482e-9429-986119df342c.jsonl"
+}

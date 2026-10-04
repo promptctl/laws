@@ -1,0 +1,37 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..135907c 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -3,7 +3,8 @@
+ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+-priced order to the shipping webhook as it goes.
++priced order to the shipping webhook as it goes. If the webhook can't be
++reached, the order is still priced and a warning goes to stderr.
+ """
+ import json
+ import sys
+@@ -22,10 +23,21 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    unnotified = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
++        try:
++            shipping.notify(order["id"], total)
++        except OSError as exc:  # URLError, HTTPError, timeouts, dropped connections
++            unnotified.append(order["id"])
++            print(f"warning: shipping webhook failed for {order['id']}: {exc}", file=sys.stderr)
++    if unnotified:
++        print(
++            f"warning: shipping was not notified of {len(unnotified)} order(s): "
++            + " ".join(unnotified),
++            file=sys.stderr,
++        )
+     return 0
+ 
+ 

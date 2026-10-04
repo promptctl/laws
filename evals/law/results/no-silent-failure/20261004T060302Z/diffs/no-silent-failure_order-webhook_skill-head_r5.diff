@@ -1,0 +1,53 @@
+diff --git a/fixture/orders.py b/work/orders.py
+index c2dcc2c..411c879 100644
+--- a/fixture/orders.py
++++ b/work/orders.py
+@@ -4,6 +4,12 @@ Usage: WEBHOOK_URL=<url> python3 orders.py <orders.json>
+ 
+ Prints one line per order, `<id> <total>`, in file order, and posts each
+ priced order to the shipping webhook as it goes.
++
++Pricing does not depend on the webhook: an order whose notification cannot be
++delivered is still priced and printed, and is reported on stderr.
++
++Exit codes: 0 all orders priced and notified; 2 usage error; 3 all orders
++priced, but at least one was not delivered to the shipping service.
+ """
+ import json
+ import sys
+@@ -11,6 +17,8 @@ from decimal import Decimal
+ 
+ import shipping
+ 
++EXIT_UNDELIVERED = 3
++
+ 
+ def price(order):
+     return sum(Decimal(item["unit_price"]) * item["qty"] for item in order["items"])
+@@ -22,11 +30,24 @@ def main(argv):
+         return 2
+     with open(argv[1]) as f:
+         orders = json.load(f)
++    undelivered = []
+     for order in orders:
+         total = price(order)
+         print(f"{order['id']} {total:.2f}")
+-        shipping.notify(order["id"], total)
+-    return 0
++        try:
++            shipping.notify(order["id"], total)
++        # [LAW:no-silent-failure] Delivery failure (URLError, HTTPError and
++        # socket timeouts are all OSError) is reported per order and in the
++        # exit code; it just doesn't abort pricing. Anything else still raises.
++        except OSError as error:
++            undelivered.append(order["id"])
++            print(f"shipping webhook failed for {order['id']}: {error}", file=sys.stderr)
++    print(
++        f"{len(orders)} orders priced, {len(undelivered)} not delivered to shipping"
++        + (f": {' '.join(undelivered)}" if undelivered else ""),
++        file=sys.stderr,
++    )
++    return EXIT_UNDELIVERED if undelivered else 0
+ 
+ 
+ if __name__ == "__main__":

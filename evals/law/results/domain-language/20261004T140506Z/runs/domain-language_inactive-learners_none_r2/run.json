@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "run_id": "domain-language_inactive-learners_none_r2_0e901cd8",
+  "session_id": "40ed9187-013b-44ed-9d57-40e848498235",
+  "started_at": "2026-10-04T14:19:58.121178+00:00",
+  "duration_ms": 24335,
+  "claude": {
+    "path": "/Users/bmf/.local/share/claude/versions/2.1.288",
+    "version": "2.1.288",
+    "version_pinned": false
+  },
+  "auth": {
+    "method": "claude.ai",
+    "provider": "firstParty"
+  },
+  "model": {
+    "requested": "claude-opus-5-5",
+    "served": [
+      "claude-opus-5-5"
+    ]
+  },
+  "admitted": {
+    "plugins": [],
+    "append_system_prompt": null,
+    "hook_events": [],
+    "mcp_servers": [],
+    "project_settings": false
+  },
+  "loaded": {
+    "claude_md": [],
+    "hooks": [],
+    "plugin_skills": [],
+    "plugin_agents": [],
+    "project_skills": [],
+    "project_agents": [],
+    "other_skills": [],
+    "other_agents": [],
+    "mcp_servers": []
+  },
+  "turns": [
+    {
+      "prompt_sha256": "1f08ff2abdf82c0bbbf89911283195829c2c98bc8bae0b6774aee82a63574673",
+      "reply": "`python3 roster.py inactive` now lists every learner whose last login was 14 or more days ago. Run against the current data, it gives:\n\n```\nL-002  Ben Whitlock         ben.w@example.org        2026-09-02  32 days ago\nL-004  Dara Novak           dara@example.org         2026-08-11  54 days ago\n```\n\n- **Output:** each line shows the last login date and days since, instead of the course list, sorted by name like the other commands.\n- **Cutoff:** a learner who logged in exactly 14 days ago is included. The threshold is the `INACTIVE_AFTER_DAYS` constant at the top of `roster.py`.\n- **Docs:** I added the command to the usage text and the README.",
+      "duration_ms": 18556
+    }
+  ],
+  "tokens": {
+    "input": 8,
+    "output": 1674,
+    "cache_read": 127622,
+    "cache_creation": 10579
+  },
+  "work_dir": "/private/var/folders/80/071_2pk11ms1qftgqxswr2p40000gn/T/law-eval-run-c_ka0oyb/work",
+  "transcript": "transcript/40ed9187-013b-44ed-9d57-40e848498235.jsonl"
+}
