@@ -3,7 +3,7 @@
 Each case puts an agent at the one decision a law names, in one request, and reads
 mechanically which way it went. Run under arms with and without the law, the cases say
 whether the law's text moves the agent there. They do not score whether the task got
-done (see `design-docs/no-single-session-evals.md`).
+done.
 
 ## Run
 
