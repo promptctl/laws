@@ -2,7 +2,7 @@ Each version's section is written in the PR that bumps `.claude-plugin/plugin.js
 
 ## v0.39.0 - 2026-10-31
 
-- laws(backlog): the description no longer says "Use when the deliverable is a slate of epics and issues", which matched filing any set of tickets; the skill is for planning a backlog. "Slate" becomes "plan" in the setup step, the craft, and the goals doc
+- laws(backlog): the description no longer says "Use when the deliverable is a slate of epics and issues", which matched filing any set of tickets, nor the "Do not apply to..." sentence after it. "Slate" becomes "collection" in the setup step, the craft, and the goals doc
 
 ## v0.38.0 - 2026-10-31
 
