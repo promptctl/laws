@@ -152,6 +152,6 @@ why it exists in terms of the project's goals, and every ticket carries what a s
 needs to start. Where the founding document already says something, point at it by
 path; do not restate it and do not assume it was read.
 
-The check, before writing anything to the tracker: read the slate as a stranger who
+The check, before writing anything to the tracker: read the plan as a stranger who
 cloned the repo this morning. Anything that only makes sense to someone who was here
 tonight gets rewritten until it makes sense to them.
