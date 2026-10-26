@@ -17,7 +17,7 @@ This skill is tracker-agnostic. "Tracker" means whatever system holds the items;
 
 1. **One list, one order.** A team has one backlog, and position in it is the priority. Labels, columns, and priority fields describe items; they do not order them. When a label disagrees with the order, the order is authoritative and the label is corrected.
 2. **One accountable owner.** Anyone may propose items and argue for their placement. One named person decides the order and is accountable for it. The decision is recorded by position, not by discussion.
-3. **Ready at the top.** The *ready zone* — enough items to cover the team's next two planning intervals (sprints, or two-week periods for teams without sprints) — meets the Definition of Ready (below). Items lower down may be coarse; precision there is wasted because it will be redone.
+3. **Ready at the top.** The *ready zone* — enough items to cover the team's next two planning intervals (a planning interval is a sprint, or two weeks for teams without sprints) — meets the Definition of Ready (below). Items lower down may be coarse; precision there is wasted because it will be redone.
 4. **Every item is justified.** Each item states why it exists — the problem it addresses and who is affected, under the heading its type uses (Problem, Reason, Question, Goal, or Current cost). An item whose justification cannot be written is closed.
 5. **Bounded.** The backlog holds roughly what the team could complete in two quarters. Items beyond that horizon lower the signal of everything else and are closed, not kept.
 6. **Current.** An item's description reflects the present understanding of the work. When understanding changes, the description is edited. Comments record how the understanding developed; they do not replace it.
@@ -26,7 +26,7 @@ This skill is tracker-agnostic. "Tracker" means whatever system holds the items;
 
 ## Anatomy of an item
 
-Every item carries these fields:
+Every item carries these fields. An epic carries Title, Type, Goal, Done when, and Links; Size does not apply to it.
 
 | Field | Content |
 |---|---|
@@ -108,7 +108,7 @@ Order is a decision, recorded by position. The inputs:
 
 Scoring methods such as WSJF, RICE, or cost of delay make these inputs explicit. Any method is acceptable if it is applied consistently and produces a single order. When two items resist ordering, ask: "If the team could complete only one of these next, which?" Answer it. Ties are not permitted.
 
-If the tracker uses priority labels, each label has a written definition with a response expectation — for example: P0, all other work stops; P1, next planning interval; P2, this quarter; P3, no commitment. An item that meets the top label's definition is an interrupt, not a candidate for comparison: it takes the first position when filed. Items are reclassified when they do not meet their label's definition. A label most of whose items violate its definition has stopped carrying information.
+If the tracker uses priority labels, each label has a written definition with a response expectation — for example: P0, all other work stops; P1, next planning interval; P2, this quarter; P3, no commitment. An item that meets the top label's definition is an interrupt, not a candidate for comparison: it takes the first position among non-P0 items when filed, "all other work stops" means all non-P0 work, and several P0s are ordered among themselves by the rules above. Items are reclassified when they do not meet their label's definition. A label most of whose items violate its definition has stopped carrying information.
 
 ## Splitting
 
@@ -124,7 +124,7 @@ Splitting lines, in order of preference:
 4. **Operational variation** — one region, behind a feature flag, read-only first.
 5. **Acceptance criterion** — one criterion per item, when nothing above applies.
 
-Each resulting item satisfies the Anatomy section on its own. A piece that cannot be described as valuable by itself is a step inside another item, not a separate item. Link the pieces to each other, then close the original as Superseded, linking the pieces — or convert it to an epic if the pieces have no parent.
+Each resulting item satisfies the Anatomy section on its own. A piece that cannot be described as valuable by itself is a step inside another item, not a separate item. Link the pieces to each other, then close the original as Superseded, linking the pieces. If the pieces share a goal worth tracking, file a new epic for them; the original is never converted.
 
 ## Intake and triage
 
@@ -136,7 +136,7 @@ For each untriaged item, in arrival order:
 2. **Classify.** Set type, component or area, and any labels the team uses.
 3. **Decide.** One of:
    - **Accept** — the item enters the backlog.
-   - **Needs Information** — return it to the reporter with the specific questions. If unanswered after an agreed interval, close it as Won't Do with the reason "no response to questions of <date>"; a reply reopens it.
+   - **Needs Information** — return it to the reporter with the specific questions. The item stays in triage, not in the backlog, and is tracked in the audit. If unanswered after an agreed interval (14 days is common), close it as Won't Do with the reason "no response to questions of <date>"; a reply reopens it.
    - **Won't Do** — close with a one-sentence reason that would let someone reopen it with new evidence.
 4. **Place.** Set a rough position in the order. Precise placement happens in refinement.
 
@@ -155,9 +155,9 @@ Decisions reached in refinement are written into the item's description, not lef
 
 ## Aging and retirement
 
-An item whose description or fields have not been edited within an agreed interval (reordering does not count) — 90 days is common — is reviewed at the next refinement. For each such item, one of two outcomes:
+An item whose description has not been edited, and which has not been reviewed at refinement, within an agreed interval — 90 days is common — is reviewed. Label, link, and position changes do not count as review. A *review* means a named person has read the item against current understanding at the next refinement. For each such item, one of two outcomes:
 
-- **Still relevant and would be done given capacity** — edit the description to current understanding (or add a dated line confirming it is still accurate) and place it deliberately in the order. The edit resets its age.
+- **Still relevant and would be done given capacity** — edit the description to current understanding, or record a dated review naming the reviewer, and place it deliberately in the order. That resets its age.
 - **Not going to be done within the planning horizon** — close as Won't Do, with the reason.
 
 Closing an item is a statement about the team's horizon, not about the reporter or the idea. Closed items remain searchable, and reopening one with new evidence costs nothing.
@@ -166,7 +166,7 @@ Closing an item is a statement about the team's horizon, not about the reporter 
 
 - When understanding of the problem changes, edit the description. The description is the item's present truth; the comment thread is its history.
 - When scope is cut from an item, record what was cut. If the cut work still matters, file it as its own item and link it.
-- When an item is blocked, link the blocker, state it in the description, and mark the item blocked. Its position stays where its impact and urgency put it; it does not count toward the ready zone, and every refinement checks whether the blocker has cleared.
+- When an item is blocked, link the blocker and state it in the description. A blocker inside the backlog is resolved by order: it is placed ahead of the blocked item. A blocker outside the team's control (a vendor, another team) marks the item blocked. A blocked item keeps the position its impact and urgency give it, does not count toward the ready zone, and is rechecked at every refinement.
 - Status reflects reality. An item is in progress when someone is working on it today, not when it was assigned.
 
 ## Health audit
@@ -175,10 +175,11 @@ Run monthly, or whenever the backlog feels wrong. Measure and report:
 
 | Metric | Healthy |
 |---|---|
-| Total open items | At or below what the team completes in two quarters |
-| Ready-zone items meeting the Definition of Ready | 100% |
-| Open items with no edit in 90+ days | Few, and all reviewed at the last refinement |
+| Total open items (epics excluded) | At or below what the team completes in two quarters |
+| Ready-zone items (blocked items excluded) meeting the Definition of Ready | 100% |
+| Open items with no description edit or recorded review in 90+ days | Few, and all reviewed at the last refinement |
 | Untriaged items older than the triage interval | 0 |
+| Items awaiting information past the Needs Information interval | 0 |
 | Inflow vs. outflow over the last quarter | Roughly equal, or converging |
 | Items carrying the highest priority label | Few enough that every one is being handled per the label's definition |
 | Items without a stated problem, reason, question, goal, or current cost | 0 |
@@ -214,11 +215,13 @@ Steps to reproduce
 Expected:
 Actual:
 Environment: <version, platform, region, flags>
+Frequency and impact: <how many users or requests, how badly>
 
 Acceptance criteria
 - [ ]
 - [ ] A regression test covers <condition> and fails against the current build.
 
+Size: <required before the item enters the ready zone>
 Links: <incident, related items, parent epic>
 ```
 
@@ -228,7 +231,7 @@ Links: <incident, related items, parent epic>
 Title: <the outcome, as the user would observe it>
 
 Problem
-<Who needs what, and why. Evidence of the need.>
+<The user or system served, what they need, and why. Evidence of the need.>
 
 Acceptance criteria
 - [ ]
@@ -237,6 +240,7 @@ Acceptance criteria
 Proposed approach (suggestion)
 <Optional.>
 
+Size: <required before the item enters the ready zone>
 Links: <epic, design document, dependencies>
 ```
 
@@ -251,6 +255,7 @@ Reason
 Acceptance criteria
 - [ ] <How completion is confirmed.>
 
+Size: <required before the item enters the ready zone>
 Links:
 ```
 
@@ -271,6 +276,7 @@ Expected result
 Acceptance criteria
 - [ ]
 
+Size: <required before the item enters the ready zone>
 Links: <incidents, affected items>
 ```
 
@@ -282,7 +288,7 @@ Title: Decide <question>
 Question
 <The decision this spike enables, and what is blocked on it.>
 
-Timebox: <N days>
+Timebox (serves as Size): <N days>
 
 Deliverable
 <Decision record, document, prototype, or follow-up items.>
