@@ -17,8 +17,8 @@ This skill is tracker-agnostic. "Tracker" means whatever system holds the items;
 
 1. **One list, one order.** A team has one backlog, and position in it is the priority. Labels, columns, and priority fields describe items; they do not order them. When a label disagrees with the order, the order is authoritative and the label is corrected.
 2. **One accountable owner.** Anyone may propose items and argue for their placement. One named person decides the order and is accountable for it. The decision is recorded by position, not by discussion.
-3. **Ready at the top.** The *ready zone* — enough items to cover the team's next one to two iterations — meets the Definition of Ready (below). Items lower down may be coarse; precision there is wasted because it will be redone.
-4. **Every item is justified.** Each item states the problem it addresses and who is affected. An item whose justification cannot be written is closed.
+3. **Ready at the top.** The *ready zone* — enough items to cover the team's next two planning intervals (sprints, or two-week periods for teams without sprints) — meets the Definition of Ready (below). Items lower down may be coarse; precision there is wasted because it will be redone.
+4. **Every item is justified.** Each item states why it exists — the problem it addresses and who is affected, under the heading its type uses (Problem, Reason, Question, Goal, or Current cost). An item whose justification cannot be written is closed.
 5. **Bounded.** The backlog holds roughly what the team could complete in two quarters. Items beyond that horizon lower the signal of everything else and are closed, not kept.
 6. **Current.** An item's description reflects the present understanding of the work. When understanding changes, the description is edited. Comments record how the understanding developed; they do not replace it.
 7. **Every item resolves.** An item ends in exactly one of: **Done**, **Won't Do** (with a one-sentence reason), or **Superseded** (linking what replaces it — the surviving duplicate, or the items it was split into). Nothing stays open indefinitely.
@@ -32,8 +32,8 @@ Every item carries these fields:
 |---|---|
 | **Title** | The observable change, in 70 characters or fewer. Specific enough that a reader can decide whether to open the item. |
 | **Type** | Bug, Feature, Task, Tech Debt, Spike, or Epic. |
-| **Problem** | What is wrong or missing, who is affected, and how that is known. One to four sentences. Written before any solution. |
-| **Acceptance criteria** | Observable conditions that, when all true, mean the item is done. Each is checkable with a yes/no answer by someone other than the author. |
+| **Problem** (Task: Reason. Spike: Question. Epic: Goal. Tech Debt: Current cost.) | What is wrong or missing, who is affected, and how that is known. One to four sentences. Written before any solution. |
+| **Acceptance criteria** (Spike: Deliverable. Epic: Done when.) | Observable conditions that, when all true, mean the item is done. Each is checkable with a yes/no answer by someone other than the author. |
 | **Size** | A relative estimate on the team's scale. Required in the ready zone; optional below it. |
 | **Links** | Parent epic, dependencies, related items, and the source (incident, support case, design document, user research). |
 
@@ -82,7 +82,7 @@ Each type has requirements beyond the common fields. An item missing them is not
 
 **Spike.** A timeboxed investigation. The question to be answered, the timebox, and the deliverable: a decision record, a document, a prototype, or follow-up items. A spike's deliverable is never production code.
 
-**Epic.** A goal spanning multiple items. The goal in one sentence, the condition under which the epic is done, and its child items. Epics are containers for ordering and progress; they are not themselves worked. Keep the hierarchy to two levels — epic and item. A third level indicates the epic should be split.
+**Epic.** A goal spanning multiple items. The goal in one sentence, the condition under which the epic is done, and its child items. Epics are containers for progress; they are not themselves worked. An epic has no position of its own: its children are ordered, and the epic is excluded from the Definition of Ready, the size ceiling, and the open-item counts. Keep the hierarchy to two levels — epic and item. A third level indicates the epic should be split.
 
 ## Definition of Ready
 
@@ -106,9 +106,9 @@ Order is a decision, recorded by position. The inputs:
 - **Cost** — size. Of two items with equal impact, the smaller goes first.
 - **Dependencies** — a dependency is always placed before its dependents.
 
-Scoring methods such as WSJF, RICE, or cost of delay make these inputs explicit. Any method is acceptable if it is applied consistently and produces a single order. When two items resist ordering, ask: "If the team could complete only one of these this iteration, which?" Answer it. Ties are not permitted.
+Scoring methods such as WSJF, RICE, or cost of delay make these inputs explicit. Any method is acceptable if it is applied consistently and produces a single order. When two items resist ordering, ask: "If the team could complete only one of these next, which?" Answer it. Ties are not permitted.
 
-If the tracker uses priority labels, each label has a written definition with a response expectation — for example: P0, all other work stops; P1, next iteration; P2, this quarter; P3, no commitment. Items are reclassified when they do not meet their label's definition. A label most of whose items violate its definition has stopped carrying information.
+If the tracker uses priority labels, each label has a written definition with a response expectation — for example: P0, all other work stops; P1, next planning interval; P2, this quarter; P3, no commitment. An item that meets the top label's definition is an interrupt, not a candidate for comparison: it takes the first position when filed. Items are reclassified when they do not meet their label's definition. A label most of whose items violate its definition has stopped carrying information.
 
 ## Splitting
 
@@ -136,7 +136,7 @@ For each untriaged item, in arrival order:
 2. **Classify.** Set type, component or area, and any labels the team uses.
 3. **Decide.** One of:
    - **Accept** — the item enters the backlog.
-   - **Needs Information** — return it to the reporter with the specific questions. Close it if unanswered after an agreed interval.
+   - **Needs Information** — return it to the reporter with the specific questions. If unanswered after an agreed interval, close it as Won't Do with the reason "no response to questions of <date>"; a reply reopens it.
    - **Won't Do** — close with a one-sentence reason that would let someone reopen it with new evidence.
 4. **Place.** Set a rough position in the order. Precise placement happens in refinement.
 
@@ -144,7 +144,7 @@ Record the decision on the item.
 
 ## Refinement
 
-A recurring session — weekly, or once per iteration — that walks the backlog from the top.
+A recurring session — weekly, or once per planning interval — that walks the backlog from the top.
 
 1. **Ready zone.** For each item, confirm it meets the Definition of Ready. Fix what does not.
 2. **Next zone.** For the items that will enter the ready zone before the next session, bring them to ready: clarify the problem, write acceptance criteria, estimate, split.
@@ -155,9 +155,9 @@ Decisions reached in refinement are written into the item's description, not lef
 
 ## Aging and retirement
 
-An item not edited or reordered within an agreed interval — 90 days is common — is reviewed at the next refinement. For each such item, one of two outcomes:
+An item whose description or fields have not been edited within an agreed interval (reordering does not count) — 90 days is common — is reviewed at the next refinement. For each such item, one of two outcomes:
 
-- **Still relevant and would be done given capacity** — update the description and place it deliberately in the order. This resets its age.
+- **Still relevant and would be done given capacity** — edit the description to current understanding (or add a dated line confirming it is still accurate) and place it deliberately in the order. The edit resets its age.
 - **Not going to be done within the planning horizon** — close as Won't Do, with the reason.
 
 Closing an item is a statement about the team's horizon, not about the reporter or the idea. Closed items remain searchable, and reopening one with new evidence costs nothing.
@@ -166,7 +166,7 @@ Closing an item is a statement about the team's horizon, not about the reporter 
 
 - When understanding of the problem changes, edit the description. The description is the item's present truth; the comment thread is its history.
 - When scope is cut from an item, record what was cut. If the cut work still matters, file it as its own item and link it.
-- When an item is blocked, link the blocker, state it in the description, and move the item below the ready zone until the blocker clears.
+- When an item is blocked, link the blocker, state it in the description, and mark the item blocked. Its position stays where its impact and urgency put it; it does not count toward the ready zone, and every refinement checks whether the blocker has cleared.
 - Status reflects reality. An item is in progress when someone is working on it today, not when it was assigned.
 
 ## Health audit
@@ -181,7 +181,7 @@ Run monthly, or whenever the backlog feels wrong. Measure and report:
 | Untriaged items older than the triage interval | 0 |
 | Inflow vs. outflow over the last quarter | Roughly equal, or converging |
 | Items carrying the highest priority label | Few enough that every one is being handled per the label's definition |
-| Items without a stated problem | 0 |
+| Items without a stated problem, reason, question, goal, or current cost | 0 |
 
 Report findings as a list of specific items and the specific defect in each, not as a narrative. Fix in the session what can be fixed — close duplicates, add missing fields, reorder, retire. File the remainder as maintenance tasks with owners.
 
