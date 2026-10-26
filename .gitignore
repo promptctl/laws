@@ -13,3 +13,6 @@ review-audit/data/
 review-audit/derived/
 review-audit/bundles/
 review-audit/rendered/
+
+# Claude Code worktrees: each is its own checkout of a branch, not content of this one.
+.claude/worktrees/
