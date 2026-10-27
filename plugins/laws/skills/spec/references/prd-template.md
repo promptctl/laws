@@ -10,9 +10,9 @@ What is broken, for whom, and what it costs them. The requesting user should be 
 
 ## 3. Requirements
 
-| ID | Requirement | Source (who, date, their words) | Priority | Status |
+| ID | Requirement | Source (who, date) | Priority | Status |
 |---|---|---|---|---|
-| REQ-1 | | "..." | must / should / could | open / validated / rejected |
+| REQ-1 | | | must / should / could | open / validated / rejected |
 
 - Every requirement has a source, and a requirement without one is removed.
 - Write requirements as user needs, not as features.

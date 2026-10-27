@@ -130,7 +130,7 @@ whole. A constraint the **requester actually imposed** - "implement XYZ using tm
 "must run on the subscription, not the API," "must be Opus," "must not touch the public
 schema" - is not a mechanism you invented; it is a boundary on the solution space that
 the world imposed and the implementer cannot discover by reading the code. That
-survives the trip and belongs in the ticket, in the requester's own words. An
+survives the trip and belongs in the ticket, marked as the requester's constraint. An
 **author-invented mechanism** - the hook, the retry strategy, the data structure you
 happened to picture - is a guess dressed as a requirement; it goes. The test is sharp:
 did someone with authority over the outcome *require* this, or did you *think of* it
@@ -147,8 +147,8 @@ mechanism is *scaffolding you erected* and can tear down without touching the bu
 Same grammatical shape, opposite origin, opposite fate.
 
 Here is the failure this paragraph exists to stop, because it is the one that actually
-happens. You will be holding a directive that reads, in the requester's own words,
-*"implement XYZ using tmux."* The anti-mechanism rule will be fresh and loud in your
+happens. You will be holding a directive from the requester: *"implement XYZ using
+tmux."* The anti-mechanism rule will be fresh and loud in your
 context, and you will hear yourself think: *"'using tmux' is an implementation detail -
 the rule says strip the mechanism and state only the end state, so out it goes."* Stop.
 That is the rule firing on the wrong target. You did not invent tmux; the requester
@@ -163,7 +163,7 @@ in is not a mechanism leak - it is fidelity, and dropping it is the real defect.
   implementer is now free to pick a medium the requester already ruled out, and the
   requirement is gone with no record it ever existed.
 - GOOD: "XYZ works; must be implemented using tmux (requester constraint)." - the end
-  state, plus the boundary the world imposed, kept in the requester's own words.
+  state, plus the boundary the world imposed, marked as the requester's.
 - BAD: requester said nothing about how; ticket says "XYZ works via a token-bucket
   limiter" - a mechanism *you* minted, pinned for no reason; strip it.
 
@@ -173,7 +173,7 @@ conversation. **(1) Is this the outcome, or the route to it?** - the two-builds 
 outcome, or the exact shape of one the requester or the outcome demands, and it stays at
 full resolution. Yes means it is a route, so ask **(2) did the route come from the
 requester, or from me?** From the requester - a constraint they imposed from outside -
-keep it, verbatim, marked as theirs. From me: strip it. You never have to remember the
+keep it, marked as theirs. From me: strip it. You never have to remember the
 original chat: question 1 is about the thing itself, and question 2 turns on one fact
 always at hand - whether *you* are the one who thought of it. If you cannot honestly
 claim authorship of the mechanism, it is not yours to remove. The two failure modes sit
