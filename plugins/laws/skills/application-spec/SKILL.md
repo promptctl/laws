@@ -10,7 +10,7 @@ base directory.
 
 1. Read `references/craft.md` before touching the target.
 2. Fix these before you write:
-   - the complete requirements, in the requester's own words
+   - the requester's complete intent
    - the target: the repo path, or how to reach the application (command, URL,
      credentials) - every evidence channel available to you
    - the exact output path for the spec (default: an `appspec/` directory at the

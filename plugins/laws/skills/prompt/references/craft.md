@@ -163,8 +163,8 @@ clearly:
 - **State the deliverable exactly**: what artifact, what format, where it goes.
   Vague asks get default behavior.
 - **The reader starts from zero.** A subagent sees only your text - no conversation
-  history, no requester context, no standing guidance. Every requirement goes in,
-  in the original requester's words; anything omitted does not exist.
+  history, no requester context, no standing guidance. Every requirement goes in -
+  the requester's intent, complete; anything omitted does not exist.
 - **Give one verifiable acceptance criterion** - what correct output looks like,
   stated so it can be checked.
 - **Show a negative example for anything that matters.** "Do NOT produce output

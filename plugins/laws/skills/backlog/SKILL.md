@@ -10,7 +10,7 @@ base directory.
 
 1. Read `references/craft.md` before writing anything.
 2. Fix the deliverable before you write it: the exact output path and format, and
-   the complete requirements in the requester's own words. For a backlog the output
+   the requester's complete intent. For a backlog the output
    is a set of epics and issues in the project's tracker, and the deliverable is not
    fixed until the requester has approved and adjusted the slate in chat. Nothing is
    written to the tracker before that.
