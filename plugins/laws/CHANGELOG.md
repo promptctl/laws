@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.36.1 - 2026-10-26
+
+- laws(prompt, prose, ticket, backlog, application-spec, spec, router): skills no longer tell the agent to carry the requester's requirements in the requester's own words or verbatim; they carry the requester's intent, complete, and a requester-imposed constraint stays marked as theirs without being quoted. Same change in the PRD template's source column, `working-with-skills.md`, and the craft guard's refusal message
+
 ## v0.36.0 - 2026-10-26
 
 - laws(backlog2): new skill - tracker-agnostic standards for building and maintaining an engineering backlog: properties of a healthy backlog, item anatomy and per-type requirements, Definition of Ready, ordering, splitting, intake and triage, refinement, aging and retirement, health audit, and templates. Written from first principles, independent of laws:backlog (#96)
