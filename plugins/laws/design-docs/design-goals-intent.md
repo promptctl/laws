@@ -23,4 +23,4 @@ Feedback arrives as an instance. "Don't do that" points at one case of something
 
 ## Where it is reached from
 
-The session-start text names it beside the rung-S pointer; the per-turn engage text points at it in one clause, since a correction arrives as a user message and that hook fires on every one; each medium skill's step 2 points at it where it fixes the requester's intent before writing. The skill is a Skill-tool load, not a path, because the medium skills cannot know where the plugin is installed.
+The session-start text names it beside the rung-S pointer; the per-turn engage text points at it in one clause, since a correction arrives as a user message and that hook fires on every one. The skill is a Skill-tool load, not a path, because the medium skills cannot know where the plugin is installed.

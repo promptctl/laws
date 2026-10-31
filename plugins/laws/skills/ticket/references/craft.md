@@ -130,8 +130,7 @@ whole. A constraint the **requester actually imposed** - "implement XYZ using tm
 "must run on the subscription, not the API," "must be Opus," "must not touch the public
 schema" - is not a mechanism you invented; it is a boundary on the solution space that
 the world imposed and the implementer cannot discover by reading the code. That
-survives the trip and belongs in the ticket, marked as the requester's constraint and
-carrying its reason, so a later reader can tell when it has lapsed. An
+survives the trip and belongs in the ticket, marked as the requester's constraint. An
 **author-invented mechanism** - the hook, the retry strategy, the data structure you
 happened to picture - is a guess dressed as a requirement; it goes. The test is sharp:
 did someone with authority over the outcome *require* this, or did you *think of* it
