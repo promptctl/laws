@@ -63,7 +63,7 @@ learns from its mistakes rather than building on it.
 **The backlog stands without the conversation that produced it.** The sessions that
 pull from it were not here. Nothing in it may point back to a discussion.
 
-**The requester approves the slate before any ticket exists.** Seeding a backlog is
+**The requester approves the collection before any ticket exists.** Seeding a backlog is
 writing the project's agenda for weeks. The requester adjusts it first, and adjustment
 is the product, not friction. This lives in the skill's setup step, not the craft.
 

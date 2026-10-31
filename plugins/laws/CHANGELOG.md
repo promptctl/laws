@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.39.0 - 2026-10-31
+
+- laws(backlog): the description no longer says "Use when the deliverable is a slate of epics and issues", which matched filing any set of tickets, nor the "Do not apply to..." sentence after it. "Slate" becomes "collection" in the setup step, the craft, and the goals doc
+
 ## v0.38.0 - 2026-10-31
 
 - laws(testing): `laws:code-testing` is renamed `laws:testing`; the content is unchanged
