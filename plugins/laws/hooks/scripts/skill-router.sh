@@ -44,7 +44,7 @@ HOOK_TYPE="$1"
 # Keep it single-line, with straight quotes and no backslashes, so it needs no JSON
 # escaping when emitted.
 read -r -d '' ENGAGE_TEXT <<'EOT'
-For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.  If this message corrects or constrains you, it is an instance of a rule: find the rule (laws:intent) before acting on the words.
+For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.  If the request corrects or constrains you, it is an instance of a rule: find the rule (laws:intent) before acting on the words.
 EOT
 
 # The incompatibility policy is DATA, and it lives in one file, incompatible-crafts.txt, so
@@ -116,8 +116,8 @@ EOT
 S_PROJECTION="$(cd "$SCRIPT_DIR/../.." && pwd)/skills/code/references/rung-s.md"
 S_POINTER="The laws of code at rung S, for auditing or reviewing code against the laws (writing code loads laws:code instead): $S_PROJECTION"
 INTENT_POINTER="A requester's correction or constraint is an instance of a rule they have not stated; laws:intent is how to find that rule and record it."
-# Before S_POINTER in the emitted text: consumers outside the plugin parse the S path as the
-# tail of the session-start text (skill-router.test.sh case 16), so the path stays terminal.
+# Before S_POINTER in the emitted text: skill-router.test.sh case 16 reads the S path as the
+# tail of the session-start text.
 
 # The per-turn S arm. LAWS_PER_TURN_S=1 replaces ENGAGE_TEXT with the S projection on every
 # user message, so a session can be compared with and without the laws re-injected each turn.

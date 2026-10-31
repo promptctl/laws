@@ -2,7 +2,7 @@ Each version's section is written in the PR that bumps `.claude-plugin/plugin.js
 
 ## v0.40.0 - 2026-10-31
 
-- laws(intent): new skill - a requester's correction or constraint is read for the general rule it is an instance of, and the rule with its reason is what gets recorded, in plain technical language, never their words. Three steps to find the rule, two checks before it is written, intensity read as weight not scope, the current request outranking any extracted rule. Pointed at from the session-start text, the per-turn engage text, and step 2 of the prompt, prose, ticket, backlog and application-spec skills; a requester-imposed constraint in a ticket carries its reason so a later reader can tell when it has lapsed
+- laws(intent): new skill - a requester's correction or constraint is read for the general rule it is an instance of, and the rule with its reason is what gets recorded, in plain technical language, never their words. Three steps to find the rule, two checks before it is written, intensity read as weight not scope, the current request outranking any extracted rule. Pointed at from the session-start text, the per-turn engage text, and the medium skills that fix the requester's intent before writing
 
 ## v0.39.0 - 2026-10-31
 
