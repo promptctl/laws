@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.38.0 - 2026-10-31
+
+- laws(testing): `laws:code-testing` is renamed `laws:testing`; the content is unchanged
+
 ## v0.37.0 - 2026-10-31
 
 - laws(code-testing): new skill, held beside laws:code - the layered test strategy guide, unchanged: suite speed as an architecture property, the four layers, the six design principles, test placement, suite mechanics, migration, metrics, anti-patterns, and a checklist (promptctl-unfiled-1eb2.zyl)

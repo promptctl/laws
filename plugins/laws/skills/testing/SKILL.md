@@ -1,5 +1,5 @@
 ---
-name: code-testing
+name: testing
 description: "Layered test strategy - suite speed as an architecture property. The cost model, the four layers (unit, integration, contract, end-to-end smoke) and what each may touch, the six design principles that keep most behavior in process (decision apart from effect, ports you own, fakes over mocks, one composition root, explicit time, randomness, identity, concurrency and config, module boundaries), where a test belongs, suite mechanics, incremental migration, metrics, anti-patterns, and a checklist. Use when writing, placing, or reviewing tests, when cutting seams so code can be tested below end-to-end, when a suite is slow or flaky, or when moving an existing suite toward this shape. Held beside laws:code."
 ---
 
