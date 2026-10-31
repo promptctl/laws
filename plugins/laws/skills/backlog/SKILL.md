@@ -10,8 +10,9 @@ base directory.
 
 1. Read `references/craft.md` before writing anything.
 2. Fix the deliverable before you write it: the exact output path and format, and
-   the requester's complete intent. For a backlog the output
-   is a set of epics and issues in the project's tracker, and the deliverable is not
+   the requester's complete intent: the outcome and constraints behind
+   what they said, found as laws:intent describes. For a backlog the output is a set
+   of epics and issues in the project's tracker, and the deliverable is not
    fixed until the requester has approved and adjusted the collection in chat. Nothing is
    written to the tracker before that.
 3. Write it against the craft.

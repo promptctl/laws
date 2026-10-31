@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.40.0 - 2026-10-31
+
+- laws(intent): new skill - a requester's correction or constraint is read for the general rule it is an instance of, and the rule with its reason is what gets recorded, in plain technical language, never their words. Three steps to find the rule, two checks before it is written, intensity read as weight not scope, the current request outranking any extracted rule. Pointed at from the session-start text, the per-turn engage text, and the medium skills that fix the requester's intent before writing
+
 ## v0.39.0 - 2026-10-31
 
 - laws(backlog): the description no longer says "Use when the deliverable is a slate of epics and issues", which matched filing any set of tickets, nor the "Do not apply to..." sentence after it. "Slate" becomes "collection" in the setup step, the craft, and the goals doc
