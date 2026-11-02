@@ -52,9 +52,6 @@ traffic to external systems - goes in, exactly; anything visible only from insid
 stays out, keeping the spec legally clean. The same structure covers any target:
 a repo today, a CLI, UI, or SaaS observed directly tomorrow.
 
-**Writing for humans** (`laws:prose`) - a short skill for docs, READMEs, and
-reports. This README was written under it.
-
 A **router hook** loads the one matching skill at session start and re-engages it on
 every message, because guidance only works if it's loaded when the work begins.
 
@@ -65,8 +62,7 @@ structure exists to fix.
 
 The laws are an aesthetic for code: subtract, deduplicate, one source of truth. Aim
 that aesthetic at an LLM prompt and it guts it, because guidance lives on redundancy
-and vivid repetition - precisely what the code laws tell you to cut. Aim it at prose
-and you get terse, lifeless docs. Aim it at a backlog and you get tickets packed with
+and vivid repetition - precisely what the code laws tell you to cut. Aim it at a backlog and you get tickets packed with
 detail that rots before anyone pulls them. So each body of guidance is scoped to its medium,
 and the router loads only the one that fits the work in front of you. The split isn't
 the point of the plugin. It's what keeps the point from eating itself.
