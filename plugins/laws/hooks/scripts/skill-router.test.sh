@@ -76,16 +76,16 @@ assert_allow "subagent isolated by agent_id, incompatible craft allowed" \
   "$(run guard "$(skill_payload S2 laws:prompt agentX)")"
 
 # 5a. COEXISTENCE - the point of the compatibility model: a DIFFERENT but compatible craft
-#     loads alongside the first, no refusal. laws:code + laws:prose + laws:ticket is normal,
+#     loads alongside the first, no refusal. laws:code + laws:chat + laws:ticket is normal,
 #     complementary work (write code, its docs, its ticket) and must not be blocked.
-assert_allow "compatible craft (laws:prose) coexists with laws:code" \
+assert_allow "compatible craft (laws:chat) coexists with laws:code" \
   "$(run guard "$(skill_payload S9 laws:code)")"  # engage code first
-assert_allow "  ... laws:prose added" "$(run guard "$(skill_payload S9 laws:prose)")"
+assert_allow "  ... laws:chat added" "$(run guard "$(skill_payload S9 laws:chat)")"
 assert_allow "  ... laws:ticket added too" "$(run guard "$(skill_payload S9 laws:ticket)")"
 
 # 5b. ... but an incompatible craft is still refused against a set of compatible ones, and the
 #     refusal names the specific conflicting craft (laws:code), not whichever loaded last.
-assert_deny "laws:prompt refused against code+prose+ticket, naming code" \
+assert_deny "laws:prompt refused against code+chat+ticket, naming code" \
   "$(run guard "$(skill_payload S9 laws:prompt)")" "laws:code" "laws:prompt"
 
 # 5c. DIRECTION: the conflict edge runs ONE WAY. code degrades prompts, so code-then-prompt is
@@ -190,15 +190,15 @@ esac
 
 # 9b. When MORE THAN ONE engaged craft conflicts, the deny names them ALL, not whichever marker the
 #     glob returned first. Under the shipped policy nothing but code conflicts with prompt, so this
-#     runs a router copy whose policy also makes prose incompatible with prompt. [LAW:no-silent-failure]
+#     runs a router copy whose policy also makes chat incompatible with prompt. [LAW:no-silent-failure]
 twopair=$(mktemp -d)
 cp "$ROUTER" "$twopair/skill-router.sh"
-printf 'code prompt\nprose prompt\n' > "$twopair/incompatible-crafts.txt"
+printf 'code prompt\nchat prompt\n' > "$twopair/incompatible-crafts.txt"
 tp() { printf '%s' "$2" | "$twopair/skill-router.sh" "$1" 2>/dev/null; }
 tp guard "$(skill_payload R2b laws:code)" >/dev/null
-tp guard "$(skill_payload R2b laws:prose)" >/dev/null
+tp guard "$(skill_payload R2b laws:chat)" >/dev/null
 out=$(tp guard "$(skill_payload R2b laws:prompt)")
-assert_deny "a deny names every conflicting craft, not just the first" "$out" "laws:code" "laws:prose"
+assert_deny "a deny names every conflicting craft, not just the first" "$out" "laws:code" "laws:chat"
 rm -rf "$twopair"
 
 # 13. A policy file that is READABLE but names no pairs disables enforcement exactly as an
@@ -271,7 +271,7 @@ crlfpol=$(mktemp -d)
 cp "$ROUTER" "$crlfpol/skill-router.sh"
 # The code->prompt line carries no comment on purpose: a comment strip would take the \r with it
 # and hide the bug this case exists to catch.
-printf 'code prompt\r\n# a note\r\nprose prompt # why\r\n\r\n' > "$crlfpol/incompatible-crafts.txt"
+printf 'code prompt\r\n# a note\r\nchat prompt # why\r\n\r\n' > "$crlfpol/incompatible-crafts.txt"
 cr_code='{"session_id":"CR1","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:code"}}'
 cr_prompt='{"session_id":"CR1","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"laws:prompt"}}'
 printf '%s' "$cr_code" | "$crlfpol/skill-router.sh" guard >/dev/null 2>&1

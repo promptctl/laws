@@ -417,7 +417,7 @@ case "$HOOK_TYPE" in
       fi
     done
     if [ -n "$conflicts" ]; then
-        # Rendered once, for every message below: "laws:code" or "laws:code, laws:prose".
+        # Rendered once, for every message below: "laws:code" or "laws:code, laws:chat".
         conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
         # There is no way to move a running session from one craft to another - the refusal names
