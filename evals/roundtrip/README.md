@@ -1,5 +1,7 @@
 # Round-trip evals for the crafts
 
+Only the `prompt` and `code` skills are evaluated. No other skill gets an eval.
+
 A craft is the active form of a writing standard: it steers an agent that holds it in
 context. Its spec is the inactive form: the same rules stated once, plainly, with
 strength, condition and exceptions, and nothing else. The `distill` skill turns a craft
@@ -8,7 +10,7 @@ survives the trip, on one small single-shot task per medium.
 
 ## Layout
 
-Each medium has a directory, such as `prose/` or `code/`, holding:
+Each medium has a directory, such as `chat/` or `code/`, holding:
 
 - `meta.json` - the path of the current guidance, the output extension, the reader
   the recompiled craft is written for, and for code the command a judge may run.
@@ -25,9 +27,6 @@ Each medium has a directory, such as `prose/` or `code/`, holding:
 The seven `spec.md` files were distilled with `.claude/skills/distill/SKILL.md` as of
 commit 15361a3. The skill was revised afterward from those runs' reports, so a rerun
 of `distill` will not reproduce them exactly.
-
-`prose/pilot/` holds the first run, made before these templates existed. Its
-`results.md` explains why the protocol looks the way it does.
 
 ## Protocol
 
