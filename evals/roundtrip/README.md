@@ -1,5 +1,7 @@
 # Round-trip evals for the crafts
 
+Only the `prompt` and `code` skills are evaluated. No other skill gets an eval.
+
 A craft is the active form of a writing standard: it steers an agent that holds it in
 context. Its spec is the inactive form: the same rules stated once, plainly, with
 strength, condition and exceptions, and nothing else. The `distill` skill turns a craft
