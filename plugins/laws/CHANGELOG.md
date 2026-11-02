@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.41.1 - 2026-11-01
+
+- laws(prose): `design-goals-prose.md` restored; v0.41.0 removed it with the skill
+
 ## v0.41.0 - 2026-11-01
 
 - laws(prose): skill removed, with its goals doc and roundtrip eval. The router tests that used it as the example of a compatible craft use `laws:chat`
