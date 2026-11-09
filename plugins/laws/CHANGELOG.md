@@ -156,7 +156,7 @@ Each version's section is written in the PR that bumps `.claude-plugin/plugin.js
 - memento(address-pr-reviews): stop restating message-in-a-bottle's delivery semantics
 - memento(finalize): delete the drop-file fallback — no transport is a failure, not a delivery
 - skills(laws): the session that writes the artifact reads the craft itself (promptctl-routing-rat.3) (#19)
-- evals: delete the single-session eval system — banned in this repo, period (#18)
+- evals: delete the single-session eval system (#18)
 - hooks: compatibility-gate the craft guard - coexist by default, refuse only laws:code + laws:prompt (promptctl-routing-rat.2) (#17)
 - memento(finalize-session): gate iTerm2 goal-carry on a readiness probe, not a fixed sleep (#16)
 - plugins(memento): extract workflow tooling into its own plugin; symmetric plugins/{laws,memento} (#15)
