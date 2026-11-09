@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.42.0 - 2026-11-09
+
+- laws(code): `laws:code` is also an agent. Its prompt is the skill body, and the skill's frontmatter sets a one-hour prompt cache, so a fork of that agent reads the laws from cache across reviews run within the hour
+
 ## v0.41.2 - 2026-11-09
 
 - laws(code): the token cap is removed - the recorded token counts, the generator's count check, and the profile's `model` and `budget` keys. A profile is its rung table; `generate.py --check` checks only that the outputs are current

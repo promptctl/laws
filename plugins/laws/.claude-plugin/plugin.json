@@ -1,12 +1,13 @@
 {
   "name": "laws",
-  "version": "0.41.2",
+  "version": "0.42.0",
   "description": "Universal architectural laws for code work, medium-scoped quality skills, and skill-router hooks that route to the one matching the deliverable's medium at session start, re-engage the laws on every message, and refuse a craft ordering the compatibility policy declares.",
   "author": {
     "name": "Brandon Fryslie"
   },
   "repository": "https://github.com/promptctl/laws",
   "license": "MIT",
+  "agents": ["./skills/code/SKILL.md"],
   "keywords": [
     "architecture",
     "code-quality",
