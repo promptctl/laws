@@ -1,9 +1,8 @@
 name: laws-source
 
-# plugins/laws/skills/code/ (SKILL.md and its rung projections) and plugins/laws/agents/code.md
-# are generated from plugins/laws/source/code/ and the plugin installs with no build step, so
-# the staleness test is the only thing standing between a source edit and a stale skill or
-# agent shipping.
+# plugins/laws/skills/code/SKILL.md is generated from plugins/laws/source/code/ and the
+# plugin installs with no build step, so the staleness test is the only thing standing
+# between a source edit and a stale skill shipping.
 
 on:
   pull_request:
