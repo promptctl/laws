@@ -365,6 +365,11 @@ case "$off_out" in
   *'consider the laws and devices of your craft'*) ok "engage with the flag unset carries the engagement text";;
   *) bad "engage with the flag unset carries the engagement text (got: $off_out)";;
 esac
+case "$off_out" in
+  *$'\n'*) bad "  ... as one line of JSON (a raw newline got through: $off_out)";;
+  *'\n\n'*) ok "  ... as one line of JSON, its paragraph break escaped";;
+  *) bad "  ... as one line of JSON, its paragraph break escaped (no \\n\\n in: ${off_out:0:300})";;
+esac
 off_s=""
 k=1
 while [ "$k" -le "$s_parts" ]; do
