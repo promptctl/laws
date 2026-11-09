@@ -25,9 +25,11 @@ bad()  { printf 'FAIL - %s\n' "$1"; fail=$((fail+1)); }
 run() { printf '%s' "$2" | "$ROUTER" "$1" 2>/dev/null; }
 
 # Payload builders keep the JSON in one place so a field rename is a one-line fix.
-skill_payload() { # <session_id> <skill> [agent_id]
-  local sid=$1 skill=$2 aid=${3:-}
-  if [ -n "$aid" ]; then
+skill_payload() { # <session_id> <skill> [agent_id] [agent_type]
+  local sid=$1 skill=$2 aid=${3:-} atype=${4:-}
+  if [ -n "$atype" ]; then
+    printf '{"session_id":"%s","agent_id":"%s","agent_type":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$sid" "$aid" "$atype" "$skill"
+  elif [ -n "$aid" ]; then
     printf '{"session_id":"%s","agent_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$sid" "$aid" "$skill"
   else
     printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$sid" "$skill"
@@ -74,6 +76,21 @@ assert_deny "incompatible craft (laws:prompt after laws:code) refused" \
 #    escape hatch survives. It may load laws:prompt even though the parent holds laws:code.
 assert_allow "subagent isolated by agent_id, incompatible craft allowed" \
   "$(run guard "$(skill_payload S2 laws:prompt agentX)")"
+
+# 5b. An agent named laws:<x> carries craft <x> as its system prompt, so <x> is engaged in its
+#     slot before any Skill load: the laws:code agent may not load laws:prompt, may not load
+#     laws:code a second time, and may add a compatible craft. An agent of another name starts
+#     empty, and a subagent whose payload names no agent type is reported on stderr.
+assert_deny "the laws:code agent refuses laws:prompt (code is its system prompt)" \
+  "$(run guard "$(skill_payload S13 laws:prompt agentC laws:code)")" "laws:code"
+assert_deny "  ... and refuses loading laws:code, already its system prompt" \
+  "$(run guard "$(skill_payload S13 laws:code agentC laws:code)")" "system prompt"
+assert_allow "  ... and a compatible craft (laws:chat)" "$(run guard "$(skill_payload S13 laws:chat agentC laws:code)")"
+assert_allow "an agent of another type starts with no craft engaged" \
+  "$(run guard "$(skill_payload S13 laws:prompt agentD general-purpose)")"
+err=$(skill_payload S13 laws:chat agentE | "$ROUTER" guard 2>&1 >/dev/null)
+case "$err" in *"no agent_type"*) ok "a subagent payload without agent_type is reported on stderr" ;;
+  *) bad "a subagent payload without agent_type is reported on stderr (stderr: $err)" ;; esac
 
 # 5a. COEXISTENCE - the point of the compatibility model: a DIFFERENT but compatible craft
 #     loads alongside the first, no refusal. laws:code + laws:chat + laws:ticket is normal,

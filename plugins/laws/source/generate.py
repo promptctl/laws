@@ -4,11 +4,19 @@
 Run: python3 plugins/laws/source/generate.py          # write the outputs
      python3 plugins/laws/source/generate.py --check  # exit 1 if an output is stale
 
-Outputs, under plugins/laws/skills/code/:
+Outputs, under plugins/laws/:
 
-  SKILL.md               every law at the rung profiles/default.toml gives it
-  references/rung-s.md   every law at S
-  references/rung-m.md   every law at M
+  skills/code/SKILL.md               every law at the rung profiles/default.toml gives it
+  skills/code/references/rung-s.md   every law at S
+  skills/code/references/rung-m.md   every law at M
+  agents/code.md                     the laws:code agent: every law at SKILL.md's rungs,
+                                     as the agent's system prompt
+
+Each output is a head and the body the skeleton renders. skill-head.md and agent-head.md are
+the two frontmatter blocks, kept apart because a skill's description says when to load it and
+an agent's says when to delegate to it. Each is plain YAML between `---` lines; the generator
+writes the notice that the output is generated, as a YAML comment before the closing `---`, so
+it costs the model nothing. A projection's head is a one-line notice instead.
 
 skeleton.md fixes the order. Each of its `<!-- include: <file> -->` lines is replaced by
 that file verbatim; every other skeleton line is copied as is. Inside the included files:
@@ -17,8 +25,6 @@ that file verbatim; every other skeleton line is copied as is. Inside the includ
   <!-- rung: M -->         ... as serving rung M; unmarked text is L
   <!-- law-index -->       the law tokens, derived from the law headings, in document order
   <!-- framing-index -->   the framing tokens, likewise
-  <!-- generated-notice --> the line saying this output is generated, and from what; it sits
-                           in the frontmatter as a YAML comment, so it costs the model nothing
 
 Every file under laws/ is a law and every file under framings/ a framing: its first line is
 `## [LAW:<file stem>] - ...` (or FRAMING), and the skeleton includes each one exactly once.
@@ -42,7 +48,7 @@ from typing import Literal
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / "code"
-SKILL_DIR = HERE.parent / "skills" / "code"
+PLUGIN_DIR = HERE.parent
 DEFAULT_PROFILE = "default"
 
 GENERATED = (
@@ -54,7 +60,7 @@ INDEX_WIDTH = 84
 
 # Every single-line HTML comment in a source is one of these; anything else is a typo
 # that would otherwise ship as visible text in the skill.
-DIRECTIVE = re.compile(r"^<!-- (include|rung|law-index|framing-index|generated-notice)(?:: (\S+))? -->$")
+DIRECTIVE = re.compile(r"^<!-- (include|rung|law-index|framing-index)(?:: (\S+))? -->$")
 SINGLE_LINE_COMMENT = re.compile(r"^<!--.*-->$")
 KIND_BY_DIR = {"laws": "LAW", "framings": "FRAMING"}
 Rung = Literal["S", "M", "L"]
@@ -215,6 +221,20 @@ class Source:
         return "".join(out)
 
 
+def read_head(path: Path) -> str:
+    """A frontmatter block, plain YAML between --- lines, with the generated notice written in
+    before the closing ---."""
+    if not path.is_file():
+        raise SourceError(f"{path.name}: the head file does not exist")
+    lines = path.read_text().splitlines()
+    if len(lines) < 2 or lines[0] != "---" or lines[-1] != "---" or "---" in lines[1:-1]:
+        raise SourceError(f"{path.name}: a head is one frontmatter block, opening and closing with ---")
+    for n, line in enumerate(lines, 1):
+        if directive(line, f"{path.name}:{n}") is not None:
+            raise SourceError(f"{path.name}:{n}: a head holds no directives; the generator writes its notice")
+    return "".join(f"{line}\n" for line in lines[:-1]) + NOTICE + "---\n"
+
+
 def read_source(source: Path = SOURCE) -> Source:
     skeleton = (source / "skeleton.md").read_text().splitlines(keepends=True)
     pieces: list[Piece] = []
@@ -258,17 +278,13 @@ def read_source(source: Path = SOURCE) -> Source:
     expanded = {
         "law-index": wrap_index([f"`{t}`" for t in tokens["LAW"]]),
         "framing-index": wrap_index([f"`[FRAMING:{t}]`" for t in tokens["FRAMING"]]),
-        "generated-notice": [NOTICE],
     }
     return Source(pieces=pieces, units=units, expanded=expanded)
 
 
-def as_reference(skill: str, rung: Rung) -> str:
-    """A projection read by path is not a skill: its frontmatter goes, a one-line notice
-    takes its place."""
-    if not skill.startswith("---\n"):
-        raise SourceError("the rendered skill does not open with frontmatter")
-    body = skill[skill.index("\n---\n", 3) + len("\n---\n"):].lstrip("\n")
+def as_reference(body: str, rung: Rung) -> str:
+    """A projection read by path is not a skill: a one-line notice stands where the
+    frontmatter would."""
     return (
         f"<!-- {GENERATED} A projection of SKILL.md: every law at rung {rung}, its other paragraphs"
         f" left out; the text outside the laws is SKILL.md's. -->\n\n{body}"
@@ -277,7 +293,7 @@ def as_reference(skill: str, rung: Rung) -> str:
 
 @dataclass(frozen=True)
 class Output:
-    path: str  # under the skill directory
+    path: str  # under the plugin directory
     text: str
 
 
@@ -292,10 +308,12 @@ def build(source_dir: Path = SOURCE) -> Build:
     profile_path = source_dir / "profiles" / f"{DEFAULT_PROFILE}.toml"
     rungs = load_profile(profile_path)
     projection = {rung: source.render(uniform(rung, source.laws), f"all-{rung}") for rung in ("S", "M")}
+    body = source.render(rungs, str(profile_path))
     return Build(source=source, outputs=[
-        Output("SKILL.md", source.render(rungs, str(profile_path))),
-        Output("references/rung-s.md", as_reference(projection["S"], "S")),
-        Output("references/rung-m.md", as_reference(projection["M"], "M")),
+        Output("skills/code/SKILL.md", f"{read_head(source_dir / 'skill-head.md')}\n\n{body}"),
+        Output("skills/code/references/rung-s.md", as_reference(projection["S"], "S")),
+        Output("skills/code/references/rung-m.md", as_reference(projection["M"], "M")),
+        Output("agents/code.md", f"{read_head(source_dir / 'agent-head.md')}\n\n{body}"),
     ])
 
 
@@ -303,27 +321,27 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="exit 1 if an output is stale")
     parser.add_argument("--source", type=Path, default=SOURCE)
-    parser.add_argument("--skill-dir", type=Path, default=SKILL_DIR)
+    parser.add_argument("--plugin-dir", type=Path, default=PLUGIN_DIR)
     args = parser.parse_args(argv)
     try:
         built = build(args.source)
     except SourceError as e:
         print(f"generate: {e}", file=sys.stderr)
         return 2
-    stale = [o for o in built.outputs if not ((args.skill_dir / o.path).is_file() and (args.skill_dir / o.path).read_text() == o.text)]
+    stale = [o for o in built.outputs if not ((args.plugin_dir / o.path).is_file() and (args.plugin_dir / o.path).read_text() == o.text)]
     if args.check:
         for output in stale:
-            print(f"generate: {args.skill_dir / output.path} is stale against {args.source}; run {Path(__file__).name}", file=sys.stderr)
+            print(f"generate: {args.plugin_dir / output.path} is stale against {args.source}; run {Path(__file__).name}", file=sys.stderr)
     else:
         for output in stale:
-            (args.skill_dir / output.path).parent.mkdir(parents=True, exist_ok=True)
-            (args.skill_dir / output.path).write_text(output.text)
+            (args.plugin_dir / output.path).parent.mkdir(parents=True, exist_ok=True)
+            (args.plugin_dir / output.path).write_text(output.text)
         written = ", ".join(o.path for o in stale) or "nothing"
-        print(f"generate: wrote {written} in {args.skill_dir}: {built.source.report()}")
+        print(f"generate: wrote {written} in {args.plugin_dir}: {built.source.report()}")
     if args.check and stale:
         return 1
     if args.check:
-        print(f"generate: {args.skill_dir} is current: {built.source.report()}")
+        print(f"generate: {args.plugin_dir} is current: {built.source.report()}")
     return 0
 
 
