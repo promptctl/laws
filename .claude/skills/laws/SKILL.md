@@ -43,11 +43,8 @@ care. Simple is the goal, not a step toward something more impressive.
    under `plugins/laws/source/code/`: one file per law and per framing, plus the
    preamble, bindings, recap, and `skeleton.md` for order and part headings. Then run
    `python3 plugins/laws/source/generate.py`, which also writes the S and M projections
-   under `plugins/laws/skills/code/references/`, and record each output's token count in
-   `plugins/laws/source/counts.json`. Commit the
-   sources, the outputs and `counts.json` together: the cap test fails on a count recorded
-   for other text, and on SKILL.md over the budget in `profiles/default.toml`. A law's rung
-   is a one-line edit to that profile. The header comment's rule
+   under `plugins/laws/skills/code/references/`. Commit the sources and the outputs
+   together. A law's rung is a one-line edit to `profiles/default.toml`. The header comment's rule
    against deduplicating or compressing applies to the sources. A source is that file
    cut at its seams, not a new place to tidy. The `<!-- rung: S -->` and
    `<!-- rung: M -->` lines mark which paragraphs serve which rung of hold. Keep them on

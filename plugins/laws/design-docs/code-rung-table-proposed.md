@@ -5,7 +5,7 @@ every law to L, so the shipped SKILL.md is unchanged. Applying a row is a one-li
 that file, then `generate.py`.
 
 Counted 2026-10-03 with count_tokens on claude-opus-5-5. The all-L document is 28,009
-tokens, which is the default profile's budget. This table, applied whole, is 19,487 tokens.
+tokens. This table, applied whole, is 19,487 tokens.
 
 "Saves" is the all-L count minus the count with that one law moved to that rung. Each row
 is measured alone, so the savings of several rows add up only approximately.

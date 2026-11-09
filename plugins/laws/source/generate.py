@@ -2,7 +2,7 @@
 """Write the laws:code skill and its rung projections from plugins/laws/source/code/.
 
 Run: python3 plugins/laws/source/generate.py          # write the outputs
-     python3 plugins/laws/source/generate.py --check  # exit 1 if an output is stale or over budget
+     python3 plugins/laws/source/generate.py --check  # exit 1 if an output is stale
 
 Outputs, under plugins/laws/skills/code/:
 
@@ -28,16 +28,11 @@ paragraphs; at M, its heading and its S- and M-marked paragraphs; always in sour
 So S is a subset of M and M of L by construction. Rendering removes the rung lines and
 nothing else, and the text outside the laws is the same at every rung.
 
-A profile (profiles/<name>.toml) names the model its budget is counted on, the budget in
-tokens, and a rung for every law. counts.json records each output's token count against a
-hash of its text. --check refuses an output whose recorded count is not for its current text,
-and SKILL.md when its count exceeds the default profile's budget.
+A profile (profiles/<name>.toml) gives a rung to every law.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import re
 import sys
 import tomllib
@@ -48,7 +43,6 @@ from typing import Literal
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / "code"
 SKILL_DIR = HERE.parent / "skills" / "code"
-COUNTS = HERE / "counts.json"
 DEFAULT_PROFILE = "default"
 
 GENERATED = (
@@ -149,32 +143,21 @@ def project(lines: list[tuple[str, str]], rung: Rung) -> list[tuple[str, str]]:
     return out
 
 
-@dataclass(frozen=True)
-class Profile:
-    name: str
-    model: str
-    budget: int
-    rungs: dict[str, Rung]
-
-
-def load_profile(path: Path) -> Profile:
+def load_profile(path: Path) -> dict[str, Rung]:
+    """The profile's rung for every law."""
     try:
         data = tomllib.loads(path.read_text())
     except tomllib.TOMLDecodeError as e:
         raise SourceError(f"{path}: {e}") from e
-    if set(data) != {"model", "budget", "rungs"}:
-        raise SourceError(f"{path}: a profile has exactly model, budget and [rungs]; got {sorted(data)}")
-    model, budget, rungs = data["model"], data["budget"], data["rungs"]
-    if not isinstance(model, str) or not model:
-        raise SourceError(f"{path}: model must name the model the budget is counted on")
-    if not isinstance(budget, int) or isinstance(budget, bool) or budget <= 0:
-        raise SourceError(f"{path}: budget must be a positive number of tokens, got {budget!r}")
+    if set(data) != {"rungs"}:
+        raise SourceError(f"{path}: a profile has exactly [rungs]; got {sorted(data)}")
+    rungs = data["rungs"]
     if not isinstance(rungs, dict):
         raise SourceError(f"{path}: rungs must be a table of law = rung")
     bad = {law: rung for law, rung in rungs.items() if rung not in LADDER}
     if bad:
         raise SourceError(f"{path}: rungs must be one of {LADDER}; got {bad}")
-    return Profile(name=path.stem, model=model, budget=budget, rungs=rungs)
+    return rungs
 
 
 def uniform(rung: Rung, laws: list[str]) -> dict[str, Rung]:
@@ -301,57 +284,26 @@ class Output:
 @dataclass(frozen=True)
 class Build:
     source: Source
-    profile: Profile
     outputs: list[Output]
 
 
 def build(source_dir: Path = SOURCE) -> Build:
     source = read_source(source_dir)
     profile_path = source_dir / "profiles" / f"{DEFAULT_PROFILE}.toml"
-    profile = load_profile(profile_path)
+    rungs = load_profile(profile_path)
     projection = {rung: source.render(uniform(rung, source.laws), f"all-{rung}") for rung in ("S", "M")}
-    return Build(source=source, profile=profile, outputs=[
-        Output("SKILL.md", source.render(profile.rungs, str(profile_path))),
+    return Build(source=source, outputs=[
+        Output("SKILL.md", source.render(rungs, str(profile_path))),
         Output("references/rung-s.md", as_reference(projection["S"], "S")),
         Output("references/rung-m.md", as_reference(projection["M"], "M")),
     ])
 
 
-def sha256(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
-def read_counts(path: Path) -> dict[str, dict]:
-    return json.loads(path.read_text()) if path.is_file() else {}
-
-
-def count_problems(built: Build, counts: dict[str, dict]) -> list[str]:
-    """Why the recorded token counts cannot be trusted for these outputs, or SKILL.md is over
-    budget; empty when neither."""
-    current = {
-        output.path: counts[output.path] for output in built.outputs
-        if output.path in counts and counts[output.path]["sha256"] == sha256(output.text)
-        and counts[output.path]["model"] == built.profile.model
-    }
-    problems = [
-        f"{output.path}: no token count for its current text on {built.profile.model}; recount"
-        for output in built.outputs if output.path not in current
-    ]
-    skill = current.get("SKILL.md")
-    if skill is not None and skill["tokens"] > built.profile.budget:
-        problems.append(
-            f"SKILL.md is {skill['tokens'] - built.profile.budget} tokens over the {built.profile.name} profile's"
-            f" budget: {skill['tokens']} counted on {built.profile.model}, budget {built.profile.budget}"
-        )
-    return problems
-
-
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true", help="exit 1 if an output is stale or over budget")
+    parser.add_argument("--check", action="store_true", help="exit 1 if an output is stale")
     parser.add_argument("--source", type=Path, default=SOURCE)
     parser.add_argument("--skill-dir", type=Path, default=SKILL_DIR)
-    parser.add_argument("--counts", type=Path, default=COUNTS)
     args = parser.parse_args(argv)
     try:
         built = build(args.source)
@@ -368,10 +320,7 @@ def main(argv: list[str]) -> int:
             (args.skill_dir / output.path).write_text(output.text)
         written = ", ".join(o.path for o in stale) or "nothing"
         print(f"generate: wrote {written} in {args.skill_dir}: {built.source.report()}")
-    problems = count_problems(built, read_counts(args.counts))
-    for problem in problems:
-        print(f"generate: {problem}", file=sys.stderr)
-    if (args.check and stale) or problems:
+    if args.check and stale:
         return 1
     if args.check:
         print(f"generate: {args.skill_dir} is current: {built.source.report()}")

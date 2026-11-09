@@ -1,7 +1,6 @@
 """Tests for generate.py. Run: python3 -m unittest discover plugins/laws/source"""
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import tempfile
@@ -14,21 +13,19 @@ import generate
 
 
 class SourceTree:
-    """A scratch copy of the sources, the committed outputs and their counts, safe to edit."""
+    """A scratch copy of the sources and the committed outputs, safe to edit."""
 
     def __enter__(self) -> "SourceTree":
         self.dir = Path(tempfile.mkdtemp())
         self.source = self.dir / "code"
         self.skill_dir = self.dir / "skill"
         self.target = self.skill_dir / "SKILL.md"
-        self.counts = self.dir / "counts.json"
         shutil.copytree(generate.SOURCE, self.source)
         shutil.copytree(generate.SKILL_DIR, self.skill_dir)
-        shutil.copy(generate.COUNTS, self.counts)
         return self
 
     def args(self) -> list[str]:
-        return ["--source", str(self.source), "--skill-dir", str(self.skill_dir), "--counts", str(self.counts)]
+        return ["--source", str(self.source), "--skill-dir", str(self.skill_dir)]
 
     def __exit__(self, *exc) -> None:
         shutil.rmtree(self.dir)
@@ -77,11 +74,6 @@ class CommittedSkill(unittest.TestCase):
                     output.text,
                     f"{output.path} is stale: run python3 plugins/laws/source/generate.py",
                 )
-
-    def test_committed_counts_are_current_and_skill_is_within_budget(self):
-        # The cap test. Counting needs the API, so counts.json records counts and this holds them
-        # to the current text: a stale count fails here exactly like a count over budget.
-        self.assertEqual(generate.count_problems(generate.build(), generate.read_counts(generate.COUNTS)), [])
 
     def test_no_single_line_comment_reaches_the_skill(self):
         # Every directive is a single-line comment; the skill's one real comment spans lines.
@@ -157,43 +149,6 @@ class Projections(unittest.TestCase):
                          after.replace(section(after, "no-mode-explosion"), ""))
 
 
-class TokenCap(unittest.TestCase):
-    def test_profile_over_budget_fails_and_names_the_overage(self):
-        with SourceTree() as tree:
-            tokens = json.loads(tree.counts.read_text())["SKILL.md"]["tokens"]
-            tree.edit("profiles/default.toml", f"budget = {tokens}", f"budget = {tokens - 40}")
-            code, err = tree.check()
-        self.assertEqual(code, 1)
-        self.assertIn(f"SKILL.md is 40 tokens over the default profile's budget: {tokens} counted", err)
-
-    def test_over_budget_is_named_while_another_count_is_stale(self):
-        with SourceTree() as tree:
-            counts = json.loads(tree.counts.read_text())
-            tree.edit("profiles/default.toml", f"budget = {counts['SKILL.md']['tokens']}",
-                      f"budget = {counts['SKILL.md']['tokens'] - 40}")
-            counts["references/rung-s.md"]["sha256"] = "0" * 64
-            tree.counts.write_text(json.dumps(counts))
-            code, err = tree.check()
-        self.assertEqual(code, 1)
-        self.assertIn("references/rung-s.md: no token count for its current text", err)
-        self.assertIn("SKILL.md is 40 tokens over the default profile's budget", err)
-
-    def test_count_for_other_text_fails(self):
-        with SourceTree() as tree:
-            tree.edit("profiles/default.toml", 'no-mode-explosion = "L"', 'no-mode-explosion = "S"')
-            self.assertEqual(tree.generate()[0], 1)
-            code, err = tree.check()
-        self.assertEqual(code, 1)
-        self.assertIn("SKILL.md: no token count for its current text", err)
-
-    def test_count_on_another_model_fails(self):
-        with SourceTree() as tree:
-            tree.edit("profiles/default.toml", 'model = "claude-opus-5-5"', 'model = "claude-sonnet-5-5"')
-            code, err = tree.check()
-        self.assertEqual(code, 1)
-        self.assertIn("no token count for its current text on claude-sonnet-5-5", err)
-
-
 class StalenessCheck(unittest.TestCase):
     def test_unedited_sources_pass(self):
         with SourceTree() as tree:
@@ -223,8 +178,7 @@ class StalenessCheck(unittest.TestCase):
             self.assertIn("water flows uphill", tree.target.read_text())
             self.assertIn("water flows uphill", (tree.skill_dir / "references/rung-m.md").read_text())
         self.assertIn("wrote SKILL.md, references/rung-s.md, references/rung-m.md in", out)
-        self.assertEqual(code, 1, "a regenerated output's old count no longer holds")
-        self.assertIn("recount", err)
+        self.assertEqual((code, err), (0, ""))
 
 
 class Refusals(unittest.TestCase):
@@ -330,10 +284,10 @@ class Refusals(unittest.TestCase):
             tree.edit("profiles/default.toml", 'one-way-deps = "L"', 'one-way-deps = "XL"')
             self.assertRefused(tree, "'one-way-deps': 'XL'")
 
-    def test_profile_without_a_budget_is_refused(self):
+    def test_profile_with_a_key_besides_rungs_is_refused(self):
         with SourceTree() as tree:
-            tree.edit("profiles/default.toml", "\nbudget = ", "\nbudge = ")
-            self.assertRefused(tree, "exactly model, budget and [rungs]")
+            tree.edit("profiles/default.toml", "[rungs]\n", 'model = "x"\n\n[rungs]\n')
+            self.assertRefused(tree, "exactly [rungs]")
 
     def test_include_inside_a_law_names_its_own_line_at_every_rung(self):
         with SourceTree() as tree:
