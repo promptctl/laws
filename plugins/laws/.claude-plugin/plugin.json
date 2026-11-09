@@ -7,7 +7,7 @@
   },
   "repository": "https://github.com/promptctl/laws",
   "license": "MIT",
-  "agents": ["./skills/code/SKILL.md"],
+  "agents": ["./agents/code.md"],
   "keywords": [
     "architecture",
     "code-quality",

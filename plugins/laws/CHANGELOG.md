@@ -2,7 +2,7 @@ Each version's section is written in the PR that bumps `.claude-plugin/plugin.js
 
 ## v0.42.0 - 2026-11-09
 
-- laws(code): `laws:code` is also an agent. Its prompt is the skill body, and the skill's frontmatter sets a one-hour prompt cache, so a fork of that agent reads the laws from cache across reviews run within the hour
+- laws(code): `laws:code` is also an agent, `agents/code.md`, generated from the skill's sources: its system prompt is the skill's body, its description is for delegating a forked code review, and its frontmatter sets a one-hour prompt cache, so reviews forked within the hour read the laws from cache. The skill itself is unchanged
 
 ## v0.41.2 - 2026-11-09
 

@@ -4,11 +4,13 @@
 Run: python3 plugins/laws/source/generate.py          # write the outputs
      python3 plugins/laws/source/generate.py --check  # exit 1 if an output is stale
 
-Outputs, under plugins/laws/skills/code/:
+Outputs, under plugins/laws/:
 
-  SKILL.md               every law at the rung profiles/default.toml gives it
-  references/rung-s.md   every law at S
-  references/rung-m.md   every law at M
+  skills/code/SKILL.md               every law at the rung profiles/default.toml gives it
+  skills/code/references/rung-s.md   every law at S
+  skills/code/references/rung-m.md   every law at M
+  agents/code.md                     SKILL.md's body under agent.md's frontmatter: the
+                                     laws:code agent, whose system prompt is the laws
 
 skeleton.md fixes the order. Each of its `<!-- include: <file> -->` lines is replaced by
 that file verbatim; every other skeleton line is copied as is. Inside the included files:
@@ -42,7 +44,7 @@ from typing import Literal
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / "code"
-SKILL_DIR = HERE.parent / "skills" / "code"
+PLUGIN_DIR = HERE.parent
 DEFAULT_PROFILE = "default"
 
 GENERATED = (
@@ -263,21 +265,37 @@ def read_source(source: Path = SOURCE) -> Source:
     return Source(pieces=pieces, units=units, expanded=expanded)
 
 
+def body(skill: str) -> str:
+    """The rendered skill without its frontmatter."""
+    if not skill.startswith("---\n"):
+        raise SourceError("the rendered skill does not open with frontmatter")
+    return skill[skill.index("\n---\n", 3) + len("\n---\n"):].lstrip("\n")
+
+
 def as_reference(skill: str, rung: Rung) -> str:
     """A projection read by path is not a skill: its frontmatter goes, a one-line notice
     takes its place."""
-    if not skill.startswith("---\n"):
-        raise SourceError("the rendered skill does not open with frontmatter")
-    body = skill[skill.index("\n---\n", 3) + len("\n---\n"):].lstrip("\n")
     return (
         f"<!-- {GENERATED} A projection of SKILL.md: every law at rung {rung}, its other paragraphs"
-        f" left out; the text outside the laws is SKILL.md's. -->\n\n{body}"
+        f" left out; the text outside the laws is SKILL.md's. -->\n\n{body(skill)}"
     )
+
+
+def as_agent(skill: str, head_path: Path) -> str:
+    """The agent's own frontmatter over the skill's body. An agent's description says when to
+    delegate to it, which is not when to load the skill, so the two never share one."""
+    head = []
+    for n, line in enumerate(head_path.read_text().splitlines(keepends=True), 1):
+        d = directive(line, f"{head_path.name}:{n}")
+        if d is not None and d[0] != "generated-notice":
+            raise SourceError(f"{head_path.name}:{n}: only the generated-notice directive belongs in the agent's frontmatter")
+        head.append(line if d is None else NOTICE)
+    return f"{''.join(head)}\n{body(skill)}"
 
 
 @dataclass(frozen=True)
 class Output:
-    path: str  # under the skill directory
+    path: str  # under the plugin directory
     text: str
 
 
@@ -292,10 +310,12 @@ def build(source_dir: Path = SOURCE) -> Build:
     profile_path = source_dir / "profiles" / f"{DEFAULT_PROFILE}.toml"
     rungs = load_profile(profile_path)
     projection = {rung: source.render(uniform(rung, source.laws), f"all-{rung}") for rung in ("S", "M")}
+    skill = source.render(rungs, str(profile_path))
     return Build(source=source, outputs=[
-        Output("SKILL.md", source.render(rungs, str(profile_path))),
-        Output("references/rung-s.md", as_reference(projection["S"], "S")),
-        Output("references/rung-m.md", as_reference(projection["M"], "M")),
+        Output("skills/code/SKILL.md", skill),
+        Output("skills/code/references/rung-s.md", as_reference(projection["S"], "S")),
+        Output("skills/code/references/rung-m.md", as_reference(projection["M"], "M")),
+        Output("agents/code.md", as_agent(skill, source_dir / "agent.md")),
     ])
 
 
@@ -303,27 +323,27 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="exit 1 if an output is stale")
     parser.add_argument("--source", type=Path, default=SOURCE)
-    parser.add_argument("--skill-dir", type=Path, default=SKILL_DIR)
+    parser.add_argument("--plugin-dir", type=Path, default=PLUGIN_DIR)
     args = parser.parse_args(argv)
     try:
         built = build(args.source)
     except SourceError as e:
         print(f"generate: {e}", file=sys.stderr)
         return 2
-    stale = [o for o in built.outputs if not ((args.skill_dir / o.path).is_file() and (args.skill_dir / o.path).read_text() == o.text)]
+    stale = [o for o in built.outputs if not ((args.plugin_dir / o.path).is_file() and (args.plugin_dir / o.path).read_text() == o.text)]
     if args.check:
         for output in stale:
-            print(f"generate: {args.skill_dir / output.path} is stale against {args.source}; run {Path(__file__).name}", file=sys.stderr)
+            print(f"generate: {args.plugin_dir / output.path} is stale against {args.source}; run {Path(__file__).name}", file=sys.stderr)
     else:
         for output in stale:
-            (args.skill_dir / output.path).parent.mkdir(parents=True, exist_ok=True)
-            (args.skill_dir / output.path).write_text(output.text)
+            (args.plugin_dir / output.path).parent.mkdir(parents=True, exist_ok=True)
+            (args.plugin_dir / output.path).write_text(output.text)
         written = ", ".join(o.path for o in stale) or "nothing"
-        print(f"generate: wrote {written} in {args.skill_dir}: {built.source.report()}")
+        print(f"generate: wrote {written} in {args.plugin_dir}: {built.source.report()}")
     if args.check and stale:
         return 1
     if args.check:
-        print(f"generate: {args.skill_dir} is current: {built.source.report()}")
+        print(f"generate: {args.plugin_dir} is current: {built.source.report()}")
     return 0
 
 
