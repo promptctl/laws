@@ -318,20 +318,27 @@ class Refusals(unittest.TestCase):
                     source.render(generate.uniform(rung, source.laws), rung)
                 self.assertIn(f"laws/one-way-deps.md:{at + 1}: includes do not nest", str(caught.exception))
 
-    def test_a_head_with_another_directive_is_refused(self):
+    def test_a_head_with_a_directive_is_refused(self):
         with SourceTree() as tree:
-            tree.edit("agent-head.md", "<!-- generated-notice -->", "<!-- generated-notice -->\n<!-- law-index -->")
-            self.assertRefused(tree, "agent-head.md", "agent-head.md:7 law-index")
-
-    def test_a_head_without_the_generated_notice_is_refused(self):
-        with SourceTree() as tree:
-            tree.edit("skill-head.md", "<!-- generated-notice -->\n", "")
-            self.assertRefused(tree, "skill-head.md", "generated notice once")
+            tree.edit("agent-head.md", "name: code\n", "name: code\n<!-- law-index -->\n")
+            self.assertRefused(tree, "agent-head.md:3", "no directives")
 
     def test_a_head_that_does_not_close_is_refused(self):
         with SourceTree() as tree:
-            tree.edit("agent-head.md", "-->\n---\n", "-->\n")
+            tree.edit("agent-head.md", "1h\n---\n", "1h\n")
             self.assertRefused(tree, "agent-head.md", "opening and closing with ---")
+
+    def test_a_missing_head_is_refused(self):
+        with SourceTree() as tree:
+            (tree.source / "skill-head.md").unlink()
+            self.assertRefused(tree, "skill-head.md", "does not exist")
+
+    def test_a_head_without_a_final_newline_builds_the_same(self):
+        with SourceTree() as tree:
+            before = tree.target.read_text()
+            path = tree.source / "skill-head.md"
+            path.write_text(path.read_text().rstrip("\n"))
+            self.assertEqual(generate.build(tree.source).outputs[0].text, before)
 
     def test_include_without_a_file_is_refused(self):
         with SourceTree() as tree:

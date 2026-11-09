@@ -78,14 +78,19 @@ assert_allow "subagent isolated by agent_id, incompatible craft allowed" \
   "$(run guard "$(skill_payload S2 laws:prompt agentX)")"
 
 # 5b. An agent named laws:<x> carries craft <x> as its system prompt, so <x> is engaged in its
-#     slot before any Skill load: the laws:code agent may not load laws:prompt, may re-load
-#     laws:code, and may add a compatible craft. An agent of another name starts empty.
+#     slot before any Skill load: the laws:code agent may not load laws:prompt, may not load
+#     laws:code a second time, and may add a compatible craft. An agent of another name starts
+#     empty, and a subagent whose payload names no agent type is reported on stderr.
 assert_deny "the laws:code agent refuses laws:prompt (code is its system prompt)" \
   "$(run guard "$(skill_payload S13 laws:prompt agentC laws:code)")" "laws:code"
-assert_allow "  ... and may load laws:code itself" "$(run guard "$(skill_payload S13 laws:code agentC laws:code)")"
+assert_deny "  ... and refuses loading laws:code, already its system prompt" \
+  "$(run guard "$(skill_payload S13 laws:code agentC laws:code)")" "system prompt"
 assert_allow "  ... and a compatible craft (laws:chat)" "$(run guard "$(skill_payload S13 laws:chat agentC laws:code)")"
 assert_allow "an agent of another type starts with no craft engaged" \
   "$(run guard "$(skill_payload S13 laws:prompt agentD general-purpose)")"
+err=$(skill_payload S13 laws:chat agentE | "$ROUTER" guard 2>&1 >/dev/null)
+case "$err" in *"no agent_type"*) ok "a subagent payload without agent_type is reported on stderr" ;;
+  *) bad "a subagent payload without agent_type is reported on stderr (stderr: $err)" ;; esac
 
 # 5a. COEXISTENCE - the point of the compatibility model: a DIFFERENT but compatible craft
 #     loads alongside the first, no refusal. laws:code + laws:chat + laws:ticket is normal,

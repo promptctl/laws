@@ -31,10 +31,10 @@
 #
 # No external dependencies - pure bash (3.2+), so it runs anywhere Claude Code does.
 # The guard parses a few string fields out of the hook's JSON stdin without jq. That is
-# sound for the CONSTRAINED tokens - session_id, agent_id, source, tool_name, and
-# tool_input.skill are a UUID, a hex id, a lowercase word, or a skill name like
-# "laws:code", none of which can contain a quote, backslash, or newline that would need
-# real JSON decoding.
+# sound for the CONSTRAINED tokens - session_id, agent_id, agent_type, source, tool_name,
+# and tool_input.skill are a UUID, a hex id, an agent name, a lowercase word, or a skill
+# name like "laws:code", none of which can contain a quote, backslash, or newline that
+# would need real JSON decoding.
 
 HOOK_TYPE="$1"
 
@@ -374,13 +374,24 @@ case "$HOOK_TYPE" in
     fi
 
     slot=$(slot_dir_for "$sid" "$aid")
-    # An agent named laws:<x> has craft <x> as its system prompt (agents/code.md is the
-    # laws:code skill's body), so that craft is engaged in its slot before any Skill load.
-    agent=$(json_field agent_type)
-    case "$agent" in
-      laws:?*) mkdir -p "$slot" 2>/dev/null && : > "$slot/$(sanitize "${agent#laws:}")" 2>/dev/null ;;
-    esac
     craft_marker=$(sanitize "$craft")
+
+    # An agent named laws:<x> has craft <x> as its system prompt (agents/code.md is the
+    # laws:code skill's body). That craft is engaged in the agent's slot from its first call,
+    # read from the payload rather than stored, and loading its skill again would put the
+    # same text in the context twice.
+    agent=$(json_field agent_type)
+    agent_craft=""
+    case "$agent" in
+      laws:?*) agent_craft=$(sanitize "${agent#laws:}") ;;
+    esac
+    if [ -n "$aid" ] && [ -z "$agent" ]; then
+      echo "laws skill-router guard: subagent $aid has no agent_type in its payload; a laws:<x> agent's own craft cannot be counted as engaged" >&2
+    fi
+    if [ "$craft_marker" = "$agent_craft" ]; then
+      deny "laws:$craft is this agent's system prompt: its text is already loaded, and loading the skill would put it in the context a second time. Work from the system prompt."
+      exit 0
+    fi
     marker="$slot/$craft_marker"
 
     # Re-loading a craft already engaged is idempotent (e.g. re-routing to it after a
@@ -422,6 +433,9 @@ case "$HOOK_TYPE" in
         conflicts="${conflicts:+$conflicts,}$other"
       fi
     done
+    if [ -n "$agent_craft" ] && conflicts_with "$agent_craft" "$craft"; then
+      conflicts="${conflicts:+$conflicts,}$agent_craft"
+    fi
     if [ -n "$conflicts" ]; then
         # Rendered once, for every message below: "laws:code" or "laws:code, laws:chat".
         conflicts_pretty="laws:${conflicts//,/, laws:}"
