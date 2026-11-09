@@ -318,11 +318,12 @@ esac
 #      while it interpolated the conflict clause; with that gone it is quoted, and this is
 #      what says so. Unquote it again and a reworded line containing a $ or a backtick
 #      expands at hook launch - or breaks the JSON - and every other test here stays green.
-#      Only mutating the shipped file can see that; reading the heredoc cannot.
+#      Only mutating the shipped file can see that; reading the heredoc cannot. The
+#      mutant also breaks a paragraph, which must reach the JSON escaped, not raw.
 rtmut=$(mktemp -d)
 cp "$ROUTER" "$rtmut/skill-router.sh"
 cp "$HERE/incompatible-crafts.txt" "$rtmut/incompatible-crafts.txt"
-mutant='Load the craft for $HOME and `id` and note the cost.'
+mutant='Load the craft for $HOME and `id`\n\nand note the cost.'  # awk -v turns \n into a line break
 awk -v repl="$mutant" '
   /^read -r -d .. ROUTE_TEXT <</ { print; getline; print repl; next }
   { print }
@@ -330,7 +331,7 @@ awk -v repl="$mutant" '
 mv "$rtmut/mutated.sh" "$rtmut/skill-router.sh"
 chmod +x "$rtmut/skill-router.sh"
 # The mutation must have landed, or the assertion below passes without testing anything.
-if grep -qF 'and `id` and note the cost.' "$rtmut/skill-router.sh"; then
+if grep -qxF 'and note the cost.' "$rtmut/skill-router.sh"; then
   ok "  ... (routing-text mutation applied)"
 else
   bad "routing-text mutation did not apply - the next assertion would pass vacuously"
@@ -339,7 +340,8 @@ fi
 # want of the S projection, which this copy has no plugin tree to find.
 rt_mut_out=$(printf '{}' | env -u LAWS_PER_TURN_S "$rtmut/skill-router.sh" engage 2>/dev/null)
 case "$rt_mut_out" in
-  *'$HOME'*'`id`'*) ok "  ... and shell-special characters in it are emitted verbatim";;
+  *$'\n'*) bad "  ... and shell-special characters in it are emitted verbatim (a raw newline broke the JSON line: $rt_mut_out)";;
+  *'$HOME'*'`id`\n\nand note the cost.'*) ok "  ... and shell-special characters in it are emitted verbatim";;
   *) bad "  ... and shell-special characters in it are emitted verbatim (expanded or mangled: $rt_mut_out)";;
 esac
 rm -rf "$rtmut"

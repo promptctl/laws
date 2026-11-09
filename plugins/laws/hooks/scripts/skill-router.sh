@@ -41,10 +41,12 @@ HOOK_TYPE="$1"
 # The engagement text - injected fresh on every user message so each request re-enters
 # the philosophy rather than coasting on a stale session-start reminder. Closest
 # descendant of the original universal-laws reminder, which was itself pure engagement.
-# Keep it single-line, with straight quotes and no backslashes, so it needs no JSON
-# escaping when emitted.
+# The heredoc is quoted, so the text is literal: a trailing backslash does not join lines,
+# it reaches the model. Line breaks and quotes are safe; emit escapes them.
 read -r -d '' ENGAGE_TEXT <<'EOT'
-For the following request, please consider the laws and devices of your craft and directly consider how you will apply them to achieve the highest quality expression of your work.  You can improve your results substantially by expressing this directly in the chat.  Engaging with the laws and devices is a must.  Although it may seem tedious to repeatedly derive these concrete details from the abstract concepts, that engagement is absolutely critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is a philosophy for maximizing successful achievement of your goals.  If the request corrects or constrains you, it is an instance of a rule: find the rule (laws:intent) before acting on the words.
+For the following request, you must consider the laws and devices of your craft.  You must deeply consider how you will apply them to the problem you are solving.  You must also deeply consider the purpose of your actions - do the specifics of this task achieve the large goal this is aimed at?  Working diligently towards the wrong goal is a stronger failure than working ineffectively towards the right goal.  Independence and intelligence are prerequisites for autonomy.  To remain autonomous, you must continually act with intelligence and sound judgement.  The LAWS were designed to provide you with this judgement.
+
+Your ultimate goal is to achieve the highest quality expression of your work, not only to perform a specific task.  The task serves the goal.  The goal is not something that happens later.  It is built with every action, no matter how inconsequential it may seem, or how difficult the ask is.  You can improve your results substantially by expressing this directly in the chat, because what you say will manifest in the results.  Engaging with the laws and devices is a requirement.  You may find it tedious to do this repeatedly, but the simple act of repeatedly engaging with the laws is critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is how you help the user most.  If the request corrects or constrains you, it is an instance of a rule: find the rule (laws:intent) before acting on the words.
 EOT
 
 # The incompatibility policy is DATA, and it lives in one file, incompatible-crafts.txt, so
@@ -102,8 +104,6 @@ fi
 # a backtick, or a backslash in the prose expanding at hook launch, or breaking the JSON,
 # with every test still green. Keep it quoted: the prose is the kind of thing that gets
 # reworded by someone thinking about wording, not about shell. [LAW:no-silent-failure]
-# Same formatting constraints as ENGAGE_TEXT otherwise: single line, straight quotes, no
-# backslashes, so it needs no JSON escaping.
 read -r -d '' ROUTE_TEXT <<'EOT'
 Before substantive work, identify the medium of your primary deliverable and load the craft skill that matches, if one does.
 EOT
