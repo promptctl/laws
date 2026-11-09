@@ -41,7 +41,8 @@ care. Simple is the goal, not a step toward something more impressive.
    it should appear under one medium only.
 3. `plugins/laws/skills/code/SKILL.md` is generated. Never edit it. Edit its sources
    under `plugins/laws/source/code/`: one file per law and per framing, plus the
-   preamble, bindings, recap, and `skeleton.md` for order and part headings. Then run
+   preamble, bindings, recap, `skeleton.md` for order and part headings, and the frontmatter
+   heads `skill-head.md` and `agent-head.md`. Then run
    `python3 plugins/laws/source/generate.py`, which also writes the S and M projections
    under `plugins/laws/skills/code/references/` and the agent `plugins/laws/agents/code.md`. Commit the sources and the outputs
    together. A law's rung is a one-line edit to `profiles/default.toml`. The header comment's rule

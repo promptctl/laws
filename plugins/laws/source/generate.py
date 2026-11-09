@@ -9,8 +9,13 @@ Outputs, under plugins/laws/:
   skills/code/SKILL.md               every law at the rung profiles/default.toml gives it
   skills/code/references/rung-s.md   every law at S
   skills/code/references/rung-m.md   every law at M
-  agents/code.md                     SKILL.md's body under agent.md's frontmatter: the
-                                     laws:code agent, whose system prompt is the laws
+  agents/code.md                     the laws:code agent: every law at SKILL.md's rungs,
+                                     as the agent's system prompt
+
+Each output is a head and the body the skeleton renders. skill-head.md and agent-head.md are
+the two frontmatter blocks, kept apart because a skill's description says when to load it and
+an agent's says when to delegate to it; each opens and closes with `---` and carries the
+generated notice once. A projection's head is a one-line notice instead.
 
 skeleton.md fixes the order. Each of its `<!-- include: <file> -->` lines is replaced by
 that file verbatim; every other skeleton line is copied as is. Inside the included files:
@@ -203,18 +208,35 @@ class Source:
             missing = [law for law in self.laws if law not in rungs]
             unknown = sorted(set(rungs) - set(self.laws))
             raise SourceError(f"{where}: rungs must name every law once; missing {missing}, unknown {unknown}")
+        lines = [line for piece in self.pieces
+                 for line in (piece.lines if piece.law is None else project(piece.lines, rungs[piece.law]))]
+        return self.expand(lines)
+
+    def expand(self, lines: list[tuple[str, str]]) -> str:
+        """Lines with their directives carried out: rung markers dropped, the rest expanded."""
         out: list[str] = []
-        for piece in self.pieces:
-            lines = piece.lines if piece.law is None else project(piece.lines, rungs[piece.law])
-            for line, at in lines:
-                d = directive(line, at)
-                if d is None:
-                    out.append(line)
-                elif d[0] == "include":
-                    raise SourceError(f"{at}: includes do not nest")
-                elif d[0] != "rung":
-                    out.extend(self.expanded[d[0]])
+        for line, at in lines:
+            d = directive(line, at)
+            if d is None:
+                out.append(line)
+            elif d[0] == "include":
+                raise SourceError(f"{at}: includes do not nest")
+            elif d[0] != "rung":
+                out.extend(self.expanded[d[0]])
         return "".join(out)
+
+    def head(self, path: Path) -> str:
+        """A frontmatter block: opens and closes with ---, and carries the generated notice
+        once and no other directive."""
+        lines = path.read_text().splitlines(keepends=True)
+        if len(lines) < 2 or lines[0] != "---\n" or lines[-1] != "---\n" or "---\n" in lines[1:-1]:
+            raise SourceError(f"{path.name}: a head is one frontmatter block, opening and closing with ---")
+        found = [(n, directive(line, f"{path.name}:{n}")) for n, line in enumerate(lines, 1)]
+        found = [(n, d) for n, d in found if d is not None]
+        if [d for _, d in found] != [("generated-notice", None)]:
+            raise SourceError(f"{path.name}: a head carries the generated notice once and no other directive;"
+                              f" found {[f'{path.name}:{n} {d[0]}' for n, d in found]}")
+        return self.expand([(line, f"{path.name}:{n}") for n, line in enumerate(lines, 1)])
 
 
 def read_source(source: Path = SOURCE) -> Source:
@@ -265,32 +287,13 @@ def read_source(source: Path = SOURCE) -> Source:
     return Source(pieces=pieces, units=units, expanded=expanded)
 
 
-def body(skill: str) -> str:
-    """The rendered skill without its frontmatter."""
-    if not skill.startswith("---\n"):
-        raise SourceError("the rendered skill does not open with frontmatter")
-    return skill[skill.index("\n---\n", 3) + len("\n---\n"):].lstrip("\n")
-
-
-def as_reference(skill: str, rung: Rung) -> str:
-    """A projection read by path is not a skill: its frontmatter goes, a one-line notice
-    takes its place."""
+def as_reference(body: str, rung: Rung) -> str:
+    """A projection read by path is not a skill: a one-line notice stands where the
+    frontmatter would."""
     return (
         f"<!-- {GENERATED} A projection of SKILL.md: every law at rung {rung}, its other paragraphs"
-        f" left out; the text outside the laws is SKILL.md's. -->\n\n{body(skill)}"
+        f" left out; the text outside the laws is SKILL.md's. -->\n\n{body}"
     )
-
-
-def as_agent(skill: str, head_path: Path) -> str:
-    """The agent's own frontmatter over the skill's body. An agent's description says when to
-    delegate to it, which is not when to load the skill, so the two never share one."""
-    head = []
-    for n, line in enumerate(head_path.read_text().splitlines(keepends=True), 1):
-        d = directive(line, f"{head_path.name}:{n}")
-        if d is not None and d[0] != "generated-notice":
-            raise SourceError(f"{head_path.name}:{n}: only the generated-notice directive belongs in the agent's frontmatter")
-        head.append(line if d is None else NOTICE)
-    return f"{''.join(head)}\n{body(skill)}"
 
 
 @dataclass(frozen=True)
@@ -310,12 +313,12 @@ def build(source_dir: Path = SOURCE) -> Build:
     profile_path = source_dir / "profiles" / f"{DEFAULT_PROFILE}.toml"
     rungs = load_profile(profile_path)
     projection = {rung: source.render(uniform(rung, source.laws), f"all-{rung}") for rung in ("S", "M")}
-    skill = source.render(rungs, str(profile_path))
+    body = source.render(rungs, str(profile_path))
     return Build(source=source, outputs=[
-        Output("skills/code/SKILL.md", skill),
+        Output("skills/code/SKILL.md", f"{source.head(source_dir / 'skill-head.md')}\n\n{body}"),
         Output("skills/code/references/rung-s.md", as_reference(projection["S"], "S")),
         Output("skills/code/references/rung-m.md", as_reference(projection["M"], "M")),
-        Output("agents/code.md", as_agent(skill, source_dir / "agent.md")),
+        Output("agents/code.md", f"{source.head(source_dir / 'agent-head.md')}\n\n{body}"),
     ])
 
 

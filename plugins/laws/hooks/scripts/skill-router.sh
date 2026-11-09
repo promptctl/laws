@@ -374,6 +374,12 @@ case "$HOOK_TYPE" in
     fi
 
     slot=$(slot_dir_for "$sid" "$aid")
+    # An agent named laws:<x> has craft <x> as its system prompt (agents/code.md is the
+    # laws:code skill's body), so that craft is engaged in its slot before any Skill load.
+    agent=$(json_field agent_type)
+    case "$agent" in
+      laws:?*) mkdir -p "$slot" 2>/dev/null && : > "$slot/$(sanitize "${agent#laws:}")" 2>/dev/null ;;
+    esac
     craft_marker=$(sanitize "$craft")
     marker="$slot/$craft_marker"
 

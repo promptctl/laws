@@ -143,12 +143,16 @@ class Projections(unittest.TestCase):
 
     def test_agent_is_the_skill_body_under_its_own_frontmatter(self):
         out = self.outputs()
-        skill, agent = out["skills/code/SKILL.md"], out["agents/code.md"]
-        self.assertEqual(generate.body(agent), generate.body(skill))
-        skill_head, agent_head = skill[:skill.index(generate.body(skill))], agent[:agent.index(generate.body(agent))]
+        (skill_head, skill_body), (agent_head, agent_body) = (
+            out[path].split("\n---\n", 1) for path in ("skills/code/SKILL.md", "agents/code.md"))
+        self.assertEqual(agent_body, skill_body)
         self.assertIn("cacheTtl: 1h", agent_head)
         self.assertNotIn("cacheTtl", skill_head)
-        description = lambda head: next(l for l in head.splitlines() if l.startswith("description: "))
+
+        def description(head: str) -> str:
+            found = [l for l in head.splitlines() if l.startswith("description: ")]
+            self.assertEqual(len(found), 1, f"one description line in {head!r}")
+            return found[0]
         self.assertNotEqual(description(agent_head), description(skill_head))
 
     def test_one_line_profile_edit_changes_only_that_laws_section(self):
@@ -314,10 +318,20 @@ class Refusals(unittest.TestCase):
                     source.render(generate.uniform(rung, source.laws), rung)
                 self.assertIn(f"laws/one-way-deps.md:{at + 1}: includes do not nest", str(caught.exception))
 
-    def test_directive_in_the_agent_frontmatter_is_refused(self):
+    def test_a_head_with_another_directive_is_refused(self):
         with SourceTree() as tree:
-            tree.edit("agent.md", "<!-- generated-notice -->", "<!-- law-index -->")
-            self.assertRefused(tree, "agent.md:6", "only the generated-notice directive")
+            tree.edit("agent-head.md", "<!-- generated-notice -->", "<!-- generated-notice -->\n<!-- law-index -->")
+            self.assertRefused(tree, "agent-head.md", "agent-head.md:7 law-index")
+
+    def test_a_head_without_the_generated_notice_is_refused(self):
+        with SourceTree() as tree:
+            tree.edit("skill-head.md", "<!-- generated-notice -->\n", "")
+            self.assertRefused(tree, "skill-head.md", "generated notice once")
+
+    def test_a_head_that_does_not_close_is_refused(self):
+        with SourceTree() as tree:
+            tree.edit("agent-head.md", "-->\n---\n", "-->\n")
+            self.assertRefused(tree, "agent-head.md", "opening and closing with ---")
 
     def test_include_without_a_file_is_refused(self):
         with SourceTree() as tree:
