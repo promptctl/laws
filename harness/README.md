@@ -5,8 +5,9 @@ isolated from the owner's own Claude setup, driven for one or more turns, and le
 transcript plus a schema-conforming run record. It imports nothing from any eval; this
 directory can be moved out of the repo whole.
 
-`claude -p --bare` is banned (owner, 2026-10-03), and so is API-key auth. Every session is
-the interactive TUI on the subscription login.
+The owner's ruling, 2026-10-03, verbatim: "'-p --bare' is ACTUALLY banned, this is the user
+saying this, right here, officially. It's banned." Runs use the subscription login, never an
+API key. Every session is the interactive TUI.
 
 ## Use
 
