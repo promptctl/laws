@@ -1,6 +1,6 @@
 {
   "name": "promptctl",
-  "description": "The promptctl plugins: the universal architectural laws, agent workflow tooling, and the lit issue tracker.",
+  "description": "The promptctl plugins: the universal architectural laws, agent workflow tooling, the lit issue tracker, and a collection of general-purpose skills.",
   "owner": {
     "name": "Brandon Fryslie"
   },
@@ -27,6 +27,14 @@
         "path": "claude-plugin"
       },
       "description": "The /next and quickstart skills for repos tracked with lit, the agent-native issue tracker."
+    },
+    {
+      "name": "skillz",
+      "source": {
+        "source": "github",
+        "repo": "promptctl/skillz"
+      },
+      "description": "General-purpose skills: delegating work to subagents and tmux-driven sessions, parking and restarting tickets, finding past sessions, and spec writing."
     }
   ]
 }
