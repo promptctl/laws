@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.44.0 - 2026-11-10
+
+- laws(router): one hook per event. The `LAWS_PER_TURN_S` setting and the six `engage-s` hooks that carried it are removed; every message runs one hook again, and the router tests fail if an event gains a second
+
 ## v0.43.0 - 2026-11-09
 
 - hooks(engage): the per-turn engagement text is rewritten. It now asks the agent to weigh the purpose of its actions as well as the laws - whether the task's specifics serve the goal it is aimed at - since diligent work toward the wrong goal is the worse failure. It names judgement as what keeps the agent autonomous and the laws as its source, and holds that the goal is built in every action. It still asks for the engagement to be written in the chat, and the laws:intent sentence is unchanged
