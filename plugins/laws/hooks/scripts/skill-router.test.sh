@@ -309,7 +309,7 @@ case "$rt_out" in
   *) bad "session-start emits a SessionStart payload (got: $rt_out)";;
 esac
 case "$rt_out" in
-  *'identify the medium of your primary deliverable'*) ok "  ... carrying the routing text";;
+  *"If you're going to write code, use the laws:code skill"*) ok "  ... carrying the routing text";;
   *) bad "  ... carrying the routing text (got: $rt_out)";;
 esac
 
@@ -357,7 +357,7 @@ fi
 # 17. engage carries the routing and the engagement text.
 eng_out=$(printf '{}' | "$ROUTER" engage 2>/dev/null)
 case "$eng_out" in
-  *'identify the medium of your primary deliverable'*'consider the laws and devices of your craft'*) ok "engage carries the routing and the engagement text";;
+  *"If you're going to write code, use the laws:code skill"*'consider the laws and devices of your craft'*) ok "engage carries the routing and the engagement text";;
   *) bad "engage carries the routing and the engagement text (got: $eng_out)";;
 esac
 
