@@ -5,7 +5,8 @@ recompiled the spec into a craft, except in the prompt medium, where that was im
 with no guidance, one with the current craft, and one with the recompiled craft. Two
 blind judges scored each set, one against the spec and one against the current craft.
 Every agent ran on Opus 5, with one output per arm. Each medium's `results.md` has the
-detail.
+detail; those of application-spec, backlog, chat and ticket were removed with their skills
+and are at commit be21578.
 
 ## Rankings
 

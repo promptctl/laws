@@ -71,6 +71,17 @@ the point of the plugin. It's what keeps the point from eating itself.
 That gives you the skills and the craft-compatibility hooks. The hooks are pure bash -
 no dependencies, nothing to configure. Nothing else is required.
 
+## Looking for clean-room, spec or backlog?
+
+`clean-room` (formerly `application-spec`) and `spec` moved to the skillz plugin:
+
+```
+/plugin marketplace add promptctl/skillz
+/plugin install skillz@promptctl-skillz
+```
+
+`backlog`, `chat`, `intent` and `ticket` are no longer published.
+
 ## Looking for memento?
 
 The `next`, `message-in-a-bottle` and `address-pr-reviews` skills used to ship from

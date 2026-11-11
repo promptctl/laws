@@ -5,7 +5,7 @@ persuasive guidance, each written to the standard of one medium and built to kee
 firing deep in a session against competing defaults. An agent that reads one and then
 does other work carries that standard into the other work: reading one skill puts its
 whole standard on duty and biases what you do next. Most standards sit together fine -
-code, its ticket, and its docs are complementary work. But some standards actively damage
+code and its tests are complementary work. But some standards actively damage
 what you write next under another, and that damage runs one way: a given ordering fails,
 and the reverse ordering may be fine. That failure has already ruined a session here.
 
@@ -14,7 +14,7 @@ So there is one rule, and a way to work under it.
 ## The rule
 
 Crafts coexist; certain *orderings* do not. Most media are complementary, so a session that
-produces code and its ticket and its docs may hold those crafts together - their
+produces code and its tests may hold those crafts together - their
 standards do not fight, and the guard lets them share a session.
 
 The rule is directed, and the direction is the whole of it: **an ordering listed in

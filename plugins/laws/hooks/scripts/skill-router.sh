@@ -10,7 +10,7 @@
 #                    checkpoint that enforces craft compatibility. Routing only ASKS the
 #                    agent which craft to load; nothing before this observed the actual
 #                    load. Compatible crafts may coexist in one session - code plus its
-#                    ticket plus its docs is normal, complementary work - so what this
+#                    tests is normal, complementary work - so what this
 #                    refuses is not a second craft but a conflicting ORDERING: an engaged
 #                    craft whose standard corrupts the one now being loaded. The edges live
 #                    in incompatible-crafts.txt and nothing here hard-codes them. Every edge
