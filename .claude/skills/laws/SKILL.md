@@ -79,8 +79,8 @@ leave the "how" to the implementer. Then they copied that ticket-worded paragrap
 prose and prompt, where the rule is false: a report is supposed to carry the answer,
 not leave it open.
 
-The fix: the ticket-specific reasoning lives in the ticket skill; a medium that needs
-its own version writes it in its own words.
+The fix: each medium's reasoning lives in its own skill; a medium that needs its own
+version writes it in its own words.
 
 Watch the reflex that let it ship: reviewing the copies, the reviewer called it "the
 right kind of duplication." Repeating a point in different words inside one skill is

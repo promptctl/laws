@@ -85,24 +85,23 @@ assert_deny "the laws:code agent refuses laws:prompt (code is its system prompt)
   "$(run guard "$(skill_payload S13 laws:prompt agentC laws:code)")" "laws:code"
 assert_deny "  ... and refuses loading laws:code, already its system prompt" \
   "$(run guard "$(skill_payload S13 laws:code agentC laws:code)")" "system prompt"
-assert_allow "  ... and a compatible craft (laws:chat)" "$(run guard "$(skill_payload S13 laws:chat agentC laws:code)")"
+assert_allow "  ... and a compatible craft (laws:testing)" "$(run guard "$(skill_payload S13 laws:testing agentC laws:code)")"
 assert_allow "an agent of another type starts with no craft engaged" \
   "$(run guard "$(skill_payload S13 laws:prompt agentD general-purpose)")"
-err=$(skill_payload S13 laws:chat agentE | "$ROUTER" guard 2>&1 >/dev/null)
+err=$(skill_payload S13 laws:testing agentE | "$ROUTER" guard 2>&1 >/dev/null)
 case "$err" in *"no agent_type"*) ok "a subagent payload without agent_type is reported on stderr" ;;
   *) bad "a subagent payload without agent_type is reported on stderr (stderr: $err)" ;; esac
 
 # 5a. COEXISTENCE - the point of the compatibility model: a DIFFERENT but compatible craft
-#     loads alongside the first, no refusal. laws:code + laws:chat + laws:ticket is normal,
-#     complementary work (write code, its docs, its ticket) and must not be blocked.
-assert_allow "compatible craft (laws:chat) coexists with laws:code" \
+#     loads alongside the first, no refusal. laws:code + laws:testing is normal,
+#     complementary work (write code and its tests) and must not be blocked.
+assert_allow "compatible craft (laws:testing) coexists with laws:code" \
   "$(run guard "$(skill_payload S9 laws:code)")"  # engage code first
-assert_allow "  ... laws:chat added" "$(run guard "$(skill_payload S9 laws:chat)")"
-assert_allow "  ... laws:ticket added too" "$(run guard "$(skill_payload S9 laws:ticket)")"
+assert_allow "  ... laws:testing added" "$(run guard "$(skill_payload S9 laws:testing)")"
 
 # 5b. ... but an incompatible craft is still refused against a set of compatible ones, and the
 #     refusal names the specific conflicting craft (laws:code), not whichever loaded last.
-assert_deny "laws:prompt refused against code+chat+ticket, naming code" \
+assert_deny "laws:prompt refused against code+testing, naming code" \
   "$(run guard "$(skill_payload S9 laws:prompt)")" "laws:code" "laws:prompt"
 
 # 5c. DIRECTION: the conflict edge runs ONE WAY. code degrades prompts, so code-then-prompt is
@@ -116,20 +115,20 @@ run guard "$(skill_payload S10 laws:prompt)" >/dev/null
 assert_allow "laws:code after laws:prompt is allowed (the edge runs one way)" \
   "$(run guard "$(skill_payload S10 laws:code)")"
 
-# 5c'. laws:code-observability is held beside laws:code and written in its register, so it
+# 5c'. laws:observability is held beside laws:code and written in its register, so it
 #      carries the same edge: prompt after it is refused, and the refusal names it.
-run guard "$(skill_payload S13 laws:code-observability)" >/dev/null
-assert_deny "laws:prompt refused after laws:code-observability" \
-  "$(run guard "$(skill_payload S13 laws:prompt)")" "laws:code-observability" "laws:prompt"
+run guard "$(skill_payload S13 laws:observability)" >/dev/null
+assert_deny "laws:prompt refused after laws:observability" \
+  "$(run guard "$(skill_payload S13 laws:prompt)")" "laws:observability" "laws:prompt"
 run guard "$(skill_payload S14 laws:code)" >/dev/null
-assert_allow "laws:code-observability coexists with laws:code" \
-  "$(run guard "$(skill_payload S14 laws:code-observability)")"
+assert_allow "laws:observability coexists with laws:code" \
+  "$(run guard "$(skill_payload S14 laws:observability)")"
 
-# 5d. laws:chat is in no incompatible pair, so it coexists with everything, both directions.
+# 5d. laws:testing is in no incompatible pair, so it coexists with everything, both directions.
 run guard "$(skill_payload S11 laws:prompt)" >/dev/null
-assert_allow "laws:chat coexists with laws:prompt" "$(run guard "$(skill_payload S11 laws:chat)")"
-run guard "$(skill_payload S12 laws:chat)" >/dev/null
-assert_allow "laws:code coexists with laws:chat" "$(run guard "$(skill_payload S12 laws:code)")"
+assert_allow "laws:testing coexists with laws:prompt" "$(run guard "$(skill_payload S11 laws:testing)")"
+run guard "$(skill_payload S12 laws:testing)" >/dev/null
+assert_allow "laws:code coexists with laws:testing" "$(run guard "$(skill_payload S12 laws:code)")"
 
 # 6. The meta-skill "laws" (no colon) is not a medium craft.
 assert_allow "meta-skill laws (no colon) allowed" "$(run guard "$(skill_payload S3 laws)")"
@@ -207,15 +206,15 @@ esac
 
 # 9b. When MORE THAN ONE engaged craft conflicts, the deny names them ALL, not whichever marker the
 #     glob returned first. Under the shipped policy nothing but code conflicts with prompt, so this
-#     runs a router copy whose policy also makes chat incompatible with prompt. [LAW:no-silent-failure]
+#     runs a router copy whose policy also makes testing incompatible with prompt. [LAW:no-silent-failure]
 twopair=$(mktemp -d)
 cp "$ROUTER" "$twopair/skill-router.sh"
-printf 'code prompt\nchat prompt\n' > "$twopair/incompatible-crafts.txt"
+printf 'code prompt\ntesting prompt\n' > "$twopair/incompatible-crafts.txt"
 tp() { printf '%s' "$2" | "$twopair/skill-router.sh" "$1" 2>/dev/null; }
 tp guard "$(skill_payload R2b laws:code)" >/dev/null
-tp guard "$(skill_payload R2b laws:chat)" >/dev/null
+tp guard "$(skill_payload R2b laws:testing)" >/dev/null
 out=$(tp guard "$(skill_payload R2b laws:prompt)")
-assert_deny "a deny names every conflicting craft, not just the first" "$out" "laws:code" "laws:chat"
+assert_deny "a deny names every conflicting craft, not just the first" "$out" "laws:code" "laws:testing"
 rm -rf "$twopair"
 
 # 13. A policy file that is READABLE but names no pairs disables enforcement exactly as an

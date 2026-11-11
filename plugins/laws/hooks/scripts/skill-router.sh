@@ -43,7 +43,7 @@ HOOK_TYPE="$1"
 read -r -d '' ENGAGE_TEXT <<'EOT'
 For the following request, you must consider the laws and devices of your craft.  You must deeply consider how you will apply them to the problem you are solving.  You must also deeply consider the purpose of your actions - do the specifics of this task achieve the large goal this is aimed at?  Working diligently towards the wrong goal is a stronger failure than working ineffectively towards the right goal.  Independence and intelligence are prerequisites for autonomy.  To remain autonomous, you must continually act with intelligence and sound judgement.  The LAWS were designed to provide you with this judgement.
 
-Your ultimate goal is to achieve the highest quality expression of your work, not only to perform a specific task.  The task serves the goal.  The goal is not something that happens later.  It is built with every action, no matter how inconsequential it may seem, or how difficult the ask is.  You can improve your results substantially by expressing this directly in the chat, because what you say will manifest in the results.  Engaging with the laws and devices is a requirement.  You may find it tedious to do this repeatedly, but the simple act of repeatedly engaging with the laws is critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is how you help the user most.  If the request corrects or constrains you, it is an instance of a rule: find the rule (laws:intent) before acting on the words.
+Your ultimate goal is to achieve the highest quality expression of your work, not only to perform a specific task.  The task serves the goal.  The goal is not something that happens later.  It is built with every action, no matter how inconsequential it may seem, or how difficult the ask is.  You can improve your results substantially by expressing this directly in the chat, because what you say will manifest in the results.  Engaging with the laws and devices is a requirement.  You may find it tedious to do this repeatedly, but the simple act of repeatedly engaging with the laws is critical for achieving your highest quality expression.  This is not a checklist to satisfy; this is how you help the user most.  If the request corrects or constrains you, it is an instance of a rule: find the rule before acting on the words.
 EOT
 
 # The incompatibility policy is DATA, and it lives in one file, incompatible-crafts.txt, so
@@ -112,9 +112,6 @@ EOT
 # there rather than holding a copy of the law text.
 S_PROJECTION="$(cd "$SCRIPT_DIR/../.." && pwd)/skills/code/references/rung-s.md"
 S_POINTER="The laws of code at rung S, for auditing or reviewing code against the laws (writing code loads laws:code instead): $S_PROJECTION"
-INTENT_POINTER="A requester's correction or constraint is an instance of a rule they have not stated; laws:intent is how to find that rule and record it."
-# Before S_POINTER in the emitted text: skill-router.test.sh case 16 reads the S path as the
-# tail of the session-start text.
 
 # Read the hook's JSON payload once. Every hook event delivers JSON on stdin.
 #
@@ -244,7 +241,7 @@ case "$HOOK_TYPE" in
         ;;
     esac
     require_s_projection
-    emit "SessionStart" "$ROUTE_TEXT $INTENT_POINTER $S_POINTER"
+    emit "SessionStart" "$ROUTE_TEXT $S_POINTER"
     ;;
 
   engage)
@@ -347,7 +344,7 @@ case "$HOOK_TYPE" in
       conflicts="${conflicts:+$conflicts,}$agent_craft"
     fi
     if [ -n "$conflicts" ]; then
-        # Rendered once, for every message below: "laws:code" or "laws:code, laws:chat".
+        # Rendered once, for every message below: "laws:code" or "laws:code, laws:observability".
         conflicts_pretty="laws:${conflicts//,/, laws:}"
         rm -f "$marker"
         # There is no way to move a running session from one craft to another - the refusal names

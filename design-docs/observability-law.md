@@ -8,7 +8,7 @@ implementing session decided under the owner's 2026-09-18 split
 the law entry below went into `plugins/laws/skills/code/SKILL.md` minus what the split
 assigns to the skill (the two ops-side proverbs, the vendor names, the bindings pointer);
 the domain bindings, the retrofit procedure, and the constraints every binding must
-survive went into `plugins/laws/skills/code-observability/SKILL.md`, with naming moved
+survive went into `plugins/laws/skills/observability/SKILL.md`, with naming moved
 from retrofit step 5 to step 1 because it must precede the first instrument. Those two
 files are now the source; this file is the record of the draft they came from.
 

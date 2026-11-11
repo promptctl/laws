@@ -1,4 +1,4 @@
-# Design goals: the `code-observability` skill
+# Design goals: the `observability` skill
 
 This skill carries the domain bindings for `[LAW:nothing-unseen]` - what a fully observable system looks like, the smallest shape that already satisfies the law, what the shared layer is in each domain, what its event carries, how coverage grows across a codebase that has no shared layer, and the constraints every binding has to survive. The law itself lives in the `code` skill and is not restated here. The owner split the two on 2026-09-18 (`design-docs/observability-north-star.law.md` req. 16-17, `design-docs/observability-skill.spec.md`): the entry in laws:code is short enough to sit in every code session's standing context, and the bindings have one home, loaded when a session is writing or retrofitting instrumentation and on first contact with a codebase whose units of work emit nothing.
 
