@@ -6,7 +6,7 @@ with no guidance, one with the current craft, and one with the recompiled craft.
 blind judges scored each set, one against the spec and one against the current craft.
 Every agent ran on Opus 5, with one output per arm. Each medium's `results.md` has the
 detail; those of application-spec, backlog, chat and ticket were removed with their skills
-and are at commit be21578.
+and are at commit be21578, and prose's at 0fd2823^.
 
 ## Rankings
 
@@ -76,7 +76,7 @@ round trip. Rubric sizes differ between judges, so compare counts within a row.
 ## Follow-up tickets
 
 - `promptctl-appspec-cal`: say in the application-spec craft whether citations belong in
-  the deliverable.
+  the deliverable. Moved with the skill: `skillz-clean-room-a2i.cwf` in promptctl/skillz.
 - `promptctl-roundtrip-q0w`: remove the task flaws, diff every medium's specs, and repeat
   runs.
 - `promptctl-roundtrip-dw1`: add a long-hold arm that tests late-session steering.

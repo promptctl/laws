@@ -80,7 +80,7 @@ no dependencies, nothing to configure. Nothing else is required.
 /plugin install skillz@promptctl-skillz
 ```
 
-`backlog`, `chat`, `intent` and `ticket` are no longer published.
+`backlog`, `backlog2`, `chat`, `intent` and `ticket` are no longer published.
 
 ## Looking for memento?
 
