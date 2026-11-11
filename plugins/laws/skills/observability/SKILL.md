@@ -1,5 +1,5 @@
 ---
-name: code-observability
+name: observability
 description: Domain bindings for [LAW:nothing-unseen] - what a fully observable system has, the smallest shape that satisfies the law before any backend exists (the floor, with its default field set), what the shared layer is in each domain (service, CLI, script or job, migration, distributed hop), what its one event carries, the order coverage grows in across a codebase that has no shared layer, and the constraints every binding must survive (cardinality, sampling, redaction, overhead). Load when writing or reviewing instrumentation, logging, metrics, tracing, or telemetry; when deciding what a new service, CLI, or job must emit; on first contact with a codebase whose units of work emit nothing; when retrofitting observability onto an existing codebase; or when acting on a [LAW:nothing-unseen] finding. Held beside laws:code; the law itself lives there and is not restated here.
 ---
 

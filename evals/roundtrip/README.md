@@ -10,7 +10,7 @@ survives the trip, on one small single-shot task per medium.
 
 ## Layout
 
-Each medium has a directory, such as `chat/` or `code/`, holding:
+Each medium has a directory, `code/` and `prompt/`, holding:
 
 - `meta.json` - the path of the current guidance, the output extension, the reader
   the recompiled craft is written for, and for code the command a judge may run.
@@ -24,7 +24,7 @@ Each medium has a directory, such as `chat/` or `code/`, holding:
 - `judge-spec.md` and `judge-guidance.md` - two blind verdicts, one using the spec as
   rubric and one using the current guidance. `judge-key.md` decodes their letters.
 
-The seven `spec.md` files were distilled with `.claude/skills/distill/SKILL.md` as of
+The `spec.md` files were distilled with `.claude/skills/distill/SKILL.md` as of
 commit 15361a3. The skill was revised afterward from those runs' reports, so a rerun
 of `distill` will not reproduce them exactly.
 

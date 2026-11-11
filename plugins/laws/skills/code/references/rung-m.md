@@ -611,7 +611,7 @@ change flies into cloud with no panel. The units of work the change touches emit
 event, and the facts the change introduces - the new count, the new branch, the new
 config source - land on that event, in the same change. What the shared layer is in
 each domain, the floor a codebase stands up first, and the order coverage grows in when
-the codebase already exists, are `laws:code-observability`'s job. Load it on two
+the codebase already exists, are `laws:observability`'s job. Load it on two
 triggers: when you are writing instrumentation or retrofitting it, and on first contact
 with a codebase whose units of work emit nothing. The second trigger is the one that
 gets missed: a session doing feature work in an uninstrumented codebase is not writing

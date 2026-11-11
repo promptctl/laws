@@ -36,21 +36,15 @@ to steer sessions for months. Those two ends want opposite styles, and getting t
 backwards is an expensive, documented failure. Six devices, their mechanisms, their
 anti-goals, and a shipping checklist - written in the style it teaches.
 
-**Writing tickets for an agent to build** (`laws:ticket`) - how to break work into
-epics and issues that a *cold* executor will pull from a backlog and build one at a
-time, carrying none of your memory. Everything follows from that one fact: size each
-issue to a single sharp pass, make every ticket leave the system working and checkable,
-keep specificity to a filename so it can't rot, let rank carry the order instead of a
-dependency graph that deadlocks, and groom the backlog - the only memory the executors
-don't have.
+**Testing** (`laws:testing`) - test strategy as an architecture property: four layers
+(unit, integration, contract, end-to-end smoke), what each may touch, and the design
+principles that keep most behavior testable in process, so the suite stays fast and
+trustworthy as the code grows. Held beside `laws:code`.
 
-**Clean-room application specs** (`laws:application-spec`) - how to specify an
-existing application so an independent team can rebuild it without ever seeing it.
-One test governs every sentence: anything observable at the application's boundary
-- invocation, configuration, startup requirements, shutdown, error behavior,
-traffic to external systems - goes in, exactly; anything visible only from inside
-stays out, keeping the spec legally clean. The same structure covers any target:
-a repo today, a CLI, UI, or SaaS observed directly tomorrow.
+**Observability** (`laws:observability`) - the domain bindings for
+`[LAW:nothing-unseen]`: what a running system must emit so it can be understood from
+its outputs, the smallest shape that satisfies the law before any backend exists, and
+how coverage grows across a codebase that emits nothing yet. Held beside `laws:code`.
 
 A **router hook** loads the one matching skill at session start and re-engages it on
 every message, because guidance only works if it's loaded when the work begins.
@@ -62,9 +56,9 @@ structure exists to fix.
 
 The laws are an aesthetic for code: subtract, deduplicate, one source of truth. Aim
 that aesthetic at an LLM prompt and it guts it, because guidance lives on redundancy
-and vivid repetition - precisely what the code laws tell you to cut. Aim it at a backlog and you get tickets packed with
-detail that rots before anyone pulls them. So each body of guidance is scoped to its medium,
-and the router loads only the one that fits the work in front of you. The split isn't
+and vivid repetition - precisely what the code laws tell you to cut. So each body of
+guidance is scoped to its medium, and the router loads only the one that fits the work
+in front of you. The split isn't
 the point of the plugin. It's what keeps the point from eating itself.
 
 ## Install
@@ -76,6 +70,17 @@ the point of the plugin. It's what keeps the point from eating itself.
 
 That gives you the skills and the craft-compatibility hooks. The hooks are pure bash -
 no dependencies, nothing to configure. Nothing else is required.
+
+## Looking for clean-room, spec or backlog?
+
+`clean-room` (formerly `application-spec`) and `spec` moved to the skillz plugin:
+
+```
+/plugin marketplace add promptctl/skillz
+/plugin install skillz@promptctl-skillz
+```
+
+`backlog`, `backlog2`, `chat`, `intent` and `ticket` are no longer published.
 
 ## Looking for memento?
 

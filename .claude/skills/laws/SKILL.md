@@ -1,6 +1,6 @@
 ---
 name: laws
-description: Rules for editing the laws skills in THIS repo - which content belongs in which file, and which rules stay inside one medium. Use when creating, editing, or reviewing any `plugins/laws/skills/*/SKILL.md` (or `DISABLED_SKILL.md`), any file under `plugins/laws/skills/*/references/` or `plugins/laws/source/`, or any `plugins/laws/design-docs/design-goals-*.md`. How to write the prose well is laws:prompt's job, not this skill's.
+description: Rules for editing the laws skills in THIS repo - which content belongs in which file, and which rules stay inside one medium. Use when creating, editing, or reviewing any `plugins/laws/skills/*/SKILL.md`, any file under `plugins/laws/skills/*/references/` or `plugins/laws/source/`, or any `plugins/laws/design-docs/design-goals-*.md`. How to write the prose well is laws:prompt's job, not this skill's.
 ---
 
 # Editing the laws skills
@@ -23,7 +23,7 @@ care. Simple is the goal, not a step toward something more impressive.
 
 1. Compatible crafts coexist; incompatible ones do not. A craft loads a whole medium's
    standard, and reading it changes what you do next, by design. Most standards are
-   complementary (code, its ticket, its docs), but some *orderings* are refused: with one
+   complementary (code and its tests), but some *orderings* are refused: with one
    craft engaged, what you write next under another comes out wrong.
    `plugins/laws/hooks/scripts/incompatible-crafts.txt` lists those orderings as directed
    edges - an edge refuses one direction and says nothing about loading the same two the
@@ -79,8 +79,8 @@ leave the "how" to the implementer. Then they copied that ticket-worded paragrap
 prose and prompt, where the rule is false: a report is supposed to carry the answer,
 not leave it open.
 
-The fix: the ticket-specific reasoning lives in the ticket skill; a medium that needs
-its own version writes it in its own words.
+The fix: each medium's reasoning lives in its own skill; a medium that needs its own
+version writes it in its own words.
 
 Watch the reflex that let it ship: reviewing the copies, the reviewer called it "the
 right kind of duplication." Repeating a point in different words inside one skill is

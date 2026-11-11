@@ -1,4 +1,4 @@
-# `laws:code-observability` - skill specification
+# `laws:observability` - skill specification
 
 Scope: what the skill must contain - what a fully observable system looks like, the
 smallest shape that satisfies the law, how to find the shared layer in each domain, what
@@ -202,8 +202,8 @@ This specifies content, not wording. In bracketed citations, "draft" means
 
 ### The artifact
 
-33. Write the skill at `plugins/laws/skills/code-observability/SKILL.md`, with
-    frontmatter `name: code-observability` and a description that states when to load it.
+33. Write the skill at `plugins/laws/skills/observability/SKILL.md`, with
+    frontmatter `name: observability` and a description that states when to load it.
     [repo convention: `plugins/laws/skills/*/SKILL.md`]
 34. Trigger the description on: writing or reviewing instrumentation, logging, metrics,
     tracing, or telemetry; deciding what a new service, CLI, or job must emit;

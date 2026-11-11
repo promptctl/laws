@@ -2,7 +2,7 @@
 
 Scope: what the observability law must say inside `plugins/laws/skills/code/SKILL.md`,
 where it applies unconditionally to every code task. How to instrument a given domain
-and how to retrofit an existing codebase belong to the `laws:code-observability` skill
+and how to retrofit an existing codebase belong to the `laws:observability` skill
 and are specified in `design-docs/observability-skill.spec.md`. Observability of an
 agent's own work, of verification instruments, and of claim status in documents is
 outside the law.
@@ -117,7 +117,7 @@ This specifies content, not wording. In bracketed citations, "draft" means
 21. Draw the entry's imagery from `design-docs/observability-law.md`, which is the
     approved candidate expression, rather than inventing new imagery. [decision, not from
     the source]
-22. Send the reader to `laws:code-observability` on two triggers, both named in the
+22. Send the reader to `laws:observability` on two triggers, both named in the
     entry: when writing or retrofitting instrumentation, and on first contact with a
     codebase whose units of work emit nothing. The second is the on-ramp: a session
     doing feature work in an uninstrumented codebase is not writing instrumentation and

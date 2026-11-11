@@ -254,7 +254,7 @@ layer exists, because that is the shape that goes missing.
 
 Where the guidance lives (superseded 2026-09-18, see "Where it goes"): the law carries
 the redirect to the shared layer; the ordered procedure and the per-domain layers live
-in the `laws:code-observability` skill, which defines no audit loop of its own. The six
+in the `laws:observability` skill, which defines no audit loop of its own. The six
 failure shapes feed the sheriff.
 
 ## Where it goes
@@ -262,7 +262,7 @@ failure shapes feed the sheriff.
 The recommended home is a new law token in laws:code, framed as the dynamic twin of
 the unrepresentable-states law. Owner instruction 2026-09-18: what "observable" means
 concretely for a CLI, a service, a script, a schema migration lives in a separate
-`laws:code-observability` skill, not in laws:code's domain bindings, so the entry stays
+`laws:observability` skill, not in laws:code's domain bindings, so the entry stays
 short and the bindings have one source (`observability-north-star.law.md` req. 16-17,
 `observability-skill.spec.md`).
 
@@ -309,5 +309,5 @@ the implementing session. Enacted in laws v0.31.0, `plugins/laws/skills/code/SKI
 - The wording is `design-docs/observability-law.md`'s entry, token `nothing-unseen`,
   less what the 2026-09-18 split assigns to the skill.
 - The retrofit procedure is a single block shared by every domain, in
-  `plugins/laws/skills/code-observability/SKILL.md` after the per-domain bindings;
+  `plugins/laws/skills/observability/SKILL.md` after the per-domain bindings;
   each domain's own binding names its shared layer.
