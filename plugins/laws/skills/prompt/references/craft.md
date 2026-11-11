@@ -339,6 +339,15 @@ Green, you're growing; ripe, you're rotten.
 
 ---
 
+## Use standard terms
+
+Write in standard software engineering language. Don't invent words or phrases. A
+term you coin means nothing to the reader until it is defined, and a reader who
+guesses at it acts on the guess. If a standard term exists, use it; if none does,
+describe the thing in plain words.
+
+---
+
 ## Avoid absolutes; leave room to judge
 
 Absolutes - never, always, every, only, must - read as strength but they are brittle.

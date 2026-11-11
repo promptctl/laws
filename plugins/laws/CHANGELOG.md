@@ -1,5 +1,10 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.46.0 - 2026-11-11
+
+- laws(prompt): the skill runs with `context: fork`; its structure is unchanged. The craft adds a requirement to use standard software engineering terms, not invented words or phrases
+- laws(router): the routing text is now plain: use `laws:code` to write code, `laws:prompt` to write a prompt, and no specific skill when neither applies
+
 ## v0.45.0 - 2026-11-10
 
 - laws: the plugin keeps four skills: `laws:code`, `laws:testing`, `laws:prompt`, and `laws:observability`, renamed from `laws:code-observability`. Cut: `laws:intent`, `laws:chat`, `laws:ticket` (disabled), and with it the session-start intent pointer and the engagement text's pointer to laws:intent. Moved out: `laws:application-spec` (now `clean-room`) and `laws:spec` to the skillz plugin (promptctl/skillz); `laws:backlog` and `laws:backlog2` to the owner's personal skills. The roundtrip evals of the removed skills and the prose goals doc are deleted. A session holding a removed name finds no skill under it
