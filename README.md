@@ -53,6 +53,13 @@ cases, and the edge cases a design made possible. Working code that breaks a law
 finding, and every finding is reported. Two of its hand-offs name skills from the
 skillz plugin (`lets-take-a-step-back`, `something-just-came-up`).
 
+**The audit** (`laws:audit`) - the law review across a whole codebase. It splits the
+code into many overlapping areas, reviews them all in parallel, and ranks what they
+find by root cause: the biggest, most architectural causes first, every other finding
+attributed to one, build and performance issues last. It files tickets for the root
+causes only - research and plan, fix, then tests - or lists them when the project has
+no ticketing system.
+
 A **router hook** loads the one matching skill at session start and re-engages it on
 every message, because guidance only works if it's loaded when the work begins.
 

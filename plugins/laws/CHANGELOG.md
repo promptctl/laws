@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.48.0 - 2026-11-18
+
+- laws(audit): new skill - a forked Opus audit of a whole codebase. It splits the code into many overlapping areas, runs `laws:law-review` on each in parallel, dedups across the reviews, and ranks findings into root causes, the findings attributed to them, and build and performance issues. In a project with a ticketing system it files one epic and, per root cause, research-and-plan, fix, and test tickets; otherwise it returns the buckets as markdown lists
+
 ## v0.47.0 - 2026-11-18
 
 - laws(law-review): new skill - a forked code review whose standard is the laws. It loads `laws:code` first, then judges the diff and the code the diff touches or works around. Beside the correctness, cleanup and CLAUDE.md angles it looks for citations the code does not live up to, decisions with no citation, special cases, and edge cases traced to the code that makes them reachable. Every finding is reported, with no maximum. Findings that trace to one decision are led by that decision, and its summary can name `skillz:lets-take-a-step-back` or `skillz:something-just-came-up`, which ship in the skillz plugin
