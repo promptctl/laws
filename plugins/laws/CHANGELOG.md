@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.47.0 - 2026-11-18
+
+- laws(law-review): new skill - a forked code review whose standard is the laws. It loads `laws:code` first, then judges the diff and the code the diff touches or works around. Beside the correctness, cleanup and CLAUDE.md angles it looks for citations the code does not live up to, decisions with no citation, special cases, and edge cases traced to the code that makes them reachable. Every finding is reported, with no maximum. Findings that trace to one decision are led by that decision, and its summary can name `skillz:lets-take-a-step-back` or `skillz:something-just-came-up`, which ship in the skillz plugin
+
 ## v0.46.0 - 2026-11-11
 
 - laws(prompt): the skill runs with `context: fork`; its structure is unchanged. The craft adds a requirement to use standard software engineering terms, not invented words or phrases
