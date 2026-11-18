@@ -46,10 +46,17 @@ trustworthy as the code grows. Held beside `laws:code`.
 its outputs, the smallest shape that satisfies the law before any backend exists, and
 how coverage grows across a codebase that emits nothing yet. Held beside `laws:code`.
 
+**The law review** (`laws:law-review`) - a code review whose standard is the laws. It
+loads `laws:code`, then reads the diff and the code the diff touches or works around:
+citations the code does not live up to, decisions missing their citation, special
+cases, and the edge cases a design made possible. Working code that breaks a law is a
+finding, and every finding is reported. Two of its hand-offs name skills from the
+skillz plugin (`lets-take-a-step-back`, `something-just-came-up`).
+
 A **router hook** loads the one matching skill at session start and re-engages it on
 every message, because guidance only works if it's loaded when the work begins.
 
-## Why four skills instead of one
+## Why four bodies of guidance instead of one
 
 Because an agent handed the laws applies them everywhere - and that is the bug this
 structure exists to fix.
