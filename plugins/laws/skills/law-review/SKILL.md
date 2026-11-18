@@ -3,9 +3,10 @@ name: law-review
 description: Review the current diff, or a PR number/branch/path target, against the laws of code (laws:code). Reports every correctness bug and every law violation, with no maximum - law citations the code does not live up to, decisions missing their citation, special cases, and the code outside the diff that forces an edge case. Strict by design - working code that breaks a law is a finding.
 argument-hint: "[<pr#>|<branch>|<path>]"
 context: fork
+model: opus
 ---
 
-`law review -> load the laws -> 11 inline angles -> dedup (no verify) -> root decision -> all findings`
+`law review -> load the laws -> 11 Haiku angles -> dedup (no verify) -> root decision -> all findings`
 
 Review target (empty means the current diff): `$ARGUMENTS`
 
@@ -39,8 +40,9 @@ and line [LAW:carrying-cost].
 
 ## Phase 1 - Find candidates (3 correctness angles + 5 law angles + 2 cleanup angles + 1 conventions angle)
 
-Run **11 independent finder angles** in sequence yourself, in THIS context - do NOT
-spawn subagents for them. Each surfaces candidate findings with `file`, `line`, a
+Run **11 independent finder angles** in parallel, one Agent call per angle with
+`model: "haiku"`; each prompt carries the target, the angle's text verbatim, and
+an instruction to load `laws:code` first. Each surfaces candidate findings with `file`, `line`, a
 one-line `summary`, and a concrete `failure_scenario`. The four angles marked
 **no cap** report every instance they find; the rest surface **up to 6** each.
 
