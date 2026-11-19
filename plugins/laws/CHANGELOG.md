@@ -2,7 +2,7 @@ Each version's section is written in the PR that bumps `.claude-plugin/plugin.js
 
 ## v0.48.0 - 2026-11-18
 
-- laws(audit): new skill - a forked Opus audit of a whole codebase. It splits the code into many overlapping areas, runs `laws:law-review` on each in parallel, dedups across the reviews, and ranks findings into root causes, the findings attributed to them, and build and performance issues. In a project with a ticketing system it files one epic and, per root cause, research-and-plan, fix, and test tickets; otherwise it returns the buckets as markdown lists
+- laws(audit): new skill - a forked Opus audit of a whole codebase. It splits the code into many overlapping areas, runs `laws:law-review` on each in parallel, dedups across the reviews, and ranks findings into root causes, the bugs attributed to them, and cleanup. In a project with a ticketing system it files one epic, one minimal ticket per root cause - whoever pulls it files the research-and-plan, fix, and test tickets - and one cleanup ticket; otherwise it returns the buckets as markdown lists
 
 ## v0.47.0 - 2026-11-18
 

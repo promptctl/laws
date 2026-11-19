@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Audit an entire codebase against the laws of code. Splits the codebase into many overlapping areas, runs laws:law-review on every area in parallel, dedups across the reviews, and ranks the findings into three buckets - root causes first (biggest and most architectural), then every other finding attributed to its root cause, then build and non-architectural performance issues. Files one ticket per root cause, each with its research, fix, and test tickets, in the project's ticketing system; without one, it returns the buckets as markdown lists.
+description: Audit an entire codebase against the laws of code. Splits the codebase into many overlapping areas, runs laws:law-review on every area in parallel, dedups across the reviews, and ranks the findings into three buckets - root causes first (biggest and most architectural), then every other bug attributed to its root cause, then cleanup. In the project's ticketing system it files one ticket per root cause plus one cleanup ticket; without one, it returns the buckets as markdown lists.
 argument-hint: "[<path>]"
 context: fork
 model: opus
@@ -46,21 +46,22 @@ separate findings, and Phase 4 ties them to one root cause.
 
 ## Phase 4 - Rank into three buckets
 
-**Bucket 1 - root causes.** A root cause is the decision, the missing type, the missing
-seam, or the second source of truth that makes a set of findings possible. Read the
-pooled findings as one set and name every root cause behind them, across areas: the
-per-area reviews each saw only their own area. Each root cause gets its fix, stated as
-the change the laws ask for, and the findings it explains. Order bucket 1 biggest and
-most architectural first: the fix that reaches across the most modules and explains the
-most findings leads. If fifteen findings share one root cause, its fix comes before any
-of the fifteen.
+**Bucket 1 - root causes.** A root cause is what makes a set of findings possible:
+the law it breaks, how the code breaks it, and where. Read the pooled findings as one
+set and name every root cause behind them, across areas: each per-area review saw only
+its own area. State each one from the findings in hand - no further research, no fix,
+no instructions. Working out the fix belongs to whoever pulls its ticket. Order bucket 1
+biggest and most architectural first: the root cause that reaches across the most
+modules and explains the most findings leads. Fifteen findings with one root cause are
+fifteen findings, and their root cause comes before all of them.
 
-**Bucket 2 - every other finding.** Correctness bugs and law violations, each attributed
-to its root cause in bucket 1 by name. A finding with no root cause in bucket 1 means
-bucket 1 is incomplete: name the decision that made it possible and add that to bucket
-1. A finding that truly stands alone is its own root cause and goes there.
+**Bucket 2 - every other bug.** Correctness bugs and law violations - a law violation is
+a bug. Each is attributed by name to its root cause in bucket 1. A bug with no root
+cause there means bucket 1 is incomplete: add the root cause that made it possible. A
+bug that truly stands alone is its own root cause and goes in bucket 1.
 
-**Bucket 3 - build and non-architectural performance issues.**
+**Bucket 3 - cleanup.** Build issues, non-architectural performance issues, and the
+reuse, simplification, and conventions findings.
 
 ## Phase 5 - Tickets, or lists
 
@@ -68,36 +69,46 @@ Use the ticketing system the project defines - the one its CLAUDE.md or the user
 CLAUDE.md names, or the tracker the repository is set up with (for lit, run
 `lit quickstart` first and follow it).
 
+Every ticket is minimal and carries concrete work. It says what is wrong and where to
+start, never how to fix it - the agent that works it decides that. Its done-when is
+code changed, bugs fixed, or further tickets filed that carry its results into
+implementation; never a measurement or a research result alone.
+
 **With a ticketing system:**
 
 1. Create one epic, or the system's container, for this audit's results.
-2. File tickets for bucket 1 only. Root causes are what gets fixed; bucket 2 and bucket
-   3 get no tickets of their own.
-3. For each root cause, file a ticket under the epic: the root cause, its fix, and every
-   bucket 2 finding attributed to it with file and line. Under it, file three tickets:
-   1. **Research and plan.** Research the root cause and plan its fix, including the
-      deletion of every test for the bucket 2 findings attributed to it. The plan for the
-      fix and the deletions is written onto ticket 2; the plan for new tests is written
-      onto ticket 3. This ticket produces plans only, so it gets no plan or review
-      cycle of its own.
-   2. **Fix.** Implement the fix for the root cause. Every test for a finding
-      attributed to this root cause is deleted, not fixed. Blocked by ticket 1.
-   3. **Tests.** A placeholder that ticket 1 fills in with the plan for new tests. Every
-      test must conform to `laws:testing`. Blocked by tickets 1 and 2.
+2. File one ticket per root cause under the epic, in bucket 1 order. Bucket 2 gets no
+   tickets of its own: its bugs are the symptoms their root cause's ticket solves. Each
+   root cause ticket carries:
+   - the root cause: the law, how the code breaks it, and where;
+   - every bucket 2 bug attributed to it, with file and line;
+   - done when those bugs can no longer happen - refactored away, or otherwise solved
+     by fixing the root cause rather than each symptom;
+   - this instruction, verbatim:
+
+     > When you pull this ticket, file three tickets under it, each a few lines saying
+     > where to start, not the work itself:
+     > 1. Research and plan the fix for the root cause, and the deletion of every test
+     >    for the bugs listed here. Write the fix-and-deletion plan onto ticket 2 and
+     >    the plan for new tests onto ticket 3. This ticket gets no plan or review cycle.
+     > 2. Implement the fix. Every test for a bug listed here is deleted, not fixed.
+     >    Blocked by ticket 1.
+     > 3. Write the new tests from the plan ticket 1 puts here. Every test conforms to
+     >    `laws:testing`. Blocked by tickets 1 and 2.
+3. File one cleanup ticket under the epic: every bucket 3 item with file and line, done
+   when each is fixed.
 
 **Without a ticketing system:** write one markdown list per bucket. Each bucket 1 item
-carries the root cause, its fix, the bucket 2 findings attributed to it, and the same
-three steps - research and plan, fix with the attributable tests deleted, tests that
-conform to `laws:testing`. Each bucket 2 item names its root cause. Bucket 3 is a plain
-list.
+carries what its ticket would. Each bucket 2 item names its root cause. Bucket 3 is the
+cleanup list.
 
 ## Report
 
 Return to the user:
 
 - the areas reviewed, and any area that could not be reviewed;
-- bucket 1, in order: each root cause, its fix, how many findings it explains, and its
-  ticket ID when filed;
-- bucket 2 grouped under its root causes, then bucket 3 - each finding with file, line,
-  and summary;
+- bucket 1, in order: each root cause, how many bugs it explains, and its ticket ID
+  when filed;
+- bucket 2 grouped under its root causes, then bucket 3 - each with file, line, and
+  summary;
 - the epic's ID, or the markdown lists themselves.
