@@ -1,7 +1,7 @@
 ---
 name: law-review
 description: Review the current diff, or a PR number/branch/path target, against the laws of code (laws:code). Reports every correctness bug and every law violation, with no maximum - law citations the code does not live up to, decisions missing their citation, special cases, and the code outside the diff that forces an edge case. Strict by design - working code that breaks a law is a finding.
-argument-hint: "[<pr#>|<branch>|<path>]"
+argument-hint: "[<pr#>|<branch>|<path>] [review iteration]"
 context: fork
 model: opus
 ---
@@ -9,6 +9,32 @@ model: opus
 `law review -> load the laws -> 11 Haiku angles -> dedup (no verify) -> root decision -> all findings`
 
 Review target (empty means the current diff): `$ARGUMENTS`
+
+The second argument will be the 'review iteration', if provided.  This let's you know how many times this PR has been reviewed before.  If it's 1, this is the first review.  2, the second, and so on.  Please tailor the results accordingly.
+
+Assume that if this is not provided, it is always the first review and no special consideration should be given based on it.
+
+## Tailoring response for subsequent reviews
+
+If this is the first iteration, always provide full and complete findings in response.
+
+For the second iteration, trivial or inconsequential changes may be left out at your discretion.
+
+For the 3rd and 4th iterations of a review, limit the results to 'MAJOR' findings.  Anything that is architectural or could compromise downstream implementations that would build upon the law-violating code is a MAJOR finding.  Trivial items should be left out.  Especially in the 4th (or further) review iteration, only serious law violations should be returned.  Returning major findings on 4th or subsequent reviews WILL trigger a rewrite of the entire PR.  This protects the codebase from the significant damage of a fundamentally incorrect implementation from merging, and is a critical safeguard.  Ensure that you DO use this carefully.  Always follow the laws.
+
+When you have no major findings to report, PRINT THIS EXACT PHRASE "NO MAJOR FINDINGS" in your response.  The implementer is watching for this phrase.
+
+## How to handle a fundamentally flawed premise
+
+If you receive many serious law violations on a review, this is a signal that the implementation is fundamentally flawed.  We MUST protect the codebase from the situation where fundamentally flawed implementations are merged because the cost of fixing this later is extremely high.
+
+If this is the first iteration (or not specified, which is always treated as the first iteration), give them a chance to fix this.  Explain that the premise is fundamentally flawed and why it was judged so.  Specify this is a MAJOR FINDING.
+
+If this is the second iteration, be very clear that that they MUST solve the fundamentally laws-broken implementation or they cannot proceed.
+
+If the third or futher iterations are built on flawed assumptions or premeses, explicitly state "You need to TAKE A STEP BACK and reconsider this implentation".  Specify the flawed assumption, why it isn't laws-compliant, and provide suggestions that would be.  However, remember, it is NOT within your scope to design the solution for them.  Just explain why this implementation cannot proceed forward.
+
+In all cases, group findings by root cause, and use the findings as evidence to justify your response.  You may use additional Haiku subagents as needed to validate and gather information on implementation details, but the ultimate judgement for whether the implementation is fundmentally invalid needs to come from you and your judgement against the laws.
 
 ## Before anything - load the laws
 
