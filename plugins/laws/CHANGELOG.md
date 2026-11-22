@@ -1,5 +1,10 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.49.0 - 2026-11-22
+
+- laws(plan-review): new skill - a forked Opus review of an implementation plan against the laws, before any code is written. It loads `laws:code`, reads the ticket and the code the plan will land in, checks every claim the plan makes about that code, and judges each design decision: placement of state and checks, second mechanisms, special cases, reachable edge states, total complexity, and whether the steps deliver the ticket. It keeps `laws:law-review`'s review-iteration tailoring, flawed-premise escalation, root-decision hand-offs and `NO MAJOR FINDINGS` phrase, and returns findings anchored to plan steps
+- laws(law-review): the review-iteration tailoring and flawed-premise escalation merged in #115 ship in this release
+
 ## v0.48.0 - 2026-11-18
 
 - laws(audit): new skill - a forked Opus audit of a whole codebase. It splits the code into many overlapping areas, runs `laws:law-review` on each in parallel, dedups across the reviews, and ranks findings into root causes, the bugs attributed to them, and cleanup. In a project with a ticketing system it files one epic, one minimal ticket per root cause - whoever pulls it files the research-and-plan, fix, and test tickets - and one cleanup ticket; otherwise it returns the buckets as markdown lists
