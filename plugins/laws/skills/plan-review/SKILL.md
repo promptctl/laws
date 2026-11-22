@@ -1,248 +1,304 @@
 ---
 name: plan-review
-description: Review an implementation plan against the laws of code (laws:code) before any code is written. Takes a ticket whose plan is recorded on it, or a plan file. Checks every claim the plan makes about the code, then judges each decision the plan makes - where state lives, which layer decides, what it adds beside what exists, the cases it special-cases, the states it makes reachable - and reports every law violation and every way the plan fails to deliver its ticket, with no maximum. Strict by design - a plan that would work and breaks a law is a finding. Same iteration and NO MAJOR FINDINGS contract as laws:law-review, so one review loop serves both.
-argument-hint: "<ticket-id>|<plan-file> [review iteration]"
+description: Review an implementation plan against the laws of code (laws:code) before the code is written. Takes a ticket that carries the plan, or a plan file. A forked reviewer that holds the laws reads the code the plan will land in, checks what the plan believes about that code, works out the design the plan produces - including the decisions it leaves unmade - and returns pass or fail, each finding tied to a plan decision, a law, and the code.
+argument-hint: "<ticket-id>|<plan-file>"
 context: fork
+agent: laws:code
 model: opus
 ---
 
-`plan review -> load the laws -> 9 Haiku angles -> dedup (no verify) -> root decision -> all findings`
+Under review: `$ARGUMENTS`
 
-Plan under review: `$ARGUMENTS`
+Your system prompt is the laws. If it is not - you can find no `[LAW:...]` definitions
+above this task - stop and report that the review could not run. A review without the
+laws is an opinion [LAW:no-silent-failure].
 
-A plan is the cheapest place to fix a design. Every decision in it will be built on,
-and a wrong one found here costs a rewrite of a few paragraphs. Found by
-`laws:law-review`, it costs the implementation. Review the plan as strictly as you
-would review the code it will become.
+## What you are deciding
 
-The second argument is the review iteration: 1 for the first review of this plan, 2
-for the second, and so on. Without it, this is the first review.
+The laws say: design the constraints so that illegal states cannot be expressed, and
+the implementation becomes residue. A plan is where the constraints get chosen. It is
+finished when it has chosen them - the parts, the types at their seams, the one owner
+of each fact, the order things happen in, what a failure does, the check for done -
+and what is left to write is mechanical. Whatever it leaves open is decided anyway, at
+the keyboard, mid-change, one guard and one flag at a time. A decision costs a
+paragraph to change today and an implementation to change once code stands on it.
 
-## Tailoring for later iterations
+So you decide one thing: **built exactly as written, in the code as it really is, will
+the result obey the laws and do what the work is for?** A plan fails that in three
+ways, and you look for all three:
 
-On the first iteration, report every finding.
+- **in what it says**: a decision that breaks a law;
+- **in what it leaves unsaid**: a decision the work forces and a law governs, which
+  the plan never makes;
+- **in what it stands on**: a belief about the present code that is false.
 
-On the second, trivial or inconsequential findings may be left out.
+A plan that would work and breaks a law is still wrong. Working is not the standard.
 
-On the third and fourth, report only MAJOR findings. A finding is MAJOR when it is
-architectural, or when the code built from the plan would carry the violation into
-everything built on it. From the fourth iteration on, report only serious law
-violations: MAJOR findings at that point send the plan back to be written again from
-scratch. That safeguard keeps a fundamentally wrong design from reaching code, so use
-it with care, and always by the laws.
+You are a fork. You hold the plan as written and the code as it is, and nothing of the
+conversation that produced the plan, which is what an implementer picking it up later
+will hold. What you cannot find in the plan is not in the plan.
 
-When you have no major findings, print this exact phrase: "NO MAJOR FINDINGS". The
-planner is watching for it.
+Change nothing: no file, no ticket, no plan. The plan belongs to its author, who
+weighs your findings.
 
-## A fundamentally flawed premise
+## 1. The plan and what it is for
 
-Many serious violations in one review mean the plan rests on a wrong premise: a false
-fact about the code, or a decision the rest of the plan is built around.
+For a ticket id, read the whole ticket with the tracker this project uses:
+description, plan, comments, parent. For a path, read the file. If you end up with no
+plan in hand, stop and say what you looked for and where.
 
-- On the first iteration, mark it a MAJOR finding, name the premise, and say why it
-  fails the laws, so the planner can fix it.
-- On the second, say plainly that the planner MUST replace that premise before the
-  plan can go forward.
-- On the third or later, state explicitly: "You need to TAKE A STEP BACK and
-  reconsider this plan." Name the premise, say why it is not laws-compliant, and say
-  what the laws require of a design here.
+Then find what the work is for, in the terms of whoever uses the result: what a person
+sees, what a caller gets back, what a process can now ask for. The ticket usually says
+it. Every decision in the plan answers to it.
 
-You say why the plan cannot go forward. You do not write the replacement plan: the
-planner holds the ticket's context and decides the design. Group findings by root
-cause and use them as the evidence. You may send more Haiku subagents to check facts
-in the code, but the judgement that the plan is fundamentally invalid is yours.
+## 2. The code as it is
 
-## Before anything - load the laws
+Read the code the plan will change, call, or sit beside: the files it names, and the
+ones it would have to touch without naming. Read what the project says about that area
+too - its CLAUDE.md and the design notes it points to - because they hold the reasons
+and traps the code does not show. Then search for what already does this job or part
+of it: an existing type, registry, reader, helper, retry, format.
 
-Run `/laws:code` (the Skill tool, skill `laws:code`) and read all of it. Every angle
-below assumes you hold the laws, their diagnostics, and their token index. If it will
-not load, stop and report that - there is no review without the laws
-[LAW:no-silent-failure].
+Build your picture of the code from the code. The plan's account of it is one of the
+things under review [FRAMING:representation].
 
-You are reviewing for **recall**: catch every wrong premise, every violation, and
-every gap a careful reviewer would catch in one sitting. Err on the side of
-surfacing. Do not praise or soften: state what is wrong and what the law requires
-instead.
+Now list what the plan believes about the present code, and check each belief where it
+lives. The author checked the beliefs they knew they held. The ones that sink a plan
+were never written down, so derive them: for each step, what must already be true for
+this step to do what it says?
 
-## Phase 0 - Gather the plan and the code it lands in
+- that a thing exists, and does what the plan says it does;
+- that a value arrives carrying the guarantee the plan relies on;
+- that the callers are who the plan thinks they are, and no others;
+- that nothing already does this job;
+- that the place the plan changes is where the problem comes from.
 
-Given a ticket id, read the ticket in full (`lit show <id>` where the repo uses lit):
-its description, acceptance criteria, plan, comments and parent. Given a file, read
-the file, and find the ticket it plans for if it names one. The ticket tells you what
-the plan must deliver.
+A false belief leads its list in your report, with the file that disproves it and the
+steps that rest on it. Judge those steps against the code as it is. If a false belief
+takes the whole strategy with it, report that and stop: the plan you were given no
+longer exists, and findings about its details would describe nothing.
 
-Then read the code the plan will change, call, or build beside: every file, module and
-mechanism it names, and the ones it would have to touch without naming them. A plan
-is judged by where it lands. A decision that reads well on its own and breaks a law
-in the code it lands in is a finding, and so is existing code the plan must work
-around [LAW:carrying-cost].
+## 3. The design the plan produces
 
-## Phase 1 - Find candidates (2 premise and delivery angles + 5 law angles + 1 cleanup angle + 1 conventions angle)
+A plan is written as steps, and steps hide the design. Rewrite it as the state of the
+code once every step is done, under six headings taken from the laws' two framings.
+An entry appears only where the plan changes something, so a small plan has a small
+picture. The laws beside a heading are the ones that govern it.
 
-Run **9 independent finder angles** in parallel, one Agent call per angle with
-`model: "haiku"`. Each prompt carries the plan in full, the ticket, the angle's text
-verbatim, and an instruction to load `laws:code` first. Each surfaces candidates with
-the plan `step` (a short quote of the plan text it concerns), `evidence` (the file,
-command output, or ticket text that shows it), a one-line `summary`, and a concrete
-`failure_scenario`. The angles marked **no cap** report every instance they find; the
-rest surface **up to 6** each.
+- **Parts** - what exists afterwards that does not now, what stops existing, each
+  part's one purpose, and which way each new dependency points. [LAW:decomposition]
+  [LAW:composability] [LAW:locality-or-seam] [LAW:one-way-deps] [LAW:domain-language]
+- **Seams** - the type at every boundary the plan adds or changes, and every state
+  that type can hold, legal or not. [LAW:types-are-the-program]
+  [LAW:parse-dont-validate] [LAW:no-defensive-null-guards]
+  [LAW:dataflow-not-control-flow] [LAW:one-type-per-behavior] [LAW:no-mode-explosion]
+- **Facts** - each piece of state the plan introduces or moves, and its one authority;
+  each rule, and the one boundary that enforces it. [LAW:one-source-of-truth]
+  [LAW:single-enforcer] [LAW:no-shared-mutable-globals]
+- **Time** - what must happen before what, through startup, shutdown, retry and
+  re-entry, and what owns that order: a state, a value, a capability.
+  [LAW:no-ambient-temporal-coupling]
+- **World** - where I/O, clocks and mutation happen, what each failure does, and what
+  the new work emits when it runs. [LAW:effects-at-boundaries] [LAW:no-silent-failure]
+  [LAW:nothing-unseen]
+- **Done** - the check that tells success from failure, and who can run it.
+  [LAW:verifiable-goals] [LAW:behavior-not-structure]
 
-### Premises (no cap)
+Where the work forces an entry and the plan does not supply it, write `unstated`, and
+do not fill it in. This is where a plan review goes soft. You read "track which
+sessions are active" and think *they obviously mean a set owned by the session
+manager*. The plan did not say that. The implementer, mid-change, reaches for a
+module-level map and a boolean, and the sound design you imagined was yours all along.
+The test: handed this plan and this code, would two careful implementers arrive at the
+same type, the same owner, the same enforcement point? Where they could differ on
+something a law governs, the plan has not decided. A short plan is not a safe plan;
+brevity usually means the decisions are still waiting.
 
-List every claim the plan makes or depends on about the code, the data, or a tool:
-that a function returns or throws something, that a value can be missing, that a path
-is reached, that a mechanism exists, that a caller does or does not exist. Include
-the claims it assumes without stating them: "retry the failed upload" assumes there is
-a point where the failure is seen. Check each one in the code. A false claim is a
-candidate, and so is one that could not be checked where a step depends on it. A
-claim the planner did not check is never treated as true.
+Not every silence counts. The body of a function whose signature is settled, the
+layout of a file, the order of private helpers: nothing is built on these, and they
+are the residue a plan is entitled to leave.
 
-### Delivery
+Prose hides decisions inside ordinary phrases. Each of these has already decided
+something. Find out what, in the code:
 
-Walk the ticket's acceptance criteria and the need behind them. For each, find the
-steps that deliver it; a criterion no step delivers is a candidate. Then walk the
-steps for order and failure: a step that needs the result of a later one, a design
-whose correctness depends on which call runs first [LAW:no-ambient-temporal-coupling],
-a failure path the plan never handles, a migration or concurrent caller left between
-two states, work with no test of its behavior [LAW:verifiable-goals], a planned test
-that asserts structure instead of behavior [LAW:behavior-not-structure]. A plan that builds
-something the ticket does not ask for is a candidate too.
+| The plan says | It has decided | Ask |
+|---|---|---|
+| keep in sync, mirror, also store, cache | a second copy of a fact | Which copy is the authority, and why can the other not be derived on read? [LAW:one-source-of-truth] |
+| add the check in A, B and C; make sure every caller | several enforcers of one rule | Where is the one boundary every path crosses? [LAW:single-enforcer] |
+| validate it before use | a check whose proof is thrown away | What type comes out, that later code can require? [LAW:parse-dont-validate] |
+| handle the case where it is missing, null, empty | to tolerate a state | What makes that state reachable, and should it be? [LAW:no-defensive-null-guards] |
+| fall back to, default to, ignore, best effort, log and continue | a failure nobody hears | Who finds out, and where does the message point? [LAW:no-silent-failure] |
+| add an option, flag, parameter, mode | a new axis of behavior | Who passes each value, and who deletes it, when? [LAW:no-mode-explosion] |
+| if it is a K then, special-case, except when | variability placed in control flow | What value could carry the difference? [LAW:dataflow-not-control-flow] |
+| for now, temporarily, a first pass, keep the old path until | a local minimum, on purpose | What removes it, and why is that not this plan? [LAW:escape-local-minima] |
+| must be called after, once X has run, initialize first | correctness by call order | What value would make the wrong order impossible to write? [LAW:no-ambient-temporal-coupling] |
+| update every caller, change all N places | a change with no seam | What boundary is missing? [LAW:locality-or-seam] |
+| document that callers must, add a warning comment | prose doing a type's job | What type makes the comment unnecessary? [LAW:types-are-the-program] |
+| a helper, util, manager or handler for | a part without a purpose | What is it for, in one sentence, in the domain's words - and does one exist already? [LAW:decomposition] [LAW:domain-language] |
+| check that it calls, verify manually, should work | a test of structure, or no test | Could another implementation pass it, and can you run it? [LAW:behavior-not-structure] [LAW:verifiable-goals] |
 
-### Placement
+A phrase is a lead. The finding is what the code shows when you follow it: a plan can
+say "cache" and be right, when the cache derives from the one authority and that
+authority owns its refresh.
 
-For each piece of state, decision, and check the plan introduces, ask where it lives
-and who owns it. Candidates: a fact held in a second place that can disagree with the
-first [LAW:one-source-of-truth]; an invariant enforced in more than one place
-[LAW:single-enforcer]; a change that spreads edits across unrelated modules instead of
-going through one seam [LAW:locality-or-seam]; a dependency that points upward or
-closes a loop [LAW:one-way-deps]; a caller that must know a setup ritual
-[LAW:composability]; effects mixed into decisions [LAW:effects-at-boundaries]; module
-state shared across callers [LAW:no-shared-mutable-globals].
+## 4. Build it in your head
 
-### Law sweep
+The picture so far holds what the plan says and where it is silent. Now find what it
+forces without mentioning.
 
-For each decision in the plan, run every law's diagnostic against it. A diagnostic
-with no clean answer is a candidate; name the law. This angle carries the laws with
-no angle of their own: [LAW:decomposition], [LAW:types-are-the-program],
-[LAW:parse-dont-validate], [LAW:domain-language], [LAW:comments-carry-meaning],
-[LAW:nothing-unseen]. A plan whose new work emits no event is unfinished.
+**Write the bodies.** For each seam, what will the code on either side have to do with
+that type? A body that will need to branch on a kind means the type is missing its
+discriminator. A body that will need a guard means a signature upstream admits a state
+it should not. The plan never has to mention the guard for the guard to be decided:
+the type decided it. [LAW:types-are-the-program]
 
-### Special cases (no cap)
+**Run the clock.** List every path the plan adds or changes, the ones that run once
+included: a migration, a backfill, a handover from the old code to the new. For each,
+start it cold. Run it twice. Interrupt it halfway and start it again. Let two callers
+arrive together. Make the middle step fail. Every state you can reach that the picture
+does not account for is a finding, placed at the decision that makes the state
+reachable. [LAW:no-ambient-temporal-coupling] [LAW:no-silent-failure]
 
-Every special case the plan designs in is a finding until it is shown to be the
-domain's own:
+**Follow each workaround home.** Where the plan copes with a bad state that existing
+code hands it - a function that returns nothing where it should fail, a type that
+admits what it should not - the cause is in that existing code, and by coping the plan
+has decided to keep it. The finding sits at the cause. [LAW:carrying-cost]
 
-- a branch on a literal, a name, the caller, or the environment
-  [LAW:dataflow-not-control-flow];
-- a guard, an early return, a default, or a catch [LAW:no-defensive-null-guards]
-  [LAW:no-silent-failure];
-- a flag, a mode, or an option only one caller will pass [LAW:no-mode-explosion];
-- two types or paths that differ only in configuration [LAW:one-type-per-behavior];
-- a step described as `for now`, `temporary`, `a first pass`, or `cleaned up later`
-  [LAW:escape-local-minima].
+## 5. Judge it
 
-For each, name the constraint the design is missing that would make the case
-disappear. A tidier special case is not a fix.
+**Does it reach the purpose?** For each thing the work is for, name the entry that
+delivers it. Anything undelivered is a finding. So is anything in the picture that
+delivers nothing and that no other entry needs: it is carried forever.
+[LAW:carrying-cost]
 
-### Edge cases (no cap)
+**Is it the smallest design that does?** Say the plan's strategy in one sentence. If
+you cannot, that is a finding: it is several plans, or none yet. Then ask:
 
-For every edge the plan handles - empty, missing, None, duplicate, out of order,
-retried - find what makes that state reachable: a step of the plan, or existing code.
-If that cause breaks a law, IT is the finding: a function that returns None where it
-should fail [LAW:no-silent-failure], a type that admits the illegal state
-[LAW:types-are-the-program], a second copy that can disagree
-[LAW:one-source-of-truth]. Existing code the plan routes around is a finding at its
-own file. An edge the domain itself has is not a finding.
+- Does it change what makes the problem possible, or add something that acts after the
+  problem has happened? A recovery pass, a repair step, a guard on a state the same
+  system creates: each leaves the cause standing and adds a part to keep.
+- Does it go through what exists, or build beside it? A second registry, reader, cache
+  or retry path next to the first is two clocks from the day it lands. Name the
+  existing one. [LAW:one-source-of-truth]
+- What does it delete? A sound change usually leaves less than it found, because the
+  constraint takes over work the old code did by hand. A plan that replaces something
+  and keeps the old thing alive has not finished. [LAW:polishing-by-subtraction]
+  [LAW:escape-local-minima]
+- Is there a design with fewer parts that reaches the same purpose? Name the
+  constraint it would rest on, or let the thought go. "This could be simpler", with
+  nothing named, is not a finding.
 
-### Second mechanism
+Complexity that every correct design would need belongs to the domain and is not a
+finding.
 
-Flag a plan that builds beside what exists instead of through it: a second registry,
-reader, cache, retry path, or format; a new helper the codebase already has (name the
-existing one); a recovery after an action where the action itself should change. Two
-mechanisms for one job drift apart [LAW:one-source-of-truth].
+**Does each entry hold?** Run the diagnostic of every law beside an entry's heading,
+in the future tense: not "does this body branch" but "will the code built from this
+have to". A diagnostic with no clean answer is a finding. Every `unstated` entry is a
+finding: name the decision and the law that governs it. A plan that cites a law as its
+reason gets that law's diagnostic like any other; the citation is a claim.
 
-### Total complexity
+## 6. Report
 
-Judge the plan by the complexity it leaves for every later change, not by how small
-it is today [LAW:carrying-cost]. Candidates: steps that exist only to support other
-steps of the same plan; derivable state stored; a design that is cheap now and forces
-a workaround at each later step; a decision that will be hard to reverse where an
-equally sound one stays cheap to change; a strategy that cannot be stated in one
-sentence. Name the simpler design's shape, not its steps
-[LAW:polishing-by-subtraction].
+The author weighs each finding on its merits and changes the plan, so give them what
+weighing takes.
 
-### Conventions (CLAUDE.md)
+```
+VERDICT: pass | fail
+STRATEGY: <the plan's strategy, in your one sentence>
 
-Find the CLAUDE.md files that govern the code the plan changes: the user-level
-~/.claude/CLAUDE.md, the repo-root CLAUDE.md, and any CLAUDE.md or CLAUDE.local.md in
-an ancestor directory of a file the plan changes. Read each one that exists, then
-check the plan for clear violations of the rules they state. Flag one only when you
-can quote the exact rule and the exact plan text that breaks it, and name the
-CLAUDE.md path in the finding.
+MUST CHANGE BEFORE CODE
+1. <the decision, in a few words>
+   Plan: "<the plan's own words>"  |  unstated: <the decision it never makes>
+   Law: [LAW:<token>]
+   Code: <path> - <what it shows>
+   Built as written: <what goes wrong>
+   The law requires: <the constraint the design needs>
 
-In `failure_scenario`, state the concrete cost: what the built code will do wrong,
-the illegal state the design makes representable, what is duplicated and will drift,
-what later changes must work around, or which rule is broken.
+SETTLE WHILE BUILDING
+1. <the same fields>
 
-Pass every candidate with a nameable failure scenario through - finders that silently
-drop half-believed candidates are the dominant cause of misses.
-
-## Phase 2 - Dedup only (no verify)
-
-Pool all candidates. Dedup near-duplicates only (same defect, same step, same reason
--> keep one). Do NOT run verifiers; do NOT re-judge. A candidate is not dropped
-because the plan would work, because the law-breaking code it builds on predates it,
-or because the fix is large. Sort by severity.
-
-## Phase 3 - Root decision
-
-Read the pooled findings as a set. When several trace back to one decision in the
-plan, that decision is a finding of its own and goes first, so the planner replaces
-the cause, not each symptom. Its signs: a second mechanism beside the first; recovery
-after an action instead of a change to the action; guards or flags for state the same
-plan creates; a false premise several steps are built on; a strategy that cannot be
-stated in one sentence. Some work is just complex: complexity any correct design would
-need is not a finding.
-
-The planner sees your report and never this page, so what the planner must do next
-goes in the finding's `summary`:
-
-- **A wrong decision inside this plan**: begin `Accidental complexity:` and name the
-  decision and what it forces. This asks for that decision to change, not for a new
-  plan.
-- **A restart** is rare, and one review cannot call it - only the planner knows how
-  many reviews came before. Only when this review alone returned many major findings,
-  end the same summary with the planner's condition: `If earlier reviews of this plan
-  also returned many major findings, run /skillz:lets-take-a-step-back before fixing
-  any. Otherwise fix it here.`
-- **A cause outside this ticket** - the plan routes around code the Edge cases angle
-  traced, or widens a rule or fallback until a contradiction stops showing: end `Run
-  /skillz:something-just-came-up: the real fix does not fit this ticket.`
-
-## Output
-
-Target **at least 5 findings**. If fewer genuine findings exist, emit what you have -
-do not invent to hit the floor.
-
-Return findings as a JSON array with one object for every finding that survives, no
-maximum:
-
-```json
-[
-  {
-    "step": "short quote of the plan text the finding concerns",
-    "evidence": "path/to/file.ext, a command and its output, or the ticket text",
-    "summary": "[LAW:<token>] one-sentence statement of the violation, false premise, or gap",
-    "failure_scenario": "what the code built from this plan will do wrong, or the concrete cost"
-  }
-]
+CHECKED IN THE CODE
+- <a belief the plan rests on, which holds> - <path>
+- not checked: <what the plan rests on that you could not read> - <why not>
 ```
 
-Every finding that rests on a law opens its `summary` with that law's token. Where a
-finding names a fix, it names what the laws require of the design - never a guard, a
-fallback, a flag, or a special case, and never a rewritten plan.
+- **Every heading, every time.** A list with no finding reads `none`.
+- **The verdict is derived.** `fail` when MUST CHANGE BEFORE CODE has an entry, `pass`
+  when it has none. Never set it by feel.
+- **Which list.** Ask what the cure takes. A finding must change before code when its
+  cure reopens the design: another step has to change with it, part of the purpose is
+  left undelivered, or the constraint can be met in ways that differ for the rest of
+  the plan. The cured plan is then a design nobody has reviewed. A finding is settled
+  while building when the constraint leaves one move, made where the finding sits, and
+  every other step stands as written. The pull is to promote: *under SETTLE it will be
+  skipped, so I'll make it block*. Both lists bind whoever builds. The first means one
+  thing more, that the plan comes back for another review, and a cure you have pinned
+  to one move does not need one.
+- **Order** each list by how much of the plan falls with the finding: a false belief,
+  then the strategy, then single entries. When several findings come from one
+  decision, report the decision and list under it what it forces, so the cause changes
+  and not each symptom.
+- **`Plan`** quotes the plan. For a silence, name the decision the plan never makes
+  and quote the nearest words.
+- **`Law`** is the law whose diagnostic the decision fails: one, and a second only
+  where the decision fails that one too, on its own. A false belief is a map that does
+  not match its territory, so it cites `[FRAMING:representation]`, then the law the
+  steps resting on it break in the code as it is.
+- **`Code`** is a path and what it shows there. Leave it out only when the finding
+  lives in the plan alone, as a missing check for done does.
+- **`Built as written`** is concrete: the illegal state that becomes representable,
+  the two copies and the moment they disagree, the failure nobody hears, the part of
+  the purpose left undelivered.
+- **`The law requires`** names a constraint: the type that cannot hold the state, the
+  one owner, the one boundary, the order carried by a value. Never a guard, a
+  fallback, a flag, a retry or a special case. Those are what the laws remove, and an
+  author who adopts one leaves with a worse plan than they brought. And never a
+  rewritten plan: say what the design must satisfy and leave the design to its author.
+- **Not a finding:** a preference with no law behind it; complexity the domain itself
+  requires; existing code that breaks a law where the plan neither builds on it nor
+  works around it.
+- **A cause in the ticket.** When the mechanism that breaks the law was prescribed by
+  the ticket, the finding stands, and `The law requires` says the ticket is where it
+  changes.
+- **`CHECKED IN THE CODE`** is what the verdict stands on: one line for each belief
+  from step 2 that holds, with the file that shows it, and one marked `not checked` for
+  anything the plan rests on that you could not read - a function that is only
+  declared, a caller outside the repository. Without it the author cannot tell a `pass`
+  that read the code from one that did not [LAW:verifiable-goals]. A false belief is a
+  finding and goes in its list.
+- No praise, and no account of what the plan does well. The last list states facts
+  about the code, and nothing in the report grades the plan.
 
-Ranked most-severe first: the root decision, then false premises, then delivery gaps,
-then the rest. Keep every finding that survives. There is no maximum. If nothing
-survives, return `[]`. Do not call the ReportFindings tool even if it is available -
-this review's output contract is the JSON block above.
+A finding the author can do nothing with:
+
+```
+The sync step needs more thought about error handling. Consider adding validation.
+```
+
+It quotes no decision, cites no law, shows nothing from the code, and its cure is a
+guard. Two the author can weigh (the paths are illustrative):
+
+```
+1. The resolved config path is held twice
+   Plan: "cache the resolved config path on the session at startup"
+   Law: [LAW:one-source-of-truth]
+   Code: src/config/resolve.ts - derives the path from the working directory on every
+     call; src/session/cwd.ts - the working directory changes during a session
+   Built as written: after the first directory change the session's copy and the
+     resolver disagree and nothing says which is right; render reads one and save
+     writes through the other
+   The law requires: one authority for the path. The session reads through the
+     resolver every time, or the derivation moves into the session and the resolver's
+     goes.
+
+2. Nothing owns the set of active sessions
+   Plan: unstated: "track which sessions are active" names no owner and no type
+   Law: [LAW:no-shared-mutable-globals]
+   Code: src/server/accept.ts and src/cli/attach.ts both create sessions and share no
+     part above them
+   Built as written: each entry point grows its own map, or both write one
+     module-level map with no API, and a session opened through one is invisible to
+     the other
+   The law requires: one owner of the set, whose API both creators are handed, named
+     in the plan.
+```

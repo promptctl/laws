@@ -53,12 +53,13 @@ cases, and the edge cases a design made possible. Working code that breaks a law
 finding, and every finding is reported. Two of its hand-offs name skills from the
 skillz plugin (`lets-take-a-step-back`, `something-just-came-up`).
 
-**The plan review** (`laws:plan-review`) - the law review for a plan, before any code
-exists. It checks every claim the plan makes about the code, then judges each design
-decision against the laws in the code it will land in: where state lives, what it adds
-beside what exists, the special cases and reachable states it designs in, and whether
-its steps deliver the ticket. It keeps the law review's iteration contract, so one
-review loop serves plans and PRs.
+**The plan review** (`laws:plan-review`) - a review of an implementation plan against
+the laws, before the code exists. A plan is where the constraints get chosen, so the
+review asks whether it chose them. One reviewer that holds the laws reads the code the
+plan will land in, checks what the plan believes about that code, and works out the
+design the plan produces - its parts, seams, owners, ordering, failures and check for
+done - including every decision it leaves for the keyboard. It returns pass or fail,
+each finding tied to a plan decision, a law, and the code.
 
 **The audit** (`laws:audit`) - the law review across a whole codebase. It splits the
 code into many overlapping areas, reviews them all in parallel, and ranks what they

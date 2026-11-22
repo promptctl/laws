@@ -1,5 +1,9 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.50.0 - 2026-11-22
+
+- laws(plan-review): rewritten around what a plan is under the laws - the place the constraints get chosen. The skill forks the `laws:code` agent, so the reviewer holds the laws as its system prompt, and it takes a ticket or a plan file. One reviewer reads the code the plan will land in, checks each belief the plan holds about that code, and rewrites the plan as the design it produces - parts, seams, facts, time, world, done - marking each decision the work forces and the plan leaves unmade. It walks that design forward to the bodies and states it forces, then judges it against the purpose, against a smaller design, and against each law's diagnostic. It returns `pass` or `fail`, with findings split into those whose cure reopens the design and must change before code, and those the implementer can settle with one move, and it lists the beliefs it checked in the code and what it could not read. The finder angles, the JSON output, the review-iteration argument, the hand-offs to other skills and the `NO MAJOR FINDINGS` phrase are removed
+
 ## v0.49.0 - 2026-11-22
 
 - laws(plan-review): new skill - a forked Opus review of an implementation plan against the laws, before any code is written. It loads `laws:code`, reads the ticket and the code the plan will land in, checks every claim the plan makes about that code, and judges each design decision: placement of state and checks, second mechanisms, special cases, reachable edge states, total complexity, and whether the steps deliver the ticket. It keeps `laws:law-review`'s review-iteration tailoring, flawed-premise escalation, root-decision hand-offs and `NO MAJOR FINDINGS` phrase, and returns findings anchored to plan steps
