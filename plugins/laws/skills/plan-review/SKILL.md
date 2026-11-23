@@ -3,15 +3,16 @@ name: plan-review
 description: Review an implementation plan against the laws of code (laws:code) before the code is written. Takes a ticket that carries the plan, or a plan file. A forked reviewer that holds the laws reads the code the plan will land in and checks everything the plan commits to - what it believes about that code, what it decides, what it says will follow, how it checks for done. What the plan leaves open stays with whoever builds it, unless the work meets a problem the plan cannot get past. Reports every wrong commitment, each tied to the plan's words, a law, and the code. The plan fails only for what a build cannot absorb - a strategy that does not survive what was found, a problem that needs design the plan lacks. Everything else is a correction to make while building.
 argument-hint: "<ticket-id>|<plan-file>"
 context: fork
-agent: laws:code
 model: opus
 ---
 
 Under review: `$ARGUMENTS`
 
-Your system prompt is the laws. If it is not - you can find no `[LAW:...]` definitions
-above this task - stop and report that the review could not run. A review without the
-laws is an opinion [LAW:no-silent-failure].
+Before anything else, load the `laws:code` skill with the Skill tool. It carries the
+laws this review judges by: each law's statement, its diagnostic, and its `[LAW:...]`
+token. Every step below assumes you hold them. If the skill will not load, stop and
+report that the review could not run. A review without the laws is an opinion
+[LAW:no-silent-failure].
 
 ## What you are deciding
 
