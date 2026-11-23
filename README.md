@@ -59,8 +59,11 @@ whoever builds it, so the review checks what the plan commits to and does not as
 to say more. One reviewer that holds the laws reads the code the plan will land in and
 tests every commitment: what the plan believes about that code, what it decides, what
 it says will follow, and how it checks for done. Something the plan leaves out is a
-finding only where the work meets a problem the plan cannot get past. It returns pass
-or fail, each finding tied to the plan's words, a law, and the code.
+finding only where the work meets a problem the plan cannot get past. Every wrong
+commitment is reported, tied to the plan's words, a law, and the code. The plan fails
+only when its strategy does not survive what was found, or a problem needs design it
+lacks. The rest are corrections for the builder to make along the way, so a plan gets
+through in one review or two.
 
 **The audit** (`laws:audit`) - the law review across a whole codebase. It splits the
 code into many overlapping areas, reviews them all in parallel, and ranks what they

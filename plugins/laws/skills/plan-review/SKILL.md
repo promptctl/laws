@@ -1,6 +1,6 @@
 ---
 name: plan-review
-description: Review an implementation plan against the laws of code (laws:code) before the code is written. Takes a ticket that carries the plan, or a plan file. A forked reviewer that holds the laws reads the code the plan will land in and checks everything the plan commits to - what it believes about that code, what it decides, what it says will follow, how it checks for done. What the plan leaves open stays with whoever builds it, unless the work meets a problem the plan cannot get past. Returns pass or fail, each finding tied to the plan's words, a law, and the code.
+description: Review an implementation plan against the laws of code (laws:code) before the code is written. Takes a ticket that carries the plan, or a plan file. A forked reviewer that holds the laws reads the code the plan will land in and checks everything the plan commits to - what it believes about that code, what it decides, what it says will follow, how it checks for done. What the plan leaves open stays with whoever builds it, unless the work meets a problem the plan cannot get past. Reports every wrong commitment, each tied to the plan's words, a law, and the code. The plan fails only for what a build cannot absorb - a strategy that does not survive what was found, a problem that needs design the plan lacks. Everything else is a correction to make while building.
 argument-hint: "<ticket-id>|<plan-file>"
 context: fork
 agent: laws:code
@@ -43,6 +43,14 @@ that bar, what a plan leaves open belongs to the builder and you say nothing abo
 no finding, no note, no request to spell it out. A review that reports silences gets
 back a plan with every silence filled in. That plan is longer, no sounder, and wrong
 in more places.
+
+Everything you find is reported. Very little of it stops the plan. Whoever builds
+reads your report and corrects what it names as they go, with the code open, so the
+plan is sent back only for what a build cannot absorb: a strategy that does not
+survive what you found, or a problem that takes design the plan does not have. A plan
+is meant to get through in one review, or two. Sent back for something a builder
+would have corrected in passing, it returns as a new plan, and the next review finds
+new things in it.
 
 You are a fork. You hold the plan as written and the code as it is, and nothing of the
 conversation that produced the plan. You cannot ask what a loose sentence meant, so
@@ -262,8 +270,8 @@ finding.
 
 ## 7. Report
 
-The author weighs each finding on its merits and changes the plan, so give them what
-weighing takes.
+Whoever reads this weighs each finding on its merits, then changes the plan or corrects
+the point as they build. Give them what weighing takes.
 
 ```
 VERDICT: pass | fail
@@ -277,7 +285,7 @@ MUST CHANGE BEFORE CODE
    Built as written: <what goes wrong>
    The law requires: <the constraint the design needs>
 
-SETTLE WHILE BUILDING
+CORRECT WHILE BUILDING
 1. <the same fields>
 
 CHECKED IN THE CODE
@@ -289,16 +297,25 @@ CHECKED IN THE CODE
   every time. A list with no finding reads `none`.
 - **The verdict is derived.** `fail` when MUST CHANGE BEFORE CODE has an entry, `pass`
   when it has none. Never set it by feel.
-- **Which list.** Ask what the cure takes. A finding must change before code when its
-  cure reopens the design: another step has to change with it, part of the purpose is
-  left undelivered, or the constraint can be met in ways that differ for the rest of
-  the plan. The cured plan is then a design nobody has reviewed. A finding is settled
-  while building when the constraint leaves one move, made where the finding sits, and
-  every other step stands as written. The pull is to promote: *under SETTLE it will be
-  skipped, so I'll make it block*. Both lists bind whoever builds. The first means one
-  thing more, that the plan comes back for another review, and a cure you have pinned
-  to one move does not need one. A problem the plan does not answer is always in the
-  first list: it passed step 5 because getting past it takes design.
+- **Which list.** Every wrong commitment is reported, in one list or the other, and
+  whoever builds reads both. The first list does one thing more: it stops the build
+  and sends the plan back to be changed and reviewed again. Test each finding against
+  your STRATEGY sentence, with the correction made:
+  - The sentence still describes the plan. The builder makes the correction with your
+    report in hand, at the step or steps it touches, and the approach stands. Second
+    list, however many of these there are.
+  - The sentence no longer describes it: the approach rested on a false belief, breaks
+    a law in its own shape, or cannot reach what the work is for. First list. A
+    builder who corrected that would be designing a new plan halfway through the old
+    one, and nobody would have reviewed it.
+
+  A problem the plan does not answer is always in the first list: it passed step 5
+  because getting past it takes design. What the plan would have done uncorrected
+  does not decide the list, because the uncorrected plan is not what gets built. How
+  much of the plan the correction replaces decides it. The pull is to promote: *under
+  CORRECT it will be skipped, so I'll make it block*. Both lists reach whoever builds.
+  The list a finding sits in says whether the plan comes back, and nothing about
+  whether the finding is right.
 - **Order** each list by how much of the plan falls with the finding: a false belief,
   then the strategy and the problems it does not answer, then single commitments. When
   several findings come from one decision, report the decision and list under it what
@@ -379,3 +396,9 @@ plan. Two the author can weigh (the paths are illustrative):
    The law requires: every session that exists before the change is in the store
      before the list reads from it, and one that could not be carried is reported.
 ```
+
+Which list each goes in depends on the plan. If the cache in the first is one step of
+a plan about something else, the builder drops it and reads through the resolver, the
+strategy sentence stands, and the finding goes under CORRECT WHILE BUILDING. If the
+cache is the plan, it goes under MUST CHANGE BEFORE CODE. The second is a problem the
+plan does not answer, and always does.
