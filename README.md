@@ -54,12 +54,13 @@ finding, and every finding is reported. Two of its hand-offs name skills from th
 skillz plugin (`lets-take-a-step-back`, `something-just-came-up`).
 
 **The plan review** (`laws:plan-review`) - a review of an implementation plan against
-the laws, before the code exists. A plan is where the constraints get chosen, so the
-review asks whether it chose them. One reviewer that holds the laws reads the code the
-plan will land in, checks what the plan believes about that code, and works out the
-design the plan produces - its parts, seams, owners, ordering, failures and check for
-done - including every decision it leaves for the keyboard. It returns pass or fail,
-each finding tied to a plan decision, a law, and the code.
+the laws, before the code exists. A plan settles a strategy and leaves the rest to
+whoever builds it, so the review checks what the plan commits to and does not ask it
+to say more. One reviewer that holds the laws reads the code the plan will land in and
+tests every commitment: what the plan believes about that code, what it decides, what
+it says will follow, and how it checks for done. Something the plan leaves out is a
+finding only where the work meets a problem the plan cannot get past. It returns pass
+or fail, each finding tied to the plan's words, a law, and the code.
 
 **The audit** (`laws:audit`) - the law review across a whole codebase. It splits the
 code into many overlapping areas, reviews them all in parallel, and ranks what they

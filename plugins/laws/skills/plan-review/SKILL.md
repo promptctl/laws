@@ -1,6 +1,6 @@
 ---
 name: plan-review
-description: Review an implementation plan against the laws of code (laws:code) before the code is written. Takes a ticket that carries the plan, or a plan file. A forked reviewer that holds the laws reads the code the plan will land in, checks what the plan believes about that code, works out the design the plan produces - including the decisions it leaves unmade - and returns pass or fail, each finding tied to a plan decision, a law, and the code.
+description: Review an implementation plan against the laws of code (laws:code) before the code is written. Takes a ticket that carries the plan, or a plan file. A forked reviewer that holds the laws reads the code the plan will land in and checks everything the plan commits to - what it believes about that code, what it decides, what it says will follow, how it checks for done. What the plan leaves open stays with whoever builds it, unless the work meets a problem the plan cannot get past. Returns pass or fail, each finding tied to the plan's words, a law, and the code.
 argument-hint: "<ticket-id>|<plan-file>"
 context: fork
 agent: laws:code
@@ -16,40 +16,57 @@ laws is an opinion [LAW:no-silent-failure].
 ## What you are deciding
 
 The laws say: design the constraints so that illegal states cannot be expressed, and
-the implementation becomes residue. A plan is where the constraints get chosen. It is
-finished when it has chosen them - the parts, the types at their seams, the one owner
-of each fact, the order things happen in, what a failure does, the check for done -
-and what is left to write is mechanical. Whatever it leaves open is decided anyway, at
-the keyboard, mid-change, one guard and one flag at a time. A decision costs a
-paragraph to change today and an implementation to change once code stands on it.
+the implementation becomes residue. A plan chooses the first of those constraints: a
+strategy, and the decisions its author had to settle before any code. It is not the
+code written out in prose, and it is not meant to become that. Whoever builds from it
+holds the same laws and will have the code open, so a choice the plan leaves to them
+is made later, with more in view. Each thing a plan settles ahead of that is one more
+thing it can get wrong.
 
-So you decide one thing: **built exactly as written, in the code as it really is, will
-the result obey the laws and do what the work is for?** A plan fails that in three
-ways, and you look for all three:
+So the review asks two questions, and the first is nearly all of the work.
 
-- **in what it says**: a decision that breaks a law;
-- **in what it leaves unsaid**: a decision the work forces and a law governs, which
-  the plan never makes;
-- **in what it stands on**: a belief about the present code that is false.
+**Is everything the plan commits to right?** A plan commits itself in four ways, and
+each can be wrong:
 
-A plan that would work and breaks a law is still wrong. Working is not the standard.
+- a **belief** about the code as it is, written down or only relied on, that is false;
+- a **decision** that breaks a law, or that leaves a later choice no way to keep one;
+- a **claim** about what will be true once it is built, that will not be;
+- a **check** for done that a broken build would pass.
+
+Find every one of them. A wrong commitment that gets through is built on, and it costs
+a paragraph to change today and an implementation to change once code stands on it. A
+plan that would work and breaks a law is still wrong. Working is not the standard.
+
+**Does the work meet a problem the plan has no answer to?** This is the only finding
+you raise about something the plan does not say, and step 5 sets the bar for it. Below
+that bar, what a plan leaves open belongs to the builder and you say nothing about it:
+no finding, no note, no request to spell it out. A review that reports silences gets
+back a plan with every silence filled in. That plan is longer, no sounder, and wrong
+in more places.
 
 You are a fork. You hold the plan as written and the code as it is, and nothing of the
-conversation that produced the plan, which is what an implementer picking it up later
-will hold. What you cannot find in the plan is not in the plan.
+conversation that produced the plan. You cannot ask what a loose sentence meant, so
+read it the way that works, when there is one.
 
 Change nothing: no file, no ticket, no plan. The plan belongs to its author, who
 weighs your findings.
 
-## 1. The plan and what it is for
+## 1. The plan and what it commits to
 
 For a ticket id, read the whole ticket with the tracker this project uses:
 description, plan, comments, parent. For a path, read the file. If you end up with no
 plan in hand, stop and say what you looked for and where.
 
-Then find what the work is for, in the terms of whoever uses the result: what a person
+Find what the work is for, in the terms of whoever uses the result: what a person
 sees, what a caller gets back, what a process can now ask for. The ticket usually says
 it. Every decision in the plan answers to it.
+
+Then go through the plan a sentence at a time and take down each commitment it makes:
+the beliefs ("`resolve` returns an absolute path", "the CLI is the only caller"), the
+decisions, the claims ("so the two can no longer disagree"), the checks. One sentence
+can hold several. This list is the work of the review. Each item on it ends shown to
+hold or in a finding, and none is passed because it reads as plainly true. The author
+checked the ones they doubted. Nobody has checked the rest.
 
 ## 2. The code as it is
 
@@ -62,10 +79,9 @@ of it: an existing type, registry, reader, helper, retry, format.
 Build your picture of the code from the code. The plan's account of it is one of the
 things under review [FRAMING:representation].
 
-Now list what the plan believes about the present code, and check each belief where it
-lives. The author checked the beliefs they knew they held. The ones that sink a plan
-were never written down, so derive them: for each step, what must already be true for
-this step to do what it says?
+Check every belief on your list where it lives. Then add the beliefs the plan never
+wrote down, because those are the ones that sink it. For each step, what must already
+be true for this step to do what it says?
 
 - that a thing exists, and does what the plan says it does;
 - that a value arrives carrying the guarantee the plan relies on;
@@ -80,18 +96,20 @@ longer exists, and findings about its details would describe nothing.
 
 ## 3. The design the plan produces
 
-A plan is written as steps, and steps hide the design. Rewrite it as the state of the
-code once every step is done, under six headings taken from the laws' two framings.
-An entry appears only where the plan changes something, so a small plan has a small
-picture. The laws beside a heading are the ones that govern it.
+A plan is written as steps, and steps hide the design: two steps far apart can each
+put a hand on the same fact. Rewrite the plan's decisions as the state of the code
+once every step is done, under six headings taken from the laws' two framings. An
+entry appears only where the plan decides something, so a small plan has a small
+picture, and a heading the plan never touches stays empty. The laws beside a heading
+are the ones that govern it.
 
 - **Parts** - what exists afterwards that does not now, what stops existing, each
   part's one purpose, and which way each new dependency points. [LAW:decomposition]
   [LAW:composability] [LAW:locality-or-seam] [LAW:one-way-deps] [LAW:domain-language]
-- **Seams** - the type at every boundary the plan adds or changes, and every state
-  that type can hold, legal or not. [LAW:types-are-the-program]
-  [LAW:parse-dont-validate] [LAW:no-defensive-null-guards]
-  [LAW:dataflow-not-control-flow] [LAW:one-type-per-behavior] [LAW:no-mode-explosion]
+- **Seams** - the type at each boundary the plan settles, and every state that type
+  can hold, legal or not. [LAW:types-are-the-program] [LAW:parse-dont-validate]
+  [LAW:no-defensive-null-guards] [LAW:dataflow-not-control-flow]
+  [LAW:one-type-per-behavior] [LAW:no-mode-explosion]
 - **Facts** - each piece of state the plan introduces or moves, and its one authority;
   each rule, and the one boundary that enforces it. [LAW:one-source-of-truth]
   [LAW:single-enforcer] [LAW:no-shared-mutable-globals]
@@ -104,19 +122,20 @@ picture. The laws beside a heading are the ones that govern it.
 - **Done** - the check that tells success from failure, and who can run it.
   [LAW:verifiable-goals] [LAW:behavior-not-structure]
 
-Where the work forces an entry and the plan does not supply it, write `unstated`, and
-do not fill it in. This is where a plan review goes soft. You read "track which
-sessions are active" and think *they obviously mean a set owned by the session
-manager*. The plan did not say that. The implementer, mid-change, reaches for a
-module-level map and a boolean, and the sound design you imagined was yours all along.
-The test: handed this plan and this code, would two careful implementers arrive at the
-same type, the same owner, the same enforcement point? Where they could differ on
-something a law governs, the plan has not decided. A short plan is not a safe plan;
-brevity usually means the decisions are still waiting.
+**Where the plan is open, the picture is open.** The plan says "track which sessions
+are active" and names no owner and no type. Two readings go wrong from here. One fills
+the gap with a poor choice - a module-level map and a boolean - and reports the poor
+choice, which the plan never made. The other reports the gap, and the author answers
+by writing in the owner, then the type, then its fields, until the plan is the code in
+prose. Do neither. The builder chooses, with the laws and the code in front of them,
+so take the open place as filled soundly.
 
-Not every silence counts. The body of a function whose signature is settled, the
-layout of a file, the order of private helpers: nothing is built on these, and they
-are the residue a plan is entitled to leave.
+What you check in an open place is whether a sound choice is still there to be made.
+The plan's own decisions can close it off: if another step keeps the two places that
+create sessions independent of each other, no single owner can exist, and every way of
+tracking them puts the fact in two hands [LAW:one-source-of-truth]. That is a finding,
+and it sits at the step that closed the choice: at what the plan said, not at what it
+left out.
 
 Prose hides decisions inside ordinary phrases. Each of these has already decided
 something. Find out what, in the code:
@@ -143,33 +162,79 @@ authority owns its refresh.
 
 ## 4. Build it in your head
 
-The picture so far holds what the plan says and where it is silent. Now find what it
-forces without mentioning.
+The picture holds what the plan decided. Now find what those decisions force without
+mentioning, and whether the plan's claims survive being run.
 
-**Write the bodies.** For each seam, what will the code on either side have to do with
-that type? A body that will need to branch on a kind means the type is missing its
-discriminator. A body that will need a guard means a signature upstream admits a state
-it should not. The plan never has to mention the guard for the guard to be decided:
-the type decided it. [LAW:types-are-the-program]
+**Write the bodies.** For each seam the plan settles, what will the code on either
+side have to do with that type? A body that will need to branch on a kind means the
+type is missing its discriminator. A body that will need a guard means a signature
+upstream admits a state it should not. The plan never has to mention the guard for the
+guard to be decided: the type decided it. [LAW:types-are-the-program]
 
 **Run the clock.** List every path the plan adds or changes, the ones that run once
 included: a migration, a backfill, a handover from the old code to the new. For each,
 start it cold. Run it twice. Interrupt it halfway and start it again. Let two callers
-arrive together. Make the middle step fail. Every state you can reach that the picture
-does not account for is a finding, placed at the decision that makes the state
-reachable. [LAW:no-ambient-temporal-coupling] [LAW:no-silent-failure]
+arrive together. Make the middle step fail, and keep whatever broke it broken for the
+steps that follow: the cleanup, the release, the report. Where a path runs through a
+choice the plan left open, run it with that choice made well. A state that still goes
+wrong is one of two things. If a decision in the plan makes it reachable, it is a
+finding at that decision. If no decision made it and nothing in the plan gets past it,
+take it to step 5. [LAW:no-ambient-temporal-coupling] [LAW:no-silent-failure]
+
+**Test each claim.** For every claim on your list, look for the run that makes it
+false: the second caller, the data that was already there, the failure that does not
+stop at one call. Start from the conditions the ticket describes. A result that holds
+on a healthy system, and not in the situation the work was raised for, has not been
+delivered. A claim that holds on the easy path alone is false as written.
 
 **Follow each workaround home.** Where the plan copes with a bad state that existing
 code hands it - a function that returns nothing where it should fail, a type that
 admits what it should not - the cause is in that existing code, and by coping the plan
 has decided to keep it. The finding sits at the cause. [LAW:carrying-cost]
 
-## 5. Judge it
+## 5. Problems the plan does not answer
 
-**Does it reach the purpose?** For each thing the work is for, name the entry that
-delivers it. Anything undelivered is a finding. So is anything in the picture that
-delivers nothing and that no other entry needs: it is carried forever.
-[LAW:carrying-cost]
+Most of what a plan leaves out is left out on purpose, and most of the rest does no
+harm: the builder reaches it with the laws in hand and settles it. An omission is a
+finding only when all three of these hold.
+
+- **There is a problem, and you can show it.** Something goes wrong that matters: part
+  of the purpose is not delivered, or the result breaks a law. Name it, and name what
+  in the code makes it real - the rows that already exist, the second writer, the
+  caller the plan never met. "The plan does not say how" names no problem. Neither
+  does "a builder could get this wrong": a builder could get anything wrong.
+- **The plan has no answer to it.** Read generously. A strategy often covers a problem
+  without mentioning it, and an answer that follows plainly from a step is in the
+  plan.
+- **Getting past it takes design.** The builder who reaches it cannot settle it where
+  they stand. The answer is a part the plan does not have, a change to a step it does
+  have, or a choice between approaches that leave the rest of the plan different. If
+  one sound move on the spot settles it, the choice was never the plan's to make.
+
+Three places hold nearly all of them:
+
+- **The purpose.** For each thing the work is for, name what in the plan delivers it.
+  A purpose with nothing behind it is the plainest case.
+- **What is already there when the change lands.** Stored data in the old shape, work
+  in flight, the old path still running beside the new one.
+- **What the plan's new parts bring with them.** A second writer to a fact that had
+  one, a call that can fail where the purpose depends on it succeeding.
+
+To place the line: the text of a query whose result the plan has described, the name
+and fields of a type the plan describes by its job, the module that holds a piece of
+state when the laws give it one sound home, the wording of an error, the arrangement
+of a test - these are the builder's. A plan that moves a record to a new store, with
+no way for the records already written to get there, has a problem it does not answer.
+
+## 6. Judge it
+
+**Is each commitment right?** Go down the list from step 1. Beliefs were settled in
+step 2 and claims in step 4. For each decision, run the diagnostic of every law beside
+its heading, in the future tense: not "does this body branch" but "will the code built
+from this have to". A diagnostic with no clean answer is a finding. A plan that cites
+a law as its reason gets that law's diagnostic like any other; the citation is a
+claim. For each check, ask whether a build that fails the purpose could pass it, and
+whether anyone can run it. [LAW:behavior-not-structure] [LAW:verifiable-goals]
 
 **Is it the smallest design that does?** Say the plan's strategy in one sentence. If
 you cannot, that is a finding: it is several plans, or none yet. Then ask:
@@ -182,8 +247,12 @@ you cannot, that is a finding: it is several plans, or none yet. Then ask:
   existing one. [LAW:one-source-of-truth]
 - What does it delete? A sound change usually leaves less than it found, because the
   constraint takes over work the old code did by hand. A plan that replaces something
-  and keeps the old thing alive has not finished. [LAW:polishing-by-subtraction]
+  and decides to keep the old thing alive has not finished. One that does not mention
+  the removal has left it to the builder. [LAW:polishing-by-subtraction]
   [LAW:escape-local-minima]
+- Does every part earn its place? Anything the plan builds that delivers none of the
+  purpose, and that nothing else in the plan needs, is carried forever.
+  [LAW:carrying-cost]
 - Is there a design with fewer parts that reaches the same purpose? Name the
   constraint it would rest on, or let the thought go. "This could be simpler", with
   nothing named, is not a finding.
@@ -191,13 +260,7 @@ you cannot, that is a finding: it is several plans, or none yet. Then ask:
 Complexity that every correct design would need belongs to the domain and is not a
 finding.
 
-**Does each entry hold?** Run the diagnostic of every law beside an entry's heading,
-in the future tense: not "does this body branch" but "will the code built from this
-have to". A diagnostic with no clean answer is a finding. Every `unstated` entry is a
-finding: name the decision and the law that governs it. A plan that cites a law as its
-reason gets that law's diagnostic like any other; the citation is a claim.
-
-## 6. Report
+## 7. Report
 
 The author weighs each finding on its merits and changes the plan, so give them what
 weighing takes.
@@ -207,8 +270,8 @@ VERDICT: pass | fail
 STRATEGY: <the plan's strategy, in your one sentence>
 
 MUST CHANGE BEFORE CODE
-1. <the decision, in a few words>
-   Plan: "<the plan's own words>"  |  unstated: <the decision it never makes>
+1. <what is wrong, in a few words>
+   Plan: "<the plan's own words>"  |  unanswered: <the problem the work meets>
    Law: [LAW:<token>]
    Code: <path> - <what it shows>
    Built as written: <what goes wrong>
@@ -222,7 +285,8 @@ CHECKED IN THE CODE
 - not checked: <what the plan rests on that you could not read> - <why not>
 ```
 
-- **Every heading, every time.** A list with no finding reads `none`.
+- **The report is the whole reply.** It starts at `VERDICT` and carries every heading,
+  every time. A list with no finding reads `none`.
 - **The verdict is derived.** `fail` when MUST CHANGE BEFORE CODE has an entry, `pass`
   when it has none. Never set it by feel.
 - **Which list.** Ask what the cure takes. A finding must change before code when its
@@ -233,30 +297,36 @@ CHECKED IN THE CODE
   every other step stands as written. The pull is to promote: *under SETTLE it will be
   skipped, so I'll make it block*. Both lists bind whoever builds. The first means one
   thing more, that the plan comes back for another review, and a cure you have pinned
-  to one move does not need one.
+  to one move does not need one. A problem the plan does not answer is always in the
+  first list: it passed step 5 because getting past it takes design.
 - **Order** each list by how much of the plan falls with the finding: a false belief,
-  then the strategy, then single entries. When several findings come from one
-  decision, report the decision and list under it what it forces, so the cause changes
-  and not each symptom.
-- **`Plan`** quotes the plan. For a silence, name the decision the plan never makes
-  and quote the nearest words.
-- **`Law`** is the law whose diagnostic the decision fails: one, and a second only
-  where the decision fails that one too, on its own. A false belief is a map that does
-  not match its territory, so it cites `[FRAMING:representation]`, then the law the
-  steps resting on it break in the code as it is.
+  then the strategy and the problems it does not answer, then single commitments. When
+  several findings come from one decision, report the decision and list under it what
+  it forces, so the cause changes and not each symptom.
+- **`Plan`** quotes the plan. For a problem the plan does not answer, write
+  `unanswered:`, name the problem, and quote the step that runs into it.
+- **`Law`** is the law whose diagnostic the commitment fails: one, and a second only
+  where it fails that one too, on its own. A false belief or a false claim is a map
+  that does not match its territory, so it cites `[FRAMING:representation]`, then the
+  law the steps resting on it break in the code as it is.
 - **`Code`** is a path and what it shows there. Leave it out only when the finding
-  lives in the plan alone, as a missing check for done does.
+  lives in the plan alone, as two steps that contradict each other do.
 - **`Built as written`** is concrete: the illegal state that becomes representable,
   the two copies and the moment they disagree, the failure nobody hears, the part of
   the purpose left undelivered.
 - **`The law requires`** names a constraint: the type that cannot hold the state, the
-  one owner, the one boundary, the order carried by a value. Never a guard, a
-  fallback, a flag, a retry or a special case. Those are what the laws remove, and an
-  author who adopts one leaves with a worse plan than they brought. And never a
-  rewritten plan: say what the design must satisfy and leave the design to its author.
-- **Not a finding:** a preference with no law behind it; complexity the domain itself
-  requires; existing code that breaks a law where the plan neither builds on it nor
-  works around it.
+  one owner, the one boundary, the order carried by a value. For a problem the plan
+  does not answer, it names what the answer has to achieve. Never a guard, a fallback,
+  a flag, a retry or a special case. Those are what the laws remove, and an author who
+  adopts one leaves with a worse plan than they brought. Never a request for more
+  words - "specify the type", "say where", "clarify how". The cure for a wrong
+  commitment is a right one, or none: a detail the plan had no need to settle can
+  simply go, and the builder decides it with the code open. And never a rewritten
+  plan: say what the design must satisfy and leave the design to its author.
+- **Not a finding:** anything the plan leaves open that does not pass step 5; a choice
+  you would have made differently, with no law behind the difference; complexity the
+  domain itself requires; existing code that breaks a law where the plan neither
+  builds on it nor works around it.
 - **A cause in the ticket.** When the mechanism that breaks the law was prescribed by
   the ticket, the finding stands, and `The law requires` says the ticket is where it
   changes.
@@ -269,14 +339,21 @@ CHECKED IN THE CODE
 - No praise, and no account of what the plan does well. The last list states facts
   about the code, and nothing in the report grades the plan.
 
-A finding the author can do nothing with:
+Two findings the author can do nothing with:
 
 ```
 The sync step needs more thought about error handling. Consider adding validation.
 ```
 
-It quotes no decision, cites no law, shows nothing from the code, and its cure is a
-guard. Two the author can weigh (the paths are illustrative):
+```
+The plan does not say which module owns the set of active sessions or what its type
+is. Both should be specified before implementation.
+```
+
+The first quotes no commitment, cites no law, shows nothing from the code, and its
+cure is a guard. The second names no problem: nothing goes wrong there that a builder
+holding the laws cannot settle where they stand, and what it asks for is a longer
+plan. Two the author can weigh (the paths are illustrative):
 
 ```
 1. The resolved config path is held twice
@@ -291,14 +368,14 @@ guard. Two the author can weigh (the paths are illustrative):
      resolver every time, or the derivation moves into the session and the resolver's
      goes.
 
-2. Nothing owns the set of active sessions
-   Plan: unstated: "track which sessions are active" names no owner and no type
-   Law: [LAW:no-shared-mutable-globals]
-   Code: src/server/accept.ts and src/cli/attach.ts both create sessions and share no
-     part above them
-   Built as written: each entry point grows its own map, or both write one
-     module-level map with no API, and a session opened through one is invisible to
-     the other
-   The law requires: one owner of the set, whose API both creators are handed, named
-     in the plan.
+2. Sessions already on disk drop out of the list
+   Plan: unanswered: step 2 has the list read "from the new store" and step 3 "deletes
+     the file reader"; nothing carries the existing session files across
+   Law: [LAW:no-silent-failure]
+   Code: src/session/files.ts - today a session's only record is its file under the
+     state directory; src/session/list.ts - the list is built from those files
+   Built as written: on the first start after the change the store is empty, every
+     session the user had is missing from the list, and nothing reports it
+   The law requires: every session that exists before the change is in the store
+     before the list reads from it, and one that could not be carried is reported.
 ```
