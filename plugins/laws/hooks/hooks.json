@@ -1,5 +1,5 @@
 {
-  "description": "Three injection points: SessionStart routes once to the craft skill matching the deliverable's medium and resets the engaged-craft set on a fresh session; UserPromptSubmit re-engages the laws on every user message; PreToolUse on Skill guards craft compatibility, letting compatible crafts coexist but refusing an ordering the policy declares. One hook per event: anything an event injects goes through its one entry, and text over Claude Code's 10,000-character cap on a hook's context is cut down, never spread across more entries. The orderings live in hooks/scripts/incompatible-crafts.txt and are not restated here - a second copy is a second thing to go stale, and the copy is what a reader believes.",
+  "description": "Three injection points: SessionStart routes once to the craft skill matching the deliverable's medium and resets the engaged-craft set on a fresh session; UserPromptSubmit re-engages the laws on every user message; PreToolUse on Skill guards craft compatibility, letting compatible crafts coexist but refusing an ordering the policy declares. One injecting hook per event: anything an event injects goes through the router's one entry, and text over Claude Code's 10,000-character cap on a hook's context is cut down, never spread across more entries. SessionStart also runs install-lit-workflows.sh, which injects nothing: it links the definitions in lit-workflows/ into lit's global workflow layer, so lit asks for this plugin's reviews at the ticket moments they are due. The orderings live in hooks/scripts/incompatible-crafts.txt and are not restated here - a second copy is a second thing to go stale, and the copy is what a reader believes.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/skill-router.sh\" session-start"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/install-lit-workflows.sh\""
           }
         ]
       }

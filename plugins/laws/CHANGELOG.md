@@ -1,5 +1,10 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.51.0 - 2026-11-22
+
+- laws(lit-workflows): new - the plugin ships lit workflow definitions in `lit-workflows/`, and a SessionStart hook links them into lit's global workflow layer (`workflows/laws/` under lit's config directory), where they reach every project lit tracks. `laws-plan-review` fires as a ticket leaves `plan` and tells the agent to run `/laws:plan-review` on it; `laws-law-review` fires as a ticket enters `review` and tells the agent to run `/laws:law-review` on its pull request. The links point at the plugin's own files and are redrawn at every session start, a definition the plugin stops shipping is unlinked, and an install that fails stops with the reason shown
+- laws(router): the rule is one injecting hook per event. The installer is a second SessionStart command that injects nothing
+
 ## v0.50.1 - 2026-11-22
 
 - laws(plan-review): the reviewer loads the `laws:code` skill as its first step, and the skill no longer forks the `laws:code` agent. The skill needs nothing from this plugin but that skill's name, so it can live in another plugin
