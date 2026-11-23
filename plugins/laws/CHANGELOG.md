@@ -1,5 +1,10 @@
 Each version's section is written in the PR that bumps `.claude-plugin/plugin.json` beside this file; `claude plugin tag plugins/laws --push` then publishes it as the release notes. Procedure: https://github.com/promptctl/.github/blob/master/RELEASING.md
 
+## v0.52.0 - 2026-11-22
+
+- laws(install-lit-workflow): new skill, `/laws:install-lit-workflow`, which installs the plugin's lit workflows when a person runs it. It replaces the SessionStart hook added in 0.51.0, which is removed along with its rule change: the router's one-injecting-hook-per-event wording and test are back to one hook per event. The skill copies the definitions where the hook linked them, so an update to the plugin cannot leave lit reading nothing, and lit says nothing about a link that points at nothing. Running it again brings the copies up to date and removes any the plugin no longer ships. Anyone who got the 0.51.0 links keeps them until they run the skill, which replaces each link with a copy
+- laws(lit-workflows): the definitions moved from `lit-workflows/` to `skills/install-lit-workflow/definitions/`
+
 ## v0.51.0 - 2026-11-22
 
 - laws(lit-workflows): new - the plugin ships lit workflow definitions in `lit-workflows/`, and a SessionStart hook links them into lit's global workflow layer (`workflows/laws/` under lit's config directory), where they reach every project lit tracks. `laws-plan-review` fires as a ticket leaves `plan` and tells the agent to run `/laws:plan-review` on it; `laws-law-review` fires as a ticket enters `review` and tells the agent to run `/laws:law-review` on its pull request. The links point at the plugin's own files and are redrawn at every session start, a definition the plugin stops shipping is unlinked, and an install that fails stops with the reason shown
