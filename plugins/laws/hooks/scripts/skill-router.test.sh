@@ -361,20 +361,22 @@ case "$eng_out" in
   *) bad "engage carries the routing and the engagement text (got: $eng_out)";;
 esac
 
-# 17a. One hook per event. Everything an event injects goes through its one entry; content too
-#      long for Claude Code's 10,000-character cap on a hook's context is cut down, never spread
-#      across more entries.
+# 17a. One injecting hook per event. Everything an event injects goes through the router's one
+#      entry; content too long for Claude Code's 10,000-character cap on a hook's context is cut
+#      down, never spread across more entries. The only command that is not the router is the lit
+#      workflow installer, which injects nothing (install-lit-workflows.test.sh holds it to an
+#      empty stdout). A command this does not know fails here, where its author reads why.
 hooks_json="$HERE/../hooks.json"
 for event in SessionStart UserPromptSubmit PreToolUse; do
   n=$(awk -v ev="\"$event\"" '
     index($0, ev) { inside = 1; next }
     inside && /^    \]/ { inside = 0 }
-    inside && /"command":/ { n++ }
+    inside && /"command":/ && /skill-router\.sh/ { n++ }
     END { print n + 0 }' "$hooks_json")
-  [ "$n" = 1 ] && ok "hooks.json runs one hook on $event" || bad "hooks.json runs one hook on $event (runs $n)"
+  [ "$n" = 1 ] && ok "hooks.json runs the router once on $event" || bad "hooks.json runs the router once on $event (runs it $n times)"
 done
-total=$(grep -c '"command":' "$hooks_json")
-[ "$total" = 3 ] && ok "hooks.json runs three hooks in all" || bad "hooks.json runs three hooks in all (runs $total)"
+unknown=$(grep '"command":' "$hooks_json" | grep -v 'skill-router\.sh' | grep -v 'install-lit-workflows\.sh')
+[ -z "$unknown" ] && ok "hooks.json runs nothing but the router and the lit workflow installer" || bad "hooks.json runs nothing but the router and the lit workflow installer (also runs: $unknown)"
 
 # 17b. A missing or empty S projection refuses at session start: a pointer to nothing sends every
 #      audit and review pass to read nothing. Each case runs a copy of the router beside its own

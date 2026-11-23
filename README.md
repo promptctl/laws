@@ -75,6 +75,12 @@ cause ticket plans the fix and files its fix and test tickets.
 A **router hook** loads the one matching skill at session start and re-engages it on
 every message, because guidance only works if it's loaded when the work begins.
 
+The two reviews of a ticket's work are asked for by the ticket tracker, in projects that
+use [lit](https://github.com/promptctl/links-issue-tracker). The plugin ships two lit
+workflows and puts them in lit's global layer, so they reach every project lit tracks:
+lit asks for the plan review as a ticket leaves planning, and for the law review as a
+ticket enters review.
+
 ## Why four bodies of guidance instead of one
 
 Because an agent handed the laws applies them everywhere - and that is the bug this
@@ -94,8 +100,13 @@ the point of the plugin. It's what keeps the point from eating itself.
 /plugin install laws@promptctl
 ```
 
-That gives you the skills and the craft-compatibility hooks. The hooks are pure bash -
-no dependencies, nothing to configure. Nothing else is required.
+That gives you the skills and the hooks. The hooks are pure bash - no dependencies,
+nothing to configure. Nothing else is required.
+
+At each session start a hook links the plugin's lit workflows into
+`~/.config/links-issue-tracker/workflows/laws/`, or the same path under
+`$XDG_CONFIG_HOME` when that is set. lit reads them from there. On a machine without
+lit, nothing reads them.
 
 ## Looking for clean-room, spec or backlog?
 
@@ -140,6 +151,8 @@ it - read it before editing any skill body here.
 /plugin uninstall laws@promptctl
 ```
 
-The hooks write only under your temp directory, and only for the session at hand - the
-lock directories that record which crafts are engaged. Nothing of theirs persists, so there
-is nothing of theirs to clean up.
+The router hook writes only under your temp directory, and only for the session at hand -
+the lock directories that record which crafts are engaged. Nothing of its persists.
+
+The lit workflow links do persist. Delete `~/.config/links-issue-tracker/workflows/laws`
+(under `$XDG_CONFIG_HOME` when that is set) to remove them.
