@@ -1,7 +1,7 @@
 {
   "name": "laws",
-  "version": "0.51.0",
-  "description": "Universal architectural laws for code work, medium-scoped quality skills, skill-router hooks that route to the one matching the deliverable's medium at session start, re-engage the laws on every message, and refuse a craft ordering the compatibility policy declares, and lit workflows that ask for the plan review and the law review when a ticket reaches them.",
+  "version": "0.52.0",
+  "description": "Universal architectural laws for code work, medium-scoped quality skills, skill-router hooks that route to the one matching the deliverable's medium at session start, re-engage the laws on every message, and refuse a craft ordering the compatibility policy declares, and an install skill for lit workflows that ask for the plan review and the law review when a ticket reaches them.",
   "author": {
     "name": "Brandon Fryslie"
   },
